@@ -1,0 +1,11 @@
+[package]
+name = "fetchpath-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+curl = { version = "0.4.50", features = ["static-curl"] }
+sha2 = "0.10.9"
+uuid = { version = "1.18.1", features = ["v4"] }

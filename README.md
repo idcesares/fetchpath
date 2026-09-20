@@ -2,7 +2,7 @@
 
 A Windows-first download manager for everyday and power users, with video/audio downloading included in the first public release. A portable Rust engine is the proposed production foundation.
 
-**Current state:** M0 foundation work. This repository contains the product plan, an executable task backlog, a simulated desktop UX prototype, and a local HTTP benchmark/fixture harness. It is not a working production downloader.
+**Current state:** M1 core work. The repository now has a working Rust file-job slice and CLI alongside the product plan, executable backlog, simulated desktop UX prototype, HTTP fixtures, and media/backend spikes. It is not a public-release download manager yet.
 
 ## Start here
 
@@ -13,8 +13,9 @@ A Windows-first download manager for everyday and power users, with video/audio 
 - [Codex workflow](docs/development/WORKFLOW.md)
 - [Current tasks](docs/tasks/backlog.json)
 - [Foundation validation](docs/development/FOUNDATION-RESULTS.md)
+- [First native download](docs/development/FIRST-DOWNLOAD.md)
 
-## Run the foundation
+## Run and verify
 
 Requires Node.js 24+ and Git. No npm installation or third-party JavaScript dependencies are needed.
 
@@ -28,7 +29,16 @@ node tools/serve-prototype.mjs
 
 Open the loopback URL printed by the prototype server. It contains simulated jobs, not real transfers. See [benchmark instructions](tools/bench/README.md) for local fixture and curl baseline commands. Generated files belong under ignored `work/`; promote a small verified summary into the validation record.
 
-Rust is needed when the first engine slice starts. The initial environment has a working toolchain at `%USERPROFILE%\.cargo\bin`, although that directory was absent from this session's PATH. No production Rust crate or desktop framework has been committed to yet.
+The native CLI needs Rust 1.98+:
+
+~~~powershell
+$cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
+& $cargo test --workspace --locked
+& $cargo build --workspace --locked
+target\debug\fetchpath.exe download https://example.com/ example.html
+~~~
+
+Fetchpath currently accepts only a final HTTP 200 full representation. It refuses to overwrite a destination and reports an observed SHA-256 after safe publication. The desktop prototype still uses simulated jobs.
 
 ## Working with Codex
 

@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 19 September 2026. Phase: M0 — product and engineering foundation.
+Updated 20 September 2026. Phase: M1 — first native download slice.
 
 ## Confirmed purpose
 
@@ -15,16 +15,17 @@ The user uses Codex with Astra High for lead orchestration and explicitly permit
 - Task state, dependencies, ownership, and evidence: [backlog](docs/tasks/backlog.json).
 - Repository and future component boundaries: [repository map](docs/architecture/REPOSITORY.md).
 - Actual checks and limitations: [foundation results](docs/development/FOUNDATION-RESULTS.md).
+- Native job/transfer evidence: [first download](docs/development/FIRST-DOWNLOAD.md).
 
 Do not duplicate task status into multiple checklists. The backlog is authoritative; this page records phase and decisions.
 
 ## Current delivery
 
-Repository organization, a desktop interaction prototype, and a reproducible local HTTP/1.1 fixture/baseline harness. The prototype simulates downloads; the harness exercises existing curl. Neither is the Fetchpath production engine, and no speed advantage has been established.
+Repository organization, desktop interaction prototype, reproducible HTTP fixtures, backend/media packaging spikes, the accepted job contract, and a native Rust vertical slice. The new CLI performs a real sequential HTTP download through an in-memory job, bounded buffer, observed hash, serialized cancellation, and no-overwrite publication. The desktop prototype still simulates downloads, and no speed advantage has been established.
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. Ready work includes the native HTTP backend packaging spike, browser/media compatibility spikes, and the shared job/event contract. Resolve those contracts before building the first production desktop download. M0 has started; it is not fully complete.
+Run `node tools/tasks.mjs next`. The next gates include browser handoff evidence, the Windows desktop-framework decision, durable checkpoints/restart recovery, and connecting the real core to the desktop add-download journey. Media helper packaging is proven on lawful local HLS/DASH fixtures; public-source compatibility remains a release gate.
 
 ## Remaining choices
 

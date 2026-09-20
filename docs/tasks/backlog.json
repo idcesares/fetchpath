@@ -210,8 +210,8 @@
         "FP-004",
         "FP-005"
       ],
-      "status": "in_progress",
-      "owner": "benchmark_harness",
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "crates",
@@ -223,8 +223,13 @@
         "A07"
       ],
       "acceptance": "Real URL to staging file to validated safe publication; fixture byte check; bounded memory, cancellation, native build/test.",
-      "verification": "Real URL to staging file to validated safe publication; fixture byte check; bounded memory, cancellation, native build/test.",
-      "evidence": [],
+      "verification": "Native Rust job and CLI stream one real HTTP source through a 16 KiB buffer to unique staging, observed SHA-256, serialized cancellation/publication, and create-only safe publication. Eleven adversarial core tests, locked build/check, Clippy, and a 1 MiB CLI smoke hash pass.",
+      "evidence": [
+        "docs/development/FIRST-DOWNLOAD.md",
+        "docs/development/FIRST-DOWNLOAD-REVIEW.md",
+        "crates/fetchpath-core/src/lib.rs",
+        "apps/cli/src/main.rs"
+      ],
       "blockedReason": null
     },
     {
