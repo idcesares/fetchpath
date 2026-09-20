@@ -1,0 +1,617 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-09-19",
+  "tasks": [
+    {
+      "id": "FP-001",
+      "title": "Organize the repository and executable backlog",
+      "milestone": "M0",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "lead",
+      "modelTier": "terra-medium",
+      "files": [
+        "README.md",
+        "AGENTS.md",
+        "tools/tasks.mjs"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "Task graph checks and tooling tests pass; task ownership and evidence are documented.",
+      "verification": "See docs/development/FOUNDATION-RESULTS.md",
+      "evidence": [
+        "docs/development/FOUNDATION-RESULTS.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-002",
+      "title": "Prototype the everyday and advanced desktop journeys",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-001"
+      ],
+      "status": "done",
+      "owner": "lead",
+      "modelTier": "terra-medium",
+      "files": [
+        "prototypes/desktop",
+        "docs/product/UX.md"
+      ],
+      "acceptanceIds": [
+        "A01"
+      ],
+      "acceptance": "Browser walkthrough covers add, media quality, pause/resume, filtering, power mode, keyboard dialog; simulation is clear.",
+      "verification": "See docs/development/FOUNDATION-RESULTS.md",
+      "evidence": [
+        "docs/development/FOUNDATION-RESULTS.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-003",
+      "title": "Build local HTTP fixtures and baseline harness",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-001"
+      ],
+      "status": "done",
+      "owner": "lead",
+      "modelTier": "terra-medium",
+      "files": [
+        "tools/bench",
+        "tests/bench"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A09"
+      ],
+      "acceptance": "Range/ETag/fault tests pass; two curl runs record independent matching hashes. No comparative claim.",
+      "verification": "See docs/development/FOUNDATION-RESULTS.md",
+      "evidence": [
+        "docs/development/FOUNDATION-RESULTS.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-004",
+      "title": "Prove native HTTP backend packaging and capabilities",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-001",
+        "FP-003"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "work/http-spike",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A06"
+      ],
+      "acceptance": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
+      "verification": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-005",
+      "title": "Define job commands, events and identity contract",
+      "milestone": "M1",
+      "dependsOn": [
+        "FP-001",
+        "FP-002"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "docs/architecture"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A04"
+      ],
+      "acceptance": "Specify states/errors, cancellation, progress, trusted versus observed hashes, bounded buffers, and publication contract. Strong-model review.",
+      "verification": "Specify states/errors, cancellation, progress, trusted versus observed hashes, bounded buffers, and publication contract. Strong-model review.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-006",
+      "title": "Prove browser handoff compatibility",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-001"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "work/browser-spike",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A08"
+      ],
+      "acceptance": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
+      "verification": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-007",
+      "title": "Prove media extraction and helper packaging",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-001"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "work/media-spike",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A11"
+      ],
+      "acceptance": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
+      "verification": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-008",
+      "title": "Choose desktop framework from Windows UX spike",
+      "milestone": "M0",
+      "dependsOn": [
+        "FP-002"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "work/ui-spike",
+        "docs/architecture"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12"
+      ],
+      "acceptance": "Compare no more than two credible candidates for accessibility, startup/RSS, tray lifecycle, native integration and installer; record supported Windows target decision.",
+      "verification": "Compare no more than two credible candidates for accessibility, startup/RSS, tray lifecycle, native integration and installer; record supported Windows target decision.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-009",
+      "title": "Download one HTTP file through the native core",
+      "milestone": "M1",
+      "dependsOn": [
+        "FP-004",
+        "FP-005"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "crates",
+        "apps/cli"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A05",
+        "A07"
+      ],
+      "acceptance": "Real URL to staging file to validated safe publication; fixture byte check; bounded memory, cancellation, native build/test.",
+      "verification": "Real URL to staging file to validated safe publication; fixture byte check; bounded memory, cancellation, native build/test.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-010",
+      "title": "Connect the desktop add-download flow to the core",
+      "milestone": "M1",
+      "dependsOn": [
+        "FP-008",
+        "FP-009"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "apps/desktop"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02"
+      ],
+      "acceptance": "Real desktop download with destination/progress/cancel/completion; no simulated jobs in production path.",
+      "verification": "Real desktop download with destination/progress/cancel/completion; no simulated jobs in production path.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-011",
+      "title": "Implement recoverable checkpoints and safe resume",
+      "milestone": "M2",
+      "dependsOn": [
+        "FP-009"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "crates/fetchpath-storage",
+        "crates/fetchpath-core"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A04"
+      ],
+      "acceptance": "Fault injection at write/flush/commit/publication; changed ETag, refused range, truncation, disk full and restart remain correct.",
+      "verification": "Fault injection at write/flush/commit/publication; changed ETag, refused range, truncation, disk full and restart remain correct.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-012",
+      "title": "Ship usable queues, schedules and recovery UX",
+      "milestone": "M2",
+      "dependsOn": [
+        "FP-010",
+        "FP-011"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "apps/desktop",
+        "crates/fetchpath-core"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A04",
+        "A05"
+      ],
+      "acceptance": "Batch preview, schedules after sleep, conflict handling, history, search, tray and actionable errors; coherent keyboard flow.",
+      "verification": "Batch preview, schedules after sleep, conflict handling, history, search, tray and actionable errors; coherent keyboard flow.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-013",
+      "title": "Implement browser extension and authenticated capture",
+      "milestone": "M3",
+      "dependsOn": [
+        "FP-006",
+        "FP-011"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "extensions/browser",
+        "apps/desktop"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A08"
+      ],
+      "acceptance": "Supported requests hand off without loss/duplicates, secrets stay scoped, unsupported requests stay in browser, exclusions work.",
+      "verification": "Supported requests hand off without loss/duplicates, secrets stay scoped, unsupported requests stay in browser, exclusions work.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-014",
+      "title": "Implement launch media downloads and quality selection",
+      "milestone": "M5",
+      "dependsOn": [
+        "FP-007",
+        "FP-010",
+        "FP-005"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "adapters/media",
+        "apps/desktop"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A05",
+        "A11"
+      ],
+      "acceptance": "Real selected-quality video/audio output, mux verification, cancellation, helper crash and expired-session recovery; first release requirement.",
+      "verification": "Real selected-quality video/audio output, mux verification, cancellation, helper crash and expired-session recovery; first release requirement.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-015",
+      "title": "Implement measured adaptive HTTP transfers",
+      "milestone": "M4",
+      "dependsOn": [
+        "FP-011",
+        "FP-004"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "crates/fetchpath-core",
+        "crates/fetchpath-http",
+        "tools/bench"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A05",
+        "A06",
+        "A09"
+      ],
+      "acceptance": "Global budgets, H2/H3 fallback, identical workloads and raw comparative evidence; no speed claim from loopback alone.",
+      "verification": "Global budgets, H2/H3 fallback, identical workloads and raw comparative evidence; no speed claim from loopback alone.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-016",
+      "title": "Extend compatibility to FTP, FTPS and SFTP",
+      "milestone": "M5",
+      "dependsOn": [
+        "FP-009",
+        "FP-011"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "crates/fetchpath-http",
+        "tests/compatibility"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A11"
+      ],
+      "acceptance": "Real protocol auth/resume/certificate/host-key fixtures; errors and supported capabilities documented.",
+      "verification": "Real protocol auth/resume/certificate/host-key fixtures; errors and supported capabilities documented.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-017",
+      "title": "Harden Windows UX and packaging",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-012",
+        "FP-013",
+        "FP-014"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop",
+        "tests/compatibility"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07",
+        "A12"
+      ],
+      "acceptance": "Accessibility, install/update/uninstall, retained queues, native compatibility; settle distribution/license and signing before publication.",
+      "verification": "Accessibility, install/update/uninstall, retained queues, native compatibility; settle distribution/license and signing before publication.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-018",
+      "title": "Validate first public release candidate",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-015",
+        "FP-016",
+        "FP-017"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "tests",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A11",
+        "A12"
+      ],
+      "acceptance": "Independent acceptance matrix, compatibility corpus, benchmark uncertainty, known limitations and documented release decision.",
+      "verification": "Independent acceptance matrix, compatibility corpus, benchmark uncertainty, known limitations and documented release decision.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-019",
+      "title": "Add Metalink and verified multi-source repair",
+      "milestone": "M7",
+      "dependsOn": [
+        "FP-011",
+        "FP-015"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "crates",
+        "tests/compatibility"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A05"
+      ],
+      "acceptance": "Trusted piece hashes enable selective repair; final-only hash behavior honest; bad/slow/offline mirrors tested.",
+      "verification": "Trusted piece hashes enable selective repair; final-only hash behavior honest; bad/slow/offline mirrors tested.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-020",
+      "title": "Add bounded content cache and paired LAN mode",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-019"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "crates",
+        "adapters/lan"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A05",
+        "A10"
+      ],
+      "acceptance": "Authorized offline reuse, explicit pairing/sharing, eviction and quota tests; no private-content leakage.",
+      "verification": "Authorized offline reuse, explicit pairing/sharing, eviction and quota tests; no private-content leakage.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-021",
+      "title": "Integrate torrents and magnets through isolated engine",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-019"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "adapters/torrent"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A05",
+        "A10"
+      ],
+      "acceptance": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
+      "verification": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-022",
+      "title": "Add provider-specific model/data acceleration",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-019"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "adapters/providers"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A07",
+        "A09"
+      ],
+      "acceptance": "Provider auth/version identity correct; compare to official client, including Xet where applicable.",
+      "verification": "Provider auth/version identity correct; compare to official client, including Xet where applicable.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-023",
+      "title": "Evaluate CDC and delta on related-version corpus",
+      "milestone": "M9",
+      "dependsOn": [
+        "FP-020"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "work/cdc",
+        "tools/bench"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A09"
+      ],
+      "acceptance": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
+      "verification": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-024",
+      "title": "Evaluate multi-interface and coding experiments",
+      "milestone": "M9",
+      "dependsOn": [
+        "FP-015",
+        "FP-019"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "work/transport-research",
+        "tools/bench"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
+      "verification": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-025",
+      "title": "Scope additional desktop platforms and mobile lifecycle",
+      "milestone": "M9",
+      "dependsOn": [
+        "FP-018"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "docs/product"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A04",
+        "A12"
+      ],
+      "acceptance": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
+      "verification": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
+      "evidence": [],
+      "blockedReason": null
+    }
+  ]
+}

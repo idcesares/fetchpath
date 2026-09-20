@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Local HTTP/1.1 fixture sanity only; this is not comparative performance evidence.",
+  "fixture": {
+    "baseUrl": "http://127.0.0.1:53845",
+    "size": 1048576,
+    "stableSha256": "f616fddc4f999bd2b1f22fd8447eee9ecdbba01e70f43278c6021cea91af3cf4",
+    "stableEtag": "\"sha256-f616fddc4f999bd2b1f22fd8447eee9ecdbba01e70f43278c6021cea91af3cf4\""
+  },
+  "config": {
+    "repetitions": 2,
+    "size": 1048576,
+    "outputDir": "work/bench"
+  },
+  "curlVersion": "curl 8.21.0 (Windows) libcurl/8.21.0 Schannel zlib/1.3.2 WinIDN WinLDAP",
+  "runs": [
+    {
+      "index": 0,
+      "startedAt": "2026-09-20T00:30:13.604Z",
+      "curl": "curl.exe",
+      "exitCode": 0,
+      "curlMetrics": {
+        "http_version": "1.1",
+        "http_code": 200,
+        "size_download": 1048576,
+        "time_total": 0.005886
+      },
+      "elapsedMs": 47.5403,
+      "outputBytes": 1048576,
+      "outputSha256": "f616fddc4f999bd2b1f22fd8447eee9ecdbba01e70f43278c6021cea91af3cf4",
+      "hashMatchesFixture": true
+    },
+    {
+      "index": 1,
+      "startedAt": "2026-09-20T00:30:13.658Z",
+      "curl": "curl.exe",
+      "exitCode": 0,
+      "curlMetrics": {
+        "http_version": "1.1",
+        "http_code": 200,
+        "size_download": 1048576,
+        "time_total": 0.002739
+      },
+      "elapsedMs": 41.7488,
+      "outputBytes": 1048576,
+      "outputSha256": "f616fddc4f999bd2b1f22fd8447eee9ecdbba01e70f43278c6021cea91af3cf4",
+      "hashMatchesFixture": true
+    }
+  ]
+}

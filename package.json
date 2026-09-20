@@ -1,0 +1,13 @@
+{
+  "name": "fetchpath-foundation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "check": "node tools/tasks.mjs check && node --test",
+    "tasks": "node tools/tasks.mjs list",
+    "next": "node tools/tasks.mjs next",
+    "prototype": "node tools/serve-prototype.mjs"
+  }
+}
