@@ -83,19 +83,23 @@
         "FP-001",
         "FP-003"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "benchmark_harness",
       "modelTier": "terra-medium",
       "files": [
-        "work/http-spike",
+        "tools/spikes/http-backend",
         "docs/development"
       ],
       "acceptanceIds": [
         "A06"
       ],
       "acceptance": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
-      "verification": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
-      "evidence": [],
+      "verification": "Tracked Rust/libcurl spike builds with a lockfile and passes controlled H1, public TLS, explicit proxy, and bounded cancellation checks. Runtime feature detection correctly fails the HTTP/2 and HTTP/3 capability gate; protocol transfers remain not-run.",
+      "evidence": [
+        "tools/spikes/http-backend/README.md",
+        "docs/development/HTTP-BACKEND-SPIKE.md",
+        "docs/development/evidence/http-backend/http-backend-spike.json"
+      ],
       "blockedReason": null
     },
     {
@@ -201,8 +205,8 @@
         "FP-004",
         "FP-005"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "benchmark_harness",
       "modelTier": "terra-medium",
       "files": [
         "crates",

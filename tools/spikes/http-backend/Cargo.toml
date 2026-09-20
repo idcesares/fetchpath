@@ -1,0 +1,10 @@
+[package]
+name = "fetchpath-http-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Build libcurl from source so the spike measures the packaged candidate rather
+# than inheriting capabilities from an unrelated system curl installation.
+curl = { version = "0.4", features = ["static-curl"] }

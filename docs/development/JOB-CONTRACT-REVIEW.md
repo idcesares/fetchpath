@@ -1,7 +1,7 @@
 # FP-005 contract review
 
-Date: 20 September 2026  
-Scope: [job, identity, and event contract](../architecture/JOB-CONTRACT.md)  
+Date: 20 September 2026
+Scope: [job, identity, and event contract](../architecture/JOB-CONTRACT.md)
 Acceptance: A02, A03, A04 architecture gate
 
 An independent Astra High / high-reasoning read-only review derived adversarial cases from the contract. It initially held the gate for six issues, then re-reviewed each correction. The final review passed with no remaining P1/P2 blockers. This validates the contract's internal architecture, not a future implementation.
