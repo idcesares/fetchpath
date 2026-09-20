@@ -51,9 +51,13 @@ $hashInputs = @(
   $archive
   (Join-Path $fixtures 'direct.mp4')
 ) + @(Get-ChildItem $output -File | Select-Object -ExpandProperty FullName)
+$normalizedRoot = (Resolve-Path $root).Path.TrimEnd('\') + '\'
 $hashInputs | ForEach-Object {
   $hash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
-  $relative = [System.IO.Path]::GetRelativePath($root, $hash.Path).Replace('\\', '/')
+  if (-not $hash.Path.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Hash input escaped repository root: $($hash.Path)"
+  }
+  $relative = $hash.Path.Substring($normalizedRoot.Length).Replace('\', '/')
   "$($hash.Hash.ToLowerInvariant())  $relative"
 } | Set-Content (Join-Path $evidence 'sha256.txt')
 Get-ChildItem $output -File | Where-Object { $_.Extension -ne '.part' } | ForEach-Object { & $ffprobePath -v error -show_entries format=format_name,duration -of default=noprint_wrappers=1 $_.FullName } | Set-Content (Join-Path $evidence 'ffprobe-output.txt')
