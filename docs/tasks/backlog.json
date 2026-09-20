@@ -83,8 +83,8 @@
         "FP-001",
         "FP-003"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "benchmark_harness",
       "modelTier": "terra-medium",
       "files": [
         "work/http-spike",
@@ -106,8 +106,8 @@
         "FP-001",
         "FP-002"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "astra-high",
       "files": [
         "docs/architecture"
@@ -118,8 +118,11 @@
         "A04"
       ],
       "acceptance": "Specify states/errors, cancellation, progress, trusted versus observed hashes, bounded buffers, and publication contract. Strong-model review.",
-      "verification": "Specify states/errors, cancellation, progress, trusted versus observed hashes, bounded buffers, and publication contract. Strong-model review.",
-      "evidence": [],
+      "verification": "Accepted contract covers states/errors, cancellation and publication fencing, identity provenance, progress streams, bounded buffers, checkpoints and restart. Independent Astra High/high adversarial review passed after corrections.",
+      "evidence": [
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/JOB-CONTRACT-REVIEW.md"
+      ],
       "blockedReason": null
     },
     {
@@ -152,8 +155,8 @@
       "dependsOn": [
         "FP-001"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "ux_foundation",
       "modelTier": "terra-medium",
       "files": [
         "work/media-spike",
