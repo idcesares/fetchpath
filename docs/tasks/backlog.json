@@ -159,19 +159,24 @@
       "dependsOn": [
         "FP-001"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "ux_foundation",
       "modelTier": "terra-medium",
       "files": [
-        "work/media-spike",
+        "tools/spikes/media",
         "docs/development"
       ],
       "acceptanceIds": [
         "A11"
       ],
       "acceptance": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
-      "verification": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
-      "evidence": [],
+      "verification": "Tracked helper harness passes controlled local direct MP4, HLS, DASH enumeration, separate video/audio mux, MP3 extraction, process-tree cancellation, and bounded 404 failure using yt-dlp 2026.08.19 and FFmpeg 9.0.1. Public extractor compatibility remains an explicit FP-014 release gate.",
+      "evidence": [
+        "tools/spikes/media/run-media-spike.ps1",
+        "tools/spikes/media/supervise-helper.mjs",
+        "docs/development/MEDIA-SPIKE.md",
+        "docs/development/evidence/media/run.jsonl"
+      ],
       "blockedReason": null
     },
     {
