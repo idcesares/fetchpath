@@ -5,6 +5,13 @@ use std::io;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+mod compatibility;
+
+pub use compatibility::{
+    Authentication, CompatibilityCapabilities, CompatibilityContext, CompatibilityProtocol,
+    CompatibilityTransferReport, CredentialSecret, transfer_compatibility,
+};
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Protocol {
     Http1,
@@ -311,6 +318,11 @@ pub struct TransferReport {
 pub enum TransferError {
     Cancelled,
     InvalidLimits,
+    InvalidUrl(String),
+    Authentication(String),
+    Certificate(String),
+    HostKey(String),
+    ResumeRejected(String),
     RestartSequential(String),
     Transport(String),
     Sink(io::Error),
@@ -321,6 +333,13 @@ impl fmt::Display for TransferError {
         match self {
             Self::Cancelled => formatter.write_str("transfer cancelled"),
             Self::InvalidLimits => formatter.write_str("invalid HTTP transfer limits"),
+            Self::InvalidUrl(detail) => write!(formatter, "invalid transfer URL: {detail}"),
+            Self::Authentication(detail) => write!(formatter, "authentication failed: {detail}"),
+            Self::Certificate(detail) => {
+                write!(formatter, "certificate verification failed: {detail}")
+            }
+            Self::HostKey(detail) => write!(formatter, "host-key verification failed: {detail}"),
+            Self::ResumeRejected(detail) => write!(formatter, "resume rejected: {detail}"),
             Self::RestartSequential(detail) => formatter.write_str(detail),
             Self::Transport(detail) => formatter.write_str(detail),
             Self::Sink(error) => write!(formatter, "destination write failed: {error}"),

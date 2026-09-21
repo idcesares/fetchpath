@@ -461,20 +461,24 @@
         "FP-009",
         "FP-011"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "crates/fetchpath-http",
-        "tests/compatibility"
+        "tests/compatibility",
+        "docs/development/PROTOCOL-COMPATIBILITY.md",
+        "Cargo.lock"
       ],
       "acceptanceIds": [
         "A07",
         "A11"
       ],
       "acceptance": "Real protocol auth/resume/certificate/host-key fixtures; errors and supported capabilities documented.",
-      "verification": "Real protocol auth/resume/certificate/host-key fixtures; errors and supported capabilities documented.",
-      "evidence": [],
+      "verification": "Parallel real FTP/implicit-FTPS/SFTP fixtures pass password and key authentication, Unicode paths, resume, certificate rejection/trust, host-key rejection/trust, and byte equality; workspace tests, clippy, Node tests, and backlog validation pass.",
+      "evidence": [
+        "docs/development/PROTOCOL-COMPATIBILITY.md"
+      ],
       "blockedReason": null
     },
     {

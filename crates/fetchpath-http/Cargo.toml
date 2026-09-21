@@ -6,5 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-curl = { version = "0.4.50", features = ["static-curl", "http2"] }
+curl = { version = "0.4.50", features = ["static-curl", "http2", "protocol-ftp"] }
+percent-encoding = "2.3.2"
+russh = { version = "0.63.3", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh-sftp = "3.0.0"
 serde_json = "1.0.145"
+tokio = { version = "1.48.0", features = ["io-util", "net", "rt", "time"] }
+url = "2.5.8"
