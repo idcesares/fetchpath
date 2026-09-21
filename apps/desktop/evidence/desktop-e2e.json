@@ -1,0 +1,32 @@
+{
+  "task": "FP-012",
+  "verifiedAt": "2026-09-20",
+  "platform": "Windows 11 25H2 (build 26200)",
+  "application": "target/release/fetchpath-desktop.exe",
+  "fixture": "localhost-only HTTP/1.1",
+  "batchPreview": {
+    "items": 2,
+    "verifiedThrough": "optimized application UI Automation"
+  },
+  "completion": {
+    "status": "Complete",
+    "bytes": 1048576,
+    "destination": "work/desktop-e2e/completed.bin",
+    "observedSha256": "bf63d8a95fcc2e64619813aae35fdcbe871fdd9264caa3f365eb3aed0f679129",
+    "digestMatchedFile": true
+  },
+  "cancellation": {
+    "nonZeroProgressObserved": true,
+    "status": "Cancelled",
+    "destination": "work/desktop-e2e/cancelled.bin",
+    "destinationPublished": false
+  },
+  "queueBehavior": {
+    "persistentHistory": true,
+    "maximumConcurrent": 3,
+    "scheduledCatchUpTested": true,
+    "destinationConflictDoesNotOverwrite": true,
+    "privateQueryValuesPersisted": false
+  },
+  "command": "pwsh -NoProfile -File apps/desktop/tools/ui-smoke.ps1"
+}

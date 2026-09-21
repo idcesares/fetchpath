@@ -1,0 +1,22 @@
+{
+  "manifest_version": 2,
+  "name": "Fetchpath browser handoff spike",
+  "version": "0.1.0",
+  "description": "Isolated FP-006 native messaging and fallback proof.",
+  "permissions": [
+    "cookies",
+    "downloads",
+    "nativeMessaging",
+    "storage",
+    "webRequest",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fetchpath-browser-spike@example.invalid"
+    }
+  }
+}

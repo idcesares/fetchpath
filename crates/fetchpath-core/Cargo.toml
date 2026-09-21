@@ -7,5 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 curl = { version = "0.4.50", features = ["static-curl"] }
+fetchpath-storage = { path = "../fetchpath-storage" }
 sha2 = "0.10.9"
 uuid = { version = "1.18.1", features = ["v4"] }

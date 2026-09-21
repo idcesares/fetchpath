@@ -1,16 +1,17 @@
-//! The first sequential file-download slice. It intentionally has no resume,
-//! persistence, redirects across credential boundaries, or H2/H3 promise.
+//! Portable file-download core with recoverable checkpoints and conservative
+//! HTTP resume. It makes no H2/H3 or publisher-authenticity claim.
 
-use curl::easy::Easy;
-use sha2::{Digest, Sha256};
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+mod checkpoint;
+mod transfer;
+
+pub use fetchpath_storage::{FaultInjector, FaultPoint, NoFaults};
+pub use transfer::download_with_faults;
+
+use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const BUFFER_BYTES: usize = 16 * 1024;
 
@@ -163,22 +164,16 @@ fn write_retained(f: &mut std::fmt::Formatter<'_>, staging: &Option<PathBuf>) ->
     Ok(())
 }
 
-fn storage(path: &Path, error: std::io::Error) -> DownloadError {
-    DownloadError::Storage {
-        path: path.to_path_buf(),
-        detail: error.to_string(),
-        staging: None,
-    }
-}
-
-fn cleanup_staging(staging: &Path) -> Option<PathBuf> {
-    match fs::remove_file(staging) {
+#[cfg(test)]
+fn cleanup_staging(staging: &std::path::Path) -> Option<PathBuf> {
+    match std::fs::remove_file(staging) {
         Ok(()) => None,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => Some(staging.to_path_buf()),
     }
 }
 
+#[cfg(test)]
 fn cancelled(staging: PathBuf, cleanup: CancelCleanup) -> DownloadError {
     let staging = match cleanup {
         CancelCleanup::RetainStaging => Some(staging),
@@ -187,208 +182,10 @@ fn cancelled(staging: PathBuf, cleanup: CancelCleanup) -> DownloadError {
     DownloadError::Cancelled { staging }
 }
 
-fn transport(detail: impl Into<String>, staging: &Path) -> DownloadError {
-    DownloadError::Transport {
-        detail: detail.into(),
-        staging: cleanup_staging(staging),
-    }
-}
-fn unique_staging(destination: &Path) -> Result<(PathBuf, File), DownloadError> {
-    let parent = destination
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let name = destination
-        .file_name()
-        .and_then(|n| n.to_str())
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| DownloadError::InvalidDestination(destination.to_path_buf()))?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    for attempt in 0..128_u32 {
-        let path = parent.join(format!(
-            ".{name}.fetchpath-{nonce}-{}-{attempt}.part",
-            std::process::id()
-        ));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(storage(&path, error)),
-        }
-    }
-    Err(DownloadError::Storage {
-        path: destination.to_path_buf(),
-        detail: "could not reserve a unique staging name".into(),
-        staging: None,
-    })
-}
-
-/// Streams one HTTP representation to a same-directory staging file, then atomically
-/// claims the destination with a hard link. The link is create-only, so a concurrent
-/// destination creator wins and is never replaced.
+/// Streams one HTTP representation through recoverable same-volume checkpoints,
+/// then claims the destination with a create-only publication fence.
 pub fn download(request: DownloadRequest) -> Result<DownloadedFile, DownloadError> {
-    if !(request.url.starts_with("http://") || request.url.starts_with("https://")) {
-        return Err(DownloadError::InvalidUrl);
-    }
-    if request.destination.exists() {
-        return Err(DownloadError::DestinationExists {
-            destination: request.destination,
-            staging: None,
-        });
-    }
-    let mut easy = Easy::new();
-    easy.url(&request.url)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.follow_location(true)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.fail_on_error(true)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.ssl_verify_peer(true)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.ssl_verify_host(true)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.buffer_size(BUFFER_BYTES)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-    easy.progress(true)
-        .map_err(|error| DownloadError::Transport {
-            detail: error.to_string(),
-            staging: None,
-        })?;
-
-    let (staging, file) = unique_staging(&request.destination)?;
-    if request.cancellation.is_cancelled() {
-        return Err(cancelled(staging, request.cancel_cleanup));
-    }
-    let received = Arc::new(AtomicU64::new(0));
-    let mut file = file;
-    let mut hasher = Sha256::new();
-    let write_error = Arc::new(Mutex::new(None));
-    let result = (|| {
-        let count = Arc::clone(&received);
-        let token = request.cancellation.clone();
-        let write_token = token.clone();
-        let write_error_slot = Arc::clone(&write_error);
-        let mut transfer = easy.transfer();
-        transfer.write_function(|data| {
-            if let Err(error) = file.write_all(data) {
-                *write_error_slot.lock().expect("write error slot poisoned") = Some(error);
-                // A short write aborts the transfer; Pause would wait forever
-                // without an explicit unpause operation.
-                return Ok(0);
-            }
-            hasher.update(data);
-            let total = count.fetch_add(data.len() as u64, Ordering::Relaxed) + data.len() as u64;
-            write_token.set_received(total);
-            Ok(data.len())
-        })?;
-        transfer.progress_function(move |_, _, _, _| !token.is_cancelled())?;
-        transfer.perform()
-    })();
-    if let Err(error) = result {
-        drop(file);
-        if let Some(write_error) = write_error
-            .lock()
-            .expect("write error slot poisoned")
-            .take()
-        {
-            let retained = cleanup_staging(&staging);
-            return Err(DownloadError::Storage {
-                path: staging,
-                detail: write_error.to_string(),
-                staging: retained,
-            });
-        }
-        if request.cancellation.is_cancelled() {
-            return Err(cancelled(staging, request.cancel_cleanup));
-        }
-        if let Ok(response_code) = easy.response_code()
-            && response_code >= 400
-        {
-            return Err(transport(format!("HTTP status {response_code}"), &staging));
-        }
-        return Err(transport(error.to_string(), &staging));
-    }
-    let response_code = match easy.response_code() {
-        Ok(code) => code,
-        Err(error) => {
-            drop(file);
-            return Err(transport(error.to_string(), &staging));
-        }
-    };
-    if response_code != 200 {
-        drop(file);
-        return Err(transport(format!("HTTP status {response_code}"), &staging));
-    }
-    if let Err(error) = file.flush() {
-        drop(file);
-        let retained = cleanup_staging(&staging);
-        return Err(DownloadError::Storage {
-            path: staging,
-            detail: error.to_string(),
-            staging: retained,
-        });
-    }
-    if let Err(error) = file.sync_all() {
-        drop(file);
-        let retained = cleanup_staging(&staging);
-        return Err(DownloadError::Storage {
-            path: staging,
-            detail: error.to_string(),
-            staging: retained,
-        });
-    }
-    drop(file);
-    // This serializes the final cancellation check with the hard-link publication
-    // fence. Cancellation wins before this point; publication wins once linked.
-    let gate = request.cancellation.publication_gate();
-    if request.cancellation.is_cancelled() {
-        drop(gate);
-        return Err(cancelled(staging, request.cancel_cleanup));
-    }
-    if let Err(error) = fs::hard_link(&staging, &request.destination) {
-        drop(gate);
-        let retained = cleanup_staging(&staging);
-        if error.kind() == std::io::ErrorKind::AlreadyExists {
-            return Err(DownloadError::DestinationExists {
-                destination: request.destination,
-                staging: retained,
-            });
-        }
-        return Err(DownloadError::Storage {
-            path: request.destination,
-            detail: error.to_string(),
-            staging: retained,
-        });
-    }
-    request.cancellation.mark_published();
-    let staging_cleanup_pending = cleanup_staging(&staging);
-    drop(gate);
-    Ok(DownloadedFile {
-        destination: request.destination,
-        bytes: received.load(Ordering::Relaxed),
-        observed_sha256: format!("{:x}", hasher.finalize()),
-        staging_cleanup_pending,
-    })
+    transfer::download(request)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -450,6 +247,20 @@ fn transition(inner: &mut JobInner, state: FileJobState) {
 
 impl FileJob {
     pub fn create(url: String, destination: PathBuf) -> Self {
+        Self::create_with_cleanup(url, destination, CancelCleanup::RemoveStaging)
+    }
+
+    /// Creates a job whose orderly cancellation retains staging/checkpoint data
+    /// so a later job for the same source and destination can recover it.
+    pub fn create_recoverable(url: String, destination: PathBuf) -> Self {
+        Self::create_with_cleanup(url, destination, CancelCleanup::RetainStaging)
+    }
+
+    fn create_with_cleanup(
+        url: String,
+        destination: PathBuf,
+        cancel_cleanup: CancelCleanup,
+    ) -> Self {
         let cancellation = CancellationToken::default();
         let id = uuid::Uuid::new_v4().to_string();
         let snapshot = FileJobSnapshot {
@@ -475,7 +286,7 @@ impl FileJob {
                     url,
                     destination,
                     cancellation: cancellation.clone(),
-                    cancel_cleanup: CancelCleanup::RemoveStaging,
+                    cancel_cleanup,
                 }),
                 worker: None,
             })),
@@ -586,10 +397,12 @@ impl FileJob {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(

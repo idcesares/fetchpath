@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "task": "FP-006",
+  "runAt": "2026-09-20T16:35:46.963Z",
+  "platform": "win32 x64",
+  "browser": {
+    "name": "Chrome for Testing stable",
+    "fileVersion": "153.0.8010.52",
+    "product": "Chrome/153.0.8010.52",
+    "source": "cached official Chrome for Testing archive",
+    "isolatedProfile": true
+  },
+  "nativeMessaging": {
+    "api": "chrome.runtime.sendNativeMessage",
+    "probe": {
+      "accepted": true,
+      "reason": "native_host_available",
+      "schema_version": 1,
+      "type": "probe_ack"
+    },
+    "durableAckLedgerRecords": [
+      {
+        "capture_id": "browser-download-1",
+        "method": "GET",
+        "redacted_url": "http://127.0.0.1:10266/download/get.bin",
+        "signed_hint": false
+      },
+      {
+        "capture_id": "browser-download-2",
+        "method": "GET",
+        "redacted_url": "http://127.0.0.1:10266/download/signed.bin",
+        "signed_hint": true
+      },
+      {
+        "capture_id": "duplicate-probe",
+        "method": "GET",
+        "redacted_url": "http://127.0.0.1:10266/download/duplicate.bin",
+        "signed_hint": true
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case": "get",
+      "expectedAccepted": true,
+      "expectedReason": null,
+      "passed": true,
+      "event": {
+        "accepted": true,
+        "auth_context_observed": false,
+        "browser_download_id": 1,
+        "cancel_observed": true,
+        "capture_id": "browser-download-1",
+        "deduplicated": false,
+        "fallback": false,
+        "method": "GET",
+        "reason": null,
+        "redacted_url": "http://127.0.0.1:10266/download/get.bin",
+        "signed_hint": false
+      }
+    },
+    {
+      "case": "signed",
+      "expectedAccepted": true,
+      "expectedReason": null,
+      "passed": true,
+      "event": {
+        "accepted": true,
+        "auth_context_observed": false,
+        "browser_download_id": 2,
+        "cancel_observed": true,
+        "capture_id": "browser-download-2",
+        "deduplicated": false,
+        "fallback": false,
+        "method": "GET",
+        "reason": null,
+        "redacted_url": "http://127.0.0.1:10266/download/signed.bin",
+        "signed_hint": true
+      }
+    },
+    {
+      "case": "auth",
+      "expectedAccepted": false,
+      "expectedReason": "browser_auth_context_required",
+      "passed": true,
+      "event": {
+        "accepted": false,
+        "auth_context_observed": true,
+        "browser_download_id": 3,
+        "cancel_observed": false,
+        "capture_id": "browser-download-3",
+        "deduplicated": false,
+        "fallback": true,
+        "method": "GET",
+        "reason": "browser_auth_context_required",
+        "redacted_url": "http://127.0.0.1:10266/download/auth.bin",
+        "signed_hint": false
+      }
+    },
+    {
+      "case": "post",
+      "expectedAccepted": false,
+      "expectedReason": "unsupported_method",
+      "passed": true,
+      "event": {
+        "accepted": false,
+        "auth_context_observed": true,
+        "browser_download_id": 4,
+        "cancel_observed": false,
+        "capture_id": "browser-download-4",
+        "deduplicated": false,
+        "fallback": true,
+        "method": "POST",
+        "reason": "unsupported_method",
+        "redacted_url": "http://127.0.0.1:10266/download/post.bin",
+        "signed_hint": false
+      }
+    },
+    {
+      "case": "blob",
+      "expectedAccepted": false,
+      "expectedReason": "unsupported_scheme",
+      "passed": true,
+      "event": {
+        "accepted": false,
+        "auth_context_observed": false,
+        "browser_download_id": 5,
+        "cancel_observed": false,
+        "capture_id": "browser-download-5",
+        "deduplicated": false,
+        "fallback": true,
+        "method": "GET",
+        "reason": "unsupported_scheme",
+        "redacted_url": "blob:http://127.0.0.1:10266/19325973-7c9d-4e9c-80c1-2ff598af2ffc",
+        "signed_hint": false
+      }
+    }
+  ],
+  "duplicateCheck": {
+    "first": {
+      "accepted": true,
+      "capture_id": "duplicate-probe",
+      "deduplicated": false,
+      "schema_version": 1,
+      "type": "capture_ack"
+    },
+    "second": {
+      "accepted": true,
+      "capture_id": "duplicate-probe",
+      "deduplicated": true,
+      "schema_version": 1,
+      "type": "capture_ack"
+    },
+    "passed": true
+  },
+  "secretPersistenceCheck": true,
+  "overall": "pass"
+}

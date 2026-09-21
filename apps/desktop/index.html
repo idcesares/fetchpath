@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Fetchpath</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">FETCHPATH</p>
+          <h1>Your downloads, on a clear path.</h1>
+          <p class="lede">Queue a link or a batch, choose when it starts, and recover safely if the app restarts.</p>
+        </div>
+        <div class="hero-stat" aria-label="Queue status">
+          <strong id="active-count">0</strong>
+          <span>active</span>
+        </div>
+      </header>
+
+      <form id="download-form" class="card composer" aria-labelledby="add-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">ADD TO QUEUE</p>
+            <h2 id="add-heading">Review before downloading</h2>
+          </div>
+          <kbd>Ctrl L</kbd>
+        </div>
+
+        <label for="url">Download addresses <span class="hint">one per line</span></label>
+        <textarea id="url" name="url" required autocomplete="url" rows="3" placeholder="https://example.com/archive.zip"></textarea>
+
+        <label for="destination">Save first item as</label>
+        <div class="destination-row">
+          <input id="destination" name="destination" required autocomplete="off" placeholder="Choose a destination file" />
+          <button id="choose-destination" class="secondary" type="button">Choose…</button>
+        </div>
+        <p class="hint field-note">For a batch, the remaining files use this folder and their source filenames.</p>
+
+        <div class="schedule-row">
+          <div>
+            <label for="schedule">Start time <span class="hint">optional</span></label>
+            <input id="schedule" name="schedule" type="datetime-local" />
+          </div>
+          <button id="clear-schedule" class="quiet" type="button">Start when ready</button>
+        </div>
+
+        <section id="batch-preview" class="preview" aria-labelledby="preview-heading" hidden>
+          <div class="preview-heading">
+            <h3 id="preview-heading">Batch preview</h3>
+            <span id="preview-count"></span>
+          </div>
+          <ol id="preview-list"></ol>
+        </section>
+
+        <div class="submit-row">
+          <p id="form-error" class="error" role="alert" hidden></p>
+          <button id="start-download" type="submit">Add to queue</button>
+        </div>
+      </form>
+
+      <section class="queue-heading" aria-labelledby="queue-title">
+        <div>
+          <p class="eyebrow">DOWNLOADS</p>
+          <h2 id="queue-title">Queue and history</h2>
+        </div>
+        <label class="search" for="queue-search">
+          <span class="sr-only">Search downloads</span>
+          <input id="queue-search" type="search" placeholder="Search files or sources" />
+        </label>
+      </section>
+
+      <nav id="queue-filters" class="filters" aria-label="Filter downloads">
+        <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
+        <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
+        <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>
+        <button class="filter" type="button" data-filter="completed" aria-pressed="false">Completed</button>
+        <button class="filter" type="button" data-filter="failed" aria-pressed="false">Needs attention</button>
+      </nav>
+
+      <div class="queue-status-row">
+        <p id="queue-summary" class="queue-summary" aria-live="polite">No downloads yet.</p>
+        <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
+      </div>
+      <section id="job-card" class="queue" aria-label="Download queue" hidden>
+        <div id="job-list"></div>
+      </section>
+
+      <p class="tray-note">Closing this window keeps the queue available from the notification area.</p>
+    </main>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-19",
+  "updated": "2026-09-20",
   "tasks": [
     {
       "id": "FP-001",
@@ -136,11 +136,12 @@
       "dependsOn": [
         "FP-001"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "work/browser-spike",
+        "tools/spikes/browser",
         "docs/development"
       ],
       "acceptanceIds": [
@@ -148,8 +149,12 @@
         "A08"
       ],
       "acceptance": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
-      "verification": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
-      "evidence": [],
+      "verification": "Chrome for Testing 153.0.8010.52 exercised real downloads, webRequest, cookies, and nativeMessaging APIs. Controlled plain and signed GETs were durably acknowledged before observed browser cancellation; cookie-authenticated GET, POST, and blob cases preserved the browser path; duplicate capture ID was idempotent; secret-persistence assertions passed. Hidden Authorization headers remain an explicit generic auto-capture limitation. Edge and Firefox API differences are documented; runtime execution is explicitly not run.",
+      "evidence": [
+        "tools/spikes/browser/README.md",
+        "docs/development/BROWSER-HANDOFF-SPIKE.md",
+        "docs/development/evidence/browser/browser-spike.json"
+      ],
       "blockedReason": null
     },
     {
@@ -186,20 +191,24 @@
       "dependsOn": [
         "FP-002"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "work/ui-spike",
-        "docs/architecture"
+        "docs/architecture",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A01",
         "A12"
       ],
       "acceptance": "Compare no more than two credible candidates for accessibility, startup/RSS, tray lifecycle, native integration and installer; record supported Windows target decision.",
-      "verification": "Compare no more than two credible candidates for accessibility, startup/RSS, tray lifecycle, native integration and installer; record supported Windows target decision.",
-      "evidence": [],
+      "verification": "Tauri 2 and WinUI 3 implemented the same Windows journey and passed release builds, Windows UI Automation discovery, and close-to-tray probes. Five UIA-ready startup and process-tree memory samples plus installer artifacts were recorded. Tauri 2 was selected for direct Rust-core integration and smaller/faster delivery despite its higher measured renderer footprint. Support is Windows 11 x64 on Microsoft-serviced releases; 24H2 is the current floor and 25H2 the primary QA target.",
+      "evidence": [
+        "docs/architecture/DESKTOP-FRAMEWORK.md",
+        "docs/architecture/evidence/ui/framework-spike.json"
+      ],
       "blockedReason": null
     },
     {
@@ -240,19 +249,28 @@
         "FP-008",
         "FP-009"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
-        "apps/desktop"
+        "apps/desktop",
+        "Cargo.toml",
+        "Cargo.lock",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A01",
         "A02"
       ],
       "acceptance": "Real desktop download with destination/progress/cancel/completion; no simulated jobs in production path.",
-      "verification": "Real desktop download with destination/progress/cancel/completion; no simulated jobs in production path.",
-      "evidence": [],
+      "verification": "The optimized Tauri application was driven through Windows UI Automation against localhost-only fixtures. A 1 MiB transfer displayed non-zero progress, completed at the selected destination, and reported a SHA-256 matching the downloaded file. A throttled transfer was cancelled after progress and published no destination. Rust command-path tests also cover real transfer, cancellation cleanup, and user-facing validation errors; the production renderer contains no simulated jobs.",
+      "evidence": [
+        "apps/desktop/README.md",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/tools/ui-smoke.ps1",
+        "apps/desktop/evidence/desktop-e2e.json"
+      ],
       "blockedReason": null
     },
     {
@@ -262,12 +280,19 @@
       "dependsOn": [
         "FP-009"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "astra-high",
       "files": [
         "crates/fetchpath-storage",
-        "crates/fetchpath-core"
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-core/src/lib.rs",
+        "crates/fetchpath-core/Cargo.toml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "docs/development/CHECKPOINT-RECOVERY.md",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A02",
@@ -275,8 +300,13 @@
         "A04"
       ],
       "acceptance": "Fault injection at write/flush/commit/publication; changed ETag, refused range, truncation, disk full and restart remain correct.",
-      "verification": "Fault injection at write/flush/commit/publication; changed ETag, refused range, truncation, disk full and restart remain correct.",
-      "evidence": [],
+      "verification": "Recoverable same-volume checkpoints commit only after payload sync; retained bytes are locally rehashed and HTTP suffixes require a matching strong ETag plus valid 206 Content-Range. Workspace tests cover changed ETag, ignored Range, truncation, injected disk full/payload flush/metadata write-flush-commit faults, retained-byte corruption, destination races, and restart reconciliation before and after the publication fence. Power-loss durability is explicitly not claimed.",
+      "evidence": [
+        "docs/development/CHECKPOINT-RECOVERY.md",
+        "crates/fetchpath-storage/src/lib.rs",
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-core/src/transfer.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -287,12 +317,22 @@
         "FP-010",
         "FP-011"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
-        "apps/desktop",
-        "crates/fetchpath-core"
+        "apps/desktop/index.html",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/styles.css",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/Cargo.toml",
+        "apps/desktop/tools/ui-smoke.ps1",
+        "apps/desktop/README.md",
+        "apps/desktop/evidence/desktop-e2e.json",
+        "crates/fetchpath-core/src/lib.rs",
+        "Cargo.lock",
+        "docs/development/DESKTOP-QUEUE-RECOVERY.md",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A01",
@@ -300,8 +340,14 @@
         "A05"
       ],
       "acceptance": "Batch preview, schedules after sleep, conflict handling, history, search, tray and actionable errors; coherent keyboard flow.",
-      "verification": "Batch preview, schedules after sleep, conflict handling, history, search, tray and actionable errors; coherent keyboard flow.",
-      "evidence": [],
+      "verification": "The optimized Windows application UI smoke covers a two-item batch preview, real completion with matching observed digest, non-zero progress, and cancellation without destination publication. Rust command-path tests cover bounded concurrency, due-schedule catch-up, persistent history recovery, query-secret omission with refreshed-link recovery, destination conflicts without overwrite, and user-facing invalid-input errors. The renderer provides native labeled controls, Ctrl+L/Escape shortcuts, search and status filters, start-now/retry/edit-link/choose-path actions, and close-to-tray behavior.",
+      "evidence": [
+        "docs/development/DESKTOP-QUEUE-RECOVERY.md",
+        "apps/desktop/evidence/desktop-e2e.json",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/tools/ui-smoke.ps1"
+      ],
       "blockedReason": null
     },
     {
