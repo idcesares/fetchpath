@@ -509,6 +509,7 @@ checksum = "97799a0d220bfb3361e0fe4936966ff8c4b24d65c3f06dfc70d7b680b44e7897"
 dependencies = [
  "cc",
  "libc",
+ "libnghttp2-sys",
  "libz-sys",
  "openssl-sys",
  "pkg-config",
@@ -841,6 +842,7 @@ name = "fetchpath-core"
 version = "0.1.0"
 dependencies = [
  "curl",
+ "fetchpath-http",
  "fetchpath-storage",
  "sha2",
  "uuid",
@@ -862,6 +864,14 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "fetchpath-http"
+version = "0.1.0"
+dependencies = [
+ "curl",
+ "serde_json",
 ]
 
 [[package]]
@@ -1831,6 +1841,16 @@ checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libnghttp2-sys"
+version = "0.1.13+1.68.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "492e00167f1418c15648144f42bbfc63099806ecee9bf8d09a6353d6b4856b3c"
+dependencies = [
+ "cc",
+ "libc",
 ]
 
 [[package]]

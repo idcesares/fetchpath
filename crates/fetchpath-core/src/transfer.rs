@@ -3,6 +3,10 @@ use crate::checkpoint::{
 };
 use crate::{BUFFER_BYTES, CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use curl::easy::{Easy, List};
+use fetchpath_http::{
+    Chunk, GlobalBudget, RequestContext as HttpRequestContext, TransferError, TransferLimits,
+    transfer_adaptive,
+};
 use fetchpath_storage::{
     CheckpointPhase, CheckpointRecord, CheckpointStore, FaultInjector, NoFaults,
     PublicationRecovery, sha256_file,
@@ -10,8 +14,18 @@ use fetchpath_storage::{
 use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io;
+use std::sync::OnceLock;
 
 const CHECKPOINT_BYTES: u64 = 64 * 1024;
+static HTTP_BUDGET: OnceLock<GlobalBudget> = OnceLock::new();
+
+fn http_budget() -> &'static GlobalBudget {
+    let limits = TransferLimits::default();
+    HTTP_BUDGET.get_or_init(|| {
+        GlobalBudget::new(limits.max_active_requests, limits.max_buffered_bytes)
+            .expect("default HTTP transfer budget must be valid")
+    })
+}
 
 enum CallbackFailure {
     RestartRequired,
@@ -102,14 +116,27 @@ pub fn download_with_faults(
         return Err(cancelled(&request, &store));
     }
 
-    let first = perform_attempt(
-        &request,
-        &store,
-        &mut file,
-        offset,
-        validator.as_deref(),
-        faults,
-    );
+    let first = if offset == 0 {
+        match perform_adaptive_attempt(&request, &store, &mut file, faults) {
+            Err(CallbackFailure::RestartRequired) => {
+                file = store
+                    .reset()
+                    .map_err(|error| storage_error(&store, error))?;
+                request.cancellation.set_received(0);
+                perform_attempt(&request, &store, &mut file, 0, None, faults)
+            }
+            result => result,
+        }
+    } else {
+        perform_attempt(
+            &request,
+            &store,
+            &mut file,
+            offset,
+            validator.as_deref(),
+            faults,
+        )
+    };
     let attempt = match first {
         Err(CallbackFailure::RestartRequired) => {
             file = store
@@ -155,6 +182,75 @@ pub fn download_with_faults(
     publish(&request, &store, &intent, faults)
 }
 
+fn perform_adaptive_attempt(
+    request: &DownloadRequest,
+    store: &CheckpointStore,
+    file: &mut File,
+    faults: &dyn FaultInjector,
+) -> Result<AttemptResult, CallbackFailure> {
+    let limits = TransferLimits::default();
+    let budget = http_budget();
+    let context = HttpRequestContext {
+        cookie_lines: request.context.cookie_lines.clone(),
+        referer: request.context.referer.clone(),
+        http2_prior_knowledge: false,
+    };
+    let current_offset = Cell::new(0_u64);
+    let last_checkpoint = Cell::new(0_u64);
+    let result = transfer_adaptive(
+        &request.url,
+        &context,
+        limits,
+        budget,
+        || request.cancellation.is_cancelled(),
+        |chunk: Chunk<'_>| {
+            if chunk.offset != current_offset.get() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "adaptive range arrived at {} while {} was required",
+                        chunk.offset,
+                        current_offset.get()
+                    ),
+                ));
+            }
+            store.write_payload(file, chunk.offset, chunk.bytes, faults)?;
+            let next = chunk.offset + chunk.bytes.len() as u64;
+            current_offset.set(next);
+            request.cancellation.set_received(next);
+            if chunk.strong_etag.is_some() && next - last_checkpoint.get() >= CHECKPOINT_BYTES {
+                store.sync_payload(file, faults)?;
+                let digest = sha256_file(store.staging())?;
+                let record = CheckpointRecord::downloading(
+                    source_key_with_context(&request.url, &request.context.fingerprint()),
+                    next,
+                    digest,
+                    chunk.strong_etag.map(str::to_owned),
+                    chunk.total_bytes,
+                );
+                store.commit(record, faults)?;
+                last_checkpoint.set(next);
+            }
+            Ok(())
+        },
+    );
+    match result {
+        Ok(report) => Ok(AttemptResult {
+            headers: ResponseHeaders {
+                status: Some(200),
+                etag: report.strong_etag,
+                content_length: report.total_bytes,
+                content_range: None,
+            },
+            final_len: report.bytes,
+        }),
+        Err(TransferError::Cancelled) => Err(CallbackFailure::Cancelled),
+        Err(TransferError::Sink(error)) => Err(CallbackFailure::Storage(error)),
+        Err(TransferError::RestartSequential(_)) => Err(CallbackFailure::RestartRequired),
+        Err(error) => Err(CallbackFailure::Transport(error.to_string())),
+    }
+}
+
 fn recover_download(
     store: &CheckpointStore,
     latest: Option<&CheckpointRecord>,
@@ -190,6 +286,12 @@ fn perform_attempt(
     expected_etag: Option<&str>,
     faults: &dyn FaultInjector,
 ) -> Result<AttemptResult, CallbackFailure> {
+    let _request_permit = http_budget()
+        .reserve(0, &|| request.cancellation.is_cancelled())
+        .map_err(|error| match error {
+            TransferError::Cancelled => CallbackFailure::Cancelled,
+            other => CallbackFailure::Transport(other.to_string()),
+        })?;
     let mut easy = Easy::new();
     configure(&mut easy, &request.url, &request.context)
         .map_err(|error| CallbackFailure::Transport(error.to_string()))?;
@@ -586,6 +688,17 @@ mod tests {
         })
     }
 
+    fn exact_range(request: &str) -> Option<(usize, usize)> {
+        request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if !name.eq_ignore_ascii_case("range") {
+                return None;
+            }
+            let (start, end) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
+            Some((start.parse().ok()?, end.parse().ok()?))
+        })
+    }
+
     fn server(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<String>>>, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -637,6 +750,31 @@ mod tests {
                         break;
                     }
                 }
+            }
+        });
+        (format!("http://{address}/fixture"), requests, worker)
+    }
+
+    fn adaptive_server(body: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requests);
+        let request_count = 1 + (body.len() - 1).div_ceil(1024 * 1024);
+        let worker = thread::spawn(move || {
+            for _ in 0..request_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_request(&mut stream);
+                let (start, end) = exact_range(&request).expect("exact range request expected");
+                captured.lock().unwrap().push(request);
+                let selected = &body[start..=end];
+                let headers = format!(
+                    "HTTP/1.1 206 Partial Content\r\nETag: \"adaptive-v1\"\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nConnection: close\r\n\r\n",
+                    selected.len(),
+                    body.len()
+                );
+                stream.write_all(headers.as_bytes()).unwrap();
+                stream.write_all(selected).unwrap();
             }
         });
         (format!("http://{address}/fixture"), requests, worker)
@@ -798,6 +936,31 @@ mod tests {
         let recovered = download(request(url, destination.clone())).unwrap();
         assert_eq!(recovered.bytes, body.len() as u64);
         assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn adaptive_ranges_reassemble_in_order_under_the_core_publication_contract() {
+        let dir = temp_dir("adaptive-ranges");
+        let destination = dir.join("file.bin");
+        let body: Vec<u8> = (0..5 * 1024 * 1024)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let (url, requests, worker) = adaptive_server(body.clone());
+
+        let done = download(request(url, destination.clone())).unwrap();
+        worker.join().unwrap();
+
+        assert_eq!(done.bytes, body.len() as u64);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 6);
+        assert!(requests[0].contains("Range: bytes=0-0"));
+        assert!(
+            requests[1..]
+                .iter()
+                .all(|request| request.contains("If-Range: \"adaptive-v1\""))
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

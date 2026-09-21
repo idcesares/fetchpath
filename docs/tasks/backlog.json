@@ -429,13 +429,14 @@
         "FP-011",
         "FP-004"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "astra-high",
       "files": [
         "crates/fetchpath-core",
         "crates/fetchpath-http",
-        "tools/bench"
+        "tools/bench",
+        "docs/development/ADAPTIVE-HTTP.md"
       ],
       "acceptanceIds": [
         "A03",
@@ -444,8 +445,12 @@
         "A09"
       ],
       "acceptance": "Global budgets, H2/H3 fallback, identical workloads and raw comparative evidence; no speed claim from loopback alone.",
-      "verification": "Global budgets, H2/H3 fallback, identical workloads and raw comparative evidence; no speed claim from loopback alone.",
-      "evidence": [],
+      "verification": "The production core safely reassembles strong-ETag exact ranges through its existing checkpoint/publication contract. Unit and integration tests cover adaptive control and process-wide request/buffer budgets. Controlled H1 and H2-prior-knowledge outputs match expected hashes; packaged H3 is detected unavailable and falls back without a false attempt. Five randomized identical 8 MiB loopback pairs retain raw timings and matching hashes, with no speed claim.",
+      "evidence": [
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence/http-adaptive/fp015-loopback-pilot.json",
+        "docs/development/evidence/http-adaptive/fp015-protocol-matrix.json"
+      ],
       "blockedReason": null
     },
     {

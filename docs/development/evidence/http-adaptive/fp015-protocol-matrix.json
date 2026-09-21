@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Controlled packaged-protocol negotiation and fallback evidence.",
+  "http1": {
+    "report": {"bytes":5242880,"preferredProtocol":"h2","negotiatedProtocol":"http/1.1","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"usedRanges":true,"adaptive":true,"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152},
+    "outputSha256": "5a86080b9c83f04748b3fb82ff9ff96f0666b2a7387d535b788556b9d1b011ac",
+    "expectedSha256": "5a86080b9c83f04748b3fb82ff9ff96f0666b2a7387d535b788556b9d1b011ac"
+  },
+  "http2PriorKnowledge": {
+    "report": {"bytes":5242880,"preferredProtocol":"h2","negotiatedProtocol":"h2","fallbackReasons":["http3_unavailable"],"usedRanges":true,"adaptive":true,"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152},
+    "outputSha256": "c036cbb7553a909f8b8877d4461924307f27ecb66cff928eeeafd569c3887e29",
+    "expectedSha256": "c036cbb7553a909f8b8877d4461924307f27ecb66cff928eeeafd569c3887e29"
+  },
+  "http3": {
+    "attempted": false,
+    "reason": "Packaged libcurl reports HTTP/3 unavailable; policy records http3_unavailable and falls back without a false attempt."
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Raw paired localhost correctness and instrumentation observations; not Internet speed evidence.",
+  "fixture": {
+    "size": 8388608,
+    "sha256": "a9407298d138c39f01e2067ad330ea65db7fa553a7cb541fd8bfd243c5405c45"
+  },
+  "config": {
+    "repetitions": 5,
+    "seed": 15015,
+    "fetchpathMaxActiveRequests": 8,
+    "fetchpathMaxBufferedBytes": 8388608,
+    "fetchpathSegmentBytes": 1048576
+  },
+  "versions": {
+    "curl": "curl 8.21.0 (Windows) libcurl/8.21.0 Schannel zlib/1.3.2 WinIDN WinLDAP",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "pairs": [
+    {"index":0,"order":["curl","fetchpath"],"fetchpathElapsedMs":210.8191,"curlElapsedMs":65.9179,"fetchpathHashMatches":true,"curlHashMatches":true,"negotiatedProtocol":"http/1.1","preferredProtocol":"h2","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152},
+    {"index":1,"order":["fetchpath","curl"],"fetchpathElapsedMs":57.7378,"curlElapsedMs":56.5587,"fetchpathHashMatches":true,"curlHashMatches":true,"negotiatedProtocol":"http/1.1","preferredProtocol":"h2","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152},
+    {"index":2,"order":["curl","fetchpath"],"fetchpathElapsedMs":81.3978,"curlElapsedMs":56.8628,"fetchpathHashMatches":true,"curlHashMatches":true,"negotiatedProtocol":"http/1.1","preferredProtocol":"h2","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097151},
+    {"index":3,"order":["fetchpath","curl"],"fetchpathElapsedMs":53.825,"curlElapsedMs":63.4812,"fetchpathHashMatches":true,"curlHashMatches":true,"negotiatedProtocol":"http/1.1","preferredProtocol":"h2","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152},
+    {"index":4,"order":["curl","fetchpath"],"fetchpathElapsedMs":119.897,"curlElapsedMs":48.4693,"fetchpathHashMatches":true,"curlHashMatches":true,"negotiatedProtocol":"http/1.1","preferredProtocol":"h2","fallbackReasons":["http3_unavailable","negotiated_lower_protocol"],"peakConcurrency":2,"peakActiveRequests":2,"peakBufferedBytes":2097152}
+  ]
+}
