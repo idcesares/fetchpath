@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-20",
+  "updated": "2026-09-21",
   "tasks": [
     {
       "id": "FP-001",
@@ -358,20 +358,30 @@
         "FP-006",
         "FP-011"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "extensions/browser",
-        "apps/desktop"
+        "apps/desktop/src-tauri",
+        "crates/fetchpath-core",
+        "Cargo.lock",
+        "docs/development/BROWSER-CAPTURE.md",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A07",
         "A08"
       ],
       "acceptance": "Supported requests hand off without loss/duplicates, secrets stay scoped, unsupported requests stay in browser, exclusions work.",
-      "verification": "Supported requests hand off without loss/duplicates, secrets stay scoped, unsupported requests stay in browser, exclusions work.",
-      "evidence": [],
+      "verification": "The production Chromium extension uses an explicit Send link action and exact-origin optional permissions; it does not intercept ordinary browser downloads. Chrome 153 in an isolated profile passed a real native-messaging capture with one HttpOnly cookie, a durable acknowledgement, query/cookie redaction, and an origin exclusion that produced no second inbox command. Native-host integration tests cover framed IPC, caller allowlisting, DPAPI protection, idempotent duplicate acknowledgement and unsupported POST rejection. Rust tests cover malformed input, filename/path boundaries, cookie scope, cross-host redirect isolation, exactly-once desktop ingestion, persistence and a real authenticated transfer.",
+      "evidence": [
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/development/evidence/browser/browser-capture.json",
+        "extensions/browser/README.md",
+        "apps/desktop/src-tauri/src/browser_bridge.rs",
+        "crates/fetchpath-core/src/lib.rs"
+      ],
       "blockedReason": null
     },
     {

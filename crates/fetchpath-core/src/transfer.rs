@@ -1,4 +1,6 @@
-use crate::checkpoint::{ResponseHeaders, resume_headers_match, source_key, strong_etag};
+use crate::checkpoint::{
+    ResponseHeaders, resume_headers_match, source_key_with_context, strong_etag,
+};
 use crate::{BUFFER_BYTES, CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use curl::easy::{Easy, List};
 use fetchpath_storage::{
@@ -34,7 +36,8 @@ pub fn download_with_faults(
     if !(request.url.starts_with("http://") || request.url.starts_with("https://")) {
         return Err(DownloadError::InvalidUrl);
     }
-    let key = source_key(&request.url);
+    let context_fingerprint = request.context.fingerprint();
+    let key = source_key_with_context(&request.url, &context_fingerprint);
     let store = CheckpointStore::new(&request.destination, &key).map_err(|error| {
         if error.kind() == io::ErrorKind::InvalidInput {
             DownloadError::InvalidDestination(request.destination.clone())
@@ -188,7 +191,7 @@ fn perform_attempt(
     faults: &dyn FaultInjector,
 ) -> Result<AttemptResult, CallbackFailure> {
     let mut easy = Easy::new();
-    configure(&mut easy, &request.url)
+    configure(&mut easy, &request.url, &request.context)
         .map_err(|error| CallbackFailure::Transport(error.to_string()))?;
     if start_offset > 0 {
         easy.range(&format!("{start_offset}-"))
@@ -260,7 +263,7 @@ fn perform_attempt(
                         store.sync_payload(file, faults)?;
                         let digest = sha256_file(store.staging())?;
                         let record = CheckpointRecord::downloading(
-                            source_key(&request.url),
+                            source_key_with_context(&request.url, &request.context.fingerprint()),
                             next,
                             digest,
                             validator,
@@ -333,12 +336,22 @@ fn perform_attempt(
     })
 }
 
-fn configure(easy: &mut Easy, url: &str) -> Result<(), curl::Error> {
+fn configure(
+    easy: &mut Easy,
+    url: &str,
+    context: &crate::RequestContext,
+) -> Result<(), curl::Error> {
     easy.url(url)?;
     easy.follow_location(true)?;
     easy.fail_on_error(true)?;
     easy.ssl_verify_peer(true)?;
     easy.ssl_verify_host(true)?;
+    for cookie in &context.cookie_lines {
+        easy.cookie_list(cookie)?;
+    }
+    if let Some(referer) = &context.referer {
+        easy.referer(referer)?;
+    }
     easy.buffer_size(BUFFER_BYTES)?;
     easy.progress(true)
 }
@@ -538,6 +551,7 @@ mod tests {
             destination,
             cancellation: CancellationToken::default(),
             cancel_cleanup: CancelCleanup::RemoveStaging,
+            context: crate::RequestContext::default(),
         }
     }
 
@@ -629,7 +643,7 @@ mod tests {
     }
 
     fn seed_checkpoint(url: &str, destination: &std::path::Path, body: &[u8], len: usize) {
-        let key = source_key(url);
+        let key = crate::checkpoint::source_key(url);
         let store = CheckpointStore::new(destination, &key).unwrap();
         fs::write(store.staging(), &body[..len]).unwrap();
         let record = CheckpointRecord::downloading(
@@ -727,7 +741,7 @@ mod tests {
             truncate: true,
         }]);
         seed_checkpoint(&url, &destination, &body, 96 * 1024);
-        let key = source_key(&url);
+        let key = crate::checkpoint::source_key(&url);
         let store = CheckpointStore::new(&destination, &key).unwrap();
 
         assert!(matches!(

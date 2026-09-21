@@ -1,0 +1,7 @@
+{
+  "name": "com.fetchpath.browser",
+  "description": "Fetchpath browser capture bridge",
+  "path": "${FETCHPATH_BROWSER_HOST}",
+  "type": "stdio",
+  "allowed_extensions": ["browser@fetchpath.app"]
+}

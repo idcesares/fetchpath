@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Fetchpath",
+  "version": "0.1.0",
+  "description": "Explicitly send a download link to the Fetchpath desktop queue.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyk7GrL+N7Uc12BCU+MBrgSNjRltRNU/VBjmbq8CrzKBWxS7TRKEh5ZDtV7XsK4NtvFwPyocrfDXjLag8zYYvAnxuvKG9THp8pvnXapazBIbI6PxuDVBDXX/+rOYsuWozImi47yr5d3K+ETEOiWpTnUuPmeRgRHBJHnxR0DtW+uJg/w/ERtRV9pGJetbJclfWVs05LrS0doaX1lIt+QD2O33Oh+P9eja+1X6wOJHg41yI0/vbrTnmevXKpinlOg4G6fOg7eSBZOtb2KdLf9t/zXQ2E8QFRivCq0124bmiLbAeOo0z+O+yqAdk5WzJUSPAwsMLgth93AzOFENRLVKurwIDAQAB",
+  "permissions": ["contextMenus", "cookies", "nativeMessaging", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Fetchpath"
+  }
+}

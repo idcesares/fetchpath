@@ -21,7 +21,7 @@ interface JobSnapshot {
   observedSha256: string | null;
   cleanupPending: boolean;
   error: string | null;
-  action: "retry" | "choose_new_path" | "edit_link" | null;
+  action: "retry" | "choose_new_path" | "edit_link" | "recapture" | null;
   retryable: boolean;
   createdAtMs: number;
   notBeforeMs: number | null;
@@ -175,6 +175,9 @@ jobList.addEventListener("click", async (event) => {
       }
       case "edit-link":
         beginEdit(job);
+        return;
+      case "recapture":
+        queueSummary.textContent = "Open the source in your browser and choose Send link to Fetchpath again.";
         return;
       case "copy-path":
         if (job.destination) await navigator.clipboard.writeText(job.destination);
@@ -376,6 +379,7 @@ function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; da
   if (job.state === "failed" || job.state === "cancelled" || job.state === "needs_source") {
     if (job.action === "choose_new_path") actions.push({ action: "choose-new-path", label: "Choose new path" });
     else if (job.action === "edit_link") actions.push({ action: "edit-link", label: "Edit link" });
+    else if (job.action === "recapture") actions.push({ action: "recapture", label: "Send again from browser" });
     else actions.push({ action: "retry", label: "Retry" });
   }
   if (job.state === "completed") actions.push({ action: "copy-path", label: "Copy path" });
@@ -481,6 +485,7 @@ function stateLabel(state: JobState): string {
 function friendlyError(job: JobSnapshot): string {
   if (job.action === "choose_new_path") return "A file already exists there. Choose a different destination to continue.";
   if (job.action === "edit_link") return "This link needs attention. Paste a refreshed address to continue safely.";
+  if (job.action === "recapture") return "The protected browser context is unavailable. Send the link from your browser again.";
   return job.error ?? "The download stopped. Retry when the source is available.";
 }
 

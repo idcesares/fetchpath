@@ -73,12 +73,58 @@ pub enum CancelCleanup {
     RetainStaging,
 }
 
+/// Sensitive request context supplied by an explicitly authorized client.
+///
+/// Values are deliberately not `Debug` and must never be emitted in routine
+/// snapshots, events, or errors.
+#[derive(Clone, Default)]
+pub struct RequestContext {
+    cookie_lines: Vec<String>,
+    referer: Option<String>,
+}
+
+impl RequestContext {
+    pub fn new(cookie_lines: Vec<String>, referer: Option<String>) -> Result<Self, &'static str> {
+        let invalid = cookie_lines.iter().any(|line| {
+            line.is_empty() || line.contains(['\r', '\n', '\0']) || line.len() > 16 * 1024
+        }) || referer
+            .as_deref()
+            .is_some_and(|value| value.contains(['\r', '\n', '\0']) || value.len() > 8 * 1024);
+        if invalid || cookie_lines.len() > 256 {
+            return Err("request_context.invalid");
+        }
+        Ok(Self {
+            cookie_lines,
+            referer,
+        })
+    }
+
+    fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+
+        if self.cookie_lines.is_empty() && self.referer.is_none() {
+            return String::new();
+        }
+        let mut digest = Sha256::new();
+        for line in &self.cookie_lines {
+            digest.update(line.len().to_le_bytes());
+            digest.update(line.as_bytes());
+        }
+        if let Some(referer) = &self.referer {
+            digest.update(referer.len().to_le_bytes());
+            digest.update(referer.as_bytes());
+        }
+        format!("{:x}", digest.finalize())
+    }
+}
+
 #[derive(Clone)]
 pub struct DownloadRequest {
     pub url: String,
     pub destination: PathBuf,
     pub cancellation: CancellationToken,
     pub cancel_cleanup: CancelCleanup,
+    pub context: RequestContext,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -256,10 +302,27 @@ impl FileJob {
         Self::create_with_cleanup(url, destination, CancelCleanup::RetainStaging)
     }
 
+    pub fn create_recoverable_with_context(
+        url: String,
+        destination: PathBuf,
+        context: RequestContext,
+    ) -> Self {
+        Self::create_with_context(url, destination, CancelCleanup::RetainStaging, context)
+    }
+
     fn create_with_cleanup(
         url: String,
         destination: PathBuf,
         cancel_cleanup: CancelCleanup,
+    ) -> Self {
+        Self::create_with_context(url, destination, cancel_cleanup, RequestContext::default())
+    }
+
+    fn create_with_context(
+        url: String,
+        destination: PathBuf,
+        cancel_cleanup: CancelCleanup,
+        context: RequestContext,
     ) -> Self {
         let cancellation = CancellationToken::default();
         let id = uuid::Uuid::new_v4().to_string();
@@ -287,6 +350,7 @@ impl FileJob {
                     destination,
                     cancellation: cancellation.clone(),
                     cancel_cleanup,
+                    context,
                 }),
                 worker: None,
             })),
@@ -465,6 +529,7 @@ mod tests {
             destination,
             cancellation: token,
             cancel_cleanup: cleanup,
+            context: RequestContext::default(),
         }
     }
 
@@ -770,6 +835,110 @@ mod tests {
         );
         assert!(!destination.exists());
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scoped_browser_cookie_context_reaches_the_authorized_origin() {
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (request_tx, request_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0_u8; 4096];
+            let read = stream.read(&mut request).unwrap();
+            request.truncate(read);
+            request_tx
+                .send(String::from_utf8_lossy(&request).into_owned())
+                .unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .unwrap();
+        });
+        let dir = temp_dir("browser-cookie");
+        let destination = dir.join("authenticated.bin");
+        let context = RequestContext::new(
+            vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tsession\tprivate-value".into()],
+            None,
+        )
+        .unwrap();
+        let job = FileJob::create_recoverable_with_context(
+            format!("http://{address}/authenticated.bin"),
+            destination.clone(),
+            context,
+        );
+        job.start().unwrap();
+        job.join();
+        server.join().unwrap();
+
+        assert_eq!(fs::read(destination).unwrap(), b"ok");
+        assert!(
+            request_rx
+                .recv()
+                .unwrap()
+                .contains("Cookie: session=private-value")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn browser_cookie_context_does_not_cross_a_redirected_host_boundary() {
+        use std::sync::mpsc;
+
+        let destination_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let destination_address = destination_listener.local_addr().unwrap();
+        let (request_tx, request_rx) = mpsc::channel();
+        let destination_server = thread::spawn(move || {
+            let (mut stream, _) = destination_listener.accept().unwrap();
+            let mut request = vec![0_u8; 4096];
+            let read = stream.read(&mut request).unwrap();
+            request.truncate(read);
+            request_tx
+                .send(String::from_utf8_lossy(&request).into_owned())
+                .unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .unwrap();
+        });
+
+        let redirect_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let redirect_address = redirect_listener.local_addr().unwrap();
+        let redirect_server = thread::spawn(move || {
+            let (mut stream, _) = redirect_listener.accept().unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        destination_address.port()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+        });
+
+        let dir = temp_dir("browser-cookie-redirect");
+        let destination = dir.join("redirected.bin");
+        let context = RequestContext::new(
+            vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tsession\tprivate-value".into()],
+            None,
+        )
+        .unwrap();
+        let job = FileJob::create_recoverable_with_context(
+            format!("http://{redirect_address}/start"),
+            destination.clone(),
+            context,
+        );
+        job.start().unwrap();
+        job.join();
+        redirect_server.join().unwrap();
+        destination_server.join().unwrap();
+
+        assert_eq!(fs::read(destination).unwrap(), b"ok");
+        assert!(!request_rx.recv().unwrap().contains("private-value"));
         fs::remove_dir_all(dir).unwrap();
     }
 }

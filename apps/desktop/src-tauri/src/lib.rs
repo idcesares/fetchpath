@@ -1,4 +1,7 @@
-use fetchpath_core::{CancelResult, FileJob, FileJobState};
+pub mod browser_bridge;
+
+use browser_bridge::BridgeStore;
+use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -17,6 +20,8 @@ struct DesktopJobs {
     inner: Mutex<QueueState>,
     state_path: Option<PathBuf>,
     max_active: usize,
+    browser_store: Option<BridgeStore>,
+    browser_download_dir: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -27,6 +32,8 @@ struct QueueState {
 struct QueueRecord {
     id: String,
     live_url: Option<String>,
+    live_context: RequestContext,
+    credential_ref: Option<String>,
     restart_url: Option<String>,
     display_url: String,
     destination: PathBuf,
@@ -82,6 +89,8 @@ struct PersistedQueue {
 struct PersistedRecord {
     id: String,
     restart_url: Option<String>,
+    #[serde(default)]
+    credential_ref: Option<String>,
     display_url: String,
     destination: String,
     not_before_ms: Option<u64>,
@@ -91,15 +100,27 @@ struct PersistedRecord {
 }
 
 impl DesktopJobs {
+    #[cfg(test)]
     fn load(state_path: PathBuf, max_active: usize) -> io::Result<Self> {
+        Self::load_with_browser(state_path, max_active, None)
+    }
+
+    fn load_with_browser(
+        state_path: PathBuf,
+        max_active: usize,
+        browser_download_dir: Option<PathBuf>,
+    ) -> io::Result<Self> {
         let persisted = load_persisted(&state_path)?;
         let now = now_ms();
+        let browser_store = state_path
+            .parent()
+            .map(|parent| BridgeStore::new(parent.to_path_buf()));
         let records = persisted
             .map(|queue| {
                 queue
                     .records
                     .into_iter()
-                    .map(|saved| QueueRecord::restore(saved, now))
+                    .map(|saved| QueueRecord::restore(saved, now, browser_store.as_ref()))
                     .collect()
             })
             .unwrap_or_default();
@@ -107,6 +128,8 @@ impl DesktopJobs {
             inner: Mutex::new(QueueState { records }),
             state_path: Some(state_path),
             max_active: max_active.max(1),
+            browser_store,
+            browser_download_dir,
         })
     }
 
@@ -116,6 +139,8 @@ impl DesktopJobs {
             inner: Mutex::new(QueueState::default()),
             state_path: None,
             max_active: max_active.max(1),
+            browser_store: None,
+            browser_download_dir: None,
         }
     }
 
@@ -165,14 +190,24 @@ impl DesktopJobs {
 
     fn list(&self) -> Result<Vec<JobSnapshot>, String> {
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let processed = self.ingest_browser_locked(&mut state)?;
         self.reconcile_locked(&mut state);
         self.save_locked(&state)?;
-        Ok(state
+        let snapshots = state
             .records
             .iter()
             .rev()
             .map(|record| record.view.clone())
-            .collect())
+            .collect();
+        drop(state);
+        if let Some(store) = self.browser_store.as_ref() {
+            for (capture_id, job_id) in processed {
+                store
+                    .mark_processed(&capture_id, &job_id)
+                    .map_err(|error| format!("Browser capture was queued but its receipt could not be updated: {error}"))?;
+            }
+        }
+        Ok(snapshots)
     }
 
     fn snapshot(&self, job_id: &str) -> Result<JobSnapshot, String> {
@@ -245,6 +280,12 @@ impl DesktopJobs {
             record.display_url = display_url(&url);
             record.restart_url = restartable_url(&url);
             record.live_url = Some(url);
+            record.live_context = RequestContext::default();
+            if let Some(credential_ref) = record.credential_ref.take()
+                && let Some(store) = self.browser_store.as_ref()
+            {
+                let _ = store.remove_secret(&credential_ref);
+            }
         }
         if let Some(destination) = destination {
             let destination = PathBuf::from(destination.trim());
@@ -263,9 +304,10 @@ impl DesktopJobs {
             record.view.action = Some("choose_new_path".into());
             record.view.retryable = true;
         } else {
-            record.job = Some(FileJob::create_recoverable(
+            record.job = Some(FileJob::create_recoverable_with_context(
                 live_url,
                 record.destination.clone(),
+                record.live_context.clone(),
             ));
             record.not_before_ms = None;
             record.finished_at_ms = None;
@@ -293,6 +335,11 @@ impl DesktopJobs {
             .position(|record| record.id == job_id)
             .ok_or_else(|| "This download is no longer available.".to_string())?;
         let record = state.records.remove(index);
+        if let Some(credential_ref) = record.credential_ref.as_deref()
+            && let Some(store) = self.browser_store.as_ref()
+        {
+            let _ = store.remove_secret(credential_ref);
+        }
         if let Some(job) = record.job {
             job.cancel();
             job.join();
@@ -332,7 +379,11 @@ impl DesktopJobs {
             if record.view.state == "cancelled"
                 && let Some(url) = record.live_url.clone()
             {
-                record.job = Some(FileJob::create_recoverable(url, record.destination.clone()));
+                record.job = Some(FileJob::create_recoverable_with_context(
+                    url,
+                    record.destination.clone(),
+                    record.live_context.clone(),
+                ));
                 record.view.state = if record.not_before_ms.is_some_and(|due| due > now_ms()) {
                     "scheduled".into()
                 } else {
@@ -351,6 +402,12 @@ impl DesktopJobs {
     fn reconcile_locked(&self, state: &mut QueueState) {
         for record in &mut state.records {
             refresh_record(record);
+            if record.view.state == "completed"
+                && let Some(credential_ref) = record.credential_ref.take()
+                && let Some(store) = self.browser_store.as_ref()
+            {
+                let _ = store.remove_secret(&credential_ref);
+            }
         }
         let mut active = state
             .records
@@ -397,18 +454,114 @@ impl DesktopJobs {
             )
         })
     }
+
+    fn ingest_browser_locked(
+        &self,
+        state: &mut QueueState,
+    ) -> Result<Vec<(String, String)>, String> {
+        let (Some(store), Some(download_dir)) = (
+            self.browser_store.as_ref(),
+            self.browser_download_dir.as_ref(),
+        ) else {
+            return Ok(Vec::new());
+        };
+        let pending = store
+            .pending()
+            .map_err(|error| format!("Could not read browser captures: {error}"))?;
+        let mut processed = Vec::with_capacity(pending.len());
+        for capture in pending {
+            if let Some(existing) = state
+                .records
+                .iter()
+                .find(|record| record.credential_ref.as_deref() == Some(&capture.credential_ref))
+            {
+                processed.push((capture.capture_id, existing.id.clone()));
+                continue;
+            }
+            let secret = store
+                .load_secret(&capture.credential_ref)
+                .map_err(|error| format!("Protected browser capture is unavailable: {error}"))?;
+            let context = RequestContext::new(secret.cookie_lines, secret.referer)
+                .map_err(|code| format!("Browser request context was rejected ({code})."))?;
+            let destination = unique_browser_destination(
+                download_dir,
+                &capture.suggested_filename,
+                &state.records,
+            );
+            let record = QueueRecord::new_with_context(
+                secret.url,
+                destination,
+                None,
+                Some(capture.credential_ref),
+                context,
+            );
+            let job_id = record.id.clone();
+            state.records.push(record);
+            processed.push((capture.capture_id, job_id));
+        }
+        Ok(processed)
+    }
+}
+
+fn unique_browser_destination(
+    directory: &Path,
+    filename: &str,
+    records: &[QueueRecord],
+) -> PathBuf {
+    let candidate = directory.join(filename);
+    if !candidate.exists() && !records.iter().any(|record| record.destination == candidate) {
+        return candidate;
+    }
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let extension = path.extension().and_then(|value| value.to_str());
+    for index in 2..10_000 {
+        let name = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let candidate = directory.join(name);
+        if !candidate.exists() && !records.iter().any(|record| record.destination == candidate) {
+            return candidate;
+        }
+    }
+    directory.join(format!("{}-{}", uuid::Uuid::new_v4(), filename))
 }
 
 impl QueueRecord {
     fn new(url: String, destination: PathBuf, not_before_ms: Option<u64>) -> Self {
+        Self::new_with_context(
+            url,
+            destination,
+            not_before_ms,
+            None,
+            RequestContext::default(),
+        )
+    }
+
+    fn new_with_context(
+        url: String,
+        destination: PathBuf,
+        not_before_ms: Option<u64>,
+        credential_ref: Option<String>,
+        live_context: RequestContext,
+    ) -> Self {
         let now = now_ms();
         let id = uuid::Uuid::new_v4().to_string();
         let display = display_url(&url);
         let restart_url = restartable_url(&url);
         let conflict = destination.exists();
         let scheduled = not_before_ms.is_some_and(|due| due > now);
-        let job =
-            (!conflict).then(|| FileJob::create_recoverable(url.clone(), destination.clone()));
+        let job = (!conflict).then(|| {
+            FileJob::create_recoverable_with_context(
+                url.clone(),
+                destination.clone(),
+                live_context.clone(),
+            )
+        });
         let state = if conflict {
             "failed"
         } else if scheduled {
@@ -419,6 +572,8 @@ impl QueueRecord {
         Self {
             id: id.clone(),
             live_url: Some(url),
+            live_context,
+            credential_ref,
             restart_url,
             display_url: display.clone(),
             destination: destination.clone(),
@@ -444,40 +599,63 @@ impl QueueRecord {
         }
     }
 
-    fn restore(saved: PersistedRecord, now: u64) -> Self {
+    fn restore(saved: PersistedRecord, now: u64, browser_store: Option<&BridgeStore>) -> Self {
         let terminal = is_terminal(&saved.view.state);
-        let private_source_needs_refresh = saved.restart_url.is_none()
-            && matches!(saved.view.state.as_str(), "failed" | "cancelled");
-        let (job, live_url, state, error, action, retryable) = if private_source_needs_refresh {
+        let browser_secret = saved
+            .credential_ref
+            .as_deref()
+            .and_then(|credential_ref| browser_store?.load_secret(credential_ref).ok())
+            .and_then(|secret| {
+                let context = RequestContext::new(secret.cookie_lines, secret.referer).ok()?;
+                Some((secret.url, context))
+            });
+        let live_url = saved
+            .restart_url
+            .clone()
+            .or_else(|| browser_secret.as_ref().map(|(url, _)| url.clone()));
+        let live_context = browser_secret
+            .as_ref()
+            .map(|(_, context)| context.clone())
+            .unwrap_or_default();
+        let private_source_needs_refresh =
+            live_url.is_none() && matches!(saved.view.state.as_str(), "failed" | "cancelled");
+        let missing_browser_secret = saved.credential_ref.is_some() && live_url.is_none();
+        let (job, state, error, action, retryable) = if private_source_needs_refresh {
             (
                 None,
-                None,
                 "needs_source".into(),
-                Some("Paste a refreshed link because private query values were not saved.".into()),
-                Some("edit_link".into()),
+                Some(if missing_browser_secret {
+                    "Send this download from the browser again because its protected context is unavailable.".into()
+                } else {
+                    "Paste a refreshed link because private query values were not saved.".into()
+                }),
+                Some(if missing_browser_secret {
+                    "recapture".into()
+                } else {
+                    "edit_link".into()
+                }),
                 true,
             )
         } else if terminal {
             (
                 None,
-                saved.restart_url.clone(),
                 saved.view.state.clone(),
                 saved.view.error.clone(),
                 saved.view.action.clone(),
                 saved.view.retryable,
             )
-        } else if let Some(url) = saved.restart_url.clone() {
+        } else if let Some(url) = live_url.clone() {
             let state = if saved.not_before_ms.is_some_and(|due| due > now) {
                 "scheduled"
             } else {
                 "queued"
             };
             (
-                Some(FileJob::create_recoverable(
+                Some(FileJob::create_recoverable_with_context(
                     url.clone(),
                     PathBuf::from(&saved.destination),
+                    live_context.clone(),
                 )),
-                Some(url),
                 state.into(),
                 Some("Recovered after Fetchpath restarted.".into()),
                 None,
@@ -486,10 +664,17 @@ impl QueueRecord {
         } else {
             (
                 None,
-                None,
                 "needs_source".into(),
-                Some("Paste a refreshed link because private query values were not saved.".into()),
-                Some("edit_link".into()),
+                Some(if missing_browser_secret {
+                    "Send this download from the browser again because its protected context is unavailable.".into()
+                } else {
+                    "Paste a refreshed link because private query values were not saved.".into()
+                }),
+                Some(if missing_browser_secret {
+                    "recapture".into()
+                } else {
+                    "edit_link".into()
+                }),
                 true,
             )
         };
@@ -501,6 +686,8 @@ impl QueueRecord {
         Self {
             id: saved.id,
             live_url,
+            live_context,
+            credential_ref: saved.credential_ref,
             restart_url: saved.restart_url,
             display_url: saved.display_url,
             destination: PathBuf::from(saved.destination),
@@ -624,6 +811,7 @@ fn save_persisted(path: &Path, state: &QueueState) -> io::Result<()> {
             .map(|record| PersistedRecord {
                 id: record.id.clone(),
                 restart_url: record.restart_url.clone(),
+                credential_ref: record.credential_ref.clone(),
                 display_url: record.display_url.clone(),
                 destination: record.destination.display().to_string(),
                 not_before_ms: record.not_before_ms,
@@ -751,7 +939,12 @@ pub fn run() {
         ])
         .setup(|app| {
             let state_path = app.path().app_data_dir()?.join("queue-v1.json");
-            app.manage(DesktopJobs::load(state_path, DEFAULT_MAX_ACTIVE)?);
+            let download_dir = app.path().download_dir()?;
+            app.manage(DesktopJobs::load_with_browser(
+                state_path,
+                DEFAULT_MAX_ACTIVE,
+                Some(download_dir),
+            )?);
             let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Fetchpath", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -974,5 +1167,51 @@ mod tests {
                 .contains("at least one")
         );
         assert!(jobs.snapshot("missing").unwrap_err().contains("no longer"));
+    }
+
+    #[test]
+    fn browser_inbox_is_consumed_once_into_the_persistent_queue() {
+        use crate::browser_bridge::{BrowserCookie, CaptureRequest, SCHEMA_VERSION};
+
+        let dir = tempfile::tempdir().unwrap();
+        let download_dir = dir.path().join("downloads");
+        fs::create_dir_all(&download_dir).unwrap();
+        let state_path = dir.path().join("queue-v1.json");
+        let body = b"browser capture bytes".repeat(1024);
+        let (url, server) = fixture(body.clone(), false);
+        let capture_id = uuid::Uuid::new_v4().to_string();
+        let store = BridgeStore::new(dir.path().to_path_buf());
+        store
+            .accept(&CaptureRequest {
+                schema_version: SCHEMA_VERSION,
+                capture_id: capture_id.clone(),
+                method: "GET".into(),
+                url: format!("{url}/archive.bin?token=private"),
+                suggested_filename: "archive.bin".into(),
+                referrer: None,
+                cookies: Vec::<BrowserCookie>::new(),
+                user_initiated: true,
+            })
+            .unwrap();
+
+        let jobs =
+            DesktopJobs::load_with_browser(state_path.clone(), 1, Some(download_dir.clone()))
+                .unwrap();
+        let queued = jobs.list().unwrap();
+        assert_eq!(queued.len(), 1);
+        let completed = wait_for_terminal(&jobs, &queued[0].job_id);
+        server.join().unwrap();
+        assert_eq!(completed.state, "completed");
+        assert_eq!(fs::read(download_dir.join("archive.bin")).unwrap(), body);
+        assert!(store.pending().unwrap().is_empty());
+        let persisted = fs::read_to_string(&state_path).unwrap();
+        assert!(!persisted.contains("token=private"));
+
+        let restored = DesktopJobs::load_with_browser(state_path, 1, Some(download_dir))
+            .unwrap()
+            .list()
+            .unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].job_id, queued[0].job_id);
     }
 }

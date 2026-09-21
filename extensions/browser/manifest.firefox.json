@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Fetchpath",
+  "version": "0.1.0",
+  "description": "Explicitly send a download link to the Fetchpath desktop queue.",
+  "permissions": ["contextMenus", "cookies", "nativeMessaging", "storage"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "scripts": ["policy.js", "background.js"]
+  },
+  "action": {
+    "default_title": "Fetchpath"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser@fetchpath.app",
+      "strict_min_version": "128.0"
+    }
+  }
+}

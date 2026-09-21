@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 20 September 2026. Phase: M1 — first native download slice.
+Updated 21 September 2026. Phase: M3 — dependable queue with explicit browser capture.
 
 ## Confirmed purpose
 
@@ -17,16 +17,17 @@ The user uses Codex with Astra High for lead orchestration and explicitly permit
 - Actual checks and limitations: [foundation results](docs/development/FOUNDATION-RESULTS.md).
 - Native job/transfer evidence: [first download](docs/development/FIRST-DOWNLOAD.md).
 - Desktop queue/recovery evidence: [queue and recovery](docs/development/DESKTOP-QUEUE-RECOVERY.md).
+- Browser capture evidence: [browser capture](docs/development/BROWSER-CAPTURE.md).
 
 Do not duplicate task status into multiple checklists. The backlog is authoritative; this page records phase and decisions.
 
 ## Current delivery
 
-Repository organization, reproducible HTTP fixtures, backend/media packaging spikes, browser handoff evidence, the accepted job contract, and a native Rust vertical slice. The CLI and Tauri 2 desktop shell now perform real sequential HTTP downloads through recoverable same-volume checkpoints, strong-validator HTTP resume, bounded buffers, observed hashes, serialized cancellation, and no-overwrite publication. The desktop journey now includes a persistent bounded queue, batch preview, future schedules with post-sleep catch-up, history search/filtering, actionable recovery, destination conflict protection, keyboard shortcuts, progress, cancellation, completion, and close-to-tray behavior on serviced Windows 11 x64 releases. No speed advantage has been established.
+Repository organization, reproducible HTTP fixtures, backend/media packaging spikes, the accepted job contract, and a native Rust vertical slice. The CLI and Tauri 2 desktop shell perform real sequential HTTP downloads through recoverable same-volume checkpoints, strong-validator HTTP resume, bounded buffers, observed hashes, serialized cancellation, and no-overwrite publication. The desktop journey includes a persistent bounded queue, batch preview, schedules, history search/filtering, actionable recovery, destination conflict protection, keyboard controls, progress, cancellation, completion, and close-to-tray behavior. A production browser extension now provides explicit per-link capture, exact-origin permissions and exclusions, origin-scoped cookie replay, a DPAPI-protected durable inbox, and idempotent desktop ingestion on serviced Windows 11 x64 releases. No speed advantage has been established.
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. The next ready gates include browser capture and media download/quality selection. Media helper packaging is proven on lawful local HLS/DASH fixtures; public-source compatibility remains a release gate.
+Run `node tools/tasks.mjs next`. The next ready gates include media download/quality selection, measured adaptive HTTP transfers, and additional protocols. Media helper packaging is proven on lawful local HLS/DASH fixtures; public-source compatibility remains a release gate.
 
 ## Remaining choices
 

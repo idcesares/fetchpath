@@ -43,12 +43,21 @@ impl ResponseHeaders {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn source_key(url: &str) -> String {
+    source_key_with_context(url, "")
+}
+
+pub(crate) fn source_key_with_context(url: &str, context_fingerprint: &str) -> String {
     // Query values can contain signed URLs or credentials. They never enter
     // persistent checkpoint identity; the strong response validator is the
     // authority for reusing retained bytes.
     let redacted = url.split(['?', '#']).next().unwrap_or(url);
-    let digest = format!("{:x}", Sha256::digest(redacted.as_bytes()));
+    let mut hasher = Sha256::new();
+    hasher.update(redacted.as_bytes());
+    hasher.update([0]);
+    hasher.update(context_fingerprint.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
     digest[..32].to_owned()
 }
 
@@ -131,6 +140,10 @@ mod tests {
         assert_ne!(
             source_key("https://example.test/file"),
             source_key("https://example.test/other")
+        );
+        assert_ne!(
+            source_key_with_context("https://example.test/file", "context-a"),
+            source_key_with_context("https://example.test/file", "context-b")
         );
     }
 }
