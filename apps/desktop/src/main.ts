@@ -21,17 +21,34 @@ interface JobSnapshot {
   observedSha256: string | null;
   cleanupPending: boolean;
   error: string | null;
-  action: "retry" | "choose_new_path" | "edit_link" | "recapture" | null;
+  action: "retry" | "choose_new_path" | "edit_link" | "recapture" | "refresh_source" | "configure_media_tools" | null;
   retryable: boolean;
   createdAtMs: number;
   notBeforeMs: number | null;
   finishedAtMs: number | null;
+  kind: "file" | "media";
+  qualityLabel: string | null;
 }
 
 interface JobDraft {
   url: string;
   destination: string;
   notBeforeMs: number | null;
+}
+
+interface MediaVariant {
+  id: string;
+  label: string;
+  kind: "video" | "audio";
+  extension: string;
+  height: number | null;
+  fps: number | null;
+}
+
+interface MediaInspection {
+  title: string;
+  durationSeconds: number | null;
+  variants: MediaVariant[];
 }
 
 const form = required<HTMLFormElement>("download-form");
@@ -52,12 +69,68 @@ const cancelCurrentButton = required<HTMLButtonElement>("cancel-download");
 const jobCard = required<HTMLElement>("job-card");
 const jobList = required<HTMLDivElement>("job-list");
 const activeCount = required<HTMLElement>("active-count");
+const kindChooser = required<HTMLFieldSetElement>("download-kind");
+const mediaOptions = required<HTMLElement>("media-options");
+const inspectMediaButton = required<HTMLButtonElement>("inspect-media");
+const mediaQuality = required<HTMLSelectElement>("media-quality");
+const mediaTitle = required<HTMLParagraphElement>("media-title");
 
 let jobs: JobSnapshot[] = [];
 let selectedFilter: QueueFilter = "all";
 let editingJobId: string | null = null;
 let refreshRunning = false;
 let refreshTimer = 0;
+let mediaInspection: MediaInspection | null = null;
+let inspectedMediaUrl = "";
+
+kindChooser.addEventListener("change", () => {
+  mediaInspection = null;
+  inspectedMediaUrl = "";
+  mediaQuality.replaceChildren(new Option("Inspect a link first", ""));
+  mediaQuality.disabled = true;
+  mediaTitle.textContent = "";
+  const media = downloadKind() === "media";
+  mediaOptions.hidden = !media;
+  urlInput.rows = media ? 2 : 3;
+  urlInput.placeholder = media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
+  renderPreview();
+});
+
+inspectMediaButton.addEventListener("click", async () => {
+  clearError(formError);
+  const urls = parseUrls();
+  if (urls.length !== 1) {
+    showError(formError, "Enter one media address to inspect.");
+    return;
+  }
+  inspectMediaButton.disabled = true;
+  inspectMediaButton.textContent = "Inspecting…";
+  try {
+    const inspection = await invoke<MediaInspection>("inspect_media", { url: urls[0] });
+    mediaInspection = inspection;
+    inspectedMediaUrl = urls[0];
+    mediaQuality.replaceChildren(...inspection.variants.map((variant) => new Option(variant.label, variant.id)));
+    mediaQuality.disabled = false;
+    mediaTitle.textContent = inspection.durationSeconds
+      ? `${inspection.title} · ${formatDuration(inspection.durationSeconds)}`
+      : inspection.title;
+    if (!destinationInput.value.trim()) setMediaDestination(inspection.variants[0]);
+    renderPreview();
+  } catch (error) {
+    mediaInspection = null;
+    inspectedMediaUrl = "";
+    showError(formError, error);
+  } finally {
+    inspectMediaButton.disabled = false;
+    inspectMediaButton.textContent = "Inspect link";
+  }
+});
+
+mediaQuality.addEventListener("change", () => {
+  const variant = selectedMediaVariant();
+  if (variant) setMediaDestination(variant, true);
+  renderPreview();
+});
 
 chooseButton.addEventListener("click", async () => {
   clearError(formError);
@@ -87,6 +160,15 @@ for (const eventName of ["input", "change"] as const) {
   scheduleInput.addEventListener(eventName, renderPreview);
 }
 
+urlInput.addEventListener("input", () => {
+  if (downloadKind() === "media" && parseUrls()[0] !== inspectedMediaUrl) {
+    mediaInspection = null;
+    mediaQuality.replaceChildren(new Option("Inspect this link to continue", ""));
+    mediaQuality.disabled = true;
+    mediaTitle.textContent = "";
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError(formError);
@@ -105,6 +187,20 @@ form.addEventListener("submit", async (event) => {
         destination: drafts[0].destination,
       });
       editingJobId = null;
+    } else if (downloadKind() === "media") {
+      const variant = selectedMediaVariant();
+      if (!variant || inspectedMediaUrl !== drafts[0].url) {
+        throw new Error("Inspect this media link and choose a quality first.");
+      }
+      await invoke<JobSnapshot>("start_media_download", {
+        draft: {
+          url: drafts[0].url,
+          variantId: variant.id,
+          qualityLabel: variant.label,
+          destination: drafts[0].destination,
+          notBeforeMs: drafts[0].notBeforeMs,
+        },
+      });
     } else {
       await invoke<JobSnapshot[]>("start_batch", { drafts });
     }
@@ -312,7 +408,9 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
 
   const destination = document.createElement("p");
   destination.className = "destination";
-  destination.textContent = job.destination ?? "Destination unavailable";
+  destination.textContent = job.qualityLabel
+    ? `${job.qualityLabel} · ${job.destination ?? "Destination unavailable"}`
+    : job.destination ?? "Destination unavailable";
   article.append(destination);
 
   if (job.state === "scheduled" && job.notBeforeMs) {
@@ -380,6 +478,8 @@ function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; da
     if (job.action === "choose_new_path") actions.push({ action: "choose-new-path", label: "Choose new path" });
     else if (job.action === "edit_link") actions.push({ action: "edit-link", label: "Edit link" });
     else if (job.action === "recapture") actions.push({ action: "recapture", label: "Send again from browser" });
+    else if (job.action === "refresh_source") actions.push({ action: "edit-link", label: "Refresh source" });
+    else if (job.action === "configure_media_tools") actions.push({ action: "retry", label: "Retry after setup" });
     else actions.push({ action: "retry", label: "Retry" });
   }
   if (job.state === "completed") actions.push({ action: "copy-path", label: "Copy path" });
@@ -400,6 +500,12 @@ function actionButton(job: JobSnapshot, spec: { action: string; label: string; d
 
 function beginEdit(job: JobSnapshot): void {
   editingJobId = job.jobId;
+  const kind = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${job.kind}"]`);
+  if (kind) kind.checked = true;
+  mediaOptions.hidden = job.kind !== "media";
+  if (job.kind === "media") {
+    mediaTitle.textContent = `${job.qualityLabel ?? "Selected quality"} will be revalidated before retrying.`;
+  }
   urlInput.value = "";
   destinationInput.value = job.destination ?? "";
   scheduleInput.value = "";
@@ -413,15 +519,24 @@ function beginEdit(job: JobSnapshot): void {
 function clearComposer(): void {
   editingJobId = null;
   form.reset();
+  mediaInspection = null;
+  inspectedMediaUrl = "";
+  mediaOptions.hidden = true;
+  mediaQuality.replaceChildren(new Option("Inspect a link first", ""));
+  mediaQuality.disabled = true;
+  mediaTitle.textContent = "";
+  urlInput.rows = 3;
+  urlInput.placeholder = "https://example.com/archive.zip";
   clearError(formError);
   renderPreview();
   startButton.textContent = "Add to queue";
 }
 
 function setComposerAvailability(available: boolean, label?: string): void {
-  for (const control of form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input, textarea, button")) {
+  for (const control of form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement>("input, textarea, button, select")) {
     control.disabled = !available;
   }
+  if (available && downloadKind() === "media" && !mediaInspection) mediaQuality.disabled = true;
   if (label) startButton.textContent = label;
   else renderPreview();
 }
@@ -460,7 +575,7 @@ function matchesFilter(job: JobSnapshot, filter: QueueFilter): boolean {
 
 function matchesSearch(job: JobSnapshot, query: string): boolean {
   if (!query) return true;
-  return [job.source, job.destination, filename(job.destination), job.error]
+  return [job.source, job.destination, filename(job.destination), job.error, job.qualityLabel]
     .filter((value): value is string => Boolean(value))
     .some((value) => value.toLocaleLowerCase().includes(query));
 }
@@ -486,6 +601,8 @@ function friendlyError(job: JobSnapshot): string {
   if (job.action === "choose_new_path") return "A file already exists there. Choose a different destination to continue.";
   if (job.action === "edit_link") return "This link needs attention. Paste a refreshed address to continue safely.";
   if (job.action === "recapture") return "The protected browser context is unavailable. Send the link from your browser again.";
+  if (job.action === "refresh_source") return "This media session expired or its qualities changed. Paste a refreshed source to retry.";
+  if (job.action === "configure_media_tools") return "Media tools are unavailable. Configure them, restart Fetchpath, then retry.";
   return job.error ?? "The download stopped. Retry when the source is available.";
 }
 
@@ -509,6 +626,35 @@ function suggestedFilename(value: string): string {
   } catch {
     return "download.bin";
   }
+}
+
+function downloadKind(): "file" | "media" {
+  return form.querySelector<HTMLInputElement>('input[name="download-kind"]:checked')?.value === "media" ? "media" : "file";
+}
+
+function selectedMediaVariant(): MediaVariant | null {
+  return mediaInspection?.variants.find((variant) => variant.id === mediaQuality.value) ?? null;
+}
+
+function setMediaDestination(variant: MediaVariant, replaceExtension = false): void {
+  const current = destinationInput.value.trim();
+  const title = sanitizeFilename(mediaInspection?.title ?? "media");
+  if (!current) {
+    destinationInput.value = `${title}.${variant.extension}`;
+    return;
+  }
+  if (replaceExtension) {
+    const separator = Math.max(current.lastIndexOf("/"), current.lastIndexOf("\\"));
+    const dot = current.lastIndexOf(".");
+    destinationInput.value = `${dot > separator ? current.slice(0, dot) : current}.${variant.extension}`;
+  }
+}
+
+function formatDuration(seconds: number): string {
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const remainder = rounded % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
 }
 
 function sanitizeFilename(value: string): string {

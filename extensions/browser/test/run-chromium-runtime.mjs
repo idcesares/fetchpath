@@ -6,6 +6,9 @@ import path from "node:path";
 const EXTENSION_ID = "lfikhkjdpjcjaboanknaabncpkbgoele";
 const [chromePath, sourceDir, workDir, evidencePath] = process.argv.slice(2);
 if (![chromePath, sourceDir, workDir, evidencePath].every(Boolean)) {
+  // `node --test` discovers every script under a directory named `test`.
+  // This file is an argument-driven runtime harness, not a standalone test.
+  if (process.env.NODE_TEST_CONTEXT) process.exit(0);
   throw new Error("usage: run-chromium-runtime.mjs <chrome> <source-extension> <work-dir> <evidence>");
 }
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));

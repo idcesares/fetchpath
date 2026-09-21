@@ -31,8 +31,29 @@
           <kbd>Ctrl L</kbd>
         </div>
 
+        <fieldset id="download-kind" class="mode-switch">
+          <legend class="sr-only">Download type</legend>
+          <label><input type="radio" name="download-kind" value="file" checked /> File or batch</label>
+          <label><input type="radio" name="download-kind" value="media" /> Video or audio</label>
+        </fieldset>
+
         <label for="url">Download addresses <span class="hint">one per line</span></label>
         <textarea id="url" name="url" required autocomplete="url" rows="3" placeholder="https://example.com/archive.zip"></textarea>
+
+        <section id="media-options" class="media-options" hidden>
+          <div class="media-inspect-row">
+            <div>
+              <strong>Inspect available quality</strong>
+              <p class="hint">Fetchpath shows only formats confirmed by the media engine.</p>
+            </div>
+            <button id="inspect-media" class="secondary" type="button">Inspect link</button>
+          </div>
+          <label for="media-quality">Quality</label>
+          <select id="media-quality" disabled>
+            <option value="">Inspect a link first</option>
+          </select>
+          <p id="media-title" class="field-note" aria-live="polite"></p>
+        </section>
 
         <label for="destination">Save first item as</label>
         <div class="destination-row">

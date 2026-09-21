@@ -1,0 +1,53 @@
+{
+  "task": "FP-014",
+  "verifiedAt": "2026-09-21",
+  "platform": "Windows 11 x64",
+  "source": "locally generated non-copyright DASH fixture",
+  "tools": {
+    "ytDlp": "2026.08.19",
+    "ffmpeg": "9.0.1-full_build-www.gyan.dev"
+  },
+  "inspection": {
+    "title": "manifest",
+    "choices": [
+      {
+        "id": "video-0",
+        "label": "360p",
+        "kind": "video"
+      },
+      {
+        "id": "audio-best",
+        "label": "Audio only · best available",
+        "kind": "audio"
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "selection": "video-0",
+      "container": "mp4",
+      "durationSeconds": 12,
+      "streams": ["h264 640x360 video", "aac audio"],
+      "bytes": 1974606,
+      "sha256": "ab2b99473ae03197f39ecab04c21cd2c87ba5e23ee6ac50fe38b02cfd1f5c891"
+    },
+    {
+      "selection": "audio-best",
+      "container": "mp3",
+      "durationSeconds": 12,
+      "streams": ["mp3 audio"],
+      "bytes": 100812,
+      "sha256": "c7bca9c7c87096be093f84d087178b170a8be8aa031cb3e22918600e17893e37"
+    }
+  ],
+  "failureCoverage": {
+    "cancellation": "Windows helper process tree terminated; no destination or staging retained",
+    "helperCrash": "typed retryable helper_crash failure; helper output redacted",
+    "expiredSession": "typed source_expired failure mapped to refresh_source in the desktop queue",
+    "destinationRace": "create-only same-volume publication"
+  },
+  "limitations": [
+    "No arbitrary-public-site compatibility claim",
+    "Supported-source corpus and helper distribution licensing remain release gates"
+  ]
+}

@@ -23,11 +23,11 @@ Do not duplicate task status into multiple checklists. The backlog is authoritat
 
 ## Current delivery
 
-Repository organization, reproducible HTTP fixtures, backend/media packaging spikes, the accepted job contract, and a native Rust vertical slice. The CLI and Tauri 2 desktop shell perform real sequential HTTP downloads through recoverable same-volume checkpoints, strong-validator HTTP resume, bounded buffers, observed hashes, serialized cancellation, and no-overwrite publication. The desktop journey includes a persistent bounded queue, batch preview, schedules, history search/filtering, actionable recovery, destination conflict protection, keyboard controls, progress, cancellation, completion, and close-to-tray behavior. A production browser extension now provides explicit per-link capture, exact-origin permissions and exclusions, origin-scoped cookie replay, a DPAPI-protected durable inbox, and idempotent desktop ingestion on serviced Windows 11 x64 releases. No speed advantage has been established.
+Repository organization, reproducible HTTP fixtures, backend/media packaging spikes, the accepted job contract, and a native Rust vertical slice. The CLI and Tauri 2 desktop shell perform real sequential HTTP downloads through recoverable same-volume checkpoints, strong-validator HTTP resume, bounded buffers, observed hashes, serialized cancellation, and no-overwrite publication. The desktop journey includes a persistent bounded queue, batch preview, schedules, history search/filtering, actionable recovery, destination conflict protection, keyboard controls, progress, cancellation, completion, and close-to-tray behavior. A production browser extension provides explicit per-link capture, exact-origin permissions and exclusions, origin-scoped cookie replay, a DPAPI-protected durable inbox, and idempotent desktop ingestion. Production media inspection and selected-quality video/audio downloads now share the desktop queue, with supervised helpers, mux verification, cancellation, and expired-session recovery on serviced Windows 11 x64 releases. No speed advantage has been established.
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. The next ready gates include media download/quality selection, measured adaptive HTTP transfers, and additional protocols. Media helper packaging is proven on lawful local HLS/DASH fixtures; public-source compatibility remains a release gate.
+Run `node tools/tasks.mjs next`. The next ready gates include measured adaptive HTTP transfers and additional protocols. Media integration is proven on lawful local HLS/DASH fixtures; the supported public-source corpus and helper distribution/licensing remain release gates.
 
 ## Remaining choices
 

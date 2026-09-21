@@ -851,6 +851,7 @@ name = "fetchpath-desktop"
 version = "0.1.0"
 dependencies = [
  "fetchpath-core",
+ "fetchpath-media",
  "serde",
  "serde_json",
  "sha2",
@@ -861,6 +862,18 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "fetchpath-media"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "url",
+ "uuid",
 ]
 
 [[package]]

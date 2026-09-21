@@ -393,12 +393,17 @@
         "FP-010",
         "FP-005"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "modelTier": "terra-medium",
       "files": [
         "adapters/media",
-        "apps/desktop"
+        "apps/desktop",
+        "Cargo.toml",
+        "Cargo.lock",
+        "docs/development/MEDIA-INTEGRATION.md",
+        "docs/development/evidence/media/media-integration.json",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A01",
@@ -406,8 +411,14 @@
         "A11"
       ],
       "acceptance": "Real selected-quality video/audio output, mux verification, cancellation, helper crash and expired-session recovery; first release requirement.",
-      "verification": "Real selected-quality video/audio output, mux verification, cancellation, helper crash and expired-session recovery; first release requirement.",
-      "evidence": [],
+      "verification": "The production media adapter and desktop media mode were verified on Windows 11 x64 with a locally generated 12-second DASH fixture. Engine inspection returned a 360p video choice and best-available audio choice; the selected video path muxed H.264 plus AAC into a verified 1,974,606-byte MP4, and the audio path produced a verified 100,812-byte MP3. Unit and desktop tests cover engine-confirmed quality selection, stream verification, URL boundaries, redacted helper crash and 403 expiry classification, process-tree cancellation with no publication/staging, and refresh_source queue recovery. Public-source corpus compatibility and helper distribution/licensing remain explicit release gates.",
+      "evidence": [
+        "adapters/media/src/lib.rs",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "docs/development/MEDIA-INTEGRATION.md",
+        "docs/development/evidence/media/media-integration.json"
+      ],
       "blockedReason": null
     },
     {

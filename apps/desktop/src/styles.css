@@ -56,6 +56,13 @@ h3 { margin-bottom: 0; font-size: 1.04rem; }
 }
 
 .composer { padding: 22px; }
+.mode-switch { display: flex; gap: 8px; margin: 18px 0; padding: 0; border: 0; }
+.mode-switch label { display: flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid #3f574d; border-radius: 999px; cursor: pointer; }
+.mode-switch input { width: auto; margin: 0; accent-color: var(--accent); }
+.media-options { margin: 14px 0; padding: 14px; border: 1px solid #3f574d; border-radius: 10px; background: #0d1512; }
+.media-inspect-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.media-inspect-row p { margin: 3px 0 0; }
+.media-options select { width: 100%; padding: 10px 12px; border: 1px solid #3f574d; border-radius: 8px; background: var(--panel); color: var(--text); }
 .section-heading, .queue-heading, .job-header, .preview-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .section-heading { margin-bottom: 18px; }
 .section-heading .eyebrow { margin-bottom: 2px; }
