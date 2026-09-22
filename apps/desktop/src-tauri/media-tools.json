@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Pinned media helpers for the guided setup in src/media_setup.rs.",
+    "",
+    "`sha256` is the maintainer's statement about one specific published",
+    "artifact. It is recorded by `node tools/media-tools/pin.mjs`, which",
+    "downloads the artifact AND the publisher's own checksum file, compares",
+    "them, and only then writes the digest here. A digest produced any other",
+    "way proves nothing about the publisher and must not be pasted in.",
+    "",
+    "An entry with an empty `sha256` is unpinned. The application refuses to",
+    "download it and offers the manual folder path instead. That is the",
+    "intended state of this file until a maintainer runs pin.mjs on a machine",
+    "with network access.",
+    "",
+    "ffmpeg here is a GPL build. Fetchpath does not redistribute it: the user",
+    "chooses to fetch it from the publisher, and the license is shown before",
+    "the download starts."
+  ],
+  "tools": [
+    {
+      "name": "yt-dlp",
+      "version": "2025.09.05",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2025.09.05/yt-dlp.exe",
+      "checksumSource": "https://github.com/yt-dlp/yt-dlp/releases/download/2025.09.05/SHA2-256SUMS",
+      "sha256": "",
+      "kind": "executable",
+      "license": "Unlicense"
+    },
+    {
+      "name": "ffmpeg",
+      "version": "n7.1-latest-win64-gpl",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip",
+      "checksumSource": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip.sha256",
+      "sha256": "",
+      "kind": "zip",
+      "license": "GPL-3.0-or-later"
+    }
+  ]
+}

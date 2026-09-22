@@ -9,18 +9,63 @@
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#queue-title">Skip to the download queue</a>
+
+    <!-- One polite region for progress and queue changes, one assertive region for
+         problems that need immediate attention. Everything else stays silent so a
+         screen reader is not flooded by the queue poll. -->
+    <p id="live-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="live-alert" class="sr-only" role="alert" aria-atomic="true"></p>
+
     <main class="shell">
       <header class="hero">
-        <div>
+        <div class="hero-text">
           <p class="eyebrow">FETCHPATH</p>
           <h1>Your downloads, on a clear path.</h1>
           <p class="lede">Queue a link or a batch, choose when it starts, and recover safely if the app restarts.</p>
         </div>
-        <div class="hero-stat" aria-label="Queue status">
-          <strong id="active-count">0</strong>
-          <span>active</span>
+        <div class="hero-side">
+          <!-- The visible number and the word "active" are two separate text runs.
+               role="group" plus aria-labelledby gives the figure one deliberate
+               sentence as its accessible name instead of two loose fragments. -->
+          <div id="active-stat" class="hero-stat" role="group" aria-labelledby="active-stat-text">
+            <strong id="active-count" aria-hidden="true">0</strong>
+            <span class="stat-unit" aria-hidden="true">active</span>
+            <span id="active-stat-text" class="sr-only">No downloads are active.</span>
+          </div>
+          <div class="hero-actions">
+            <button id="open-settings" class="quiet" type="button" aria-haspopup="dialog">Settings</button>
+            <button id="keyboard-help" class="quiet" type="button" aria-haspopup="dialog">Keyboard help</button>
+          </div>
         </div>
       </header>
+
+      <!-- First run only. Dismissing it records the choice, so it never returns
+           uninvited. -->
+      <section id="onboarding" class="card onboarding" aria-labelledby="onboarding-title" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">WELCOME</p>
+            <h2 id="onboarding-title">Three things worth knowing</h2>
+          </div>
+          <button id="dismiss-onboarding" class="quiet" type="button">Got it</button>
+        </div>
+        <ol class="onboarding-steps">
+          <li>
+            <strong>Paste a link and choose where it goes.</strong>
+            <span>Fetchpath saves to your Downloads folder unless you pick somewhere else. It never overwrites a file that is already there.</span>
+          </li>
+          <li>
+            <strong>Video and audio need two extra programs.</strong>
+            <span id="onboarding-media-note">Fetchpath does not include <code>yt-dlp</code> and <code>ffmpeg</code>. Set them up once from Settings.</span>
+            <button id="onboarding-open-media" class="secondary" type="button">Set up media tools</button>
+          </li>
+          <li>
+            <strong>Closing the window keeps the queue running.</strong>
+            <span>Fetchpath stays in the notification area. You can change that in Settings.</span>
+          </li>
+        </ol>
+      </section>
 
       <form id="download-form" class="card composer" aria-labelledby="add-heading">
         <div class="section-heading">
@@ -28,47 +73,98 @@
             <p class="eyebrow">ADD TO QUEUE</p>
             <h2 id="add-heading">Review before downloading</h2>
           </div>
-          <kbd>Ctrl L</kbd>
         </div>
 
         <fieldset id="download-kind" class="mode-switch">
           <legend class="sr-only">Download type</legend>
-          <label><input type="radio" name="download-kind" value="file" checked /> File or batch</label>
-          <label><input type="radio" name="download-kind" value="media" /> Video or audio</label>
+          <label><input type="radio" name="download-kind" value="file" checked /> <span>File or batch</span></label>
+          <label><input type="radio" name="download-kind" value="media" /> <span>Video or audio</span></label>
         </fieldset>
 
         <label for="url">Download addresses <span class="hint">one per line</span></label>
-        <textarea id="url" name="url" required autocomplete="url" rows="3" placeholder="https://example.com/archive.zip"></textarea>
+        <textarea
+          id="url"
+          name="url"
+          required
+          rows="3"
+          spellcheck="false"
+          autocomplete="off"
+          aria-describedby="url-hint"
+          aria-keyshortcuts="Control+L"
+          placeholder="https://example.com/archive.zip"
+        ></textarea>
+        <p id="url-hint" class="hint field-note">
+          Press <kbd>Ctrl</kbd> <kbd>L</kbd> from anywhere to return here. Press <kbd>Esc</kbd> to clear the form.
+        </p>
 
-        <section id="media-options" class="media-options" hidden>
-          <div class="media-inspect-row">
-            <div>
-              <strong>Inspect available quality</strong>
-              <p class="hint">Fetchpath shows only formats confirmed by the media engine.</p>
-            </div>
-            <button id="inspect-media" class="secondary" type="button">Inspect link</button>
+        <section id="media-options" class="media-options" aria-labelledby="media-options-heading" hidden>
+          <!-- The section's accessible name lives outside both branches below.
+               Naming it from inside one of them would leave the group unnamed
+               whenever the other branch is the one on screen. -->
+          <strong id="media-options-heading" class="sr-only">Video and audio options</strong>
+          <!-- Shown instead of the inspect controls when the helpers are missing,
+               so the dead end becomes a next step. -->
+          <div id="media-setup-needed" class="media-setup-needed" hidden>
+            <strong>Media tools are not set up yet</strong>
+            <p class="hint">Saving video or audio needs <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath does not include them.</p>
+            <button id="media-open-settings" class="secondary" type="button">Set them up</button>
           </div>
-          <label for="media-quality">Quality</label>
-          <select id="media-quality" disabled>
-            <option value="">Inspect a link first</option>
-          </select>
-          <p id="media-title" class="field-note" aria-live="polite"></p>
+          <div id="media-inspect-controls">
+            <div class="media-inspect-row">
+              <div>
+                <strong>Inspect available quality</strong>
+                <p class="hint" id="media-inspect-hint">Fetchpath shows only formats confirmed by the media engine.</p>
+              </div>
+              <button id="inspect-media" class="secondary" type="button" aria-describedby="media-inspect-hint">
+                Inspect link
+              </button>
+            </div>
+            <label for="media-quality">Quality</label>
+            <select id="media-quality" aria-describedby="media-title" disabled>
+              <option value="">Inspect a link first</option>
+            </select>
+            <p id="media-title" class="field-note"></p>
+          </div>
         </section>
 
         <label for="destination">Save first item as</label>
         <div class="destination-row">
-          <input id="destination" name="destination" required autocomplete="off" placeholder="Choose a destination file" />
-          <button id="choose-destination" class="secondary" type="button">Choose…</button>
+          <input
+            id="destination"
+            name="destination"
+            required
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="destination-hint"
+            placeholder="Choose a destination file"
+          />
+          <button id="choose-destination" class="secondary" type="button">
+            Choose<span aria-hidden="true">…</span><span class="sr-only"> a destination file</span>
+          </button>
         </div>
-        <p class="hint field-note">For a batch, the remaining files use this folder and their source filenames.</p>
+        <p id="destination-hint" class="hint field-note">
+          For a batch, the remaining files use this folder and their source filenames.
+        </p>
 
-        <div class="schedule-row">
-          <div>
-            <label for="schedule">Start time <span class="hint">optional</span></label>
-            <input id="schedule" name="schedule" type="datetime-local" />
+        <details id="advanced-options" class="advanced">
+          <summary>
+            Advanced options
+            <span class="hint">start time</span>
+          </summary>
+          <div class="schedule-row">
+            <div>
+              <label for="schedule">Start time <span class="hint">optional</span></label>
+              <input id="schedule" name="schedule" type="datetime-local" aria-describedby="schedule-hint" />
+            </div>
+            <button id="clear-schedule" class="quiet" type="button">
+              Start when ready<span class="sr-only">, clearing the start time</span>
+            </button>
           </div>
-          <button id="clear-schedule" class="quiet" type="button">Start when ready</button>
-        </div>
+          <p id="schedule-hint" class="hint field-note">
+            A start time only applies while Fetchpath is running or after its next launch. Fetchpath never wakes a
+            sleeping computer.
+          </p>
+        </details>
 
         <section id="batch-preview" class="preview" aria-labelledby="preview-heading" hidden>
           <div class="preview-heading">
@@ -79,7 +175,10 @@
         </section>
 
         <div class="submit-row">
-          <p id="form-error" class="error" role="alert" hidden></p>
+          <div class="submit-messages">
+            <p id="form-error" class="error" hidden></p>
+            <p id="form-notice" class="field-note notice" hidden></p>
+          </div>
           <button id="start-download" type="submit">Add to queue</button>
         </div>
       </form>
@@ -87,31 +186,170 @@
       <section class="queue-heading" aria-labelledby="queue-title">
         <div>
           <p class="eyebrow">DOWNLOADS</p>
-          <h2 id="queue-title">Queue and history</h2>
+          <h2 id="queue-title" tabindex="-1">Queue and history</h2>
         </div>
         <label class="search" for="queue-search">
           <span class="sr-only">Search downloads</span>
-          <input id="queue-search" type="search" placeholder="Search files or sources" />
+          <input id="queue-search" type="search" autocomplete="off" placeholder="Search files or sources" />
         </label>
       </section>
 
-      <nav id="queue-filters" class="filters" aria-label="Filter downloads">
+      <div id="queue-filters" class="filters" role="group" aria-label="Filter downloads">
         <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
         <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
+        <button class="filter" type="button" data-filter="paused" aria-pressed="false">Paused</button>
         <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>
         <button class="filter" type="button" data-filter="completed" aria-pressed="false">Completed</button>
         <button class="filter" type="button" data-filter="failed" aria-pressed="false">Needs attention</button>
-      </nav>
-
-      <div class="queue-status-row">
-        <p id="queue-summary" class="queue-summary" aria-live="polite">No downloads yet.</p>
-        <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
       </div>
-      <section id="job-card" class="queue" aria-label="Download queue" hidden>
-        <div id="job-list"></div>
+
+      <!-- Power mode only. Additive: nothing here duplicates or replaces a
+           control that is available without it. -->
+      <section id="stats-panel" class="card stats" aria-labelledby="stats-title" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">STATISTICS</p>
+            <h2 id="stats-title">This session</h2>
+          </div>
+          <p class="hint" id="stats-note">Throughput observed across active downloads, not a measure of your connection.</p>
+        </div>
+        <dl id="stats-grid" class="stats-grid" aria-describedby="stats-note"></dl>
       </section>
 
-      <p class="tray-note">Closing this window keeps the queue available from the notification area.</p>
+      <div class="queue-status-row">
+        <p id="queue-summary" class="queue-summary">No downloads yet.</p>
+        <div class="queue-bulk-actions">
+          <button id="pause-all" class="secondary" type="button" hidden>Pause all</button>
+          <button id="resume-all" class="secondary" type="button" hidden>Resume all</button>
+          <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
+        </div>
+      </div>
+      <section id="job-card" class="queue" aria-label="Download queue" hidden>
+        <div id="job-list" role="list"></div>
+      </section>
+
+      <p class="tray-note" id="tray-note">Closing this window keeps the queue available from the notification area.</p>
     </main>
+
+    <dialog id="shortcuts-dialog" class="card dialog" aria-labelledby="shortcuts-title">
+      <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+      <dl class="shortcuts">
+        <dt><kbd>Tab</kbd> / <kbd>Shift</kbd> <kbd>Tab</kbd></dt>
+        <dd>Move through every control in reading order.</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>L</kbd></dt>
+        <dd>Focus the download addresses box and select what is in it.</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>,</kbd></dt>
+        <dd>Open Settings.</dd>
+        <dt><kbd>Esc</kbd></dt>
+        <dd>Clear the form, or close this dialog.</dd>
+        <dt><kbd>Enter</kbd></dt>
+        <dd>Add the previewed downloads to the queue from anywhere in the form.</dd>
+        <dt><kbd>Space</kbd></dt>
+        <dd>Toggle a filter, or open Advanced options.</dd>
+      </dl>
+      <div class="dialog-actions">
+        <button id="shortcuts-close" type="button">Close</button>
+      </div>
+    </dialog>
+
+    <dialog id="settings-dialog" class="card dialog settings-dialog" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SETTINGS</p>
+          <h2 id="settings-title">Settings</h2>
+        </div>
+      </div>
+
+      <p id="settings-repaired" class="field-note notice" hidden>
+        Your saved settings could not be read, so Fetchpath started from its defaults. Anything you change here is
+        saved again.
+      </p>
+
+      <form id="settings-form" class="settings-form">
+        <fieldset class="settings-group">
+          <legend>Downloads</legend>
+
+          <label for="setting-concurrency">
+            Downloads at the same time
+            <span class="hint">More at once is not always faster.</span>
+          </label>
+          <div class="range-row">
+            <input id="setting-concurrency" type="range" min="1" max="8" step="1" value="3"
+                   aria-describedby="setting-concurrency-value" />
+            <output id="setting-concurrency-value" for="setting-concurrency">3</output>
+          </div>
+
+          <label for="setting-destination">Default save folder</label>
+          <div class="destination-row">
+            <input id="setting-destination" readonly aria-describedby="setting-destination-hint"
+                   placeholder="Your Windows Downloads folder" />
+            <button id="setting-choose-destination" class="secondary" type="button">
+              Choose<span aria-hidden="true">…</span><span class="sr-only"> a default save folder</span>
+            </button>
+          </div>
+          <p id="setting-destination-hint" class="hint field-note">
+            Used for new downloads and for links sent from your browser.
+          </p>
+          <button id="setting-clear-destination" class="quiet" type="button">Use the Windows Downloads folder</button>
+        </fieldset>
+
+        <fieldset class="settings-group">
+          <legend>When a download fails</legend>
+          <label class="check">
+            <input id="setting-auto-retry" type="checkbox" />
+            <span>Retry connection problems automatically</span>
+          </label>
+          <p class="hint field-note">
+            Only connection problems. A destination conflict, a bad link, or an expired sign-in always waits for you.
+          </p>
+          <label for="setting-retry-attempts">Attempts before giving up</label>
+          <div class="range-row">
+            <input id="setting-retry-attempts" type="range" min="0" max="10" step="1" value="3"
+                   aria-describedby="setting-retry-attempts-value" />
+            <output id="setting-retry-attempts-value" for="setting-retry-attempts">3</output>
+          </div>
+        </fieldset>
+
+        <fieldset class="settings-group">
+          <legend>Video and audio</legend>
+          <p id="media-tools-state" class="field-note">Checking…</p>
+          <p id="media-tools-detail" class="hint field-note"></p>
+          <div class="media-tools-actions">
+            <button id="media-tools-install" class="secondary" type="button">Download and set up</button>
+            <button id="media-tools-locate" class="secondary" type="button">I already have them<span aria-hidden="true">…</span></button>
+          </div>
+          <p id="media-tools-licence" class="hint field-note"></p>
+        </fieldset>
+
+        <fieldset class="settings-group">
+          <legend>Window and appearance</legend>
+          <label class="check">
+            <input id="setting-close-to-tray" type="checkbox" />
+            <span>Keep running in the notification area when I close the window</span>
+          </label>
+          <label class="check">
+            <input id="setting-confirm-remove" type="checkbox" />
+            <span>Ask before removing a finished download from the list</span>
+          </label>
+          <label class="check">
+            <input id="setting-power-mode" type="checkbox" />
+            <span>Power mode: show transfer statistics and diagnostics</span>
+          </label>
+          <label for="setting-theme">Appearance</label>
+          <select id="setting-theme">
+            <option value="system">Match Windows</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </fieldset>
+
+        <p id="settings-error" class="error" hidden></p>
+        <p id="settings-status" class="field-note notice" hidden></p>
+      </form>
+
+      <div class="dialog-actions">
+        <button id="settings-close" type="button">Done</button>
+      </div>
+    </dialog>
   </body>
 </html>

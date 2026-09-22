@@ -89,7 +89,10 @@ function Start-FixtureServer([int] $Size, [int] $DelayMilliseconds) {
             $response.ContentType = 'application/octet-stream'
             $response.ContentLength64 = $Size
             $chunk = [byte[]]::new(16384)
-            [System.Array]::Fill($chunk, [byte] 0x5A)
+            # Filled with a loop rather than [System.Array]::Fill, which does not
+            # exist on .NET Framework and throws under Windows PowerShell 5.1,
+            # killing the fixture listener and surfacing as a download failure.
+            for ($offset = 0; $offset -lt $chunk.Length; $offset++) { $chunk[$offset] = [byte] 0x5A }
             $remaining = $Size
             try {
                 while ($remaining -gt 0) {

@@ -7,10 +7,11 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 ## Information hierarchy
 
 1. **Queue** is the home and primary work surface: status, progress, remaining time, destination, and one clear next action per item.
-2. **Add link** is the primary command. It opens a focused dialog; pasted links are reviewed before starting.
+2. **Add link** is the primary command. It is an inline composer rather than a dialog: the queue below stays visible while a link is reviewed, which is what a user pasting several links in a row actually needs. `Ctrl+L` focuses it from anywhere, and pasted links are always reviewed before starting.
 3. **Item actions** are contextual: pause/resume, open destination when available, remove/cancel. Destructive actions require a confirmation only when completed files would be deleted.
 4. **Filters** reduce a long queue without moving items elsewhere: All, Active, Completed, Failed.
-5. **Power mode** exposes diagnostic and transfer details inline. It does not duplicate the normal workflow or make basic controls disappear.
+5. **Power mode** exposes diagnostic and transfer details inline, plus a session statistics panel above the queue. It is off by default, it is turned on in Settings, and it is strictly additive: nothing it shows replaces or moves a control that is available without it.
+6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
 
 ## Core journeys
 
@@ -36,13 +37,28 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 
 | State | Plain-language presentation | Available action |
 | --- | --- | --- |
-| Queued | “Waiting for available connection” | Start now, remove |
-| Connecting | “Checking source…” | Cancel |
-| Downloading | Progress, speed, time remaining | Pause |
-| Paused | “Paused” | Resume, remove |
-| Completed | “Saved to Downloads” | Open folder, remove from list |
-| Failed | Specific reason plus recovery | Retry, edit, copy details |
-| Offline | “You’re offline. Downloads will resume when connected.” | Retry when online |
+| Scheduled | “Scheduled for &lt;time&gt;” | Start now, pause, cancel |
+| Queued | “Queued” | Pause, cancel |
+| Downloading | Percent, received of total, speed, time remaining | Pause, cancel |
+| Paused | “Paused”, with the bytes already verified | Resume, cancel |
+| Cancelling | “Cancelling…” | none while it unwinds |
+| Complete | “Complete”, with the observed SHA-256 | Open folder, copy path, remove from list |
+| Needs attention | Specific reason plus one next action | Retry, edit link, choose new path, set up media tools |
+| Link needed | The private source was not saved | Paste a refreshed link, or re-send from the browser |
+
+**Progress is only ever reported from engine-confirmed numbers.** A source that
+states no length produces no percentage and no remaining time; the row shows the
+bytes received and says the total is unknown, and the bar stays indeterminate.
+Filling a bar from the bytes received so far would read as complete from the
+first chunk onward.
+
+**Pause is offered only where it can be honoured.** A file download pauses to its
+retained checkpoint and resumes from that offset. A media download has no such
+checkpoint, so pause is not offered on those rows rather than offered and then
+refused.
+
+Offline is not yet a modelled state; a connection failure appears as a transport
+failure with a retry, and automatic retry is the setting that governs it.
 
 Avoid “success” until the file is safely written and verified by the engine. Avoid “unsupported” without naming the limitation where known.
 

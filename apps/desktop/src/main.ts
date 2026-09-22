@@ -1,22 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 
 type JobState =
   | "scheduled"
   | "queued"
   | "running"
+  | "paused"
   | "cancelling"
   | "completed"
   | "cancelled"
   | "failed"
   | "needs_source";
-type QueueFilter = "all" | "active" | "scheduled" | "completed" | "failed";
+type QueueFilter = "all" | "active" | "paused" | "scheduled" | "completed" | "failed";
 
 interface JobSnapshot {
   jobId: string;
   source: string;
   state: JobState;
   bytesReceived: number;
+  /** Absent whenever the source never stated a length. Never guessed. */
+  totalBytes: number | null;
+  bytesPerSecond: number | null;
+  etaSeconds: number | null;
+  attempt: number;
   destination: string | null;
   observedSha256: string | null;
   cleanupPending: boolean;
@@ -51,6 +57,61 @@ interface MediaInspection {
   variants: MediaVariant[];
 }
 
+interface Settings {
+  maxActiveDownloads: number;
+  defaultDestinationDir: string | null;
+  autoRetry: boolean;
+  autoRetryMaxAttempts: number;
+  autoRetryBaseDelaySeconds: number;
+  closeToTray: boolean;
+  powerMode: boolean;
+  mediaToolsDir: string | null;
+  confirmRemoveCompleted: boolean;
+  theme: "system" | "light" | "dark";
+  onboardingCompleted: boolean;
+}
+
+interface SettingsView {
+  settings: Settings;
+  repaired: boolean;
+  maxActiveLimit: number;
+  maxRetryAttempts: number;
+  systemDownloadDir: string | null;
+}
+
+interface QueueStats {
+  running: number;
+  queued: number;
+  scheduled: number;
+  paused: number;
+  completed: number;
+  failed: number;
+  activeBytes: number;
+  completedBytes: number;
+  combinedBytesPerSecond: number;
+  maxActiveDownloads: number;
+}
+
+interface AvailableTool {
+  name: string;
+  version: string;
+  url: string;
+  checksumSource: string;
+  license: string;
+  pinned: boolean;
+}
+
+interface ToolsStatus {
+  ready: boolean;
+  ytDlpPath: string | null;
+  ffmpegDir: string | null;
+  ytDlpVersion: string | null;
+  ffmpegVersion: string | null;
+  installDir: string;
+  available: AvailableTool[];
+  problem: string | null;
+}
+
 const form = required<HTMLFormElement>("download-form");
 const urlInput = required<HTMLTextAreaElement>("url");
 const destinationInput = required<HTMLInputElement>("destination");
@@ -66,14 +127,60 @@ const queueSearch = required<HTMLInputElement>("queue-search");
 const queueFilters = required<HTMLElement>("queue-filters");
 const queueSummary = required<HTMLParagraphElement>("queue-summary");
 const cancelCurrentButton = required<HTMLButtonElement>("cancel-download");
+const pauseAllButton = required<HTMLButtonElement>("pause-all");
+const resumeAllButton = required<HTMLButtonElement>("resume-all");
 const jobCard = required<HTMLElement>("job-card");
 const jobList = required<HTMLDivElement>("job-list");
 const activeCount = required<HTMLElement>("active-count");
 const kindChooser = required<HTMLFieldSetElement>("download-kind");
 const mediaOptions = required<HTMLElement>("media-options");
+const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
+const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
+const mediaOpenSettings = required<HTMLButtonElement>("media-open-settings");
 const inspectMediaButton = required<HTMLButtonElement>("inspect-media");
 const mediaQuality = required<HTMLSelectElement>("media-quality");
 const mediaTitle = required<HTMLParagraphElement>("media-title");
+const formNotice = required<HTMLParagraphElement>("form-notice");
+const liveStatus = required<HTMLParagraphElement>("live-status");
+const liveAlert = required<HTMLParagraphElement>("live-alert");
+const activeStatText = required<HTMLElement>("active-stat-text");
+const queueTitle = required<HTMLHeadingElement>("queue-title");
+const keyboardHelpButton = required<HTMLButtonElement>("keyboard-help");
+const shortcutsDialog = required<HTMLDialogElement>("shortcuts-dialog");
+const shortcutsCloseButton = required<HTMLButtonElement>("shortcuts-close");
+const trayNote = required<HTMLParagraphElement>("tray-note");
+
+const onboarding = required<HTMLElement>("onboarding");
+const dismissOnboarding = required<HTMLButtonElement>("dismiss-onboarding");
+const onboardingOpenMedia = required<HTMLButtonElement>("onboarding-open-media");
+
+const statsPanel = required<HTMLElement>("stats-panel");
+const statsGrid = required<HTMLDListElement>("stats-grid");
+
+const openSettingsButton = required<HTMLButtonElement>("open-settings");
+const settingsDialog = required<HTMLDialogElement>("settings-dialog");
+const settingsCloseButton = required<HTMLButtonElement>("settings-close");
+const settingsForm = required<HTMLFormElement>("settings-form");
+const settingsError = required<HTMLParagraphElement>("settings-error");
+const settingsStatus = required<HTMLParagraphElement>("settings-status");
+const settingsRepaired = required<HTMLParagraphElement>("settings-repaired");
+const concurrencyInput = required<HTMLInputElement>("setting-concurrency");
+const concurrencyValue = required<HTMLOutputElement>("setting-concurrency-value");
+const settingDestination = required<HTMLInputElement>("setting-destination");
+const settingChooseDestination = required<HTMLButtonElement>("setting-choose-destination");
+const settingClearDestination = required<HTMLButtonElement>("setting-clear-destination");
+const autoRetryInput = required<HTMLInputElement>("setting-auto-retry");
+const retryAttemptsInput = required<HTMLInputElement>("setting-retry-attempts");
+const retryAttemptsValue = required<HTMLOutputElement>("setting-retry-attempts-value");
+const closeToTrayInput = required<HTMLInputElement>("setting-close-to-tray");
+const confirmRemoveInput = required<HTMLInputElement>("setting-confirm-remove");
+const powerModeInput = required<HTMLInputElement>("setting-power-mode");
+const themeSelect = required<HTMLSelectElement>("setting-theme");
+const mediaToolsState = required<HTMLParagraphElement>("media-tools-state");
+const mediaToolsDetail = required<HTMLParagraphElement>("media-tools-detail");
+const mediaToolsLicence = required<HTMLParagraphElement>("media-tools-licence");
+const mediaToolsInstall = required<HTMLButtonElement>("media-tools-install");
+const mediaToolsLocate = required<HTMLButtonElement>("media-tools-locate");
 
 let jobs: JobSnapshot[] = [];
 let selectedFilter: QueueFilter = "all";
@@ -82,6 +189,312 @@ let refreshRunning = false;
 let refreshTimer = 0;
 let mediaInspection: MediaInspection | null = null;
 let inspectedMediaUrl = "";
+let renderedQueueSignature = "";
+let announcedStatus = "";
+let announcedAlert = "";
+let dialogOpener: HTMLElement | null = null;
+let composerFocus: HTMLElement | null = null;
+let observedStates = new Map<string, JobState>();
+/// True while the destination still holds Fetchpath's own suggestion rather
+/// than something the user typed or picked.
+let destinationIsSuggested = true;
+
+let settingsView: SettingsView | null = null;
+let toolsStatus: ToolsStatus | null = null;
+let systemDownloadDir: string | null = null;
+let defaultDestinationDir: string | null = null;
+
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+/**
+ * Polite announcements. The queue polls several times a second, so the same
+ * sentence is never re-sent: a screen reader would otherwise repeat it forever.
+ */
+function announce(message: string): void {
+  if (!message || message === announcedStatus) return;
+  announcedStatus = message;
+  liveStatus.textContent = message;
+}
+
+/** Assertive announcements, reserved for problems the user has to act on. */
+function announceProblem(message: string): void {
+  if (!message) return;
+  announcedAlert = message;
+  liveAlert.textContent = "";
+  window.setTimeout(() => {
+    if (announcedAlert === message) liveAlert.textContent = message;
+  }, 40);
+}
+
+function setQueueSummary(message: string): void {
+  queueSummary.textContent = message;
+  announce(message);
+}
+
+function scrollTo(element: HTMLElement): void {
+  element.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "start" });
+}
+
+/* Dialogs ------------------------------------------------------------------
+   `<dialog>` traps focus natively while modal. Every open records its trigger
+   and every close restores it, including the Escape path, so keyboard focus is
+   never dropped onto the document body. */
+
+function openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void {
+  dialogOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  dialog.showModal();
+  focus.focus();
+}
+
+function restoreDialogFocus(fallback: HTMLElement): void {
+  (dialogOpener ?? fallback).focus();
+  dialogOpener = null;
+}
+
+keyboardHelpButton.addEventListener("click", () => openDialog(shortcutsDialog, shortcutsCloseButton));
+shortcutsCloseButton.addEventListener("click", () => shortcutsDialog.close());
+shortcutsDialog.addEventListener("close", () => restoreDialogFocus(keyboardHelpButton));
+
+openSettingsButton.addEventListener("click", () => void showSettings());
+settingsCloseButton.addEventListener("click", () => settingsDialog.close());
+settingsDialog.addEventListener("close", () => restoreDialogFocus(openSettingsButton));
+
+// Every setting saves the moment it changes, so the settings form has nothing
+// to submit. Without this, Enter in the folder field triggers implicit
+// submission, which navigates the webview away from the application.
+settingsForm.addEventListener("submit", (event) => event.preventDefault());
+
+async function showSettings(): Promise<void> {
+  clearError(settingsError);
+  openDialog(settingsDialog, settingsCloseButton);
+  await Promise.all([loadSettings(), refreshToolsStatus()]);
+}
+
+/* Settings ---------------------------------------------------------------- */
+
+async function loadSettings(): Promise<void> {
+  try {
+    settingsView = await invoke<SettingsView>("get_settings");
+    applySettingsToForm(settingsView);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+}
+
+function applySettingsToForm(view: SettingsView): void {
+  const { settings } = view;
+  systemDownloadDir = view.systemDownloadDir;
+  defaultDestinationDir = settings.defaultDestinationDir ?? view.systemDownloadDir;
+
+  settingsRepaired.hidden = !view.repaired;
+  concurrencyInput.max = String(view.maxActiveLimit);
+  concurrencyInput.value = String(settings.maxActiveDownloads);
+  concurrencyValue.textContent = String(settings.maxActiveDownloads);
+  retryAttemptsInput.max = String(view.maxRetryAttempts);
+  retryAttemptsInput.value = String(settings.autoRetryMaxAttempts);
+  retryAttemptsValue.textContent = String(settings.autoRetryMaxAttempts);
+  retryAttemptsInput.disabled = !settings.autoRetry;
+
+  settingDestination.value = settings.defaultDestinationDir ?? "";
+  settingDestination.placeholder = view.systemDownloadDir ?? "Your Windows Downloads folder";
+  settingClearDestination.hidden = !settings.defaultDestinationDir;
+
+  autoRetryInput.checked = settings.autoRetry;
+  closeToTrayInput.checked = settings.closeToTray;
+  confirmRemoveInput.checked = settings.confirmRemoveCompleted;
+  powerModeInput.checked = settings.powerMode;
+  themeSelect.value = settings.theme;
+
+  applyTheme(settings.theme);
+  statsPanel.hidden = !settings.powerMode;
+  onboarding.hidden = settings.onboardingCompleted;
+  trayNote.textContent = settings.closeToTray
+    ? "Closing this window keeps the queue available from the notification area."
+    : "Closing this window stops Fetchpath. Downloads in progress are paused at their last checkpoint.";
+}
+
+/** Windows' own setting decides unless the user chose a specific appearance. */
+function applyTheme(theme: Settings["theme"]): void {
+  if (theme === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+}
+
+/** Sends one changed field, then re-applies whatever the backend accepted. */
+async function changeSetting(patch: Partial<Settings>, note?: string): Promise<void> {
+  if (!settingsView) return;
+  clearError(settingsError);
+  const next = { ...settingsView.settings, ...patch };
+  try {
+    settingsView = await invoke<SettingsView>("update_settings", { next });
+    applySettingsToForm(settingsView);
+    if (note) {
+      settingsStatus.textContent = note;
+      settingsStatus.hidden = false;
+      announce(note);
+    }
+    await refreshQueue();
+  } catch (error) {
+    showError(settingsError, error);
+    // The backend refused, so the control must go back to the stored value
+    // rather than showing a change that did not happen.
+    applySettingsToForm(settingsView);
+  }
+}
+
+concurrencyInput.addEventListener("input", () => {
+  concurrencyValue.textContent = concurrencyInput.value;
+});
+concurrencyInput.addEventListener("change", () => {
+  void changeSetting({ maxActiveDownloads: Number(concurrencyInput.value) });
+});
+
+retryAttemptsInput.addEventListener("input", () => {
+  retryAttemptsValue.textContent = retryAttemptsInput.value;
+});
+retryAttemptsInput.addEventListener("change", () => {
+  void changeSetting({ autoRetryMaxAttempts: Number(retryAttemptsInput.value) });
+});
+
+autoRetryInput.addEventListener("change", () => void changeSetting({ autoRetry: autoRetryInput.checked }));
+closeToTrayInput.addEventListener("change", () => void changeSetting({ closeToTray: closeToTrayInput.checked }));
+confirmRemoveInput.addEventListener("change", () =>
+  void changeSetting({ confirmRemoveCompleted: confirmRemoveInput.checked }),
+);
+powerModeInput.addEventListener("change", () => void changeSetting({ powerMode: powerModeInput.checked }));
+themeSelect.addEventListener("change", () => void changeSetting({ theme: themeSelect.value as Settings["theme"] }));
+
+settingChooseDestination.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    const selected = await open({
+      directory: true,
+      title: "Choose the default save folder",
+      defaultPath: settingDestination.value || systemDownloadDir || undefined,
+    });
+    if (typeof selected === "string") {
+      await changeSetting({ defaultDestinationDir: selected }, "Default save folder updated.");
+    }
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+settingClearDestination.addEventListener("click", () => {
+  void changeSetting({ defaultDestinationDir: null }, "New downloads will use your Windows Downloads folder.");
+});
+
+dismissOnboarding.addEventListener("click", () => {
+  onboarding.hidden = true;
+  void changeSettingWithoutDialog({ onboardingCompleted: true });
+  openSettingsButton.focus({ preventScroll: true });
+});
+
+onboardingOpenMedia.addEventListener("click", () => void showSettings());
+mediaOpenSettings.addEventListener("click", () => void showSettings());
+
+/** Settings changed from outside the dialog, where there is no form to update. */
+async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<void> {
+  if (!settingsView) return;
+  try {
+    settingsView = await invoke<SettingsView>("update_settings", { next: { ...settingsView.settings, ...patch } });
+    applySettingsToForm(settingsView);
+  } catch {
+    // A failed preference write is not worth interrupting the queue for; the
+    // panel will show the stored value again the next time it opens.
+  }
+}
+
+/* Media tools ------------------------------------------------------------- */
+
+async function refreshToolsStatus(): Promise<void> {
+  try {
+    toolsStatus = await invoke<ToolsStatus>("media_tools_status");
+    renderToolsStatus(toolsStatus);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+  updateMediaAvailability();
+}
+
+function renderToolsStatus(status: ToolsStatus): void {
+  mediaToolsState.dataset.ready = String(status.ready);
+  if (status.ready) {
+    mediaToolsState.textContent = "Ready to save video and audio";
+    mediaToolsDetail.textContent = [status.ytDlpVersion, status.ffmpegVersion]
+      .filter(Boolean)
+      .join(" · ") || status.installDir;
+  } else if (status.problem) {
+    mediaToolsState.textContent = "Found, but they would not run";
+    mediaToolsDetail.textContent = status.problem;
+  } else {
+    mediaToolsState.textContent = "Not set up yet";
+    mediaToolsDetail.textContent =
+      "Fetchpath does not include yt-dlp or ffmpeg. Download them here, or point Fetchpath at a folder that already has them.";
+  }
+
+  // Only offer the download when this build actually carries a checksum to
+  // check the result against. Otherwise the honest offer is the manual one.
+  const unpinned = status.available.filter((tool) => !tool.pinned);
+  mediaToolsInstall.disabled = status.ready || unpinned.length > 0;
+  mediaToolsInstall.textContent = status.ready ? "Already set up" : "Download and set up";
+
+  if (unpinned.length && !status.ready) {
+    mediaToolsLicence.textContent =
+      `This build has no recorded checksum for ${unpinned.map((tool) => tool.name).join(" and ")}, ` +
+      "so Fetchpath will not download it. Install it yourself and choose the folder below.";
+  } else {
+    mediaToolsLicence.textContent = status.available
+      .map((tool) => `${tool.name} ${tool.version} — ${tool.license}`)
+      .join(" · ");
+  }
+}
+
+mediaToolsInstall.addEventListener("click", async () => {
+  clearError(settingsError);
+  mediaToolsInstall.disabled = true;
+  mediaToolsInstall.textContent = "Downloading…";
+  announce("Downloading the media tools. This can take a minute.");
+  try {
+    toolsStatus = await invoke<ToolsStatus>("install_media_tools");
+    renderToolsStatus(toolsStatus);
+    announce(toolsStatus.ready ? "Media tools are ready." : "The media tools were not set up.");
+  } catch (error) {
+    showError(settingsError, error);
+    if (toolsStatus) renderToolsStatus(toolsStatus);
+  } finally {
+    updateMediaAvailability();
+    if (mediaToolsInstall.isConnected && !mediaToolsInstall.disabled) {
+      mediaToolsInstall.focus({ preventScroll: true });
+    }
+  }
+});
+
+mediaToolsLocate.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    const selected = await open({
+      directory: true,
+      title: "Choose the folder that holds yt-dlp and ffmpeg",
+      defaultPath: toolsStatus?.installDir,
+    });
+    if (typeof selected !== "string") return;
+    toolsStatus = await invoke<ToolsStatus>("use_media_tools_dir", { directory: selected });
+    renderToolsStatus(toolsStatus);
+    updateMediaAvailability();
+    announce(toolsStatus.ready ? "Media tools are ready." : "Those programs could not be used.");
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+/** Swaps the composer's media section between "set these up" and "inspect". */
+function updateMediaAvailability(): void {
+  const ready = toolsStatus?.ready ?? false;
+  mediaSetupNeeded.hidden = ready;
+  mediaInspectControls.hidden = !ready;
+}
+
+/* Composer ---------------------------------------------------------------- */
 
 kindChooser.addEventListener("change", () => {
   mediaInspection = null;
@@ -93,6 +506,7 @@ kindChooser.addEventListener("change", () => {
   mediaOptions.hidden = !media;
   urlInput.rows = media ? 2 : 3;
   urlInput.placeholder = media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
+  if (media && !toolsStatus) void refreshToolsStatus();
   renderPreview();
 });
 
@@ -103,8 +517,10 @@ inspectMediaButton.addEventListener("click", async () => {
     showError(formError, "Enter one media address to inspect.");
     return;
   }
+  const wasFocused = document.activeElement === inspectMediaButton;
   inspectMediaButton.disabled = true;
   inspectMediaButton.textContent = "Inspecting…";
+  announce("Inspecting the media link.");
   try {
     const inspection = await invoke<MediaInspection>("inspect_media", { url: urls[0] });
     mediaInspection = inspection;
@@ -116,13 +532,22 @@ inspectMediaButton.addEventListener("click", async () => {
       : inspection.title;
     if (!destinationInput.value.trim()) setMediaDestination(inspection.variants[0]);
     renderPreview();
+    announce(
+      inspection.variants.length === 1
+        ? "1 quality is available. Choose it in the Quality list."
+        : `${inspection.variants.length} qualities are available. Choose one in the Quality list.`,
+    );
   } catch (error) {
     mediaInspection = null;
     inspectedMediaUrl = "";
     showError(formError, error);
+    // The helpers may have gone missing since the last check; re-reading the
+    // status turns a repeated failure into the setup path.
+    void refreshToolsStatus();
   } finally {
     inspectMediaButton.disabled = false;
     inspectMediaButton.textContent = "Inspect link";
+    if (wasFocused) inspectMediaButton.focus({ preventScroll: true });
   }
 });
 
@@ -135,12 +560,18 @@ mediaQuality.addEventListener("change", () => {
 chooseButton.addEventListener("click", async () => {
   clearError(formError);
   try {
+    const suggested = destinationInput.value || suggestedFilename(parseUrls()[0] ?? "");
     const selected = await save({
       title: "Save download as",
-      defaultPath: destinationInput.value || suggestedFilename(parseUrls()[0] ?? ""),
+      // Opens in the user's chosen folder rather than wherever Windows last
+      // left the picker.
+      defaultPath: suggested.includes("\\") || suggested.includes("/")
+        ? suggested
+        : joinPath(defaultDestinationDir, suggested),
     });
     if (selected) {
       destinationInput.value = selected;
+      destinationIsSuggested = false;
       renderPreview();
     }
   } catch (error) {
@@ -167,7 +598,46 @@ urlInput.addEventListener("input", () => {
     mediaQuality.disabled = true;
     mediaTitle.textContent = "";
   }
+  suggestDestination();
 });
+
+/**
+ * Fills the destination in from the first address, so the common case needs no
+ * picker at all.
+ *
+ * Two rules keep the suggestion from getting in the way. It only runs while the
+ * destination is still Fetchpath's own suggestion — the moment the user edits
+ * it or picks a folder, it is theirs and is never overwritten. And it only runs
+ * once the address parses as a real URL: recomputing on every keystroke would
+ * settle on `download.bin` from the first character typed and then never
+ * correct itself, because from the second character the field is no longer
+ * empty.
+ */
+function suggestDestination(): void {
+  if (!destinationIsSuggested || downloadKind() !== "file") return;
+  const first = parseUrls()[0];
+  if (!first) {
+    destinationInput.value = "";
+    return;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(first);
+  } catch {
+    // Not a usable address yet. Leave whatever the last good suggestion was
+    // rather than replacing it with a placeholder.
+    return;
+  }
+  if (!parsed.protocol) return;
+  destinationInput.value = joinPath(defaultDestinationDir, suggestedFilename(first));
+}
+
+// Any edit to the destination, by typing or by picking, makes it the user's.
+for (const eventName of ["input", "change"] as const) {
+  destinationInput.addEventListener(eventName, () => {
+    destinationIsSuggested = false;
+  });
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -206,7 +676,8 @@ form.addEventListener("submit", async (event) => {
     }
     const count = drafts.length;
     clearComposer();
-    queueSummary.textContent = count === 1 ? "Added 1 download to the queue." : `Added ${count} downloads to the queue.`;
+    renderedQueueSignature = "";
+    setQueueSummary(count === 1 ? "Added 1 download to the queue." : `Added ${count} downloads to the queue.`);
     await refreshQueue();
   } catch (error) {
     showError(formError, error);
@@ -214,6 +685,8 @@ form.addEventListener("submit", async (event) => {
     setComposerAvailability(true);
   }
 });
+
+/* Queue controls ---------------------------------------------------------- */
 
 queueFilters.addEventListener("click", (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-filter]");
@@ -224,6 +697,8 @@ queueFilters.addEventListener("click", (event) => {
     candidate.classList.toggle("is-selected", selected);
     candidate.setAttribute("aria-pressed", String(selected));
   }
+  // The pressed state is announced by the button itself, and `renderQueue`
+  // announces the resulting count, so nothing extra is pushed here.
   renderQueue();
 });
 
@@ -240,8 +715,46 @@ cancelCurrentButton.addEventListener("click", async () => {
     showError(formError, error);
   } finally {
     cancelCurrentButton.disabled = false;
+    // The button disappears once nothing is running, so focus moves to the
+    // queue heading rather than being lost with it.
+    if (cancelCurrentButton.hidden) queueTitle.focus({ preventScroll: true });
+    else cancelCurrentButton.focus({ preventScroll: true });
   }
 });
+
+pauseAllButton.addEventListener("click", () => void bulkPauseOrResume("pause"));
+resumeAllButton.addEventListener("click", () => void bulkPauseOrResume("resume"));
+
+/**
+ * Pauses or resumes every eligible file download.
+ *
+ * Failures are counted rather than thrown: one row that has already finished
+ * must not stop the rest, and the summary says how many actually moved.
+ */
+async function bulkPauseOrResume(mode: "pause" | "resume"): Promise<void> {
+  const button = mode === "pause" ? pauseAllButton : resumeAllButton;
+  const targets = jobs.filter((job) =>
+    mode === "pause"
+      ? job.kind === "file" && ["running", "queued", "scheduled"].includes(job.state)
+      : job.state === "paused",
+  );
+  if (!targets.length) return;
+  button.disabled = true;
+  let moved = 0;
+  for (const job of targets) {
+    try {
+      await invoke(mode === "pause" ? "pause_download" : "resume_download", { jobId: job.jobId });
+      moved += 1;
+    } catch {
+      // Already finished, or no longer eligible. The next refresh shows why.
+    }
+  }
+  button.disabled = false;
+  await refreshQueue();
+  const verb = mode === "pause" ? "paused" : "resumed";
+  setQueueSummary(moved === 1 ? `1 download ${verb}.` : `${moved} downloads ${verb}.`);
+  if (button.hidden) queueTitle.focus({ preventScroll: true });
+}
 
 jobList.addEventListener("click", async (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action][data-job-id]");
@@ -254,6 +767,12 @@ jobList.addEventListener("click", async (event) => {
     switch (button.dataset.action) {
       case "cancel":
         await invoke("cancel_download", { jobId });
+        break;
+      case "pause":
+        await invoke("pause_download", { jobId });
+        break;
+      case "resume":
+        await invoke("resume_download", { jobId });
         break;
       case "start-now":
         await invoke("start_now", { jobId });
@@ -273,13 +792,30 @@ jobList.addEventListener("click", async (event) => {
         beginEdit(job);
         return;
       case "recapture":
-        queueSummary.textContent = "Open the source in your browser and choose Send link to Fetchpath again.";
+        setQueueSummary("Open the source in your browser and choose Send link to Fetchpath again.");
+        return;
+      case "configure-media":
+        await showSettings();
+        return;
+      case "open-folder":
+        await invoke("reveal_download", { jobId });
+        setQueueSummary("Opened the folder in File Explorer.");
         return;
       case "copy-path":
         if (job.destination) await navigator.clipboard.writeText(job.destination);
-        queueSummary.textContent = "Destination copied.";
+        setQueueSummary("Destination copied.");
         break;
       case "remove":
+        if (
+          job.state === "completed" &&
+          settingsView?.settings.confirmRemoveCompleted &&
+          !window.confirm(
+            `Remove ${filename(job.destination) || "this download"} from the list?\n\n` +
+              "The downloaded file stays on your computer.",
+          )
+        ) {
+          return;
+        }
         await invoke("remove_download", { jobId });
         break;
     }
@@ -288,20 +824,28 @@ jobList.addEventListener("click", async (event) => {
     showError(formError, error);
   } finally {
     button.disabled = false;
+    if (button.isConnected) button.focus({ preventScroll: true });
   }
 });
 
 document.addEventListener("keydown", (event) => {
+  // While a dialog is modal it owns Escape and every other key.
+  if (shortcutsDialog.open || settingsDialog.open) return;
   if (event.ctrlKey && event.key.toLowerCase() === "l") {
     event.preventDefault();
     urlInput.focus();
     urlInput.select();
+  } else if (event.ctrlKey && event.key === ",") {
+    event.preventDefault();
+    void showSettings();
   } else if (event.key === "Escape" && (editingJobId || urlInput.value || destinationInput.value)) {
     event.preventDefault();
     clearComposer();
     startButton.focus();
   }
 });
+
+/* Rendering --------------------------------------------------------------- */
 
 function buildDrafts(): JobDraft[] {
   const urls = parseUrls();
@@ -345,11 +889,44 @@ async function refreshQueue(): Promise<void> {
   try {
     jobs = await invoke<JobSnapshot[]>("list_downloads");
     renderQueue();
+    if (settingsView?.settings.powerMode) await refreshStats();
   } catch (error) {
-    queueSummary.textContent = typeof error === "string" ? error : "Could not refresh the queue.";
+    showError(formError, typeof error === "string" ? error : "Could not refresh the queue.");
   } finally {
     refreshRunning = false;
   }
+}
+
+async function refreshStats(): Promise<void> {
+  try {
+    renderStats(await invoke<QueueStats>("queue_stats"));
+  } catch {
+    // The queue itself is the source of truth on screen; a missing statistics
+    // read is not worth an error banner over the whole page.
+  }
+}
+
+function renderStats(stats: QueueStats): void {
+  const entries: Array<[string, string]> = [
+    ["Combined speed", stats.combinedBytesPerSecond ? `${formatBytes(stats.combinedBytesPerSecond)}/s` : "—"],
+    ["Running", `${stats.running} of ${stats.maxActiveDownloads}`],
+    ["Waiting", String(stats.queued + stats.scheduled)],
+    ["Paused", String(stats.paused)],
+    ["Received now", formatBytes(stats.activeBytes)],
+    ["Finished", `${stats.completed} · ${formatBytes(stats.completedBytes)}`],
+    ["Needs attention", String(stats.failed)],
+  ];
+  statsGrid.replaceChildren(
+    ...entries.map(([term, value]) => {
+      const group = document.createElement("div");
+      const dt = document.createElement("dt");
+      dt.textContent = term;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      group.append(dt, dd);
+      return group;
+    }),
+  );
 }
 
 function renderQueue(): void {
@@ -358,35 +935,114 @@ function renderQueue(): void {
     : null;
   const active = jobs.filter((job) => isActive(job.state)).length;
   activeCount.textContent = String(active);
+  activeStatText.textContent =
+    active === 0 ? "No downloads are active." : active === 1 ? "1 download active now." : `${active} downloads active now.`;
+
   const current = jobs.find((job) => ["running", "queued", "scheduled", "cancelling"].includes(job.state));
   cancelCurrentButton.hidden = !current;
   cancelCurrentButton.disabled = current?.state === "cancelling";
   cancelCurrentButton.textContent = current?.state === "cancelling" ? "Cancelling…" : "Cancel current download";
+  if (current) {
+    cancelCurrentButton.setAttribute(
+      "aria-label",
+      `Cancel the current download, ${filename(current.destination) || "download"}`,
+    );
+  } else {
+    cancelCurrentButton.removeAttribute("aria-label");
+  }
+
+  const pausable = jobs.filter((job) => job.kind === "file" && ["running", "queued", "scheduled"].includes(job.state));
+  const resumable = jobs.filter((job) => job.state === "paused");
+  pauseAllButton.hidden = pausable.length < 2;
+  resumeAllButton.hidden = resumable.length < 2;
+  pauseAllButton.textContent = `Pause all (${pausable.length})`;
+  resumeAllButton.textContent = `Resume all (${resumable.length})`;
+
   const query = queueSearch.value.trim().toLocaleLowerCase();
   const visible = jobs.filter((job) => matchesFilter(job, selectedFilter) && matchesSearch(job, query));
   jobCard.hidden = visible.length === 0;
-  jobList.replaceChildren();
+
   if (!jobs.length) {
-    queueSummary.textContent = "No downloads yet. Add a link to begin.";
+    setQueueSummary("No downloads yet. Add a link to begin.");
   } else if (!visible.length) {
-    queueSummary.textContent = "No downloads match this view.";
+    setQueueSummary("No downloads match this view.");
   } else {
-    queueSummary.textContent = `${visible.length} of ${jobs.length} downloads shown. ${active} active.`;
+    setQueueSummary(`${visible.length} of ${jobs.length} downloads shown. ${active} active.`);
   }
+
+  // Announced after the summary so a finished or failed download is the last
+  // thing queued for the polite region rather than being overwritten by it.
+  announceStateChanges();
+
+  // The queue is polled several times a second. Rebuilding identical cards would
+  // churn the accessibility tree and steal keyboard focus, so it only rebuilds
+  // when something structural has changed. Progress, speed and remaining time
+  // change constantly and are written into the existing cards instead.
+  const signature = JSON.stringify([selectedFilter, query, visible.map(queueRowSignature)]);
+  if (signature === renderedQueueSignature) {
+    updateLiveMetrics(visible);
+    return;
+  }
+  renderedQueueSignature = signature;
+
+  jobList.replaceChildren();
   visible.forEach((job, index) => jobList.append(createJobCard(job, index === 0)));
-  if (focusedAction?.jobId && focusedAction.action) {
-    const replacement = Array.from(jobList.querySelectorAll<HTMLButtonElement>("button[data-job-id][data-action]")).find(
-      (button) => button.dataset.jobId === focusedAction.jobId && button.dataset.action === focusedAction.action,
-    );
-    replacement?.focus({ preventScroll: true });
+  if (!focusedAction?.jobId || !focusedAction.action) return;
+  const replacement = Array.from(jobList.querySelectorAll<HTMLButtonElement>("button[data-job-id][data-action]")).find(
+    (button) => button.dataset.jobId === focusedAction.jobId && button.dataset.action === focusedAction.action,
+  );
+  if (replacement) {
+    replacement.focus({ preventScroll: true });
+  } else {
+    // The control the user was on is gone, so focus lands on a stable heading
+    // instead of falling back to the document body.
+    queueTitle.focus({ preventScroll: true });
+  }
+}
+
+/**
+ * Structural identity of a row.
+ *
+ * Deliberately excludes the byte count, rate and remaining time. Those change
+ * on every poll, and including them would rebuild every card several times a
+ * second, which is what `updateLiveMetrics` exists to avoid. Whether a total is
+ * known *is* included, because that changes the shape of the row.
+ */
+function queueRowSignature(job: JobSnapshot): string {
+  return [
+    job.jobId,
+    job.state,
+    job.totalBytes === null ? "no-total" : "total",
+    job.destination ?? "",
+    job.observedSha256 ?? "",
+    job.error ?? "",
+    job.action ?? "",
+    job.notBeforeMs ?? "",
+    job.qualityLabel ?? "",
+    job.attempt,
+  ].join("\u0001");
+}
+
+/** Writes changing measurements into cards that are already on screen. */
+function updateLiveMetrics(visible: JobSnapshot[]): void {
+  for (const job of visible) {
+    const card = jobList.querySelector<HTMLElement>(`[data-job-id="${CSS.escape(job.jobId)}"]`);
+    if (!card) continue;
+    const progress = card.querySelector("progress");
+    if (progress) applyProgress(progress, job);
+    const metrics = card.querySelector<HTMLElement>(".metrics");
+    if (metrics) metrics.replaceChildren(...metricSpans(job));
   }
 }
 
 function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
+  const name = filename(job.destination) || "Download";
   const article = document.createElement("article");
   article.className = "card job";
   article.dataset.state = job.state;
   article.dataset.jobId = job.jobId;
+  article.setAttribute("role", "listitem");
+  article.setAttribute("aria-label", `${name}, ${stateLabel(job.state)}`);
 
   const header = document.createElement("header");
   header.className = "job-header";
@@ -395,14 +1051,13 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   source.className = "job-source";
   source.textContent = job.source;
   const heading = document.createElement("h3");
-  heading.textContent = filename(job.destination) || "Download";
+  heading.textContent = name;
   titleWrap.append(heading, source);
   const status = document.createElement("output");
   status.className = "status";
   status.dataset.state = job.state;
   status.textContent = stateLabel(job.state);
   if (primary) status.id = "job-status";
-  status.setAttribute("aria-live", "polite");
   header.append(titleWrap, status);
   article.append(header);
 
@@ -421,27 +1076,29 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   }
 
   const progress = document.createElement("progress");
-  progress.setAttribute("aria-label", `Progress for ${heading.textContent}`);
+  progress.setAttribute("aria-label", `Progress for ${name}`);
   if (primary) progress.id = "job-progress";
-  if (job.state === "completed") {
-    progress.max = Math.max(job.bytesReceived, 1);
-    progress.value = job.bytesReceived;
-  }
+  applyProgress(progress, job);
   article.append(progress);
 
-  const bytes = document.createElement("output");
-  bytes.className = "bytes";
-  bytes.textContent = `${formatBytes(job.bytesReceived)} received`;
-  bytes.setAttribute("aria-live", "polite");
-  if (primary) bytes.id = "job-bytes";
-  article.append(bytes);
+  const metrics = document.createElement("output");
+  metrics.className = "metrics";
+  // `<output>` is implicitly a polite live region. These numbers change several
+  // times a second, so this one is silenced and `#live-status` announces the
+  // things that matter instead.
+  metrics.setAttribute("aria-live", "off");
+  if (primary) metrics.id = "job-bytes";
+  metrics.replaceChildren(...metricSpans(job));
+  article.append(metrics);
 
   if (job.error) {
     const error = document.createElement("p");
     error.className = "error job-error";
     error.textContent = friendlyError(job);
-    error.setAttribute("role", "alert");
-    if (primary) error.id = "job-error";
+    // Not a live region: `#live-alert` announces a new failure exactly once, and
+    // this copy is the description of the card it belongs to.
+    error.id = primary ? "job-error" : `job-error-${job.jobId}`;
+    article.setAttribute("aria-describedby", error.id);
     article.append(error);
   }
 
@@ -461,6 +1118,8 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
     article.append(completion);
   }
 
+  if (settingsView?.settings.powerMode) article.append(diagnostics(job));
+
   const actions = document.createElement("div");
   actions.className = "job-actions";
   for (const action of actionsFor(job)) actions.append(actionButton(job, action));
@@ -468,10 +1127,101 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   return article;
 }
 
+/**
+ * Sets the progress bar from engine-confirmed numbers only.
+ *
+ * With no stated total the bar stays indeterminate. Filling it from the bytes
+ * received so far would show a full bar from the first chunk onward, which is
+ * a lie the moment the file is larger than one read.
+ */
+function applyProgress(progress: HTMLProgressElement, job: JobSnapshot): void {
+  if (job.state === "completed") {
+    progress.max = 1;
+    progress.value = 1;
+    progress.setAttribute("aria-valuetext", "Complete");
+    return;
+  }
+  if (job.totalBytes && job.totalBytes > 0) {
+    const ratio = Math.min(job.bytesReceived / job.totalBytes, 1);
+    progress.max = 1;
+    progress.value = ratio;
+    progress.setAttribute(
+      "aria-valuetext",
+      `${Math.floor(ratio * 100)} percent, ${formatBytes(job.bytesReceived)} of ${formatBytes(job.totalBytes)}`,
+    );
+    return;
+  }
+  progress.removeAttribute("value");
+  progress.setAttribute("aria-valuetext", `${formatBytes(job.bytesReceived)} received, total size unknown`);
+}
+
+/** The measurements line: percent, received of total, speed, remaining. */
+function metricSpans(job: JobSnapshot): HTMLElement[] {
+  const spans: HTMLElement[] = [];
+  const add = (text: string, primary = false) => {
+    const span = document.createElement("span");
+    if (primary) span.className = "primary";
+    span.textContent = text;
+    spans.push(span);
+  };
+
+  if (job.totalBytes && job.totalBytes > 0) {
+    const percent = Math.floor(Math.min(job.bytesReceived / job.totalBytes, 1) * 100);
+    add(`${percent}%`, true);
+    add(`${formatBytes(job.bytesReceived)} of ${formatBytes(job.totalBytes)}`);
+  } else {
+    add(`${formatBytes(job.bytesReceived)} received`, true);
+    if (job.state === "running") add("total size unknown");
+  }
+  if (job.bytesPerSecond) add(`${formatBytes(job.bytesPerSecond)}/s`);
+  if (job.etaSeconds !== null) add(`${formatDurationLong(job.etaSeconds)} left`);
+  if (job.state === "paused") add("Paused at this point");
+  return spans;
+}
+
+/** Power mode only. Additive detail; nothing here is needed to use the queue. */
+function diagnostics(job: JobSnapshot): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "diagnostics";
+  const label = document.createElement("p");
+  label.className = "digest-label";
+  label.textContent = "Diagnostics";
+  const list = document.createElement("dl");
+  const rows: Array<[string, string]> = [
+    ["Job", job.jobId],
+    ["Kind", job.kind === "media" ? "Media" : "File"],
+    ["Added", new Date(job.createdAtMs).toLocaleString()],
+    ["Total size", job.totalBytes === null ? "Not stated by the source" : `${job.totalBytes.toLocaleString()} bytes`],
+    ["Received", `${job.bytesReceived.toLocaleString()} bytes`],
+  ];
+  if (job.finishedAtMs) {
+    rows.push(["Finished", new Date(job.finishedAtMs).toLocaleString()]);
+    const elapsed = (job.finishedAtMs - job.createdAtMs) / 1000;
+    if (elapsed > 0) rows.push(["Time in queue", formatDurationLong(Math.round(elapsed))]);
+  }
+  if (job.attempt > 0) rows.push(["Automatic retries", String(job.attempt)]);
+  if (job.cleanupPending) rows.push(["Staging", "Retained for resume"]);
+  for (const [term, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = term;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    list.append(dt, dd);
+  }
+  section.append(label, list);
+  return section;
+}
+
 function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; danger?: boolean }> {
   const actions: Array<{ action: string; label: string; danger?: boolean }> = [];
   if (job.state === "scheduled") actions.push({ action: "start-now", label: "Start now" });
-  if (["scheduled", "queued", "running", "cancelling"].includes(job.state)) {
+  // Media downloads have no checkpoint to come back to, so pause is not offered
+  // for them rather than offered and then refused.
+  if (job.kind === "file" && ["running", "queued", "scheduled"].includes(job.state)) {
+    actions.push({ action: "pause", label: "Pause" });
+  }
+  if (job.state === "paused") actions.push({ action: "resume", label: "Resume" });
+  if (["scheduled", "queued", "running", "cancelling", "paused"].includes(job.state)) {
     actions.push({ action: "cancel", label: job.state === "cancelling" ? "Cancelling…" : "Cancel", danger: true });
   }
   if (job.state === "failed" || job.state === "cancelled" || job.state === "needs_source") {
@@ -479,11 +1229,14 @@ function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; da
     else if (job.action === "edit_link") actions.push({ action: "edit-link", label: "Edit link" });
     else if (job.action === "recapture") actions.push({ action: "recapture", label: "Send again from browser" });
     else if (job.action === "refresh_source") actions.push({ action: "edit-link", label: "Refresh source" });
-    else if (job.action === "configure_media_tools") actions.push({ action: "retry", label: "Retry after setup" });
+    else if (job.action === "configure_media_tools") actions.push({ action: "configure-media", label: "Set up media tools" });
     else actions.push({ action: "retry", label: "Retry" });
   }
-  if (job.state === "completed") actions.push({ action: "copy-path", label: "Copy path" });
-  if (["completed", "cancelled", "failed"].includes(job.state)) actions.push({ action: "remove", label: "Remove", danger: false });
+  if (job.state === "completed") {
+    actions.push({ action: "open-folder", label: "Open folder" });
+    actions.push({ action: "copy-path", label: "Copy path" });
+  }
+  if (["completed", "cancelled", "failed"].includes(job.state)) actions.push({ action: "remove", label: "Remove" });
   return actions;
 }
 
@@ -494,8 +1247,32 @@ function actionButton(job: JobSnapshot, spec: { action: string; label: string; d
   button.dataset.action = spec.action;
   button.dataset.jobId = job.jobId;
   button.textContent = spec.label;
+  // "Retry" repeated on five cards is five identical accessible names in the
+  // automation tree, so every row action names the download it acts on.
+  button.setAttribute("aria-label", `${spec.label}: ${filename(job.destination) || "download"}`);
   if (job.state === "cancelling" && spec.action === "cancel") button.disabled = true;
   return button;
+}
+
+/** Announces only terminal transitions, once each, through the right live region. */
+function announceStateChanges(): void {
+  const next = new Map<string, JobState>();
+  for (const job of jobs) {
+    next.set(job.jobId, job.state);
+    const previous = observedStates.get(job.jobId);
+    if (previous === job.state || previous === undefined) continue;
+    const name = filename(job.destination) || "download";
+    if (job.state === "completed") {
+      announce(`${name} finished downloading.`);
+    } else if (job.state === "failed" || job.state === "needs_source") {
+      announceProblem(`${name} needs attention. ${friendlyError(job)}`);
+    } else if (job.state === "cancelled") {
+      announce(`${name} was cancelled.`);
+    } else if (job.state === "paused") {
+      announce(`${name} is paused at ${formatBytes(job.bytesReceived)}.`);
+    }
+  }
+  observedStates = next;
 }
 
 function beginEdit(job: JobSnapshot): void {
@@ -508,17 +1285,19 @@ function beginEdit(job: JobSnapshot): void {
   }
   urlInput.value = "";
   destinationInput.value = job.destination ?? "";
+  destinationIsSuggested = false;
   scheduleInput.value = "";
   startButton.textContent = "Save and retry";
-  formError.textContent = "Paste a refreshed address. Private query values are never restored from history.";
-  formError.hidden = false;
+  clearError(formError);
+  showNotice("Paste a refreshed address. Private query values are never restored from history.");
+  scrollTo(form);
   urlInput.focus();
-  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function clearComposer(): void {
   editingJobId = null;
   form.reset();
+  destinationIsSuggested = true;
   mediaInspection = null;
   inspectedMediaUrl = "";
   mediaOptions.hidden = true;
@@ -528,24 +1307,45 @@ function clearComposer(): void {
   urlInput.rows = 3;
   urlInput.placeholder = "https://example.com/archive.zip";
   clearError(formError);
+  clearNotice();
   renderPreview();
   startButton.textContent = "Add to queue";
 }
 
 function setComposerAvailability(available: boolean, label?: string): void {
-  for (const control of form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement>("input, textarea, button, select")) {
+  // Disabling the control that was activated would drop focus to the document
+  // body, so the focused element is remembered and restored around the work.
+  if (!available && form.contains(document.activeElement) && document.activeElement instanceof HTMLElement) {
+    composerFocus = document.activeElement;
+  }
+  for (const control of form.querySelectorAll<
+    HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement | HTMLSelectElement
+  >("input, textarea, button, select")) {
     control.disabled = !available;
   }
   if (available && downloadKind() === "media" && !mediaInspection) mediaQuality.disabled = true;
   if (label) startButton.textContent = label;
   else renderPreview();
+  if (!available) return;
+  const restore = composerFocus;
+  composerFocus = null;
+  if (restore && form.contains(restore) && !(restore as HTMLButtonElement).disabled) restore.focus({ preventScroll: true });
+  else if (restore) startButton.focus({ preventScroll: true });
 }
+
+/* Helpers ----------------------------------------------------------------- */
 
 function parseUrls(): string[] {
   return urlInput.value
     .split(/\r?\n/)
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function joinPath(directory: string | null, name: string): string {
+  if (!directory) return name;
+  const separator = directory.includes("/") && !directory.includes("\\") ? "/" : "\\";
+  return directory.endsWith(separator) ? `${directory}${name}` : `${directory}${separator}${name}`;
 }
 
 function siblingDestination(base: string, name: string): string {
@@ -568,6 +1368,7 @@ function uniqueDestination(destination: string, used: Set<string>): string {
 function matchesFilter(job: JobSnapshot, filter: QueueFilter): boolean {
   if (filter === "all") return true;
   if (filter === "active") return isActive(job.state);
+  if (filter === "paused") return job.state === "paused";
   if (filter === "scheduled") return job.state === "scheduled" || job.state === "queued";
   if (filter === "completed") return job.state === "completed";
   return job.state === "failed" || job.state === "needs_source";
@@ -589,6 +1390,7 @@ function stateLabel(state: JobState): string {
     scheduled: "Scheduled",
     queued: "Queued",
     running: "Downloading",
+    paused: "Paused",
     cancelling: "Cancelling",
     completed: "Complete",
     cancelled: "Cancelled",
@@ -602,7 +1404,7 @@ function friendlyError(job: JobSnapshot): string {
   if (job.action === "edit_link") return "This link needs attention. Paste a refreshed address to continue safely.";
   if (job.action === "recapture") return "The protected browser context is unavailable. Send the link from your browser again.";
   if (job.action === "refresh_source") return "This media session expired or its qualities changed. Paste a refreshed source to retry.";
-  if (job.action === "configure_media_tools") return "Media tools are unavailable. Configure them, restart Fetchpath, then retry.";
+  if (job.action === "configure_media_tools") return "Video and audio need yt-dlp and ffmpeg. Set them up, then retry.";
   return job.error ?? "The download stopped. Retry when the source is available.";
 }
 
@@ -616,6 +1418,19 @@ function formatBytes(bytes: number): string {
     unit = units[index];
   }
   return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+}
+
+/** Remaining time in words, coarse on purpose: a to-the-second estimate that
+ *  swings around reads as less trustworthy than an honest rough one. */
+function formatDurationLong(seconds: number): string {
+  if (seconds < 60) return `${Math.max(seconds, 1)} sec`;
+  if (seconds < 3600) {
+    const minutes = Math.round(seconds / 60);
+    return minutes === 1 ? "1 min" : `${minutes} min`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.round((seconds % 3600) / 60);
+  return minutes ? `${hours} hr ${minutes} min` : `${hours} hr`;
 }
 
 function suggestedFilename(value: string): string {
@@ -640,7 +1455,8 @@ function setMediaDestination(variant: MediaVariant, replaceExtension = false): v
   const current = destinationInput.value.trim();
   const title = sanitizeFilename(mediaInspection?.title ?? "media");
   if (!current) {
-    destinationInput.value = `${title}.${variant.extension}`;
+    destinationInput.value = joinPath(defaultDestinationDir, `${title}.${variant.extension}`);
+    destinationIsSuggested = false;
     return;
   }
   if (replaceExtension) {
@@ -673,13 +1489,68 @@ function redactedSource(url: string): string {
 }
 
 function showError(element: HTMLElement, error: unknown): void {
-  element.textContent = error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  element.textContent = message;
   element.hidden = false;
+  if (element === settingsError) {
+    settingsStatus.hidden = true;
+    announceProblem(message);
+    return;
+  }
+  if (element !== formError) return;
+  announceProblem(message);
+  associateError(message);
 }
 
 function clearError(element: HTMLElement): void {
   element.textContent = "";
   element.hidden = true;
+  if (element === settingsError) {
+    settingsStatus.hidden = true;
+    return;
+  }
+  if (element !== formError) return;
+  liveAlert.textContent = "";
+  announcedAlert = "";
+  associateError(null);
+}
+
+/**
+ * Points the failing control at the message that describes it, so the field and
+ * its error are read together instead of the error living alone in the page.
+ */
+function associateError(message: string | null): void {
+  const culprit = !message
+    ? null
+    : /destination|folder|file ?name|reserved|drive|dot or a space|Windows cannot use|same folder|already exists/i.test(
+          message,
+        )
+      ? destinationInput
+      : /address|link|url|http|password|user name|quality|media/i.test(message)
+        ? urlInput
+        : null;
+  for (const field of [urlInput, destinationInput] as const) {
+    const base = field === urlInput ? "url-hint" : "destination-hint";
+    if (field === culprit) {
+      field.setAttribute("aria-invalid", "true");
+      field.setAttribute("aria-describedby", `form-error ${base}`);
+    } else {
+      field.removeAttribute("aria-invalid");
+      field.setAttribute("aria-describedby", base);
+    }
+  }
+}
+
+function showNotice(message: string): void {
+  formNotice.textContent = message;
+  formNotice.hidden = false;
+  announce(message);
+}
+
+function clearNotice(): void {
+  formNotice.textContent = "";
+  formNotice.hidden = true;
 }
 
 function required<T extends HTMLElement>(id: string): T {
@@ -688,7 +1559,23 @@ function required<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
-renderPreview();
-void refreshQueue();
-refreshTimer = window.setInterval(() => void refreshQueue(), 350);
+/* Start ------------------------------------------------------------------- */
+
+async function start(): Promise<void> {
+  // Settings decide the theme, whether the statistics panel exists and whether
+  // the welcome card shows, so they are read before the first paint of the
+  // queue rather than after it.
+  await loadSettings();
+  try {
+    defaultDestinationDir = await invoke<string | null>("default_destination_dir");
+  } catch {
+    defaultDestinationDir = systemDownloadDir;
+  }
+  void refreshToolsStatus();
+  renderPreview();
+  await refreshQueue();
+  refreshTimer = window.setInterval(() => void refreshQueue(), 350);
+}
+
+void start();
 window.addEventListener("beforeunload", () => window.clearInterval(refreshTimer));

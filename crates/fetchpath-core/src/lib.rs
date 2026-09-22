@@ -29,6 +29,10 @@ pub const BUFFER_BYTES: usize = 16 * 1024;
 struct CancelState {
     cancelled: AtomicBool,
     received: AtomicU64,
+    /// Engine-confirmed total size, or 0 while the source has not stated one.
+    /// A download manager that guesses a total reports a percentage that walks
+    /// backwards, so an unknown length stays unknown all the way to the UI.
+    total: AtomicU64,
     published: AtomicBool,
     publication_gate: Mutex<()>,
 }
@@ -39,6 +43,7 @@ impl Default for CancellationToken {
         Self(Arc::new(CancelState {
             cancelled: AtomicBool::new(false),
             received: AtomicU64::new(0),
+            total: AtomicU64::new(0),
             published: AtomicBool::new(false),
             publication_gate: Mutex::new(()),
         }))
@@ -75,6 +80,19 @@ impl CancellationToken {
     }
     fn received(&self) -> u64 {
         self.0.received.load(Ordering::Acquire)
+    }
+    /// Records the total the source actually stated. `None` and a stated zero
+    /// both leave the total unknown rather than inventing one.
+    fn set_total(&self, value: Option<u64>) {
+        if let Some(total) = value.filter(|total| *total > 0) {
+            self.0.total.store(total, Ordering::Release);
+        }
+    }
+    fn total(&self) -> Option<u64> {
+        match self.0.total.load(Ordering::Acquire) {
+            0 => None,
+            total => Some(total),
+        }
     }
 }
 
@@ -260,6 +278,8 @@ pub struct FileJobSnapshot {
     pub job_revision: u64,
     pub state: FileJobState,
     pub bytes_received: u64,
+    /// Engine-confirmed total size. `None` means the source never stated one.
+    pub total_bytes: Option<u64>,
     pub destination: Option<PathBuf>,
     pub observed_sha256: Option<String>,
     pub staging_cleanup_pending: Option<PathBuf>,
@@ -342,6 +362,7 @@ impl FileJob {
             job_revision: 1,
             state: FileJobState::Queued,
             bytes_received: 0,
+            total_bytes: None,
             destination: Some(destination.clone()),
             observed_sha256: None,
             staging_cleanup_pending: None,
@@ -387,6 +408,7 @@ impl FileJob {
                 return;
             }
             state.snapshot.bytes_received = token.received();
+            state.snapshot.total_bytes = token.total().or(state.snapshot.total_bytes);
             match result {
                 Ok(done) => {
                     state.snapshot.destination = Some(done.destination);
@@ -445,6 +467,12 @@ impl FileJob {
             FileJobState::Running | FileJobState::Cancelling
         ) {
             state.snapshot.bytes_received = self.cancellation.received();
+        }
+        // The total is published as soon as the source states one and stays
+        // available after the transfer ends, so a completed row can still show
+        // the size that was agreed rather than dropping back to "unknown".
+        if let Some(total) = self.cancellation.total() {
+            state.snapshot.total_bytes = Some(total);
         }
         state.snapshot.clone()
     }
@@ -529,6 +557,70 @@ mod tests {
         });
         (url, handle)
     }
+    /// A response that states no length at all: the body simply runs to EOF.
+    fn server_without_declared_length(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 200 Test\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            let _ = stream.write_all(&body);
+        });
+        (url, handle)
+    }
+
+    #[test]
+    fn a_stated_content_length_becomes_the_reported_total() {
+        let dir = temp_dir("total-known");
+        let body = b"sized fixture".repeat(4096);
+        let expected = body.len() as u64;
+        let (url, server) = server(body, false);
+        let job = FileJob::create(url, dir.join("sized.bin"));
+        job.start().unwrap();
+        job.join();
+        server.join().unwrap();
+
+        let snapshot = job.snapshot();
+        assert_eq!(snapshot.state, FileJobState::Completed);
+        assert_eq!(snapshot.total_bytes, Some(expected));
+        assert_eq!(snapshot.bytes_received, expected);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_response_without_a_length_reports_no_total_rather_than_the_bytes_so_far() {
+        let dir = temp_dir("total-unknown");
+        let body = b"unsized fixture".repeat(4096);
+        let expected = body.len() as u64;
+        let (url, server) = server_without_declared_length(body);
+        let job = FileJob::create(url, dir.join("unsized.bin"));
+        job.start().unwrap();
+        job.join();
+        server.join().unwrap();
+
+        let snapshot = job.snapshot();
+        assert_eq!(snapshot.state, FileJobState::Completed);
+        // The bytes are all here, but the source never agreed to a size. The
+        // total has to stay absent: reporting `bytes_received` as the total is
+        // how a progress bar comes to read 100% from its very first sample.
+        assert_eq!(snapshot.total_bytes, None);
+        assert_eq!(snapshot.bytes_received, expected);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_queued_job_has_no_total_before_the_source_states_one() {
+        let dir = temp_dir("total-queued");
+        let job = FileJob::create("http://127.0.0.1:1/never".into(), dir.join("queued.bin"));
+        assert_eq!(job.snapshot().total_bytes, None);
+        assert_eq!(job.snapshot().bytes_received, 0);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     fn request(
         url: String,
         destination: PathBuf,

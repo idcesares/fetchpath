@@ -167,14 +167,29 @@ impl MediaTools {
                     .map(|parent| parent.join("media-tools"))
             })
             .ok_or(MediaError::HelperUnavailable)?;
+        Self::discover_in(&root)
+    }
+
+    /// Resolves the helpers inside one directory the user chose.
+    ///
+    /// Accepts the two layouts people actually end up with: the executables
+    /// sitting directly in the folder, and an ffmpeg release extracted with its
+    /// own `bin/` subdirectory left in place. Requiring one exact arrangement
+    /// turns a correct download into a support question.
+    pub fn discover_in(root: &Path) -> Result<Self, MediaError> {
         let yt_dlp = root.join(executable("yt-dlp"));
         let direct_bin = root.join("bin");
         let ffmpeg_dir = if direct_bin.join(executable("ffmpeg")).is_file() {
             direct_bin
         } else {
-            root.clone()
+            root.to_path_buf()
         };
         Self::new(yt_dlp, &ffmpeg_dir, ffmpeg_dir.join(executable("ffprobe")))
+    }
+
+    /// The file name of a helper executable on this platform.
+    pub fn executable_name(name: &str) -> String {
+        executable(name)
     }
 
     pub fn inspect(&self, source: &str) -> Result<MediaInspection, MediaError> {

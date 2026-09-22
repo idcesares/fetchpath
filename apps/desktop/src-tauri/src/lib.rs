@@ -1,13 +1,16 @@
 pub mod browser_bridge;
+pub mod media_setup;
+pub mod settings;
 
 use browser_bridge::BridgeStore;
 use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext};
 use fetchpath_media::{MediaInspection, MediaJob, MediaJobState, MediaTools};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem};
@@ -16,14 +19,24 @@ use tauri::{AppHandle, Manager, State, WindowEvent};
 
 const QUEUE_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_MAX_ACTIVE: usize = 3;
+/// Upper bound for an inter-process address. Long enough for real signed links,
+/// short enough that a malformed renderer message cannot force unbounded work.
+const MAX_SOURCE_LENGTH: usize = 8_192;
+/// Upper bound for a destination path. Windows long paths stop well below this.
+const MAX_DESTINATION_LENGTH: usize = 4_096;
 
 struct DesktopJobs {
     inner: Mutex<QueueState>,
     state_path: Option<PathBuf>,
-    max_active: usize,
+    settings_path: Option<PathBuf>,
+    /// Guarded separately from the queue so reading a setting never waits on a
+    /// transfer, and so a settings write cannot deadlock against the poll.
+    settings: Mutex<Settings>,
+    /// True when the stored settings file had to be repaired on load.
+    settings_repaired: bool,
     browser_store: Option<BridgeStore>,
     browser_download_dir: Option<PathBuf>,
-    media_tools: Option<MediaTools>,
+    media_tools: Mutex<Option<MediaTools>>,
 }
 
 #[derive(Default)]
@@ -74,6 +87,82 @@ impl JobHandle {
     }
 }
 
+/// A smoothed view of how fast one download is actually moving.
+///
+/// Progress is sampled whenever the interface asks for the queue, which is an
+/// irregular interval, so the rate is computed from the elapsed time between
+/// samples rather than assuming a fixed cadence. Samples closer together than
+/// `MIN_INTERVAL_MS` are ignored: dividing a handful of bytes by a few
+/// milliseconds produces a number that swings wildly and reads as noise.
+#[derive(Clone, Copy, Default)]
+struct RateEstimate {
+    last_sample_ms: u64,
+    last_bytes: u64,
+    started: bool,
+    smoothed_bytes_per_second: Option<f64>,
+}
+
+impl RateEstimate {
+    const MIN_INTERVAL_MS: u64 = 400;
+    /// Weight given to the newest sample. Low enough that one slow scheduling
+    /// hiccup does not make the displayed rate jump.
+    const SMOOTHING: f64 = 0.3;
+    /// After this long with no progress the rate is no longer describing
+    /// anything that is happening, so it is withdrawn rather than left frozen.
+    const STALE_AFTER_MS: u64 = 5_000;
+
+    fn observe(&mut self, bytes: u64, now_ms: u64) {
+        if !self.started || bytes < self.last_bytes {
+            // First sample, or the transfer restarted from a lower offset.
+            // There is no interval to measure yet, so record a baseline only.
+            *self = Self {
+                last_sample_ms: now_ms,
+                last_bytes: bytes,
+                started: true,
+                smoothed_bytes_per_second: None,
+            };
+            return;
+        }
+        let elapsed_ms = now_ms.saturating_sub(self.last_sample_ms);
+        if elapsed_ms < Self::MIN_INTERVAL_MS {
+            return;
+        }
+        let delta = bytes - self.last_bytes;
+        if delta == 0 && elapsed_ms >= Self::STALE_AFTER_MS {
+            self.smoothed_bytes_per_second = None;
+            self.last_sample_ms = now_ms;
+            return;
+        }
+        let instant = delta as f64 * 1_000.0 / elapsed_ms as f64;
+        self.smoothed_bytes_per_second = Some(match self.smoothed_bytes_per_second {
+            Some(previous) => Self::SMOOTHING * instant + (1.0 - Self::SMOOTHING) * previous,
+            None => instant,
+        });
+        self.last_sample_ms = now_ms;
+        self.last_bytes = bytes;
+    }
+
+    /// Clears the estimate when a download stops, so a paused or finished row
+    /// never shows a speed it is not achieving.
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn bytes_per_second(&self) -> Option<u64> {
+        self.smoothed_bytes_per_second
+            .filter(|rate| *rate >= 1.0)
+            .map(|rate| rate as u64)
+    }
+
+    /// Remaining time, only when a total and a real rate are both known.
+    fn eta_seconds(&self, received: u64, total: Option<u64>) -> Option<u64> {
+        let total = total?;
+        let rate = self.bytes_per_second()?;
+        let remaining = total.checked_sub(received)?;
+        (remaining > 0).then(|| remaining.div_ceil(rate))
+    }
+}
+
 struct QueueRecord {
     id: String,
     live_url: Option<String>,
@@ -88,6 +177,13 @@ struct QueueRecord {
     media_variant_id: Option<String>,
     media_quality: Option<String>,
     job: Option<JobHandle>,
+    /// Live only. Deliberately not persisted: a rate measured before a restart
+    /// describes a transfer that is no longer running.
+    rate: RateEstimate,
+    /// Automatic retries already spent on this download.
+    attempt: u32,
+    /// When an automatic retry is due, for the row to show and reconcile to act on.
+    retry_at_ms: Option<u64>,
     view: JobSnapshot,
 }
 
@@ -116,6 +212,20 @@ struct JobSnapshot {
     source: String,
     state: String,
     bytes_received: u64,
+    /// Engine-confirmed total. Absent whenever the source never stated a
+    /// length, which the interface shows as an unknown size rather than a
+    /// percentage it cannot support.
+    #[serde(default)]
+    total_bytes: Option<u64>,
+    /// Smoothed transfer rate, present only while bytes are actually moving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bytes_per_second: Option<u64>,
+    /// Remaining time, present only when both a total and a rate are known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    eta_seconds: Option<u64>,
+    /// How many automatic retries this download has already consumed.
+    #[serde(default)]
+    attempt: u32,
     destination: Option<String>,
     observed_sha256: Option<String>,
     cleanup_pending: bool,
@@ -129,6 +239,30 @@ struct JobSnapshot {
     kind: String,
     #[serde(default)]
     quality_label: Option<String>,
+}
+
+/// Aggregate queue figures, for the statistics panel.
+///
+/// Every field is counted from the same reconciled snapshot, so the totals
+/// agree with the rows on screen rather than describing a slightly different
+/// moment.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QueueStats {
+    running: usize,
+    queued: usize,
+    scheduled: usize,
+    paused: usize,
+    completed: usize,
+    failed: usize,
+    /// Bytes received by downloads that are running right now.
+    active_bytes: u64,
+    /// Bytes received by downloads that finished and are still in the list.
+    completed_bytes: u64,
+    /// Sum of the per-download rates. This is throughput actually observed, not
+    /// a link-capacity measurement.
+    combined_bytes_per_second: u64,
+    max_active_downloads: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -180,7 +314,16 @@ impl DesktopJobs {
         let browser_store = state_path
             .parent()
             .map(|parent| BridgeStore::new(parent.to_path_buf()));
-        let media_tools = MediaTools::discover().ok();
+        let settings_path = state_path.with_file_name("settings-v1.json");
+        let loaded = settings::load(&settings_path);
+        let mut stored = loaded.settings;
+        // A caller-supplied concurrency (the tests, and the launch default) only
+        // applies when the user has never chosen one themselves.
+        if !settings_path.exists() {
+            stored.max_active_downloads = max_active;
+            stored.clamp();
+        }
+        let media_tools = discover_media_tools(stored.media_tools_dir.as_deref());
         let records = persisted
             .map(|queue| {
                 queue
@@ -200,30 +343,80 @@ impl DesktopJobs {
         Ok(Self {
             inner: Mutex::new(QueueState { records }),
             state_path: Some(state_path),
-            max_active: max_active.max(1),
+            settings_path: Some(settings_path),
+            settings: Mutex::new(stored),
+            settings_repaired: loaded.repaired,
             browser_store,
             browser_download_dir,
-            media_tools,
+            media_tools: Mutex::new(media_tools),
         })
     }
 
     #[cfg(test)]
     fn in_memory(max_active: usize) -> Self {
+        let mut stored = Settings {
+            max_active_downloads: max_active,
+            ..Settings::default()
+        };
+        stored.clamp();
         Self {
             inner: Mutex::new(QueueState::default()),
             state_path: None,
-            max_active: max_active.max(1),
+            settings_path: None,
+            settings: Mutex::new(stored),
+            settings_repaired: false,
             browser_store: None,
             browser_download_dir: None,
-            media_tools: None,
+            media_tools: Mutex::new(None),
         }
     }
 
     #[cfg(test)]
     fn in_memory_with_media(max_active: usize, media_tools: MediaTools) -> Self {
-        let mut jobs = Self::in_memory(max_active);
-        jobs.media_tools = Some(media_tools);
+        let jobs = Self::in_memory(max_active);
+        *jobs.media_tools.lock().expect("media tools poisoned") = Some(media_tools);
         jobs
+    }
+
+    fn settings(&self) -> Settings {
+        self.settings.lock().expect("settings poisoned").clone()
+    }
+
+    fn max_active(&self) -> usize {
+        self.settings().max_active_downloads
+    }
+
+    fn media_tools(&self) -> Option<MediaTools> {
+        self.media_tools
+            .lock()
+            .expect("media tools poisoned")
+            .clone()
+    }
+
+    /// Applies a settings change, clamping it first and re-resolving anything
+    /// the change affects.
+    fn update_settings(&self, mut next: Settings) -> Result<Settings, String> {
+        next.clamp();
+        let tools_dir_changed = {
+            let current = self.settings.lock().expect("settings poisoned");
+            current.media_tools_dir != next.media_tools_dir
+        };
+        if tools_dir_changed {
+            *self.media_tools.lock().expect("media tools poisoned") =
+                discover_media_tools(next.media_tools_dir.as_deref());
+        }
+        *self.settings.lock().expect("settings poisoned") = next.clone();
+        if let Some(path) = self.settings_path.as_ref() {
+            settings::save(path, &next).map_err(|error| {
+                format!("Could not save settings at {}: {error}", path.display())
+            })?;
+        }
+        // A higher concurrency takes effect immediately rather than at the next
+        // poll, so raising the limit visibly starts the next waiting download.
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        let _ = self.save_locked(&state);
+        Ok(next)
     }
 
     fn enqueue(&self, drafts: Vec<JobDraft>) -> Result<Vec<JobSnapshot>, String> {
@@ -237,18 +430,23 @@ impl DesktopJobs {
         self.reconcile_locked(&mut state);
         let mut destinations = HashSet::new();
         let mut created_ids = Vec::with_capacity(drafts.len());
+        let mut batch_directory: Option<PathBuf> = None;
 
         for draft in drafts {
-            let url = draft.url.trim();
-            let destination = PathBuf::from(draft.destination.trim());
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err(format!(
-                    "{} is not an HTTP or HTTPS address.",
-                    display_url(url)
-                ));
-            }
-            if destination.file_name().is_none() {
-                return Err("Every queued download needs a destination filename.".into());
+            let url = validated_source(&draft.url)?;
+            let destination = validated_destination(&draft.destination)?;
+            let directory = destination
+                .parent()
+                .ok_or_else(|| "Choose a destination folder for this download.".to_string())?
+                .to_path_buf();
+            match batch_directory.as_ref() {
+                None => batch_directory = Some(directory),
+                Some(expected) if expected == &directory => {}
+                Some(_) => {
+                    return Err(
+                        "Every download in one batch has to be saved in the same folder.".into(),
+                    );
+                }
             }
             if !destinations.insert(destination.clone()) {
                 return Err(format!(
@@ -256,7 +454,7 @@ impl DesktopJobs {
                     destination.display()
                 ));
             }
-            let record = QueueRecord::new(url.to_owned(), destination, draft.not_before_ms);
+            let record = QueueRecord::new(url, destination, draft.not_before_ms);
             created_ids.push(record.id.clone());
             state.records.push(record);
         }
@@ -271,27 +469,25 @@ impl DesktopJobs {
     }
 
     fn inspect_media(&self, source: &str) -> Result<MediaInspection, String> {
-        let tools = self.media_tools.as_ref().ok_or_else(|| {
-            "Media tools are unavailable. Set FETCHPATH_YT_DLP and FETCHPATH_FFMPEG_DIR, then restart Fetchpath."
+        let tools = self.media_tools().ok_or_else(|| {
+            "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
                 .to_string()
         })?;
-        tools
-            .inspect(source.trim())
-            .map_err(|error| error.to_string())
+        let source = validated_source(source)?;
+        tools.inspect(&source).map_err(|error| error.to_string())
     }
 
     fn enqueue_media(&self, draft: MediaDraft) -> Result<JobSnapshot, String> {
-        let tools = self.media_tools.clone().ok_or_else(|| {
-            "Media tools are unavailable. Set FETCHPATH_YT_DLP and FETCHPATH_FFMPEG_DIR, then restart Fetchpath."
+        let tools = self.media_tools().ok_or_else(|| {
+            "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
                 .to_string()
         })?;
-        let url = draft.url.trim().to_owned();
-        let destination = PathBuf::from(draft.destination.trim());
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err("Enter an HTTP or HTTPS media address.".into());
-        }
-        if destination.file_name().is_none() {
-            return Err("Choose a destination filename.".into());
+        let url = validated_source(&draft.url)?;
+        let destination = validated_destination(&draft.destination)?;
+        if draft.variant_id.len() > 512 || draft.quality_label.len() > 512 {
+            return Err(
+                "That quality selection could not be read. Inspect the source again.".into(),
+            );
         }
         let inspection = tools.inspect(&url).map_err(|error| error.to_string())?;
         let selected = inspection
@@ -402,10 +598,7 @@ impl DesktopJobs {
             job.join();
         }
         if let Some(url) = url {
-            let url = url.trim().to_owned();
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err("Enter an HTTP or HTTPS address.".into());
-            }
+            let url = validated_source(&url)?;
             record.display_url = display_url(&url);
             record.restart_url = restartable_url(&url);
             record.live_url = Some(url);
@@ -417,11 +610,7 @@ impl DesktopJobs {
             }
         }
         if let Some(destination) = destination {
-            let destination = PathBuf::from(destination.trim());
-            if destination.file_name().is_none() {
-                return Err("Choose a destination filename.".into());
-            }
-            record.destination = destination;
+            record.destination = validated_destination(&destination)?;
         }
         let live_url = record.live_url.clone().ok_or_else(|| {
             "This source included private query values. Paste a refreshed link to continue."
@@ -434,8 +623,9 @@ impl DesktopJobs {
             record.view.retryable = true;
         } else {
             record.job = Some(if let Some(variant_id) = record.media_variant_id.clone() {
-                let tools = self.media_tools.clone().ok_or_else(|| {
-                    "Media tools are unavailable. Configure them before retrying.".to_string()
+                let tools = self.media_tools().ok_or_else(|| {
+                    "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
+                        .to_string()
                 })?;
                 JobHandle::Media(MediaJob::create(
                     live_url,
@@ -463,6 +653,105 @@ impl DesktopJobs {
             record.view.not_before_ms = None;
             record.view.finished_at_ms = None;
         }
+        self.reconcile_locked(&mut state);
+        self.save_locked(&state)?;
+        Ok(find_record(&state, job_id)?.view.clone())
+    }
+
+    /// Stops a running download at its last checkpoint so it can continue
+    /// later from that offset.
+    ///
+    /// Pausing races publication. Cancellation is refused once the engine has
+    /// committed to publishing, and when that happens the download really did
+    /// finish: this reports the completion instead of claiming a paused state
+    /// for a file that is already on disk.
+    fn pause(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        let handle = {
+            let mut state = self.inner.lock().expect("desktop jobs poisoned");
+            self.reconcile_locked(&mut state);
+            let record = find_record_mut(&mut state, job_id)?;
+            if record.view.kind != "file" {
+                return Err(
+                    "Only file downloads can be paused. Video and audio downloads have to be cancelled and started again."
+                        .into(),
+                );
+            }
+            match record.view.state.as_str() {
+                // Not started yet: hold it out of the queue without disturbing
+                // the prepared job, so resuming costs nothing.
+                "queued" | "scheduled" => {
+                    record.view.state = "paused".into();
+                    record.view.error = None;
+                    record.view.action = None;
+                    record.view.retryable = false;
+                    sample_rate(record);
+                    let view = record.view.clone();
+                    self.save_locked(&state)?;
+                    return Ok(view);
+                }
+                "running" => record.job.clone(),
+                "paused" => return Ok(record.view.clone()),
+                other => {
+                    return Err(format!("A download that is {other} cannot be paused."));
+                }
+            }
+        };
+
+        // Joining the worker must happen with the queue lock released; it waits
+        // for a network read to unwind and would otherwise freeze every other
+        // command, including the poll that draws the interface.
+        let Some(handle) = handle else {
+            return Err("This download is no longer running.".into());
+        };
+        handle.cancel();
+        handle.join();
+
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record_mut(&mut state, job_id)?;
+        refresh_record(record);
+        if record.view.state == "cancelled" {
+            // The checkpoint was retained, so the bytes already verified stay
+            // on disk and the next start resumes from that offset.
+            record.job = None;
+            record.view.state = "paused".into();
+            record.view.error = None;
+            record.view.action = None;
+            record.view.retryable = false;
+            record.finished_at_ms = None;
+            record.view.finished_at_ms = None;
+            sample_rate(record);
+        }
+        let view = record.view.clone();
+        self.save_locked(&state)?;
+        Ok(view)
+    }
+
+    /// Returns a paused download to the queue, continuing from its checkpoint.
+    fn resume(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record_mut(&mut state, job_id)?;
+        if record.view.state != "paused" {
+            return Err("Only a paused download can be resumed.".into());
+        }
+        if record.job.is_none() {
+            let url = record.live_url.clone().ok_or_else(|| {
+                "This source included private query values. Paste a refreshed link to continue."
+                    .to_string()
+            })?;
+            // A recoverable job validates the retained checkpoint against the
+            // source before reusing a single byte of it, so a source that
+            // changed while paused restarts instead of splicing.
+            record.job = Some(JobHandle::File(FileJob::create_recoverable_with_context(
+                url,
+                record.destination.clone(),
+                record.live_context.clone(),
+            )));
+        }
+        record.view.state = "queued".into();
+        record.view.error = None;
+        record.view.action = None;
+        record.view.retryable = false;
+        record.retry_at_ms = None;
         self.reconcile_locked(&mut state);
         self.save_locked(&state)?;
         Ok(find_record(&state, job_id)?.view.clone())
@@ -521,7 +810,7 @@ impl DesktopJobs {
                 && let Some(url) = record.live_url.clone()
             {
                 record.job = if let Some(variant_id) = record.media_variant_id.clone() {
-                    self.media_tools.clone().map(|tools| {
+                    self.media_tools().map(|tools| {
                         JobHandle::Media(MediaJob::create(
                             url,
                             variant_id,
@@ -552,6 +841,8 @@ impl DesktopJobs {
     }
 
     fn reconcile_locked(&self, state: &mut QueueState) {
+        let settings = self.settings();
+        let max_active = settings.max_active_downloads;
         for record in &mut state.records {
             refresh_record(record);
             if record.view.state == "completed"
@@ -561,6 +852,9 @@ impl DesktopJobs {
                 let _ = store.remove_secret(&credential_ref);
             }
         }
+        if settings.auto_retry {
+            self.schedule_automatic_retries(state, &settings);
+        }
         let mut active = state
             .records
             .iter()
@@ -568,7 +862,7 @@ impl DesktopJobs {
             .count();
         let now = now_ms();
         for record in &mut state.records {
-            if active >= self.max_active {
+            if active >= max_active {
                 break;
             }
             if record.view.state == "scheduled" && record.not_before_ms.is_none_or(|due| due <= now)
@@ -593,6 +887,106 @@ impl DesktopJobs {
             refresh_record(record);
             active += 1;
         }
+    }
+
+    /// Re-queues transport failures on a widening backoff.
+    ///
+    /// Only failures the engine classified as plain transport trouble qualify.
+    /// A destination conflict, an invalid link, an expired private source or a
+    /// missing helper all need a person to decide something, and retrying them
+    /// on a timer would bury that decision under repeated identical failures.
+    fn schedule_automatic_retries(&self, state: &mut QueueState, settings: &Settings) {
+        let now = now_ms();
+        for record in &mut state.records {
+            let due = record.retry_at_ms.is_some_and(|due| due <= now);
+            if due && record.view.state == "scheduled" {
+                record.retry_at_ms = None;
+                continue;
+            }
+            if record.view.state != "failed"
+                || record.attempt >= settings.auto_retry_max_attempts
+                || record.retry_at_ms.is_some()
+            {
+                continue;
+            }
+            // `recovery_action` returns "retry" only for failures with no
+            // specific user action attached, which is exactly the transport case.
+            if record.view.action.as_deref() != Some("retry") {
+                continue;
+            }
+            let Some(url) = record.live_url.clone() else {
+                continue;
+            };
+            if record.destination.exists() {
+                continue;
+            }
+            record.attempt += 1;
+            let delay = settings.retry_delay_seconds(record.attempt);
+            let due_at = now.saturating_add(delay.saturating_mul(1_000));
+            record.job = if let Some(variant_id) = record.media_variant_id.clone() {
+                let Some(tools) = self.media_tools() else {
+                    record.attempt -= 1;
+                    continue;
+                };
+                Some(JobHandle::Media(MediaJob::create(
+                    url,
+                    variant_id,
+                    record.destination.clone(),
+                    tools,
+                )))
+            } else {
+                Some(JobHandle::File(FileJob::create_recoverable_with_context(
+                    url,
+                    record.destination.clone(),
+                    record.live_context.clone(),
+                )))
+            };
+            record.not_before_ms = Some(due_at);
+            record.retry_at_ms = Some(due_at);
+            record.finished_at_ms = None;
+            record.view.state = "scheduled".into();
+            record.view.not_before_ms = Some(due_at);
+            record.view.finished_at_ms = None;
+            record.view.attempt = record.attempt;
+            record.view.action = None;
+            record.view.retryable = false;
+            record.view.error = Some(format!(
+                "Retrying automatically (attempt {} of {}).",
+                record.attempt, settings.auto_retry_max_attempts
+            ));
+        }
+    }
+
+    /// Aggregate figures for the statistics panel.
+    fn stats(&self) -> QueueStats {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        let mut stats = QueueStats::default();
+        for record in &state.records {
+            let view = &record.view;
+            match view.state.as_str() {
+                "running" => stats.running += 1,
+                "queued" => stats.queued += 1,
+                "scheduled" => stats.scheduled += 1,
+                "paused" => stats.paused += 1,
+                "completed" => {
+                    stats.completed += 1;
+                    stats.completed_bytes =
+                        stats.completed_bytes.saturating_add(view.bytes_received);
+                }
+                "failed" | "needs_source" => stats.failed += 1,
+                _ => {}
+            }
+            if view.state == "running" {
+                stats.active_bytes = stats.active_bytes.saturating_add(view.bytes_received);
+                if let Some(rate) = view.bytes_per_second {
+                    stats.combined_bytes_per_second =
+                        stats.combined_bytes_per_second.saturating_add(rate);
+                }
+            }
+        }
+        stats.max_active_downloads = self.max_active();
+        stats
     }
 
     fn save_locked(&self, state: &QueueState) -> Result<(), String> {
@@ -735,11 +1129,18 @@ impl QueueRecord {
             media_variant_id: None,
             media_quality: None,
             job,
+            rate: RateEstimate::default(),
+            attempt: 0,
+            retry_at_ms: None,
             view: JobSnapshot {
                 job_id: id,
                 source: display,
                 state: state.into(),
                 bytes_received: 0,
+                total_bytes: None,
+                bytes_per_second: None,
+                eta_seconds: None,
+                attempt: 0,
                 destination: Some(destination.display().to_string()),
                 observed_sha256: None,
                 cleanup_pending: false,
@@ -798,11 +1199,18 @@ impl QueueRecord {
             media_variant_id: Some(variant_id),
             media_quality: Some(quality_label.clone()),
             job,
+            rate: RateEstimate::default(),
+            attempt: 0,
+            retry_at_ms: None,
             view: JobSnapshot {
                 job_id: id,
                 source: display,
                 state: state.into(),
                 bytes_received: 0,
+                total_bytes: None,
+                bytes_per_second: None,
+                eta_seconds: None,
+                attempt: 0,
                 destination: Some(destination.display().to_string()),
                 observed_sha256: None,
                 cleanup_pending: false,
@@ -844,7 +1252,13 @@ impl QueueRecord {
         let private_source_needs_refresh =
             live_url.is_none() && matches!(saved.view.state.as_str(), "failed" | "cancelled");
         let missing_browser_secret = saved.credential_ref.is_some() && live_url.is_none();
-        let (job, state, error, action, retryable) = if private_source_needs_refresh {
+        // A download the user paused stays paused. Restoring it as queued would
+        // silently start a transfer the user deliberately stopped, which is the
+        // one thing a pause has to be able to promise across a restart.
+        let paused = saved.view.state == "paused";
+        let (job, state, error, action, retryable) = if paused && live_url.is_some() {
+            (None, "paused".into(), None, None, false)
+        } else if private_source_needs_refresh {
             (
                 None,
                 "needs_source".into(),
@@ -946,12 +1360,23 @@ impl QueueRecord {
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
             job,
+            rate: RateEstimate::default(),
+            attempt: view.attempt,
+            retry_at_ms: None,
             view,
         }
     }
 }
 
 fn refresh_record(record: &mut QueueRecord) {
+    // A paused record may still hold a prepared job that never started. That
+    // job reports itself as queued, and copying its state over the view would
+    // put the record straight back in the queue for reconcile to start, which
+    // is exactly the transfer the user stopped.
+    if record.view.state == "paused" {
+        sample_rate(record);
+        return;
+    }
     let Some(job) = record.job.as_ref() else {
         return;
     };
@@ -966,6 +1391,10 @@ fn refresh_record(record: &mut QueueRecord) {
             }
             record.view.state = state_name(snapshot.state).into();
             record.view.bytes_received = snapshot.bytes_received;
+            // The engine only reports a total once a source states one, and a
+            // total it has already reported is kept rather than flickering off
+            // between samples.
+            record.view.total_bytes = snapshot.total_bytes.or(record.view.total_bytes);
             record.view.destination = snapshot
                 .destination
                 .as_ref()
@@ -1004,6 +1433,26 @@ fn refresh_record(record: &mut QueueRecord) {
     if is_terminal(&record.view.state) && record.finished_at_ms.is_none() {
         record.finished_at_ms = Some(now_ms());
         record.view.finished_at_ms = record.finished_at_ms;
+    }
+    sample_rate(record);
+}
+
+/// Updates the transfer rate and remaining time for one record.
+///
+/// Rate and remaining time are only meaningful while bytes are moving. Every
+/// other state clears them, so a queued, paused or finished row never displays
+/// a speed that nothing is producing.
+fn sample_rate(record: &mut QueueRecord) {
+    if record.view.state == "running" {
+        record.rate.observe(record.view.bytes_received, now_ms());
+        record.view.bytes_per_second = record.rate.bytes_per_second();
+        record.view.eta_seconds = record
+            .rate
+            .eta_seconds(record.view.bytes_received, record.view.total_bytes);
+    } else {
+        record.rate.clear();
+        record.view.bytes_per_second = None;
+        record.view.eta_seconds = None;
     }
 }
 
@@ -1074,6 +1523,18 @@ fn is_terminal(state: &str) -> bool {
     matches!(state, "completed" | "cancelled" | "failed")
 }
 
+/// Resolves the media helpers, preferring a directory the user chose.
+///
+/// A configured directory that no longer contains the helpers falls through to
+/// the ambient discovery rather than failing outright, so a moved folder
+/// degrades to "not set up" instead of hiding tools that are still findable.
+fn discover_media_tools(configured: Option<&str>) -> Option<MediaTools> {
+    configured
+        .map(PathBuf::from)
+        .and_then(|root| MediaTools::discover_in(&root).ok())
+        .or_else(|| MediaTools::discover().ok())
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1085,11 +1546,132 @@ fn now_ms() -> u64 {
 
 fn display_url(url: &str) -> String {
     let base = url.split(['?', '#']).next().unwrap_or(url);
-    if base == url {
-        base.to_owned()
+    let redacted = redact_userinfo(base);
+    if redacted == url {
+        redacted
     } else {
-        format!("{base}?…")
+        format!("{redacted}?…")
     }
+}
+
+/// Replaces any `user:password@` section of an address with a fixed marker so a
+/// credential can never reach queue JSON, an event payload, or an error string.
+fn redact_userinfo(base: &str) -> String {
+    let Some(scheme_end) = base.find("://") else {
+        return base.to_owned();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = base[authority_start..]
+        .find('/')
+        .map_or(base.len(), |offset| authority_start + offset);
+    let authority = &base[authority_start..authority_end];
+    match authority.rfind('@') {
+        None => base.to_owned(),
+        Some(at) => format!(
+            "{}…@{}{}",
+            &base[..authority_start],
+            &authority[at + 1..],
+            &base[authority_end..]
+        ),
+    }
+}
+
+/// Validates an address arriving over IPC. Every rejection is a user-facing
+/// sentence and never echoes the raw value, which may carry a signed query.
+fn validated_source(raw: &str) -> Result<String, String> {
+    let url = raw.trim();
+    if url.is_empty() {
+        return Err("Add at least one download address.".into());
+    }
+    if url.len() > MAX_SOURCE_LENGTH {
+        return Err("That download address is too long to queue safely.".into());
+    }
+    if url.chars().any(char::is_control) {
+        return Err("That download address contains characters Fetchpath cannot use.".into());
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!(
+            "{} is not an HTTP or HTTPS address.",
+            display_url(url)
+        ));
+    }
+    let parsed = url::Url::parse(url)
+        .map_err(|_| "That download address could not be read as a web address.".to_string())?;
+    if parsed.host_str().is_none() {
+        return Err("That download address is missing a host name.".into());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(
+            "Addresses that embed a user name or password are not accepted. Remove the credentials from the link."
+                .into(),
+        );
+    }
+    Ok(url.to_owned())
+}
+
+/// Validates a destination arriving over IPC. The path must be absolute and free
+/// of traversal, so a renderer cannot steer a write outside the folder the user
+/// actually chose, and the leaf must be a name Windows can really create.
+fn validated_destination(raw: &str) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Every queued download needs a destination filename.".into());
+    }
+    if trimmed.len() > MAX_DESTINATION_LENGTH {
+        return Err("That destination path is too long.".into());
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err("That destination path contains characters Windows cannot use.".into());
+    }
+    let path = PathBuf::from(trimmed);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("A destination path cannot contain \"..\".".into());
+    }
+    if !path.is_absolute()
+        || path
+            .components()
+            .next()
+            .is_none_or(|component| !matches!(component, Component::Prefix(_)))
+    {
+        return Err("Choose a full destination path, including its drive.".into());
+    }
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err("Every queued download needs a destination filename.".into());
+    };
+    if name != name.trim_end_matches(['.', ' ']) {
+        return Err("A destination filename cannot end with a dot or a space.".into());
+    }
+    // A colon in the leaf names an NTFS alternate data stream, so
+    // `notes.txt:hidden` would attach bytes to a file the user never chose while
+    // still satisfying the create-only publication fence. The drive letter's
+    // colon lives in the prefix component, not here, so it is unaffected.
+    if let Some(offending) = name.chars().find(|character| {
+        matches!(
+            character,
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+        )
+    }) {
+        return Err(format!(
+            "A destination filename cannot contain {offending}."
+        ));
+    }
+    if is_reserved_device_name(name) {
+        return Err("That destination filename is reserved by Windows.".into());
+    }
+    Ok(path)
+}
+
+/// Windows refuses these names in any directory and with any extension.
+fn is_reserved_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
 }
 
 fn restartable_url(url: &str) -> Option<String> {
@@ -1231,12 +1813,271 @@ fn retry_download(
 }
 
 #[tauri::command]
+fn pause_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<JobSnapshot, String> {
+    jobs.pause(&job_id)
+}
+
+#[tauri::command]
+fn resume_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<JobSnapshot, String> {
+    jobs.resume(&job_id)
+}
+
+#[tauri::command]
+fn queue_stats(jobs: State<'_, DesktopJobs>) -> Result<QueueStats, String> {
+    Ok(jobs.stats())
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsView {
+    settings: Settings,
+    /// True when the stored settings file was unusable and defaults were
+    /// substituted, so the interface can say so instead of presenting the
+    /// defaults as the user's own choices.
+    repaired: bool,
+    max_active_limit: usize,
+    max_retry_attempts: u32,
+    /// The folder used when no default destination is set.
+    system_download_dir: Option<String>,
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle, jobs: State<'_, DesktopJobs>) -> Result<SettingsView, String> {
+    Ok(SettingsView {
+        settings: jobs.settings(),
+        repaired: jobs.settings_repaired,
+        max_active_limit: settings::MAX_ACTIVE_DOWNLOADS,
+        max_retry_attempts: settings::MAX_RETRY_ATTEMPTS,
+        system_download_dir: app
+            .path()
+            .download_dir()
+            .ok()
+            .map(|dir| dir.display().to_string()),
+    })
+}
+
+#[tauri::command]
+fn update_settings(
+    next: Settings,
+    app: AppHandle,
+    jobs: State<'_, DesktopJobs>,
+) -> Result<SettingsView, String> {
+    jobs.update_settings(next)?;
+    get_settings(app, jobs)
+}
+
+/// The folder new downloads are saved in: the user's choice, else Windows'
+/// own Downloads folder.
+#[tauri::command]
+fn default_destination_dir(
+    app: AppHandle,
+    jobs: State<'_, DesktopJobs>,
+) -> Result<Option<String>, String> {
+    Ok(jobs.settings().default_destination_dir.or_else(|| {
+        app.path()
+            .download_dir()
+            .ok()
+            .map(|dir| dir.display().to_string())
+    }))
+}
+
+/// Opens Explorer with the finished file selected.
+///
+/// Only ever points at a destination this queue recorded, so a renderer message
+/// cannot turn this into a way to launch an arbitrary path.
+#[tauri::command]
+fn reveal_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<(), String> {
+    let snapshot = jobs.snapshot(&job_id)?;
+    let destination = snapshot
+        .destination
+        .ok_or_else(|| "This download has no saved file yet.".to_string())?;
+    let path = PathBuf::from(&destination);
+    if !path.exists() {
+        return Err(format!("{destination} is no longer on disk."));
+    }
+    // Explorer parses its own command line rather than using the standard
+    // argv rules, and `/select,` with the path must arrive as one unquoted
+    // token followed by a quoted path. Passing it through `arg` lets Rust
+    // quote the whole `/select,C:\Some Folder\file` string, which Explorer
+    // then fails to split and answers by opening Documents instead. `raw_arg`
+    // writes the command line exactly.
+    //
+    // A quote inside the path would escape the quoting below, so it is refused.
+    // `validated_destination` already rejects one, which makes this a second
+    // fence rather than the only one.
+    if destination.contains('"') {
+        return Err("That destination cannot be shown in File Explorer.".into());
+    }
+    std::os::windows::process::CommandExt::raw_arg(
+        &mut std::process::Command::new("explorer.exe"),
+        format!("/select,\"{}\"", path.display()),
+    )
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .map(|_| ())
+    .map_err(|error| format!("Could not open the folder: {error}"))
+}
+
+#[tauri::command]
+fn media_tools_status(
+    app: AppHandle,
+    jobs: State<'_, DesktopJobs>,
+) -> Result<media_setup::ToolsStatus, String> {
+    let install_dir = media_tools_install_dir(&app)?;
+    Ok(media_setup::status(
+        jobs.settings().media_tools_dir.as_deref(),
+        &install_dir,
+    ))
+}
+
+#[tauri::command]
+fn install_media_tools(
+    app: AppHandle,
+    jobs: State<'_, DesktopJobs>,
+) -> Result<media_setup::ToolsStatus, String> {
+    let install_dir = media_tools_install_dir(&app)?;
+    media_setup::install(&install_dir)?;
+    let mut settings = jobs.settings();
+    settings.media_tools_dir = Some(install_dir.display().to_string());
+    jobs.update_settings(settings)?;
+    media_tools_status(app, jobs)
+}
+
+#[tauri::command]
+fn use_media_tools_dir(
+    directory: String,
+    app: AppHandle,
+    jobs: State<'_, DesktopJobs>,
+) -> Result<media_setup::ToolsStatus, String> {
+    if directory.len() > MAX_DESTINATION_LENGTH {
+        return Err("That folder path is too long.".into());
+    }
+    let accepted = media_setup::use_directory(&PathBuf::from(&directory))?;
+    let mut settings = jobs.settings();
+    settings.media_tools_dir = Some(accepted);
+    jobs.update_settings(settings)?;
+    media_tools_status(app, jobs)
+}
+
+fn media_tools_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("media-tools"))
+        .map_err(|error| format!("Could not resolve the Fetchpath data folder: {error}"))
+}
+
+#[tauri::command]
 fn remove_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<(), String> {
     jobs.remove(&job_id)
 }
 
+/// One Fetchpath process per Windows user account.
+///
+/// Two processes would both own `queue-v1.json` and both claim the tray icon, so
+/// the second one would race the first over the persisted queue. The guard is a
+/// deny-sharing handle on a lock file in the same application-data directory as
+/// the queue: whoever opens it first keeps it for the life of the process.
+///
+/// It fails open. Only a sharing or locking violation means "another instance is
+/// running"; any other error (an unwritable directory, a missing `%APPDATA%`)
+/// lets the application start, because refusing to launch is worse than the
+/// unlikely double-launch it would prevent.
+mod single_instance {
+    use std::fs::{File, OpenOptions};
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    /// `FILE_SHARE_NONE`: no other process may open this file at all.
+    const NO_SHARING: u32 = 0;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const ERROR_LOCK_VIOLATION: i32 = 33;
+    const SW_SHOW: i32 = 5;
+    const SW_RESTORE: i32 = 9;
+    /// The window class tao registers for a Tauri window. Matching on it as well
+    /// as the title avoids activating some unrelated window that happens to be
+    /// called "Fetchpath" — an Explorer window on a folder of that name, say.
+    const WINDOW_CLASS: &str = "Tauri Window";
+
+    /// Held for the lifetime of the process; dropping it would release the claim.
+    static HELD: OnceLock<File> = OnceLock::new();
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn FindWindowW(class_name: *const u16, window_name: *const u16) -> *mut core::ffi::c_void;
+        fn ShowWindow(window: *mut core::ffi::c_void, command: i32) -> i32;
+        fn SetForegroundWindow(window: *mut core::ffi::c_void) -> i32;
+    }
+
+    pub fn lock_path() -> Option<PathBuf> {
+        let roaming = std::env::var_os("APPDATA")?;
+        Some(
+            Path::new(&roaming)
+                .join("app.fetchpath.desktop")
+                .join("instance.lock"),
+        )
+    }
+
+    /// `true` when this process may proceed as the single instance.
+    pub fn claim(path: &Path) -> bool {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .share_mode(NO_SHARING)
+            .open(path)
+        {
+            Ok(file) => {
+                let _ = HELD.set(file);
+                true
+            }
+            Err(error) => !matches!(
+                error.raw_os_error(),
+                Some(ERROR_SHARING_VIOLATION) | Some(ERROR_LOCK_VIOLATION)
+            ),
+        }
+    }
+
+    fn wide(value: &str) -> Vec<u16> {
+        let mut buffer: Vec<u16> = value.encode_utf16().collect();
+        buffer.push(0);
+        buffer
+    }
+
+    /// Brings the already-running window forward, including from the tray, so a
+    /// second launch looks like reopening Fetchpath rather than doing nothing.
+    pub fn activate_running_window(title: &str) {
+        let class = wide(WINDOW_CLASS);
+        let name = wide(title);
+        // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call.
+        unsafe {
+            let window = FindWindowW(class.as_ptr(), name.as_ptr());
+            if window.is_null() {
+                return;
+            }
+            // Hidden-to-tray needs SW_SHOW; minimized needs SW_RESTORE.
+            ShowWindow(window, SW_SHOW);
+            ShowWindow(window, SW_RESTORE);
+            SetForegroundWindow(window);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(path) = single_instance::lock_path()
+        && !single_instance::claim(&path)
+    {
+        single_instance::activate_running_window("Fetchpath");
+        return;
+    }
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -1249,7 +2090,17 @@ pub fn run() {
             cancel_download,
             start_now,
             retry_download,
-            remove_download
+            remove_download,
+            pause_download,
+            resume_download,
+            queue_stats,
+            get_settings,
+            update_settings,
+            default_destination_dir,
+            reveal_download,
+            media_tools_status,
+            install_media_tools,
+            use_media_tools_dir
         ])
         .setup(|app| {
             let state_path = app.path().app_data_dir()?.join("queue-v1.json");
@@ -1291,8 +2142,18 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                // Closing to the tray is the default because a running queue
+                // should survive a stray click on the X. A user who turned that
+                // off means the close button to close, so finish the transfers
+                // down cleanly and exit rather than hiding.
+                let jobs = window.app_handle().state::<DesktopJobs>();
+                if jobs.settings().close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    jobs.cancel_all_and_join();
+                    window.app_handle().exit(0);
+                }
             }
         })
         .build(tauri::generate_context!())
@@ -1318,6 +2179,9 @@ fn show_main_window(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The blank line that ends an HTTP request head.
+    const HEAD_TERMINATOR: &[u8] = b"\r\n\r\n";
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -1351,6 +2215,111 @@ mod tests {
         (url, handle)
     }
 
+    /// A fixture that honours `Range` and `If-Range`, so a resumed transfer can
+    /// be observed continuing from an offset rather than starting over.
+    ///
+    /// It serves connections in a loop and counts the requests that carried an
+    /// `If-Range` header. That header is sent only by the resume path, so the
+    /// count is direct evidence that a resume used the checkpoint instead of
+    /// quietly re-downloading the whole file.
+    fn resumable_fixture(
+        body: Vec<u8>,
+        chunk_delay: Duration,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let if_range_requests = Arc::new(AtomicUsize::new(0));
+        let counter = if_range_requests.clone();
+
+        thread::spawn(move || {
+            let total = body.len();
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut head = Vec::new();
+                let mut byte = [0_u8; 1];
+                while head.len() < 8192 {
+                    match stream.read(&mut byte) {
+                        Ok(1) => head.push(byte[0]),
+                        _ => break,
+                    }
+                    if head.ends_with(HEAD_TERMINATOR) {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&head).to_string();
+                if request.to_ascii_lowercase().contains("if-range:") {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+                let start = request
+                    .lines()
+                    .find_map(|line| {
+                        let rest = line.strip_prefix("Range: bytes=")?;
+                        rest.split('-').next()?.parse::<usize>().ok()
+                    })
+                    .unwrap_or(0)
+                    .min(total);
+
+                let header = if start > 0 {
+                    format!(
+                        concat!(
+                            "HTTP/1.1 206 Partial Content\r\n",
+                            "Content-Length: {}\r\n",
+                            "Content-Range: bytes {}-{}/{}\r\n",
+                            "ETag: \"fixture-v1\"\r\n",
+                            "Accept-Ranges: bytes\r\n",
+                            "Connection: close\r\n\r\n",
+                        ),
+                        total - start,
+                        start,
+                        total - 1,
+                        total
+                    )
+                } else {
+                    format!(
+                        concat!(
+                            "HTTP/1.1 200 OK\r\n",
+                            "Content-Length: {}\r\n",
+                            "ETag: \"fixture-v1\"\r\n",
+                            "Accept-Ranges: bytes\r\n",
+                            "Connection: close\r\n\r\n",
+                        ),
+                        total
+                    )
+                };
+                if stream.write_all(header.as_bytes()).is_err() {
+                    continue;
+                }
+                for chunk in body[start..].chunks(32 * 1024) {
+                    if stream.write_all(chunk).is_err() {
+                        break;
+                    }
+                    if !chunk_delay.is_zero() {
+                        thread::sleep(chunk_delay);
+                    }
+                }
+            }
+        });
+        (url, if_range_requests)
+    }
+
+    /// Waits for a record to reach one of `states`, returning the snapshot.
+    fn wait_for_state(jobs: &DesktopJobs, job_id: &str, states: &[&str]) -> JobSnapshot {
+        for _ in 0..600 {
+            let snapshot = jobs.snapshot(job_id).unwrap();
+            if states.contains(&snapshot.state.as_str()) {
+                return snapshot;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!(
+            "desktop job never reached {states:?}; last state was {:?}",
+            jobs.snapshot(job_id).unwrap().state
+        );
+    }
+
     fn wait_for_terminal(jobs: &DesktopJobs, job_id: &str) -> JobSnapshot {
         for _ in 0..400 {
             let snapshot = jobs.snapshot(job_id).unwrap();
@@ -1362,6 +2331,273 @@ mod tests {
         panic!("desktop job did not finish");
     }
 
+    #[test]
+    fn a_stated_length_reaches_the_queue_view_as_a_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![0x31; 256 * 1024];
+        let expected = body.len() as u64;
+        let (url, server) = fixture(body, false);
+        let jobs = DesktopJobs::in_memory(3);
+        let started = jobs
+            .enqueue(vec![JobDraft {
+                url,
+                destination: dir.path().join("sized.bin").display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap()
+            .remove(0);
+        // A queued download has not spoken to the source yet, so it has no total.
+        assert_eq!(started.total_bytes, None);
+
+        let completed = wait_for_terminal(&jobs, &started.job_id);
+        server.join().unwrap();
+        assert_eq!(completed.state, "completed");
+        assert_eq!(completed.total_bytes, Some(expected));
+        // Nothing is running, so no rate or remaining time may be reported.
+        assert_eq!(completed.bytes_per_second, None);
+        assert_eq!(completed.eta_seconds, None);
+    }
+
+    #[test]
+    fn pausing_a_running_download_resumes_from_its_checkpoint() {
+        use std::sync::atomic::Ordering;
+
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("resumable.bin");
+        let body: Vec<u8> = (0..768 * 1024).map(|index| (index % 251) as u8).collect();
+        // Slow enough that the test can pause partway through rather than
+        // racing a transfer that has already finished.
+        let (url, if_range_requests) = resumable_fixture(body.clone(), Duration::from_millis(12));
+
+        let jobs = DesktopJobs::in_memory(3);
+        let started = jobs
+            .enqueue(vec![JobDraft {
+                url,
+                destination: destination.display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap()
+            .remove(0);
+
+        // Wait for real bytes before pausing; pausing at zero would prove nothing.
+        let mut running = wait_for_state(&jobs, &started.job_id, &["running", "completed"]);
+        for _ in 0..600 {
+            if running.state != "running" || running.bytes_received > 64 * 1024 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+            running = jobs.snapshot(&started.job_id).unwrap();
+        }
+        assert_eq!(
+            running.state, "running",
+            "fixture finished before the pause"
+        );
+        let paused = jobs.pause(&started.job_id).unwrap();
+        assert_eq!(paused.state, "paused");
+        assert!(
+            paused.bytes_received > 0,
+            "a pause has to keep the bytes already verified"
+        );
+        assert_eq!(
+            paused.bytes_per_second, None,
+            "a paused row reports no speed"
+        );
+        assert!(!destination.exists(), "nothing is published while paused");
+        let paused_at = paused.bytes_received;
+
+        // Pausing is durable: another poll must not restart it.
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(jobs.snapshot(&started.job_id).unwrap().state, "paused");
+
+        let resumed = jobs.resume(&started.job_id).unwrap();
+        assert!(matches!(resumed.state.as_str(), "queued" | "running"));
+
+        let completed = wait_for_terminal(&jobs, &started.job_id);
+        assert_eq!(completed.state, "completed", "error: {:?}", completed.error);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        assert_eq!(
+            if_range_requests.load(Ordering::SeqCst),
+            1,
+            "the resume must continue from the checkpoint at {paused_at} bytes, \
+             which is the only thing that sends If-Range"
+        );
+    }
+
+    #[test]
+    fn a_queued_download_pauses_without_ever_contacting_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![9; 512 * 1024];
+        let (slow_url, slow_server) = fixture(body.clone(), true);
+        let (waiting_url, waiting_server) = fixture(body, false);
+
+        // One slot, so the second download is still queued when it is paused.
+        let jobs = DesktopJobs::in_memory(1);
+        let created = jobs
+            .enqueue(vec![
+                JobDraft {
+                    url: slow_url,
+                    destination: dir.path().join("slow.bin").display().to_string(),
+                    not_before_ms: None,
+                },
+                JobDraft {
+                    url: waiting_url,
+                    destination: dir.path().join("waiting.bin").display().to_string(),
+                    not_before_ms: None,
+                },
+            ])
+            .unwrap();
+
+        let waiting_id = created[1].job_id.clone();
+        let paused = jobs.pause(&waiting_id).unwrap();
+        assert_eq!(paused.state, "paused");
+        assert_eq!(paused.bytes_received, 0);
+
+        // The first download finishing must not promote the paused one.
+        wait_for_terminal(&jobs, &created[0].job_id);
+        thread::sleep(Duration::from_millis(60));
+        assert_eq!(jobs.snapshot(&waiting_id).unwrap().state, "paused");
+
+        let resumed = jobs.resume(&waiting_id).unwrap();
+        assert!(matches!(resumed.state.as_str(), "queued" | "running"));
+        let completed = wait_for_terminal(&jobs, &waiting_id);
+        assert_eq!(completed.state, "completed");
+
+        let _ = slow_server.join();
+        let _ = waiting_server.join();
+    }
+
+    #[test]
+    fn a_paused_download_is_still_paused_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("queue-v1.json");
+        let body = vec![4; 256 * 1024];
+        let (url, server) = fixture(body, true);
+
+        let waiting_id = {
+            let jobs = DesktopJobs::load(state_path.clone(), 1).unwrap();
+            let created = jobs
+                .enqueue(vec![JobDraft {
+                    url,
+                    destination: dir.path().join("paused.bin").display().to_string(),
+                    not_before_ms: None,
+                }])
+                .unwrap();
+            let id = created[0].job_id.clone();
+            jobs.pause(&id).unwrap();
+            id
+        };
+
+        // A fresh process reading the same queue file.
+        let reopened = DesktopJobs::load(state_path, 1).unwrap();
+        let restored = reopened.snapshot(&waiting_id).unwrap();
+        assert_eq!(
+            restored.state, "paused",
+            "restoring a paused download as queued would start a transfer the user stopped"
+        );
+
+        // And it is still resumable from the new process.
+        let resumed = reopened.resume(&waiting_id).unwrap();
+        assert!(matches!(resumed.state.as_str(), "queued" | "running"));
+        let _ = server.join();
+    }
+
+    #[test]
+    fn media_downloads_refuse_to_pause_rather_than_pretending() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![1; 64 * 1024];
+        let (url, server) = fixture(body, true);
+        let jobs = DesktopJobs::in_memory(1);
+        let created = jobs
+            .enqueue(vec![JobDraft {
+                url,
+                destination: dir.path().join("file.bin").display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap();
+        let id = created[0].job_id.clone();
+
+        // Force the record to look like a media job, which has no checkpoint to
+        // resume from. The command must say so instead of dropping the bytes.
+        {
+            let mut state = jobs.inner.lock().unwrap();
+            find_record_mut(&mut state, &id).unwrap().view.kind = "media".into();
+        }
+        let error = jobs.pause(&id).unwrap_err();
+        assert!(
+            error.contains("cancelled and started again"),
+            "unexpected message: {error}"
+        );
+        let _ = server.join();
+    }
+
+    #[test]
+    fn settings_bound_concurrency_and_take_effect_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::load(dir.path().join("queue-v1.json"), 3).unwrap();
+        assert_eq!(jobs.max_active(), 3);
+
+        let mut next = jobs.settings();
+        next.max_active_downloads = 999;
+        let applied = jobs.update_settings(next).unwrap();
+        assert_eq!(applied.max_active_downloads, settings::MAX_ACTIVE_DOWNLOADS);
+        assert_eq!(jobs.max_active(), settings::MAX_ACTIVE_DOWNLOADS);
+
+        // And the choice survives a restart.
+        let reopened = DesktopJobs::load(dir.path().join("queue-v1.json"), 3).unwrap();
+        assert_eq!(
+            reopened.max_active(),
+            settings::MAX_ACTIVE_DOWNLOADS,
+            "a stored concurrency must win over the launch default"
+        );
+    }
+
+    #[test]
+    fn stats_count_the_same_rows_the_queue_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![2; 128 * 1024];
+        let (first_url, first_server) = fixture(body.clone(), false);
+        let (second_url, second_server) = fixture(body, true);
+        let jobs = DesktopJobs::in_memory(1);
+        let created = jobs
+            .enqueue(vec![
+                JobDraft {
+                    url: first_url,
+                    destination: dir.path().join("one.bin").display().to_string(),
+                    not_before_ms: None,
+                },
+                JobDraft {
+                    url: second_url,
+                    destination: dir.path().join("two.bin").display().to_string(),
+                    not_before_ms: None,
+                },
+            ])
+            .unwrap();
+        wait_for_terminal(&jobs, &created[0].job_id);
+        jobs.pause(&created[1].job_id).ok();
+
+        let stats = jobs.stats();
+        let rows = jobs.list().unwrap();
+        let counted = stats.running
+            + stats.queued
+            + stats.scheduled
+            + stats.paused
+            + stats.completed
+            + stats.failed;
+        assert_eq!(
+            counted,
+            rows.len(),
+            "every row has to be counted exactly once: {stats:?} against {} rows",
+            rows.len()
+        );
+        assert_eq!(stats.max_active_downloads, 1);
+        assert!(stats.completed_bytes > 0);
+
+        // Neither fixture is joined. Pausing can win the race against the
+        // worker's first socket write, in which case that fixture is still
+        // blocked in `accept` and joining it would hang the test rather than
+        // reveal anything about the queue.
+        drop((first_server, second_server));
+    }
     #[test]
     fn production_command_path_downloads_real_bytes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1565,5 +2801,228 @@ mod tests {
         assert_eq!(failed.action.as_deref(), Some("refresh_source"));
         assert!(!failed.error.unwrap().contains("private"));
         assert!(!destination.exists());
+    }
+
+    fn draft(url: &str, destination: &Path) -> JobDraft {
+        JobDraft {
+            url: url.into(),
+            destination: destination.display().to_string(),
+            not_before_ms: None,
+        }
+    }
+
+    #[test]
+    fn destinations_cannot_escape_the_chosen_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(1);
+
+        let traversal = dir.path().join("..").join("escaped.bin");
+        let error = jobs
+            .enqueue(vec![draft("http://127.0.0.1:9/file", &traversal)])
+            .unwrap_err();
+        assert!(error.contains(".."), "unexpected traversal error: {error}");
+
+        let relative = jobs
+            .enqueue(vec![JobDraft {
+                url: "http://127.0.0.1:9/file".into(),
+                destination: "escaped.bin".into(),
+                not_before_ms: None,
+            }])
+            .unwrap_err();
+        assert!(
+            relative.contains("full destination path"),
+            "unexpected relative-path error: {relative}"
+        );
+
+        let sibling = dir.path().join("sibling");
+        fs::create_dir_all(&sibling).unwrap();
+        let split_batch = jobs
+            .enqueue(vec![
+                draft("http://127.0.0.1:9/one", &dir.path().join("one.bin")),
+                draft("http://127.0.0.1:9/two", &sibling.join("two.bin")),
+            ])
+            .unwrap_err();
+        assert!(
+            split_batch.contains("same folder"),
+            "unexpected batch-containment error: {split_batch}"
+        );
+        assert!(!dir.path().join("one.bin").exists());
+    }
+
+    #[test]
+    fn malformed_ipc_input_is_rejected_with_a_user_facing_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(1);
+
+        for (destination, expected) in [
+            ("NUL", "full destination path"),
+            ("trailing.", "full destination path"),
+        ] {
+            let error = jobs
+                .enqueue(vec![JobDraft {
+                    url: "http://127.0.0.1:9/file".into(),
+                    destination: destination.into(),
+                    not_before_ms: None,
+                }])
+                .unwrap_err();
+            assert!(error.contains(expected), "{destination}: {error}");
+        }
+
+        for name in ["NUL.bin", "COM1.bin"] {
+            let error = jobs
+                .enqueue(vec![draft(
+                    "http://127.0.0.1:9/file",
+                    &dir.path().join(name),
+                )])
+                .unwrap_err();
+            assert!(error.contains("reserved by Windows"), "{name}: {error}");
+        }
+
+        let trailing_dot = jobs
+            .enqueue(vec![draft(
+                "http://127.0.0.1:9/file",
+                &dir.path().join("name."),
+            )])
+            .unwrap_err();
+        assert!(trailing_dot.contains("dot or a space"), "{trailing_dot}");
+
+        // An alternate data stream would otherwise pass every other check and
+        // attach bytes to a file the user never chose.
+        let stream = jobs
+            .enqueue(vec![JobDraft {
+                url: "http://127.0.0.1:9/file".into(),
+                destination: format!("{}\\notes.txt:hidden", dir.path().display()),
+                not_before_ms: None,
+            }])
+            .unwrap_err();
+        assert!(stream.contains("cannot contain :"), "{stream}");
+        assert!(!dir.path().join("notes.txt").exists());
+
+        // The drive letter's colon must still be accepted.
+        let accepted = jobs.enqueue(vec![draft(
+            "http://127.0.0.1:9/file",
+            &dir.path().join("plain.bin"),
+        )]);
+        assert!(accepted.is_ok(), "{accepted:?}");
+        jobs.remove(&accepted.unwrap()[0].job_id).unwrap();
+
+        let control = jobs
+            .enqueue(vec![JobDraft {
+                url: "http://127.0.0.1:9/file".into(),
+                destination: format!("{}\u{1}bad.bin", dir.path().display()),
+                not_before_ms: None,
+            }])
+            .unwrap_err();
+        assert!(control.contains("Windows cannot use"), "{control}");
+
+        for (url, expected) in [
+            (
+                "file:///C:/Windows/System32/drivers/etc/hosts",
+                "not an HTTP or HTTPS address",
+            ),
+            ("javascript:alert(1)", "not an HTTP or HTTPS address"),
+            ("http://", "could not be read as a web address"),
+            ("http://host\u{1}/file", "characters Fetchpath cannot use"),
+            ("   ", "at least one download address"),
+        ] {
+            let error = jobs
+                .enqueue(vec![draft(url, &dir.path().join("out.bin"))])
+                .unwrap_err();
+            assert!(error.contains(expected), "{url}: {error}");
+        }
+
+        let oversized = format!("https://example.test/{}", "a".repeat(MAX_SOURCE_LENGTH));
+        let error = jobs
+            .enqueue(vec![draft(&oversized, &dir.path().join("out.bin"))])
+            .unwrap_err();
+        assert!(error.contains("too long"), "{error}");
+        assert!(!error.contains("aaaa"), "oversized address was echoed back");
+
+        assert!(
+            jobs.retry("not-a-job", None, None)
+                .unwrap_err()
+                .contains("no longer")
+        );
+        assert!(jobs.cancel("not-a-job").is_err());
+        assert!(jobs.remove("not-a-job").is_err());
+        assert!(jobs.start_now("not-a-job").is_err());
+        assert!(jobs.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn credentials_and_private_queries_never_reach_state_or_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(1);
+
+        let error = jobs
+            .enqueue(vec![draft(
+                "https://user:hunter2@example.test/file.bin",
+                &dir.path().join("out.bin"),
+            )])
+            .unwrap_err();
+        assert!(!error.contains("hunter2"), "password echoed: {error}");
+        assert!(error.contains("user name or password"), "{error}");
+
+        assert_eq!(
+            display_url("https://user:hunter2@example.test/file?token=abc"),
+            "https://…@example.test/file?…"
+        );
+        assert_eq!(
+            display_url("https://example.test/plain.bin"),
+            "https://example.test/plain.bin"
+        );
+
+        let state_path = dir.path().join("queue-v1.json");
+        let state = QueueState {
+            records: vec![QueueRecord::new(
+                "https://example.test/file?token=secret-value#frag".into(),
+                dir.path().join("private.bin"),
+                None,
+            )],
+        };
+        save_persisted(&state_path, &state).unwrap();
+        let text = fs::read_to_string(&state_path).unwrap();
+        assert!(!text.contains("secret-value"));
+        assert!(!text.contains("frag"));
+        for record in &state.records {
+            assert!(record.restart_url.is_none());
+            assert!(!record.view.source.contains("secret-value"));
+        }
+    }
+
+    #[test]
+    fn a_second_instance_is_refused_while_the_first_holds_the_lock() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("instance.lock");
+
+        // The first claim also creates the application-data directory.
+        assert!(single_instance::claim(&path));
+        assert!(path.exists());
+
+        // A second process is modelled by an independent deny-sharing open of
+        // the same path, because the in-process claim is held by a static.
+        let contended = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .share_mode(0)
+            .open(&path);
+        assert_eq!(
+            contended.unwrap_err().raw_os_error(),
+            Some(32),
+            "a second instance must see ERROR_SHARING_VIOLATION"
+        );
+
+        // Failing open: an unusable lock path must not stop the application. A
+        // regular file makes an impossible parent directory.
+        let blocker = dir.path().join("blocker");
+        fs::write(&blocker, b"not a directory").unwrap();
+        let unusable = blocker.join("child.lock");
+        assert!(single_instance::claim(&unusable));
+        assert!(!unusable.exists());
     }
 }

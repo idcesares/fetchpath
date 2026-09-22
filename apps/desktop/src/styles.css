@@ -1,3 +1,7 @@
+/* Theme tokens.
+   `:root[data-theme]` is set from the appearance setting. When it is absent or
+   "system" the media queries below decide, so a user who never opens Settings
+   still follows Windows. */
 :root {
   color: #eef5f1;
   background: #0b100e;
@@ -6,13 +10,20 @@
   font-synthesis: none;
   --surface: #141b18ee;
   --surface-raised: #1a2420;
+  --inset: #0d1512;
   --line: #34433c;
+  --line-soft: #3f574d;
+  --field: #0c1210;
+  --field-line: #617169;
   --muted: #a9b7b0;
   --quiet: #7f8e87;
   --accent: #7ce0b7;
   --accent-strong: #b2f4d7;
+  --on-accent: #06120d;
   --warning: #ffd06e;
   --danger: #ffb5ae;
+  --hover: #26342e;
+  --track: #223029;
 }
 
 * { box-sizing: border-box; }
@@ -28,7 +39,7 @@ body {
     linear-gradient(145deg, #101713, #090d0b 70%);
 }
 
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 
 .shell {
   width: min(1080px, calc(100% - 48px));
@@ -42,11 +53,17 @@ h2 { margin-bottom: 0; font-size: 1.38rem; letter-spacing: -.02em; }
 h3 { margin-bottom: 0; font-size: 1.04rem; }
 
 .hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 28px; }
+.hero-text { min-width: 0; }
+.hero-side { display: flex; align-items: center; gap: 12px; }
+.hero-actions { display: flex; flex-direction: column; gap: 8px; }
 .lede { max-width: 62ch; margin-bottom: 0; color: var(--muted); font-size: 1.06rem; }
 .eyebrow { margin-bottom: 5px; color: var(--accent); font-size: .7rem; font-weight: 780; letter-spacing: .18em; }
 .hero-stat { min-width: 92px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: #0d1411aa; text-align: center; }
 .hero-stat strong { display: block; color: var(--accent); font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
-.hero-stat span { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+/* Scoped to .stat-unit so `text-transform: uppercase` cannot reach the
+   screen-reader sentence, which some readers would then spell out letter by
+   letter. */
+.hero-stat .stat-unit { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
 
 .card {
   border: 1px solid var(--line);
@@ -56,17 +73,28 @@ h3 { margin-bottom: 0; font-size: 1.04rem; }
 }
 
 .composer { padding: 22px; }
+.onboarding { margin-bottom: 20px; padding: 22px; }
+.onboarding-steps { display: grid; gap: 14px; margin: 0; padding-left: 22px; }
+.onboarding-steps li { padding-left: 4px; }
+.onboarding-steps strong { display: block; }
+.onboarding-steps span { display: block; margin-top: 3px; color: var(--muted); font-size: .9rem; }
+.onboarding-steps button { margin-top: 10px; }
+.onboarding code { display: inline; padding: 1px 5px; border-radius: 4px; background: var(--inset); font-size: .88em; }
+
 .mode-switch { display: flex; gap: 8px; margin: 18px 0; padding: 0; border: 0; }
-.mode-switch label { display: flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid #3f574d; border-radius: 999px; cursor: pointer; }
-.mode-switch input { width: auto; margin: 0; accent-color: var(--accent); }
-.media-options { margin: 14px 0; padding: 14px; border: 1px solid #3f574d; border-radius: 10px; background: #0d1512; }
+.mode-switch label { display: flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid var(--line-soft); border-radius: 999px; cursor: pointer; }
+.mode-switch input { width: auto; min-height: 0; margin: 0; accent-color: var(--accent); }
+.media-options { margin: 14px 0; padding: 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--inset); }
 .media-inspect-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
 .media-inspect-row p { margin: 3px 0 0; }
-.media-options select { width: 100%; padding: 10px 12px; border: 1px solid #3f574d; border-radius: 8px; background: var(--panel); color: var(--text); }
+.media-options select { width: 100%; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--field); color: inherit; }
+.media-setup-needed p { margin: 5px 0 11px; }
+.media-setup-needed code { padding: 1px 5px; border-radius: 4px; background: var(--field); font-size: .88em; }
 .section-heading, .queue-heading, .job-header, .preview-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
 .section-heading { margin-bottom: 18px; }
 .section-heading .eyebrow { margin-bottom: 2px; }
-kbd { padding: 4px 8px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; color: var(--muted); background: #0d1210; font: 700 .72rem/1.2 inherit; }
+.section-heading .hint { max-width: 34ch; margin: 0; text-align: right; }
+kbd { padding: 4px 8px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; color: var(--muted); background: var(--inset); font: 700 .72rem/1.2 inherit; }
 
 label { display: block; margin: 15px 0 7px; font-weight: 680; }
 .hint { color: var(--quiet); font-size: .82rem; font-weight: 500; }
@@ -75,11 +103,12 @@ input, textarea {
   width: 100%;
   min-height: 44px;
   padding: 9px 12px;
-  border: 1px solid #617169;
+  border: 1px solid var(--field-line);
   border-radius: 8px;
   color: inherit;
-  background: #0c1210;
+  background: var(--field);
 }
+input[readonly] { color: var(--muted); }
 textarea { min-height: 86px; resize: vertical; }
 .destination-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
 .schedule-row { display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: 14px; }
@@ -89,20 +118,93 @@ button {
   padding: 8px 16px;
   border: 1px solid var(--accent);
   border-radius: 8px;
-  color: #06120d;
+  color: var(--on-accent);
   background: var(--accent);
   font-weight: 730;
   cursor: pointer;
 }
 button:hover { background: var(--accent-strong); }
 button:disabled { cursor: wait; opacity: .58; }
-button.secondary, button.quiet, button.filter { color: #e4ebe7; background: transparent; }
-button.secondary:hover, button.quiet:hover, button.filter:hover { background: #26342e; }
+button.secondary, button.quiet, button.filter { color: inherit; background: transparent; }
+button.secondary { border-color: var(--line-soft); }
+button.secondary:hover, button.quiet:hover, button.filter:hover { background: var(--hover); }
 button.quiet { border-color: var(--line); }
-button.danger { border-color: #d98f89; color: #ffd4d0; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--warning); outline-offset: 3px; }
+button.danger { border-color: #d98f89; color: var(--danger); }
+/* One focus indicator for every focusable role, including the skip link, the
+   Advanced options summary, the quality select and the skip-link target. */
+:is(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--warning);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+h2:focus-visible { outline-offset: 6px; }
 
-.preview { margin-top: 18px; padding: 14px; border: 1px solid #3f574d; border-radius: 10px; background: #0d1512; }
+.skip-link {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  z-index: 20;
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--on-accent);
+  background: var(--accent);
+  font-weight: 730;
+  text-decoration: none;
+  transform: translate(-50%, calc(-100% - 16px));
+}
+.skip-link:focus-visible { transform: translate(-50%, 0); }
+
+.advanced { margin: 18px 0 0; padding: 0 0 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--inset); }
+.advanced > summary { display: flex; align-items: baseline; gap: 10px; padding: 11px 14px; border-radius: 10px; font-weight: 680; cursor: pointer; }
+.advanced > summary::marker { color: var(--accent); }
+.advanced[open] > summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
+.advanced > :not(summary) { margin-inline: 14px; }
+.advanced > .schedule-row { margin-top: 4px; }
+.advanced > p:last-child { margin-bottom: 12px; }
+
+.submit-messages { flex: 1; min-width: 0; }
+.submit-messages > p { margin: 0; }
+.notice { color: var(--muted); }
+
+dialog.dialog {
+  width: min(520px, calc(100vw - 48px));
+  padding: 22px;
+  color: inherit;
+}
+dialog.dialog::backdrop { background: #04070699; }
+dialog.dialog h2 { margin-bottom: 14px; }
+.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; margin: 0; }
+.shortcuts dt { white-space: nowrap; }
+.shortcuts dd { margin: 0; color: var(--muted); }
+.dialog-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+
+/* Settings ---------------------------------------------------------------- */
+.settings-dialog { width: min(640px, calc(100vw - 48px)); max-height: min(88vh, 880px); }
+.settings-form { max-height: min(62vh, 620px); overflow-y: auto; padding-right: 6px; }
+.settings-group { margin: 0 0 18px; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
+.settings-group legend { padding: 0 6px; color: var(--accent); font-size: .72rem; font-weight: 780; letter-spacing: .14em; text-transform: uppercase; }
+.settings-group > label:first-of-type { margin-top: 4px; }
+.settings-group .quiet { margin-top: 10px; }
+.range-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; }
+.range-row input[type="range"] { min-height: 32px; padding: 0; border: 0; background: transparent; accent-color: var(--accent); }
+.range-row output { min-width: 2.5ch; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); font-variant-numeric: tabular-nums; text-align: center; }
+.check { display: flex; align-items: start; gap: 10px; margin: 12px 0 0; font-weight: 500; }
+.check input { flex: 0 0 auto; width: auto; min-height: 0; margin: 3px 0 0; accent-color: var(--accent); }
+.settings-group select { width: 100%; padding: 10px 12px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: inherit; }
+.media-tools-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+#media-tools-state { font-weight: 680; }
+#media-tools-state[data-ready="true"]::before { content: "\2713\00a0"; color: var(--accent); }
+#media-tools-state[data-ready="false"]::before { content: "\26a0\00a0"; color: var(--warning); }
+
+/* Statistics -------------------------------------------------------------- */
+.stats { margin: 0 0 14px; padding: 20px 22px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 16px; margin: 0; }
+.stats-grid > div { min-width: 0; }
+.stats-grid dt { color: var(--quiet); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.stats-grid dd { margin: 4px 0 0; color: var(--accent); font-size: 1.32rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.preview { margin-top: 18px; padding: 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--inset); }
 .preview h3 { font-size: .95rem; }
 .preview-heading span { color: var(--muted); font-size: .82rem; }
 .preview ol { max-height: 180px; margin: 12px 0 0; padding-left: 26px; overflow: auto; }
@@ -117,10 +219,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .search { width: min(340px, 45vw); margin: 0; }
 .filters { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 7px; }
 button.filter { min-height: 36px; padding: 5px 12px; border-color: var(--line); border-radius: 999px; white-space: nowrap; font-size: .86rem; }
-button.filter.is-selected { border-color: var(--accent); color: #07120d; background: var(--accent); }
+/* The selected filter is marked by weight and an inset ring as well as fill, so
+   the choice survives greyscale, high contrast, and colour-vision differences. */
+button.filter[aria-pressed="true"] { border-color: var(--accent); color: var(--on-accent); background: var(--accent); font-weight: 830; box-shadow: inset 0 0 0 2px var(--on-accent); }
 .queue-summary { margin: 8px 3px 12px; color: var(--muted); font-size: .86rem; }
 .queue-status-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .queue-status-row .queue-summary { flex: 1; }
+.queue-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .queue-status-row button { min-height: 36px; padding: 5px 12px; font-size: .84rem; }
 .queue { display: block; }
 #job-list { display: grid; gap: 12px; }
@@ -130,17 +235,32 @@ button.filter.is-selected { border-color: var(--accent); color: #07120d; backgro
 .job-source { max-width: 72ch; margin: 3px 0 0; color: var(--quiet); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status { flex: 0 0 auto; padding: 5px 10px; border-radius: 999px; color: var(--accent); background: #153328; font-size: .82rem; font-weight: 680; }
 .status[data-state="scheduled"], .status[data-state="queued"] { color: #f9d98b; background: #3b311a; }
+.status[data-state="paused"] { color: #cddbd4; background: #2b3a34; }
 .status[data-state="failed"], .status[data-state="cancelled"], .status[data-state="needs_source"] { color: #ffd4d0; background: #46221f; }
-.status[data-state="completed"] { color: #06140e; background: var(--accent); }
+.status[data-state="completed"] { color: var(--on-accent); background: var(--accent); }
 .destination { margin: 12px 0 8px; color: var(--muted); overflow-wrap: anywhere; }
 .schedule-note { margin: -2px 0 9px; color: #f9d98b; font-size: .86rem; }
 progress { width: 100%; height: 10px; accent-color: var(--accent); }
+/* A determinate bar needs an explicit track and fill in both engines; without
+   them a themed WebView draws a bar that is nearly invisible against the card. */
+progress::-webkit-progress-bar { border-radius: 999px; background: var(--track); }
+progress::-webkit-progress-value { border-radius: 999px; background: var(--accent); }
+.job[data-state="paused"] progress::-webkit-progress-value { background: var(--muted); }
+
+/* The measurements line: percent, received of total, speed, time remaining.
+   Tabular figures stop the row jittering as the numbers change. */
+.metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; color: var(--muted); font-size: .86rem; font-variant-numeric: tabular-nums; }
+.metrics .primary { color: inherit; font-weight: 680; }
 .bytes { display: block; margin: 6px 0 0; color: var(--muted); font-size: .86rem; font-variant-numeric: tabular-nums; }
 .job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 15px; }
 .job-actions button { min-height: 36px; padding: 5px 12px; font-size: .84rem; }
 .completion { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .digest-label { margin-bottom: 4px; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
-code { display: block; color: #e2e9e5; overflow-wrap: anywhere; }
+code { display: block; color: inherit; overflow-wrap: anywhere; }
+.diagnostics { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.diagnostics dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 6px 0 0; font-size: .8rem; }
+.diagnostics dt { color: var(--quiet); }
+.diagnostics dd { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .fine-print, .tray-note { color: var(--quiet); font-size: .78rem; }
 .fine-print { margin: 8px 0 0; }
 .tray-note { margin: 18px 4px 0; text-align: center; }
@@ -150,8 +270,11 @@ code { display: block; color: #e2e9e5; overflow-wrap: anywhere; }
 
 @media (max-width: 720px) {
   .shell { width: min(100% - 28px, 1080px); padding-top: 26px; }
-  .hero { align-items: start; }
+  .hero { align-items: start; flex-direction: column; }
   .hero-stat { display: none; }
+  .hero-side { width: 100%; }
+  .hero-actions { flex-direction: row; width: 100%; }
+  .hero-actions button { flex: 1; }
   .destination-row, .schedule-row { grid-template-columns: 1fr; }
   .destination-row button, .submit-row button { width: 100%; }
   .submit-row { align-items: stretch; flex-direction: column; }
@@ -159,24 +282,75 @@ code { display: block; color: #e2e9e5; overflow-wrap: anywhere; }
   .search { width: 100%; }
   .job-header { align-items: start; }
   .queue-status-row { align-items: stretch; flex-direction: column; }
+  .section-heading .hint { text-align: left; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
 
+/* Light theme. Applied when Windows is light and the user has not forced dark,
+   and whenever the appearance setting is explicitly "light". */
 @media (prefers-color-scheme: light) {
-  :root { color: #17211c; background: #f3f7f4; color-scheme: light; --surface: #fffffff2; --surface-raised: #fff; --line: #c2d0c9; --muted: #4d5d55; --quiet: #64756c; }
-  body { background: radial-gradient(circle at 8% -4%, #ccecdf 0, transparent 31rem), radial-gradient(circle at 96% 16%, #dce7f4 0, transparent 26rem), #f3f7f4; }
-  .hero-stat, .preview { background: #ffffffb8; }
-  input, textarea, kbd { border-color: #74827b; color: #17211c; background: white; }
-  button.secondary, button.quiet, button.filter { color: #173226; }
-  button.secondary:hover, button.quiet:hover, button.filter:hover { background: #e5eee9; }
-  code { color: #25332c; }
-  .job-error { background: #fff0ee; }
+  :root:not([data-theme="dark"]) {
+    color: #17211c; background: #f3f7f4; color-scheme: light;
+    --surface: #fffffff2; --surface-raised: #fff; --inset: #ffffffb8;
+    --line: #c2d0c9; --line-soft: #b4c6bd; --field: #fff; --field-line: #74827b;
+    --muted: #4d5d55; --quiet: #64756c; --hover: #e5eee9; --track: #d6e3dc;
+    --danger: #a3231a;
+  }
+  :root:not([data-theme="dark"]) body {
+    background: radial-gradient(circle at 8% -4%, #ccecdf 0, transparent 31rem),
+      radial-gradient(circle at 96% 16%, #dce7f4 0, transparent 26rem), #f3f7f4;
+  }
+  :root:not([data-theme="dark"]) .status { color: #12392a; background: #d3efe2; }
+  :root:not([data-theme="dark"]) .status[data-state="scheduled"],
+  :root:not([data-theme="dark"]) .status[data-state="queued"] { color: #5a4405; background: #fbeecb; }
+  :root:not([data-theme="dark"]) .status[data-state="paused"] { color: #2c3a34; background: #dfe8e4; }
+  :root:not([data-theme="dark"]) .status[data-state="failed"],
+  :root:not([data-theme="dark"]) .status[data-state="cancelled"],
+  :root:not([data-theme="dark"]) .status[data-state="needs_source"] { color: #7d1811; background: #fbdedb; }
+  :root:not([data-theme="dark"]) .job-error { background: #fff0ee; }
+  :root:not([data-theme="dark"]) .stats-grid dd { color: #15563f; }
+  :root:not([data-theme="dark"]) .eyebrow { color: #15563f; }
+  :root:not([data-theme="dark"]) button.filter[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #0d3527; }
 }
 
+/* The same light palette, forced by the appearance setting regardless of what
+   Windows reports. */
+:root[data-theme="light"] {
+  color: #17211c; background: #f3f7f4; color-scheme: light;
+  --surface: #fffffff2; --surface-raised: #fff; --inset: #ffffffb8;
+  --line: #c2d0c9; --line-soft: #b4c6bd; --field: #fff; --field-line: #74827b;
+  --muted: #4d5d55; --quiet: #64756c; --hover: #e5eee9; --track: #d6e3dc;
+  --danger: #a3231a;
+}
+:root[data-theme="light"] body {
+  background: radial-gradient(circle at 8% -4%, #ccecdf 0, transparent 31rem),
+    radial-gradient(circle at 96% 16%, #dce7f4 0, transparent 26rem), #f3f7f4;
+}
+:root[data-theme="light"] .status { color: #12392a; background: #d3efe2; }
+:root[data-theme="light"] .status[data-state="scheduled"],
+:root[data-theme="light"] .status[data-state="queued"] { color: #5a4405; background: #fbeecb; }
+:root[data-theme="light"] .status[data-state="paused"] { color: #2c3a34; background: #dfe8e4; }
+:root[data-theme="light"] .status[data-state="failed"],
+:root[data-theme="light"] .status[data-state="cancelled"],
+:root[data-theme="light"] .status[data-state="needs_source"] { color: #7d1811; background: #fbdedb; }
+:root[data-theme="light"] .job-error { background: #fff0ee; }
+:root[data-theme="light"] .stats-grid dd { color: #15563f; }
+:root[data-theme="light"] .eyebrow { color: #15563f; }
+:root[data-theme="light"] button.filter[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #0d3527; }
+
 @media (forced-colors: active) {
-  .card, input, textarea, button, .completion, .preview { border-color: CanvasText; }
+  .card, input, textarea, button, select, .completion, .preview, .advanced, dialog.dialog, .settings-group { border: 1px solid CanvasText; }
   .status { border: 1px solid CanvasText; color: CanvasText; background: Canvas; }
+  /* System colours replace every fill, so the pressed filter keeps a border-only cue. */
+  button.filter[aria-pressed="true"] { border: 3px double CanvasText; box-shadow: none; forced-color-adjust: none; }
+  .skip-link { background: Canvas; color: LinkText; }
+  :is(a, button, input, textarea, select, summary, [tabindex]):focus-visible { outline: 3px solid Highlight; }
+  .error, .job-error { border-left: 3px solid CanvasText; color: CanvasText; }
+  progress { forced-color-adjust: none; }
+  .stats-grid dd, .eyebrow { color: CanvasText; }
+  #media-tools-state[data-ready="true"]::before,
+  #media-tools-state[data-ready="false"]::before { color: CanvasText; }
 }

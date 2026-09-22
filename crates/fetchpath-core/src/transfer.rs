@@ -112,6 +112,12 @@ pub fn download_with_faults(
 
     let (mut file, mut offset, mut validator) = recover_download(&store, latest.as_ref())?;
     request.cancellation.set_received(offset);
+    // A recovered checkpoint already carries the length the source stated on the
+    // first attempt, so a resumed transfer shows its size before the first byte
+    // of this attempt arrives instead of blanking out and filling in later.
+    request
+        .cancellation
+        .set_total(latest.as_ref().and_then(|record| record.expected_total));
     if request.cancellation.is_cancelled() {
         return Err(cancelled(&request, &store));
     }
@@ -218,6 +224,7 @@ fn perform_adaptive_attempt(
             let next = chunk.offset + chunk.bytes.len() as u64;
             current_offset.set(next);
             request.cancellation.set_received(next);
+            request.cancellation.set_total(chunk.total_bytes);
             if chunk.strong_etag.is_some() && next - last_checkpoint.get() >= CHECKPOINT_BYTES {
                 store.sync_payload(file, faults)?;
                 let digest = sha256_file(store.staging())?;
@@ -348,6 +355,13 @@ fn perform_attempt(
                         return Ok(0);
                     }
                     validated.set(true);
+                    // Headers have passed the status and validator checks, so
+                    // whatever length they state is the engine-confirmed total.
+                    // `header_total` returns None rather than a fallback: a
+                    // chunked response has no total and must not appear to.
+                    request
+                        .cancellation
+                        .set_total(header_total(&headers.borrow()));
                 }
                 let offset = current_offset.get();
                 if let Err(error) = store.write_payload(file, offset, data, faults) {
@@ -463,6 +477,20 @@ fn response_body_len(headers: &ResponseHeaders) -> Option<u64> {
         headers
             .content_range
             .map(|range| range.end - range.start + 1)
+    } else {
+        headers.content_length
+    }
+}
+
+/// The total size a response states, with no fallback.
+///
+/// `response_total` substitutes the bytes actually received when a response
+/// omits a length, which is right for a checkpoint written after the body is
+/// complete. Live progress cannot use that: mid-transfer it would report the
+/// bytes so far as the total and show 100% from the first chunk onward.
+fn header_total(headers: &ResponseHeaders) -> Option<u64> {
+    if headers.status == Some(206) {
+        headers.content_range.and_then(|range| range.total)
     } else {
         headers.content_length
     }
