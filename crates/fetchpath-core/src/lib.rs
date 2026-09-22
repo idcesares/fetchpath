@@ -12,11 +12,16 @@ pub use fetchpath_metalink::{
 pub use fetchpath_storage::{FaultInjector, FaultPoint, NoFaults};
 pub use transfer::download_with_faults;
 pub use verified::{
-    DEFAULT_MIRROR_ATTEMPT_TIMEOUT, LOWEST_PRIORITY, MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS,
-    MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS, MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome,
-    MirrorReport, MirrorSource, VerificationLevel, VerifiedDownload, VerifiedDownloadError,
-    VerifiedDownloadRequest, download_verified, download_verified_with_faults,
+    DEFAULT_MIRROR_ATTEMPT_TIMEOUT, DeliverySource, LOWEST_PRIORITY,
+    MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS, MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS,
+    MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome, MirrorReport, MirrorSource, VerificationLevel,
+    VerifiedDownload, VerifiedDownloadError, VerifiedDownloadRequest, download_verified,
+    download_verified_cached, download_verified_with_faults,
 };
+
+/// The bounded content cache, re-exported so callers need only depend on this
+/// crate. Completion from it is reuse, not throughput.
+pub use fetchpath_cache;
 
 use std::path::PathBuf;
 use std::sync::{
@@ -520,8 +525,9 @@ mod tests {
         let with_cookie = RequestContext::new(vec!["a=b".to_owned()], None).expect("valid");
         assert!(!with_cookie.is_credential_free());
 
-        let with_referer = RequestContext::new(Vec::new(), Some("https://example.test/".to_owned()))
-            .expect("valid");
+        let with_referer =
+            RequestContext::new(Vec::new(), Some("https://example.test/".to_owned()))
+                .expect("valid");
         assert!(!with_referer.is_credential_free());
     }
 
