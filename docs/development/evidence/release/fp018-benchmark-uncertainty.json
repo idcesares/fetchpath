@@ -1,0 +1,141 @@
+{
+  "purpose": "A09 evidence for FP-018. Paired loopback timings with their uncertainty, recorded so the numbers can be read honestly. These are 127.0.0.1 measurements of total time to a flushed, hash-verified file; they do not model RTT, loss, blocked UDP, slow storage or competing traffic, and they support no Internet speed claim of any kind.",
+  "recordedOn": "2026-09-22",
+  "host": "Windows 11 Pro 10.0.26200.0 x64",
+  "config": {
+    "repetitions": 7,
+    "size": 8388608,
+    "seed": 18018,
+    "outputDir": "work/fp018-bench"
+  },
+  "versions": {
+    "curl": "curl 8.21.0 (x86_64-w64-mingw32) libcurl/8.21.0 Schannel zlib/1.3.2 brotli/1.2.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.5 libssh2/1.11.1 WinLDAP",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)"
+  },
+  "fixtureSha256": "a9407298d138c39f01e2067ad330ea65db7fa553a7cb541fd8bfd243c5405c45",
+  "everyOutputMatchedTheFixtureHash": true,
+  "wallClockMsIncludingProcessStart": {
+    "fetchpath": {
+      "samples": 7,
+      "meanMs": 69.7,
+      "standardDeviationMs": 39.4,
+      "minMs": 37.4,
+      "maxMs": 152.5,
+      "confidenceInterval95OfMeanMs": [
+        33.2,
+        106.2
+      ]
+    },
+    "curlHttp1Baseline": {
+      "samples": 7,
+      "meanMs": 36.2,
+      "standardDeviationMs": 2.6,
+      "minMs": 33.3,
+      "maxMs": 40.3,
+      "confidenceInterval95OfMeanMs": [
+        33.8,
+        38.7
+      ]
+    },
+    "fetchpathExcludingFirstPair": {
+      "samples": 6,
+      "meanMs": 55.9,
+      "standardDeviationMs": 16.3,
+      "minMs": 37.4,
+      "maxMs": 85.2,
+      "confidenceInterval95OfMeanMs": [
+        38.8,
+        73.0
+      ]
+    },
+    "curlExcludingFirstPair": {
+      "samples": 6,
+      "meanMs": 35.5,
+      "standardDeviationMs": 2.1,
+      "minMs": 33.3,
+      "maxMs": 39.2,
+      "confidenceInterval95OfMeanMs": [
+        33.3,
+        37.8
+      ]
+    }
+  },
+  "perPairMs": {
+    "order": [
+      "fetchpath",
+      "curl",
+      "fetchpath",
+      "curl",
+      "fetchpath",
+      "curl",
+      "fetchpath"
+    ],
+    "fetchpath": [
+      152.5,
+      57.5,
+      53.8,
+      45.0,
+      37.4,
+      85.2,
+      56.6
+    ],
+    "curl": [
+      40.3,
+      39.2,
+      35.6,
+      34.2,
+      34.5,
+      36.5,
+      33.3
+    ]
+  },
+  "reading": "Fetchpath is slower than the curl baseline on loopback: 55.9 ms mean against 35.5 ms excluding the first pair, and its spread is far wider (sd 16.3 against 2.1). The first Fetchpath run of the session took 152.5 ms against a 37.4 ms best, which is process and allocator warm-up rather than transfer cost. No acceleration claim is made or supported. What these runs do establish is correctness and instrumentation: every one of the 14 outputs matched the fixture hash, and the adaptive path stayed inside its configured budget in every run.",
+  "budgetObservance": {
+    "maxActiveRequestsConfigured": [
+      8
+    ],
+    "peakActiveRequestsObserved": [
+      1,
+      2
+    ],
+    "maxBufferedBytesConfigured": [
+      8388608
+    ],
+    "peakBufferedBytesObserved": [
+      1048576,
+      2097151,
+      2097152
+    ],
+    "withinBudgetEveryRun": true
+  },
+  "protocolMatrix": {
+    "http1": {
+      "negotiated": "http/1.1",
+      "preferred": "h2",
+      "fallbackReasons": [
+        "http3_unavailable",
+        "negotiated_lower_protocol"
+      ],
+      "hashMatchedExpected": true
+    },
+    "http2PriorKnowledge": {
+      "negotiated": "h2",
+      "preferred": "h2",
+      "fallbackReasons": [
+        "http3_unavailable"
+      ],
+      "hashMatchedExpected": true
+    },
+    "http3": {
+      "attempted": false,
+      "reason": "packaged libcurl reports HTTP/3 unavailable; policy records http3_unavailable and falls back without a false attempt"
+    }
+  },
+  "notCovered": [
+    "Any non-loopback path. No RTT, loss, blocked-UDP or competing-traffic conditions were exercised.",
+    "Tail percentiles. Seven pairs support a mean and a spread, not a p95 or p99.",
+    "A packaged HTTP/3 endpoint. The packaged libcurl reports HTTP/3 unavailable, so the fallback is capability-driven and untested against a real h3 server.",
+    "Storage other than this machine\u2019s. Publication cost on a slow or network volume is unmeasured."
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-21",
+  "updated": "2026-09-22",
   "tasks": [
     {
       "id": "FP-001",
@@ -490,12 +490,14 @@
         "FP-013",
         "FP-014"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "windows_packaging",
       "modelTier": "astra-high",
       "files": [
         "apps/desktop",
-        "tests/compatibility"
+        "tests/compatibility/windows",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows"
       ],
       "acceptanceIds": [
         "A01",
@@ -503,8 +505,12 @@
         "A12"
       ],
       "acceptance": "Accessibility, install/update/uninstall, retained queues, native compatibility; settle distribution/license and signing before publication.",
-      "verification": "Accessibility, install/update/uninstall, retained queues, native compatibility; settle distribution/license and signing before publication.",
-      "evidence": [],
+      "verification": "Accessibility is asserted through UI Automation against the optimized executable: 24 focusable controls with none unnamed, 17 tab stops in reading order from the skip link, a keyboard-only journey that published 262144 bytes, live-region announcements, modal focus containment and restore, and reduced-motion/forced-colors/focus-visible rules present in the shipped stylesheet. A real per-user NSIS install, an upgrade over the running instance, and an uninstall were exercised on Windows 11 build 10.0.26200 x64: queue-v1.json was byte-identical across the upgrade, the private-source job still required an explicit refresh, and uninstall removed program files, both shortcuts and the registry entry while leaving app data, the instance lock, the WebView2 profile and the install-path key, which is recorded rather than claimed as removal. Lead re-ran both harnesses from a clean state under Windows PowerShell 5.1 after an initial non-reproducible result was rejected and root-caused; each now passes twice and restores machine state through its own finally. Interim builds are unsigned by decision with SmartScreen consequences documented; no publisher-authenticity or signing claim is made. Open release gates: a generated per-crate license manifest, the uninstaller data-removal branch, clean-machine and ARM64 coverage.",
+      "evidence": [
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows/ui-accessibility.json",
+        "docs/development/evidence/windows/packaging-lifecycle.json"
+      ],
       "blockedReason": null
     },
     {
@@ -514,10 +520,15 @@
       "dependsOn": [
         "FP-015",
         "FP-016",
-        "FP-017"
+        "FP-017",
+        "FP-026",
+        "FP-027",
+        "FP-028",
+        "FP-029",
+        "FP-030"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "blocked",
+      "owner": "release_candidate",
       "modelTier": "astra-high",
       "files": [
         "tests",
@@ -537,9 +548,12 @@
         "A12"
       ],
       "acceptance": "Independent acceptance matrix, compatibility corpus, benchmark uncertainty, known limitations and documented release decision.",
-      "verification": "Independent acceptance matrix, compatibility corpus, benchmark uncertainty, known limitations and documented release decision.",
-      "evidence": [],
-      "blockedReason": null
+      "verification": "The acceptance matrix, the benchmark uncertainty record and the known-limitations list are complete and are recorded in docs/development/RELEASE-CANDIDATE.md. Seven paired benchmark runs with their spread and 95% intervals show Fetchpath slower than the curl HTTP/1.1 baseline on loopback (55.9 ms mean against 35.5 ms excluding the first pair, sd 16.3 against 2.1), which is recorded rather than omitted; no acceleration claim is made anywhere, so A09 has nothing to substantiate. All 14 benchmark outputs matched the fixture hash and the adaptive path stayed inside its configured budget in every run. The protocol matrix verifies http/1.1 and h2 by hash and records http3_unavailable rather than a false attempt. A02, A03, A05, A07 and A08 are met; A04 and A06 are partial, lacking OS-level power-loss tests and a real HTTP/3 endpoint respectively; A10 is not in scope for 0.1.0. The documented release decision is DO NOT PUBLISH YET, with the four open gates and their next actions recorded in the blocked reason and the document.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md",
+        "docs/development/evidence/release/fp018-benchmark-uncertainty.json"
+      ],
+      "blockedReason": "Four gates cannot be closed from a single developer machine with no network access to third-party sites. (1) A11 supported public-source corpus: media is proven against lawful local HLS/DASH fixtures only; no public site has been selected, tested or committed to. Next action: a product decision on which sites 0.1.0 supports, then a recorded run against each. (2) A11 media helper checksums: media-tools.json ships unpinned by design, so the guided download refuses. Next action: run `node tools/media-tools/pin.mjs` on a machine with network access, then re-run the media setup path with the guided download enabled. (3) A12 clean-machine packaging: install, upgrade and uninstall are exercised only on a developer machine that already has the WebView2 and Visual C++ runtimes. Next action: one packaging-lifecycle run on a freshly imaged Windows 11 x64 machine. (4) A12 ARM64: deferred by decision, with no native, helper or installer path built. Next action: either build and test that path, or state explicitly that 0.1.0 is x64 only."
     },
     {
       "id": "FP-019",
@@ -549,12 +563,15 @@
         "FP-011",
         "FP-015"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "metalink_repair",
       "modelTier": "terra-medium",
       "files": [
-        "crates",
-        "tests/compatibility"
+        "crates/fetchpath-metalink",
+        "crates/fetchpath-core",
+        "tests/compatibility/metalink",
+        "docs/development/METALINK-REPAIR.md",
+        "docs/development/evidence/metalink"
       ],
       "acceptanceIds": [
         "A02",
@@ -562,8 +579,11 @@
         "A05"
       ],
       "acceptance": "Trusted piece hashes enable selective repair; final-only hash behavior honest; bad/slow/offline mirrors tested.",
-      "verification": "Trusted piece hashes enable selective repair; final-only hash behavior honest; bad/slow/offline mirrors tested.",
-      "evidence": [],
+      "verification": "Metalink 4 parsing is bounded and refuses DTDs, entity declarations and unsafe file names without panicking. Trusted piece hashes localize damage to exact byte ranges and repair only those ranges, preferring a mirror other than the one that served the bad bytes; the verified path publishes only through the unchanged create-only fence. Final-hash-only mismatches restart conservatively and report no piece repair. Lead re-ran fetchpath-metalink (29) and fetchpath-core (33) tests, scoped clippy with -D warnings, and the loopback mirror harness independently; the recorded matrix reproduced identical outcomes and digests across bad, slow, offline and all-damaged mirrors. Mirror fan-out is sequential and no speed claim is made; documents are unsigned, so no publisher-authenticity claim is made.",
+      "evidence": [
+        "docs/development/METALINK-REPAIR.md",
+        "docs/development/evidence/metalink/fp019-mirror-matrix.json"
+      ],
       "blockedReason": null
     },
     {
@@ -704,6 +724,143 @@
       "acceptance": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
       "verification": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
       "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-026",
+      "title": "Surface transfer statistics end to end",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-015",
+        "FP-017"
+      ],
+      "status": "done",
+      "owner": "release_polish",
+      "modelTier": "astra-high",
+      "files": [
+        "crates/fetchpath-core/src",
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/src"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A05"
+      ],
+      "acceptance": "Total size, percent complete, transfer rate and remaining time are derived from engine-confirmed values, are absent rather than guessed when the source withholds a length, and never imply progress the engine has not reported.",
+      "verification": "The engine already computed the total and discarded it at the boundary. `CancellationToken` now carries it beside the received count, set at the three points the engine learns it: a recovered checkpoint, each adaptive chunk, and validated response headers. A new `header_total` reads headers with no fallback, because `response_total` substitutes the bytes received when a length is absent, which is right for a checkpoint written after the body is complete and would report 100% from the first chunk if used for live progress. Rate and remaining time are derived in the desktop layer from a time-based EWMA over poll samples, ignoring intervals under 400 ms and withdrawing after 5 s without progress, and are cleared for every state except running. Three core tests fix the behaviour: a stated Content-Length becomes the reported total; a response with no declared length reports no total while still receiving every byte; a queued job has no total before the source states one. No speed claim is made: the statistics panel reports observed throughput and says so. End to end through the desktop queue, a completed keyboard-only journey records 262144 of 262144 bytes.",
+      "evidence": [
+        "docs/development/RELEASE-POLISH.md",
+        "docs/development/evidence/windows/ui-accessibility.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-027",
+      "title": "Add pause and resume across the queue",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-011",
+        "FP-017"
+      ],
+      "status": "done",
+      "owner": "release_polish",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/src"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A03",
+        "A04"
+      ],
+      "acceptance": "A running file download pauses to a retained checkpoint and resumes from that offset without re-downloading verified bytes. A pause that loses the race against publication reports completion rather than a false paused state. Paused items survive a restart still paused.",
+      "verification": "Pause stops a running file download at its retained checkpoint; resume recreates a recoverable job, which revalidates the checkpoint against the source before reusing a byte. The publication race is handled rather than assumed: a pause refused because the engine had committed to publishing reports the completion instead of a false paused state, and the worker is joined with the queue lock released so the poll that draws the interface is not blocked. Two defects were found by the tests rather than by inspection: `refresh_record` copied a prepared job\u2019s queued state over a paused view so the next poll restarted it, and `QueueRecord::restore` rebuilt any non-terminal saved state as queued so a paused download started itself on the next launch. Four desktop tests cover it; the central one pauses a throttled 768 KB transfer partway through and asserts exactly one If-Range request, the header only the resume path sends, and a published file matching the source byte for byte. Media downloads have no checkpoint to return to, so pause is refused for them by name rather than offered and then failing. The welcome card added for first run is dismissible from the keyboard and does not return after a restart, which the harness asserts.",
+      "evidence": [
+        "docs/development/RELEASE-POLISH.md",
+        "docs/development/evidence/windows/ui-accessibility.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-028",
+      "title": "Add settings, defaults and Power mode",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-012",
+        "FP-017"
+      ],
+      "status": "done",
+      "owner": "release_polish",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/src"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A05"
+      ],
+      "acceptance": "Persisted settings govern concurrency, the default destination, automatic retry and tray behavior; every value is bounded and a corrupt settings file falls back to documented defaults rather than failing launch. Power mode adds diagnostics inline without removing or duplicating ordinary controls.",
+      "verification": "Settings persist to settings-v1.json beside the queue. A truncated or hand-edited file falls back to defaults, a file from an older build keeps every field it does have, and the load reports that it repaired something so the interface can say so rather than presenting defaults as the user\u2019s choices. Every bound is enforced in one place: concurrency 1-8, retry attempts 0-10, backoff 5-3600 s doubling to the ceiling, and a stored directory discarded unless absolute because a relative path would resolve against the launch directory. Automatic retry applies only to failures the engine classified as transport trouble; destination conflicts, invalid links, expired private sources and missing helpers always wait for a person. Power mode is off by default and strictly additive. Six settings tests and two desktop tests cover clamping, the round trip, the truncated-file fallback, the relative-path rejection, the backoff ceiling, and that a stored concurrency wins over the launch default across a restart. The accessibility harness was extended for the new surface and passes with no failures against the optimized executable: 19 tab stops in reading order, 26 focusable controls with none unnamed, and a modal Settings dialog exposed as a named Window with 11 focusable controls, none unnamed, that takes focus, hides the page behind it and returns focus on Escape.",
+      "evidence": [
+        "docs/development/RELEASE-POLISH.md",
+        "docs/development/evidence/windows/ui-accessibility.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-029",
+      "title": "Add guided media tool setup and first run",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-014",
+        "FP-017"
+      ],
+      "status": "done",
+      "owner": "release_polish",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/src",
+        "tools/media-tools"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A11"
+      ],
+      "acceptance": "Missing media helpers produce a guided in-app path rather than a bare error: detection, an explanation, a folder the user already has, or a pinned download verified against a recorded SHA-256 before it is installed. An unverified or unpinned artifact is never installed.",
+      "verification": "Missing helpers now lead to a guided path instead of a bare helper_unavailable: detection of helpers already present, a folder the user points at that is accepted only after both programs answer --version, or a pinned download fetched through the same verified transfer path as any other download and checked against a recorded SHA-256 before installation. This build ships deliberately unpinned: media-tools.json has empty sha256 fields, the guided download is refused by name for any unpinned entry, and the interface offers only the manual path in that state. A digest computed from whatever arrived would prove the bytes survived the network and nothing about the publisher, so it is never presented as authenticity. tools/media-tools/pin.mjs is the only sanctioned way to record one: it downloads the artifact and the publisher\u2019s own checksum document and writes the digest only when the two agree. Known limitation: until a maintainer runs pin.mjs with network access, guided download is unavailable and media setup is the detect-or-choose-folder path. Six module tests and five repository tests cover the manifest shape, the refusal leaving nothing behind, an empty directory reporting not ready, a wrong folder rejected with the path named, and the wrapper-directory flattening published ffmpeg archives need. The harness now checks whichever media branch the machine presents; on a machine with no helpers it is the setup path, and that path is named and operable rather than a dead end.",
+      "evidence": [
+        "docs/development/RELEASE-POLISH.md",
+        "docs/development/evidence/windows/ui-accessibility.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-030",
+      "title": "Complete installer data removal and license manifest",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-017"
+      ],
+      "status": "done",
+      "owner": "release_polish",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop/src-tauri",
+        "tools/licenses",
+        "tests/compatibility/windows"
+      ],
+      "acceptanceIds": [
+        "A12"
+      ],
+      "acceptance": "Uninstall offers an explicit data-removal choice, removes exactly what the user chose, and leaves the rest where the user can find it. The third-party notice file is generated from Cargo.lock rather than maintained by hand, and regenerating it is a checked command.",
+      "verification": "installer-hooks.nsh adds NSIS_HOOK_PREUNINSTALL. An interactive uninstall asks whether to also remove the queue, history and settings and defaults to No, because an uninstall is often a reinstall; a silent uninstall takes the keeping branch because nobody is present to choose. Answering yes removes exactly %APPDATA%\\app.fetchpath.desktop and %LOCALAPPDATA%\\app.fetchpath.desktop, the two directories the packaging harness observes, and never a downloaded file. makensis accepted the hook and produced Fetchpath_0.1.0_x64-setup.exe, so the branch is compiled into the shipped installer. tools/licenses/generate.mjs replaces the hand-maintained notices with a file generated from Cargo.lock covering 566 packages, each row stating whether its license was read from the crate manifest or recorded by a maintainer; an unresolvable crate fails the run and --check fails when the file is out of date. A false record was also corrected: packaging-lifecycle.ps1 hardcoded uninstallerOffersDataRemovalCheckbox = true for a control that did not exist, and now reads the configured hook and asserts it is present.",
+      "evidence": [
+        "docs/development/RELEASE-POLISH.md",
+        "apps/desktop/src-tauri/THIRD-PARTY-NOTICES.md"
+      ],
       "blockedReason": null
     }
   ]
