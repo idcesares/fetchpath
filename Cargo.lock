@@ -1234,6 +1234,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fetchpath-cache"
+version = "0.1.0"
+dependencies = [
+ "fetchpath-metalink",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "fetchpath-core"
 version = "0.1.0"
 dependencies = [
