@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 const CHECKPOINT_BYTES: u64 = 64 * 1024;
 static HTTP_BUDGET: OnceLock<GlobalBudget> = OnceLock::new();
 
-fn http_budget() -> &'static GlobalBudget {
+pub(crate) fn http_budget() -> &'static GlobalBudget {
     let limits = TransferLimits::default();
     HTTP_BUDGET.get_or_init(|| {
         GlobalBudget::new(limits.max_active_requests, limits.max_buffered_bytes)
@@ -438,7 +438,7 @@ fn perform_attempt(
     })
 }
 
-fn configure(
+pub(crate) fn configure(
     easy: &mut Easy,
     url: &str,
     context: &crate::RequestContext,
@@ -476,7 +476,7 @@ fn response_total(headers: &ResponseHeaders, fallback: u64) -> Option<u64> {
     }
 }
 
-fn publish(
+pub(crate) fn publish(
     request: &DownloadRequest,
     store: &CheckpointStore,
     intent: &CheckpointRecord,
@@ -527,7 +527,7 @@ fn completed(
     }
 }
 
-fn cancelled(request: &DownloadRequest, store: &CheckpointStore) -> DownloadError {
+pub(crate) fn cancelled(request: &DownloadRequest, store: &CheckpointStore) -> DownloadError {
     let staging = match request.cancel_cleanup {
         CancelCleanup::RetainStaging => Some(store.staging().to_path_buf()),
         CancelCleanup::RemoveStaging => {
@@ -545,7 +545,7 @@ fn storage_error(store: &CheckpointStore, error: io::Error) -> DownloadError {
     storage_detail(store, error)
 }
 
-fn storage_detail(store: &CheckpointStore, error: io::Error) -> DownloadError {
+pub(crate) fn storage_detail(store: &CheckpointStore, error: io::Error) -> DownloadError {
     DownloadError::Storage {
         path: store.staging().to_path_buf(),
         detail: error.to_string(),

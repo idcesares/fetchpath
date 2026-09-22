@@ -1239,6 +1239,7 @@ version = "0.1.0"
 dependencies = [
  "curl",
  "fetchpath-http",
+ "fetchpath-metalink",
  "fetchpath-storage",
  "sha2 0.10.9",
  "uuid",
@@ -1285,6 +1286,13 @@ dependencies = [
  "tempfile",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "fetchpath-metalink"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
 ]
 
 [[package]]

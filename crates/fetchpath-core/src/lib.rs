@@ -3,9 +3,20 @@
 
 mod checkpoint;
 mod transfer;
+mod verified;
 
+pub use fetchpath_metalink::{
+    FileHash, Metalink, MetalinkError, MetalinkFile, MetalinkUrl, ParseLimits, PieceMap,
+    PieceVerification, parse_metalink, parse_with_limits,
+};
 pub use fetchpath_storage::{FaultInjector, FaultPoint, NoFaults};
 pub use transfer::download_with_faults;
+pub use verified::{
+    DEFAULT_MIRROR_ATTEMPT_TIMEOUT, LOWEST_PRIORITY, MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS,
+    MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS, MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome,
+    MirrorReport, MirrorSource, VerificationLevel, VerifiedDownload, VerifiedDownloadError,
+    VerifiedDownloadRequest, download_verified, download_verified_with_faults,
+};
 
 use std::path::PathBuf;
 use std::sync::{
