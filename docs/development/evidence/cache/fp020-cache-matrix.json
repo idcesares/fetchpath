@@ -1,0 +1,205 @@
+{
+  "task": "FP-020",
+  "recorded": "2026-09-22T19:06:21Z",
+  "harness": "cargo test -p fetchpath-cache -p fetchpath-core --offline",
+  "platform": "Windows 11 Pro 26200 x64",
+  "scope": "bounded content cache only; paired LAN mode is not implemented",
+  "note": "every digest this path computes is an observed local digest checked against trusted metadata; none of it is publisher authenticity evidence. Completion from cache is reuse, not throughput, and no speed claim is made anywhere.",
+  "totals": {
+    "recorded_cases": 38,
+    "passed": 38,
+    "not_passed": 0
+  },
+  "cases": [
+    {
+      "test": "id::tests::a_flat_digest_and_a_piece_map_digest_are_never_the_same_identity",
+      "proves": "a flat digest and a piece-map digest over the same bytes are different identities",
+      "result": "ok"
+    },
+    {
+      "test": "id::tests::rendering_round_trips_through_parsing",
+      "proves": "an identity survives rendering and parsing unchanged",
+      "result": "ok"
+    },
+    {
+      "test": "id::tests::malformed_identity_text_is_refused_rather_than_guessed",
+      "proves": "malformed identity text is refused rather than guessed at",
+      "result": "ok"
+    },
+    {
+      "test": "id::tests::an_expected_whole_file_digest_becomes_a_flat_identity",
+      "proves": "a trusted whole-file digest becomes a flat identity; non-digests are refused",
+      "result": "ok"
+    },
+    {
+      "test": "id::tests::piece_map_identity_changes_when_any_trusted_input_changes",
+      "proves": "piece order and piece length both change the identity",
+      "result": "ok"
+    },
+    {
+      "test": "entry::tests::only_credential_free_entries_are_ever_shareable",
+      "proves": "only credential-free entries report as shareable",
+      "result": "ok"
+    },
+    {
+      "test": "entry::tests::provenance_labels_round_trip_and_reject_anything_else",
+      "proves": "provenance labels round-trip and reject unknown text",
+      "result": "ok"
+    },
+    {
+      "test": "entry::tests::verification_labels_round_trip_and_reject_unverified",
+      "proves": "unverified content has no label, so it cannot be represented in the store",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::an_index_round_trips_through_its_encoding",
+      "proves": "the index survives encoding and decoding with its accounting intact",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::a_malformed_index_is_refused_so_the_caller_can_rebuild_it",
+      "proves": "a malformed index is refused whole rather than partially trusted",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::a_truncated_final_line_does_not_silently_lose_bytes",
+      "proves": "a truncated index is refused, so accounting cannot silently under-report",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::touching_an_entry_updates_only_its_last_used_time",
+      "proves": "a use updates last-used time and nothing else",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::least_recently_used_skips_the_entries_it_is_told_to_skip",
+      "proves": "eviction candidate selection honours the skip set",
+      "result": "ok"
+    },
+    {
+      "test": "index::tests::removing_an_entry_returns_it_and_reduces_the_accounted_total",
+      "proves": "removal reduces the accounted total",
+      "result": "ok"
+    },
+    {
+      "test": "inserted_bytes_are_retrievable_and_accounted",
+      "proves": "inserted bytes are retrievable and counted against the quota",
+      "result": "ok"
+    },
+    {
+      "test": "the_source_file_is_left_alone_by_insertion",
+      "proves": "insertion copies; it never consumes or moves the caller's file",
+      "result": "ok"
+    },
+    {
+      "test": "inserting_the_same_identity_twice_does_not_double_count",
+      "proves": "re-inserting a known identity does not double-count its bytes",
+      "result": "ok"
+    },
+    {
+      "test": "provenance_recorded_at_insertion_survives_reopening",
+      "proves": "provenance persists across reopening and stays unshareable",
+      "result": "ok"
+    },
+    {
+      "test": "a_corrupted_index_is_rebuilt_from_the_store_directory",
+      "proves": "a corrupted index is rebuilt from the directory, and rebuilt entries fail closed as credentialed",
+      "result": "ok"
+    },
+    {
+      "test": "an_entry_larger_than_the_ceiling_is_refused_without_emptying_the_store",
+      "proves": "an oversize entry is refused; the store is not emptied to fit it",
+      "result": "ok"
+    },
+    {
+      "test": "an_entry_larger_than_the_whole_quota_is_refused_as_oversize",
+      "proves": "an entry larger than the whole quota is refused",
+      "result": "ok"
+    },
+    {
+      "test": "a_quota_breach_evicts_the_least_recently_used_entry_and_only_that_one",
+      "proves": "a quota breach evicts the least recently used entry and only that one",
+      "result": "ok"
+    },
+    {
+      "test": "a_pinned_entry_is_never_evicted_to_make_room",
+      "proves": "a pinned entry survives quota pressure; insertion is refused instead",
+      "result": "ok"
+    },
+    {
+      "test": "pinning_an_absent_entry_yields_nothing",
+      "proves": "pinning an absent identity yields nothing",
+      "result": "ok"
+    },
+    {
+      "test": "a_verified_hit_returns_pinned_bytes",
+      "proves": "a verified hit returns the stored path and pins it until released",
+      "result": "ok"
+    },
+    {
+      "test": "an_absent_identity_is_a_miss_and_is_not_an_error",
+      "proves": "an absent identity is a miss, not an error",
+      "result": "ok"
+    },
+    {
+      "test": "a_tampered_entry_is_evicted_and_never_returned",
+      "proves": "a tampered entry fails its check, is evicted, and its bytes are removed",
+      "result": "ok"
+    },
+    {
+      "test": "an_entry_whose_file_vanished_is_a_miss_rather_than_an_error",
+      "proves": "an entry whose file vanished is a miss and the stale record is dropped",
+      "result": "ok"
+    },
+    {
+      "test": "a_failed_check_never_leaves_usable_bytes_behind",
+      "proves": "a failed check cannot be resurrected by a second attempt",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_mirror_delivered_download_reports_a_network_source",
+      "proves": "a mirror-delivered download reports a network delivery source",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_populated_cache_completes_the_download_with_every_mirror_unreachable",
+      "proves": "AUTHORIZED OFFLINE REUSE: with every mirror unreachable the download completes from cache, byte-identical and verified, with no mirror contacted",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_verified_network_download_populates_the_cache_for_next_time",
+      "proves": "a verified network completion populates the cache",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_download_carrying_credentials_is_cached_as_credentialed",
+      "proves": "NO PRIVATE-CONTENT LEAKAGE: a download carrying cookies is recorded credentialed and is never shareable",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_download_from_a_signed_url_is_cached_as_credentialed",
+      "proves": "NO PRIVATE-CONTENT LEAKAGE: a signed-URL download is recorded credentialed; the report's redacted URL cannot reveal this, so provenance is read from the original source list",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::an_unverified_download_is_never_cached",
+      "proves": "content with no trusted digest is never inserted",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_tampered_cache_entry_falls_through_to_the_network_rather_than_failing",
+      "proves": "a tampered cache entry falls through to the network instead of failing the download",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_piece_identified_download_round_trips_through_the_cache",
+      "proves": "piece-identified content round-trips through the cache and reports piece-hash verification",
+      "result": "ok"
+    },
+    {
+      "test": "tests::a_default_request_context_is_credential_free_and_a_populated_one_is_not",
+      "proves": "credential-free detection underlying provenance",
+      "result": "ok"
+    }
+  ]
+}

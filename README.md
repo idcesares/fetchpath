@@ -30,6 +30,12 @@ is authoritative for task state; nothing else in the repository duplicates it.
   claim.
 - **Verified multi-source repair.** Metalink 4 piece hashes localize damage and
   repair only the failing byte ranges from another mirror.
+- **Bounded content cache.** Content carrying a trusted digest is retained under
+  a quota so a later download of the same content can complete with no network
+  at all. Cached bytes are re-verified before they are published, and anything
+  fetched with credentials is recorded as such and is never shareable. A cache
+  hit is reuse, not throughput, and is reported as such rather than as a
+  transfer rate.
 - **Protocols.** HTTP/1.1 and HTTP/2 through a statically linked libcurl, plus
   FTP, FTPS and SFTP. HTTP/3 is reported unavailable by the packaged build, and
   no speed claim is made for any of them.
@@ -120,6 +126,7 @@ how a maintainer records one.
 - [Development workflow](docs/development/WORKFLOW.md)
 - [Windows UX and packaging evidence](docs/development/WINDOWS-PACKAGING.md)
 - [Metalink repair evidence](docs/development/METALINK-REPAIR.md)
+- [Content cache and paired LAN evidence](docs/development/CACHE-AND-LAN.md)
 - [Media integration evidence](docs/development/MEDIA-INTEGRATION.md)
 - [Browser capture evidence](docs/development/BROWSER-CAPTURE.md)
 
