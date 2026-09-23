@@ -7,5 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 fetchpath-core = { path = "../../crates/fetchpath-core" }
+fetchpath-lan = { path = "../../adapters/lan" }
 ctrlc = "3.5.1"
 serde_json = "1.0.145"

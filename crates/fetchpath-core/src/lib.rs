@@ -14,9 +14,10 @@ pub use transfer::download_with_faults;
 pub use verified::{
     DEFAULT_MIRROR_ATTEMPT_TIMEOUT, DeliverySource, LOWEST_PRIORITY,
     MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS, MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS,
-    MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome, MirrorReport, MirrorSource, VerificationLevel,
-    VerifiedDownload, VerifiedDownloadError, VerifiedDownloadRequest, download_verified,
-    download_verified_cached, download_verified_with_faults,
+    MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome, MirrorReport, MirrorSource, PeerOutcome, PeerReport,
+    PeerSource, VerificationLevel, VerifiedDownload, VerifiedDownloadError,
+    VerifiedDownloadRequest, download_verified, download_verified_cached, download_verified_shared,
+    download_verified_with_faults,
 };
 
 /// The bounded content cache, re-exported so callers need only depend on this
@@ -581,6 +582,46 @@ mod tests {
         });
         (url, handle)
     }
+    /// A slow server that signals once its first body chunk is on the wire.
+    fn server_signalling_first_chunk(
+        body: Vec<u8>,
+    ) -> (
+        String,
+        thread::JoinHandle<()>,
+        std::sync::mpsc::Receiver<()>,
+    ) {
+        let (signal, streaming) = std::sync::mpsc::channel();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 Test
+Content-Length: {}
+Connection: close
+
+",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            for (index, chunk) in body.chunks(16 * 1024).enumerate() {
+                if stream.write_all(chunk).is_err() {
+                    break;
+                }
+                if index == 0 {
+                    let _ = signal.send(());
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        (url, handle, streaming)
+    }
     /// A response that states no length at all: the body simply runs to EOF.
     fn server_without_declared_length(body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -792,11 +833,15 @@ mod tests {
             ("retain", CancelCleanup::RetainStaging, true),
         ] {
             let dir = temp_dir(label);
-            let (url, server) = server(vec![7; 512 * 1024], true);
+            let (url, server, streaming) = server_signalling_first_chunk(vec![7; 512 * 1024]);
             let token = CancellationToken::default();
             let trigger = token.clone();
+            // Cancel mid-transfer, once bytes are actually flowing. A fixed
+            // delay raced the process-wide request budget: under load the
+            // download could still be queued for a permit, see the cancel,
+            // never connect, and leave the server blocked in accept forever.
             let canceller = thread::spawn(move || {
-                thread::sleep(Duration::from_millis(30));
+                streaming.recv().expect("server began streaming");
                 trigger.cancel();
             });
             let result = download(request(url, dir.join("cancel.bin"), token, cleanup));

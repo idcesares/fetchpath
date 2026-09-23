@@ -2,10 +2,30 @@ use fetchpath_core::{FileJob, FileJobState};
 use serde_json::json;
 use std::path::PathBuf;
 
+mod lan;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let other = match args.first().map(String::as_str) {
+        Some("lan") => Some(lan::run_lan(&args[1..])),
+        Some("cache") if args.get(1).map(String::as_str) == Some("status") => {
+            Some(lan::cache_status())
+        }
+        Some("fetch-verified") => Some(lan::fetch_verified(&args[1..])),
+        _ => None,
+    };
+    if let Some(outcome) = other {
+        match outcome {
+            Ok(value) => println!("{value}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(if error.starts_with("usage:") { 64 } else { 1 });
+            }
+        }
+        return;
+    }
     if args.len() != 3 || args[0] != "download" {
-        eprintln!("usage: fetchpath download URL DESTINATION");
+        eprintln!("{}", lan::USAGE);
         std::process::exit(64);
     }
     let job = FileJob::create(args[1].clone(), PathBuf::from(&args[2]));

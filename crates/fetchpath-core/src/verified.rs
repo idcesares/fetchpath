@@ -106,6 +106,46 @@ pub enum VerificationLevel {
 pub enum DeliverySource {
     Network,
     LocalCache,
+    /// A paired device, identified by the SHA-256 of its identity key. The
+    /// bytes were re-verified here against this request's own trusted digest.
+    Peer {
+        fingerprint: [u8; 32],
+    },
+}
+
+/// A device that may hold content by trusted identity.
+///
+/// A peer is a source, never an authority: whatever it writes is untrusted
+/// until this crate has checked it against the request's own digests. The
+/// transport lives outside this crate.
+pub trait PeerSource {
+    /// SHA-256 of the peer's identity key. An identifier for reports, never a
+    /// credential.
+    fn fingerprint(&self) -> [u8; 32];
+
+    /// Writes the peer's copy of `id` into `into`, reading at most `ceiling`
+    /// bytes. `Ok(false)` means the peer does not have it, would not share it,
+    /// or could not be reached.
+    fn fetch(&self, id: &ContentId, ceiling: u64, into: &Path) -> io::Result<bool>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerOutcome {
+    /// Never asked: an earlier source completed the download first.
+    Unused,
+    /// Delivered the bytes that were published.
+    Delivered,
+    /// Did not have it, refused, or could not be reached.
+    Unavailable,
+    /// Delivered bytes that failed the trusted check. They were discarded
+    /// unpublished and the peer was not asked again for this download.
+    Corrupt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerReport {
+    pub fingerprint: [u8; 32],
+    pub outcome: PeerOutcome,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,6 +202,9 @@ pub struct VerifiedDownload {
     /// Whole-file restarts forced by a digest that localized nothing.
     pub conservative_restarts: u32,
     pub mirrors: Vec<MirrorReport>,
+    /// One report per peer offered, in the order offered. Empty when no peer
+    /// was offered.
+    pub peers: Vec<PeerReport>,
     pub staging_cleanup_pending: Option<PathBuf>,
 }
 
@@ -341,14 +384,55 @@ pub fn download_verified_cached(
     request: VerifiedDownloadRequest,
     cache: &mut ContentCache,
 ) -> Result<VerifiedDownload, VerifiedDownloadError> {
-    if let Some(id) = request.content_id()
-        && let Some(result) = reuse_from_cache(&request, cache, &id)?
+    download_verified_shared(request, cache, &[])
+}
+
+/// As [`download_verified_cached`], asking paired peers in order after the
+/// local cache misses and before any mirror is contacted.
+///
+/// Peers are asked only for content with a trusted identity, and never for
+/// more than the size the request declares. Their bytes are checked against
+/// this request's own digests before publication; a peer whose bytes fail is
+/// reported `Corrupt` and not asked again. Bytes from a peer are not inserted
+/// into the cache, because the sender's provenance cannot be verified here.
+/// Peer retrieval is sequential and is not acceleration.
+pub fn download_verified_shared(
+    request: VerifiedDownloadRequest,
+    cache: &mut ContentCache,
+    peers: &[&dyn PeerSource],
+) -> Result<VerifiedDownload, VerifiedDownloadError> {
+    let id = request.content_id();
+    if let Some(id) = &id
+        && let Some(result) = reuse_from_cache(&request, cache, id)?
     {
         return Ok(result);
     }
 
-    let result = download_verified(request.clone())?;
+    let mut peer_reports: Vec<PeerReport> = peers
+        .iter()
+        .map(|peer| PeerReport {
+            fingerprint: peer.fingerprint(),
+            outcome: PeerOutcome::Unused,
+        })
+        .collect();
+    if let Some(id) = &id {
+        let ceiling = declared_size(&request).unwrap_or(cache.config().max_entry_bytes);
+        for (index, peer) in peers.iter().enumerate() {
+            peer_reports[index].outcome = match fetch_from_peer(&request, *peer, id, ceiling)? {
+                PeerAttempt::Published(mut result) => {
+                    peer_reports[index].outcome = PeerOutcome::Delivered;
+                    result.peers = peer_reports;
+                    return Ok(*result);
+                }
+                PeerAttempt::Unavailable => PeerOutcome::Unavailable,
+                PeerAttempt::Corrupt => PeerOutcome::Corrupt,
+            };
+        }
+    }
+
+    let mut result = download_verified(request.clone())?;
     insert_into_cache(&request, cache, &result);
+    result.peers = peer_reports;
     Ok(result)
 }
 
@@ -380,6 +464,66 @@ fn reuse_from_cache(
     published
 }
 
+/// The size the request's trusted metadata declares, if any.
+fn declared_size(request: &VerifiedDownloadRequest) -> Option<u64> {
+    request
+        .pieces
+        .as_ref()
+        .map(PieceMap::total_size)
+        .or(request.expected_bytes)
+}
+
+enum PeerAttempt {
+    Published(Box<VerifiedDownload>),
+    Unavailable,
+    Corrupt,
+}
+
+/// Asks one peer. Its bytes land in staging on the destination volume and are
+/// published only after they pass this request's own trusted check.
+fn fetch_from_peer(
+    request: &VerifiedDownloadRequest,
+    peer: &dyn PeerSource,
+    id: &ContentId,
+    ceiling: u64,
+) -> Result<PeerAttempt, VerifiedDownloadError> {
+    if request.destination.exists() {
+        return Err(VerifiedDownloadError::DestinationExists {
+            destination: request.destination.clone(),
+            staging: None,
+        });
+    }
+    let key = source_key_with_context("fetchpath:peer", &request.context.fingerprint());
+    let Ok(store) = CheckpointStore::new(&request.destination, &key) else {
+        return Ok(PeerAttempt::Unavailable);
+    };
+    match store.reset() {
+        Ok(file) => drop(file),
+        Err(_) => return Ok(PeerAttempt::Unavailable),
+    }
+    if !matches!(peer.fetch(id, ceiling, store.staging()), Ok(true)) {
+        let _ = store.remove_all();
+        return Ok(PeerAttempt::Unavailable);
+    }
+    let check = RequestCheck {
+        pieces: request.pieces.as_ref(),
+        expected_sha256: request.expected_sha256.as_deref(),
+    };
+    if !matches!(check.verify(store.staging()), Ok(true)) {
+        let _ = store.remove_all();
+        return Ok(PeerAttempt::Corrupt);
+    }
+    let source = DeliverySource::Peer {
+        fingerprint: peer.fingerprint(),
+    };
+    Ok(
+        match publish_staged(request, store, key, "fetchpath:peer", source)? {
+            Some(result) => PeerAttempt::Published(Box::new(result)),
+            None => PeerAttempt::Unavailable,
+        },
+    )
+}
+
 fn publish_from_cache(
     request: &VerifiedDownloadRequest,
     cached: &Path,
@@ -398,6 +542,23 @@ fn publish_from_cache(
         let _ = store.remove_all();
         return Ok(None);
     }
+    publish_staged(
+        request,
+        store,
+        key,
+        "fetchpath:cache",
+        DeliverySource::LocalCache,
+    )
+}
+
+/// Publishes already-verified staged bytes through the create-only fence.
+fn publish_staged(
+    request: &VerifiedDownloadRequest,
+    store: CheckpointStore,
+    key: String,
+    label: &str,
+    source: DeliverySource,
+) -> Result<Option<VerifiedDownload>, VerifiedDownloadError> {
     let (Ok(observed), Ok(total)) = (
         sha256_file(store.staging()),
         std::fs::metadata(store.staging()).map(|meta| meta.len()),
@@ -412,25 +573,18 @@ fn publish_from_cache(
         (None, None) => VerificationLevel::Unverified,
     };
 
-    let published = publish(
-        request,
-        &store,
-        "fetchpath:cache",
-        key,
-        total,
-        observed,
-        &NoFaults,
-    )?;
+    let published = publish(request, &store, label, key, total, observed, &NoFaults)?;
 
     Ok(Some(VerifiedDownload {
         destination: published.destination,
         bytes: published.bytes,
         observed_sha256: published.observed_sha256,
         verification,
-        source: DeliverySource::LocalCache,
+        source,
         repaired_pieces: Vec::new(),
         conservative_restarts: 0,
         mirrors: reports(&build_mirrors(&request.mirrors)),
+        peers: Vec::new(),
         staging_cleanup_pending: published.staging_cleanup_pending,
     }))
 }
@@ -637,6 +791,7 @@ pub fn download_verified_with_faults(
             repaired_pieces: repaired,
             conservative_restarts,
             mirrors: reports(&mirrors),
+            peers: Vec::new(),
             staging_cleanup_pending: published.staging_cleanup_pending,
         });
     }
@@ -2029,6 +2184,213 @@ mod tests {
         assert_eq!(done.verification, VerificationLevel::PieceHashes);
         assert!(done.repaired_pieces.is_empty(), "nothing was repaired");
         assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A peer that writes fixed bytes, and counts how often it was asked.
+    struct FakePeer {
+        fingerprint: [u8; 32],
+        bytes: Option<Vec<u8>>,
+        asked: std::cell::Cell<u32>,
+    }
+
+    impl FakePeer {
+        fn holding(tag: u8, bytes: &[u8]) -> Self {
+            Self {
+                fingerprint: [tag; 32],
+                bytes: Some(bytes.to_vec()),
+                asked: std::cell::Cell::new(0),
+            }
+        }
+
+        fn empty(tag: u8) -> Self {
+            Self {
+                fingerprint: [tag; 32],
+                bytes: None,
+                asked: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl PeerSource for FakePeer {
+        fn fingerprint(&self) -> [u8; 32] {
+            self.fingerprint
+        }
+
+        fn fetch(&self, _id: &ContentId, ceiling: u64, into: &Path) -> io::Result<bool> {
+            self.asked.set(self.asked.get() + 1);
+            match &self.bytes {
+                Some(bytes) if bytes.len() as u64 <= ceiling => {
+                    fs::write(into, bytes)?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+    }
+
+    fn peer_request(body: &[u8], destination: PathBuf) -> VerifiedDownloadRequest {
+        VerifiedDownloadRequest {
+            expected_bytes: Some(body.len() as u64),
+            expected_sha256: Some(hex(body)),
+            ..request(
+                vec![MirrorSource::new(offline_url())],
+                destination,
+                Duration::from_secs(5),
+            )
+        }
+    }
+
+    #[test]
+    fn a_paired_peer_completes_the_download_after_verification_with_every_mirror_unreachable() {
+        let dir = temp_dir("peer-delivers");
+        let body = payload();
+        let mut cache = open_cache(&dir);
+        let destination = dir.join("payload.bin");
+        let without = FakePeer::empty(1);
+        let holder = FakePeer::holding(2, &body);
+
+        let done = download_verified_shared(
+            peer_request(&body, destination.clone()),
+            &mut cache,
+            &[&without, &holder],
+        )
+        .expect("completes from a peer");
+
+        assert_eq!(
+            done.source,
+            DeliverySource::Peer {
+                fingerprint: [2; 32]
+            }
+        );
+        assert_eq!(done.verification, VerificationLevel::FinalHashOnly);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        assert_eq!(
+            done.peers
+                .iter()
+                .map(|peer| peer.outcome)
+                .collect::<Vec<_>>(),
+            vec![PeerOutcome::Unavailable, PeerOutcome::Delivered]
+        );
+        assert!(done.mirrors.iter().all(|report| report.attempts == 0));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bytes_from_a_peer_are_not_inserted_into_the_cache() {
+        let dir = temp_dir("peer-not-cached");
+        let body = payload();
+        let mut cache = open_cache(&dir);
+        let holder = FakePeer::holding(2, &body);
+        download_verified_shared(
+            peer_request(&body, dir.join("payload.bin")),
+            &mut cache,
+            &[&holder],
+        )
+        .expect("completes from a peer");
+        // The receiver cannot verify the sender's provenance claim, so it must
+        // not create an entry a later setting could share.
+        assert!(cache.entries().is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_peer_bytes_are_discarded_unpublished_and_that_peer_is_not_asked_again() {
+        let dir = temp_dir("peer-corrupt");
+        let body = payload();
+        let mut tampered = body.clone();
+        tampered[10] ^= 0xff;
+        let mut cache = open_cache(&dir);
+        let destination = dir.join("payload.bin");
+        let liar = FakePeer::holding(3, &tampered);
+        let honest = FakePeer::holding(4, &body);
+
+        let done = download_verified_shared(
+            peer_request(&body, destination.clone()),
+            &mut cache,
+            &[&liar, &honest],
+        )
+        .expect("the honest peer completes it");
+
+        assert_eq!(
+            done.source,
+            DeliverySource::Peer {
+                fingerprint: [4; 32]
+            }
+        );
+        assert_eq!(done.peers[0].outcome, PeerOutcome::Corrupt);
+        assert_eq!(liar.asked.get(), 1);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn when_every_peer_fails_the_mirrors_are_used_and_nothing_bad_is_published() {
+        let dir = temp_dir("peer-fallthrough");
+        let body = payload();
+        let mut tampered = body.clone();
+        tampered[0] ^= 1;
+        let server = mirror(body.clone(), 4096, None);
+        let mut cache = open_cache(&dir);
+        let destination = dir.join("payload.bin");
+        let liar = FakePeer::holding(5, &tampered);
+
+        let done = download_verified_shared(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(hex(&body)),
+                ..request(
+                    vec![MirrorSource::new(server.url.clone())],
+                    destination.clone(),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+            &[&liar],
+        )
+        .expect("the mirror completes it");
+
+        assert_eq!(done.source, DeliverySource::Network);
+        assert_eq!(done.peers[0].outcome, PeerOutcome::Corrupt);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_peer_is_never_asked_for_more_than_the_declared_size() {
+        let dir = temp_dir("peer-ceiling");
+        let body = payload();
+        let mut padded = body.clone();
+        padded.push(0);
+        let mut cache = open_cache(&dir);
+        // Holds one byte more than declared, so a correct ceiling refuses it.
+        let bloated = FakePeer::holding(6, &padded);
+        let result = download_verified_shared(
+            peer_request(&body, dir.join("payload.bin")),
+            &mut cache,
+            &[&bloated],
+        );
+        assert!(result.is_err(), "the offline mirror is all that remains");
+        assert!(!dir.join("payload.bin").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_request_without_a_trusted_digest_never_asks_a_peer() {
+        let dir = temp_dir("peer-untrusted");
+        let body = payload();
+        let mut cache = open_cache(&dir);
+        let holder = FakePeer::holding(7, &body);
+        let _ = download_verified_shared(
+            request(
+                vec![MirrorSource::new(offline_url())],
+                dir.join("payload.bin"),
+                Duration::from_secs(5),
+            ),
+            &mut cache,
+            &[&holder],
+        );
+        assert_eq!(holder.asked.get(), 0);
         fs::remove_dir_all(dir).unwrap();
     }
 }
