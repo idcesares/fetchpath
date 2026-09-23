@@ -48,6 +48,26 @@ impl PinStore {
         })
     }
 
+    /// Re-reads the list from disk, so a long-running server sees pairings and
+    /// unpairings made by another process. Fails closed: if the file cannot be
+    /// read or is malformed, the store holds nobody until a later reload
+    /// succeeds, and the error is returned.
+    pub fn reload(&mut self) -> io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        match Self::open(&path) {
+            Ok(fresh) => {
+                self.peers = fresh.peers;
+                Ok(())
+            }
+            Err(error) => {
+                self.peers.clear();
+                Err(error)
+            }
+        }
+    }
+
     pub fn is_pinned(&self, key: &PeerKey) -> bool {
         self.peers.contains_key(key)
     }
@@ -156,6 +176,30 @@ mod tests {
         store.pin(key, "desk").expect("pin");
         assert!(store.unpin(&key).expect("unpin"));
         assert!(!PinStore::open(&path).expect("reopen").is_pinned(&key));
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_reload_sees_another_processs_unpairing_and_fails_closed() {
+        let path = temp_path("reload");
+        let key = DeviceIdentity::generate().expect("identity").public_key();
+        let mut server = PinStore::open(&path).expect("open");
+        server.pin(key, "phone").expect("pin");
+
+        // Another process unpairs through its own handle on the same file.
+        let mut other = PinStore::open(&path).expect("other");
+        assert!(other.unpin(&key).expect("unpin"));
+        assert!(server.is_pinned(&key), "stale until reloaded");
+        server.reload().expect("reload");
+        assert!(!server.is_pinned(&key));
+
+        // A damaged file revokes everyone rather than keeping stale pins.
+        other.pin(key, "phone").expect("re-pin");
+        server.reload().expect("reload");
+        assert!(server.is_pinned(&key));
+        fs::write(&path, "garbage\n").expect("damage");
+        assert!(server.reload().is_err());
+        assert!(!server.is_pinned(&key));
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 

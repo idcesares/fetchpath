@@ -20,13 +20,11 @@ three were closed and the product was made usable without a developer:
 | ARM64 (A12) | **Closed by statement.** README, user guide and changelog say 0.1.0 is x64 only. |
 | Clean-machine packaging (A12) | **Open.** Needs one lifecycle run on a freshly imaged Windows 11 x64 PC. |
 
-Two further items must be settled before a public release:
-
-1. **FP-020's independent review of `adapters/lan`.** Its code is compiled into
-   the shipped command line, unlisted in help. Either complete the review or
-   build the release CLI without it.
-2. **FP-031** is implemented and verified in the real UI; merging this branch
-   to `main` is the lead's integration step.
+FP-020's independent review of `adapters/lan` is done: the cryptography and
+FFI are sound, and two defects it found (unpairing did not revoke a running
+server; a race in identity creation) are fixed. The paired-device commands are
+now listed in the CLI help and documented in the [CLI guide](../user/CLI.md).
+Merging this branch to `main` is the lead's integration step.
 
 Builds stay unsigned by decision, with the SmartScreen consequence and the
 installer checksum check in front of the user in the README and user guide. No
@@ -58,7 +56,7 @@ or **Open**.
 23 September 2026:
 
 ```
-cargo test --workspace --locked                        233 passed, 0 failed, 5 ignored
+cargo test --workspace --locked                        236 passed, 0 failed, 5 ignored
 cargo test -p fetchpath-desktop -- --ignored guided_install   1 passed (real helper download)
 cargo clippy --workspace --all-targets -- -D warnings  clean
 cargo fmt --check                                      clean
@@ -103,12 +101,10 @@ guide or the changelog.
 
 ## Recommended path to publication
 
-1. Complete FP-020's review of `adapters/lan`, or build the release CLI
-   without the LAN commands.
-2. Merge this branch to `main`.
-3. Run `tests/compatibility/windows/packaging-lifecycle.ps1` on a freshly
+1. Merge this branch to `main`.
+2. Run `tests/compatibility/windows/packaging-lifecycle.ps1` on a freshly
    imaged Windows 11 x64 PC.
-4. Build the release with `corepack pnpm --dir apps/desktop release`, publish
+3. Build the release with `corepack pnpm --dir apps/desktop release`, publish
    the installer with its SHA-256 next to it, and mark FP-018 done.
 
 Store listings for the extension and code signing are worthwhile next steps,

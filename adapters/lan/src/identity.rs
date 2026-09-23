@@ -38,18 +38,7 @@ impl DeviceIdentity {
     /// silently stop recognising this one.
     pub fn load_or_create(path: &Path, protector: &dyn SecretProtector) -> io::Result<Self> {
         match fs::read(path) {
-            Ok(sealed) => {
-                let seed = Zeroizing::new(protector.unprotect(&sealed)?);
-                let seed: &[u8; 32] = seed.as_slice().try_into().map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "identity key has the wrong length",
-                    )
-                })?;
-                Ok(Self {
-                    signing: SigningKey::from_bytes(seed),
-                })
-            }
+            Ok(sealed) => Self::unseal(&sealed, protector),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let identity = Self::generate()?;
                 let seed = Zeroizing::new(identity.signing.to_bytes());
@@ -57,17 +46,45 @@ impl DeviceIdentity {
                 if let Some(parent) = path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let temporary = path.with_extension("writing");
-                fs::write(&temporary, sealed)?;
-                fs::OpenOptions::new()
-                    .write(true)
-                    .open(&temporary)?
-                    .sync_all()?;
-                fs::rename(&temporary, path)?;
-                Ok(identity)
+                // A uniquely named temporary, published with a hard link, which
+                // fails if the file already exists. Two processes creating an
+                // identity at once therefore agree on one key: the loser loads
+                // the winner's instead of each keeping a key the other
+                // overwrote on disk.
+                let temporary =
+                    path.with_extension(format!("writing-{}", hex(&random_bytes::<8>()?)));
+                let published = fs::write(&temporary, &sealed)
+                    .and_then(|()| {
+                        fs::OpenOptions::new()
+                            .write(true)
+                            .open(&temporary)?
+                            .sync_all()
+                    })
+                    .and_then(|()| fs::hard_link(&temporary, path));
+                let _ = fs::remove_file(&temporary);
+                match published {
+                    Ok(()) => Ok(identity),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        Self::unseal(&fs::read(path)?, protector)
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }
+    }
+
+    fn unseal(sealed: &[u8], protector: &dyn SecretProtector) -> io::Result<Self> {
+        let seed = Zeroizing::new(protector.unprotect(sealed)?);
+        let seed: &[u8; 32] = seed.as_slice().try_into().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "identity key has the wrong length",
+            )
+        })?;
+        Ok(Self {
+            signing: SigningKey::from_bytes(seed),
+        })
     }
 
     pub fn public_key(&self) -> PeerKey {
@@ -199,6 +216,51 @@ mod tests {
         let key = DeviceIdentity::generate().expect("identity").public_key();
         assert_eq!(PeerKey::parse_hex(&key.hex()), Some(key));
         assert_eq!(PeerKey::parse_hex("zz"), None);
+    }
+
+    /// Reversible and machine-independent, so the race below runs anywhere.
+    struct Xor;
+    impl SecretProtector for Xor {
+        fn protect(&self, plaintext: &[u8]) -> io::Result<Vec<u8>> {
+            Ok(plaintext.iter().map(|byte| byte ^ 0x5a).collect())
+        }
+        fn unprotect(&self, protected: &[u8]) -> io::Result<Vec<u8>> {
+            self.protect(protected)
+        }
+    }
+
+    #[test]
+    fn concurrent_first_launches_agree_on_one_identity() {
+        for round in 0..20 {
+            let dir = std::env::temp_dir().join(format!(
+                "fetchpath-lan-identity-race-{}-{round}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            let path = dir.join("identity");
+            let keys: Vec<PeerKey> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..6)
+                    .map(|_| scope.spawn(|| DeviceIdentity::load_or_create(&path, &Xor).unwrap()))
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().unwrap().public_key())
+                    .collect()
+            });
+            let on_disk = DeviceIdentity::load_or_create(&path, &Xor)
+                .unwrap()
+                .public_key();
+            assert!(
+                keys.iter().all(|key| *key == on_disk),
+                "every caller holds the key that was persisted"
+            );
+            assert_eq!(
+                fs::read_dir(&dir).unwrap().count(),
+                1,
+                "no temporaries left"
+            );
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     #[test]

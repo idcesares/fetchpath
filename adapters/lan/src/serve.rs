@@ -181,6 +181,11 @@ impl PeerServer {
         id: &ContentId,
         remaining: u64,
     ) -> Result<Option<u64>, SessionError> {
+        // Checked on every request, not only at the handshake: unpairing a
+        // device revokes it on its next request, even within a live session.
+        // A pin list that cannot be read is treated as holding nobody.
+        let peer = channel.peer();
+        let still_paired = self.pins.lock().is_ok_and(|pins| pins.is_pinned(&peer));
         let admitted = {
             let mut cache = self.cache.lock().map_err(|_| poisoned())?;
             // Another process on this device may have inserted or evicted
@@ -190,7 +195,11 @@ impl PeerServer {
             match cache.lookup(id).filter(|_| fresh) {
                 // Checked again here, not only at connect: turning LAN mode off
                 // takes effect on the next request of a live session.
-                Some(entry) if self.enabled.load(Ordering::SeqCst) && entry.is_shareable() => {
+                Some(entry)
+                    if still_paired
+                        && self.enabled.load(Ordering::SeqCst)
+                        && entry.is_shareable() =>
+                {
                     if entry.bytes > remaining {
                         Err(BUDGET_EXHAUSTED)
                     } else {

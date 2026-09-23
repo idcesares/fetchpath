@@ -60,8 +60,9 @@ only when it is a terminal; the saved path goes to stdout. Exit codes: 0 saved,
 cancelled. Observed against example.com and a local fixture: every code above
 except 6 and 130 was produced by a real run.
 
-The cache and paired-LAN commands remain callable but are unlisted until
-FP-020's independent review is done.
+The cache and paired-device commands were unlisted until FP-020's independent
+review; after it (see [cache and paired LAN](CACHE-AND-LAN.md)) they are listed
+under an advanced section of the help and documented in the CLI guide.
 
 ## FP-036 — browser capture reaches users
 
@@ -145,8 +146,6 @@ whatever window is in front.
 ## Still open
 
 - A clean-machine install on a freshly imaged Windows 11 x64 PC.
-- FP-020's independent review of `adapters/lan`, which is compiled into the
-  shipped CLI though unlisted.
 - Chrome may warn about developer-mode extensions; store listings are external
   publication and were not attempted.
 - The CLI takes the file name from the link only, not from `Content-Disposition`; a link

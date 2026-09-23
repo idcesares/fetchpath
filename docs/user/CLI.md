@@ -80,3 +80,36 @@ cancellation prints `{"result":"cancelled",…}`.
 The command line downloads one file at a time and doesn't share the desktop
 app's queue. Use the desktop app for queues, schedules, pause and resume,
 video and audio, and links from your browser.
+
+## Paired devices (advanced)
+
+Two of your own computers can share files they have already downloaded and
+checked, so the second one does not fetch them again. Nothing is shared until
+you turn it on, only with devices you pair yourself, and only files that were
+downloaded without a sign-in, cookie or private link. The receiving computer
+checks every byte against the SHA-256 you give it before saving anything.
+
+```powershell
+# On the computer that has the files: shows a code for two minutes
+fetchpath lan pair-host 0.0.0.0:47631
+
+# On the other computer, within those two minutes
+fetchpath lan pair-join 192.168.1.20:47631 ABCDE-FGHJK laptop
+
+# On the computer that has the files: turn sharing on, then share while it runs
+fetchpath lan enable
+fetchpath lan serve 0.0.0.0:47631
+
+# On the other computer: ask the paired device first, then the link
+fetchpath fetch-verified --sha256 HEX --size BYTES --peer 192.168.1.20:47631=KEY LINK DESTINATION
+```
+
+`pair-join` prints the other device's `key`. `fetchpath lan peers` lists paired
+devices and `fetchpath lan unpair KEY` removes one; a running `serve` stops
+serving it within two seconds. `fetchpath lan disable` stops sharing the same
+way. Devices are not discovered automatically; you give the address. Windows
+Firewall may ask whether to allow Fetchpath on your network the first time you
+run `serve`.
+
+These commands print JSON and are meant for people comfortable with a
+terminal. The desktop app does not show them yet.

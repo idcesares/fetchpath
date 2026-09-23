@@ -584,6 +584,40 @@ fn turning_lan_mode_off_takes_effect_within_a_live_session() {
     assert_eq!(server.join().unwrap().unwrap().bytes_sent, 0);
 }
 
+#[test]
+fn unpairing_a_device_takes_effect_within_its_live_session() {
+    let fixture = Fixture::new("unpair-live", 1000);
+    let (address, server) = fixture.serve_once(unpaced());
+    let mut channel = connect_session(
+        TcpStream::connect(address).unwrap(),
+        &fixture.client_identity,
+        &fixture.server_identity.public_key(),
+    )
+    .expect("session");
+    // Served while paired.
+    channel.send(10, PUBLIC.render().as_bytes()).unwrap();
+    assert_eq!(channel.receive().unwrap().0, 11, "offer");
+    loop {
+        if channel.receive().unwrap().0 == 13 {
+            break;
+        }
+    }
+    // Unpaired mid-session: the next request is refused like any other.
+    fixture
+        .pins
+        .lock()
+        .unwrap()
+        .unpin(&fixture.client_identity.public_key())
+        .unwrap();
+    channel.send(10, PUBLIC.render().as_bytes()).unwrap();
+    let (kind, reason) = channel.receive().unwrap();
+    assert_eq!((kind, reason.as_slice()), (4, b"not_available".as_slice()));
+    channel.send(14, &[]).unwrap();
+    let summary = server.join().unwrap().unwrap();
+    assert_eq!(summary.served.len(), 1);
+    assert_eq!(summary.refused, 1);
+}
+
 // ---------------------------------------------------------------- identity
 
 #[cfg(windows)]

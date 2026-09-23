@@ -221,11 +221,20 @@ fn serve(bind: SocketAddr) -> Result<Value, String> {
     }
     let identity = identity()?;
     let enabled = Arc::new(AtomicBool::new(true));
-    let watcher = Arc::clone(&enabled);
+    let pins = Arc::new(Mutex::new(pins()?));
+    // `lan disable`, `lan unpair` and new pairings happen in other processes.
+    // Re-reading both every two seconds bounds how long a revoked device keeps
+    // access; the server also re-checks both on every request.
+    let watched_flag = Arc::clone(&enabled);
+    let watched_pins = Arc::clone(&pins);
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(2));
-            watcher.store(lan_enabled(), Ordering::SeqCst);
+            watched_flag.store(lan_enabled(), Ordering::SeqCst);
+            if let Ok(mut pins) = watched_pins.lock() {
+                // Fails closed: an unreadable list pins nobody.
+                let _ = pins.reload();
+            }
         }
     });
     let listener = TcpListener::bind(bind).map_err(io_error("lan.bind_failed"))?;
@@ -238,7 +247,7 @@ fn serve(bind: SocketAddr) -> Result<Value, String> {
     );
     let server = Arc::new(PeerServer::new(
         identity,
-        Arc::new(Mutex::new(pins()?)),
+        pins,
         Arc::new(Mutex::new(cache()?)),
         enabled,
         UploadBudget::default(),

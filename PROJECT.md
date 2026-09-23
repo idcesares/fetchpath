@@ -35,9 +35,9 @@ Progress is now reported from engine-confirmed values end to end: the total a so
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. FP-020 needs an independent strong-model review of `adapters/lan` (credential boundary, handshake cryptography, DPAPI FFI) before it can be marked done; its implementation, tests and evidence are recorded. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; pins remain per process.
+Run `node tools/tasks.mjs next`. FP-020 is done: the independent review of `adapters/lan` on 23 September 2026 found the cryptography and DPAPI FFI sound and fixed two defects (unpairing did not revoke a running server; a race in identity creation); see [cache and paired LAN](docs/development/CACHE-AND-LAN.md). mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; cache pins remain per process, and a running server reloads the paired-device list every two seconds.
 
-FP-018, the first public release candidate, is the remaining release gate. Decided on 23 September 2026: 0.1.0 names no supported media site (media is best-effort), and 0.1.0 is x64 only. The helper checksums are pinned. What remains is one packaging-lifecycle run on a freshly imaged Windows 11 x64 PC, and either FP-020's review of `adapters/lan` or a release CLI built without the LAN commands, which are compiled in but unlisted. See [the release candidate record](docs/development/RELEASE-CANDIDATE.md).
+FP-018, the first public release candidate, is the remaining release gate. Decided on 23 September 2026: 0.1.0 names no supported media site (media is best-effort), and 0.1.0 is x64 only. The helper checksums are pinned. FP-020's review of `adapters/lan` is done and its two findings are fixed. What remains is one packaging-lifecycle run on a freshly imaged Windows 11 x64 PC. See [the release candidate record](docs/development/RELEASE-CANDIDATE.md).
 
 ## Remaining choices
 

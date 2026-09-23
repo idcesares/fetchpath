@@ -10,6 +10,14 @@ Usage:
   fetchpath --version
   fetchpath --help
 
+Paired devices (advanced; off until you run `fetchpath lan enable`):
+  fetchpath lan id | enable | disable | peers | unpair KEY
+  fetchpath lan pair-host [BIND]      then on the other device:
+  fetchpath lan pair-join ADDRESS CODE [LABEL]
+  fetchpath lan serve [BIND]
+  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION
+  fetchpath cache status
+
 DESTINATION may be a file name or a folder. Without one, the file goes to
 your Downloads folder under the name the link suggests. Fetchpath never
 overwrites an existing file.
@@ -41,9 +49,7 @@ fn main() {
             0
         }
         Some("download") => download::run(&args[1..]),
-        // Cache and paired-LAN commands are experimental and unlisted until
-        // FP-020's independent review is complete.
-        Some("lan" | "cache" | "fetch-verified") => experimental(&args),
+        Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");
             download::EXIT_USAGE
@@ -52,7 +58,8 @@ fn main() {
     std::process::exit(code);
 }
 
-fn experimental(args: &[String]) -> i32 {
+/// Cache and paired-device commands, which print JSON for scripts.
+fn paired_devices(args: &[String]) -> i32 {
     let outcome = match args[0].as_str() {
         "lan" => lan::run_lan(&args[1..]),
         "cache" if args.get(1).map(String::as_str) == Some("status") => lan::cache_status(),

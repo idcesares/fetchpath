@@ -294,3 +294,68 @@ performed; process-level tests cannot establish power-loss behaviour.
     client proves possession of that key. Anyone who knows a pinned device's
     public key can therefore learn that this server pins it, and learn the
     server's own public key. They get no session and no content.
+
+## Independent review of `adapters/lan` (23 September 2026)
+
+The strong-model review AGENTS.md requires for credential boundaries, handshake
+cryptography and FFI, done by a reviewer that did not write the adapter. Every
+file in `adapters/lan/src` was read in full, with `apps/cli/src/lan.rs`.
+
+**Handshake cryptography: sound.** Sessions are a signed-transcript mutual
+authentication in the TLS 1.3 style: both hellos (version, X25519 ephemeral,
+ed25519 identity, 32-byte nonce) are hashed with length prefixes under a
+distinct label; each side signs the transcript under a role label, so a
+signature cannot be reflected; ed25519 verification is strict; an all-zero
+X25519 result is refused; traffic keys come from HKDF-SHA256 salted with the
+transcript, one AES-256-GCM key per direction with a non-wrapping counter
+nonce, and the frame kind is associated data. There is no trust-on-first-use
+path. Pairing binds the typed code, the X25519 secret and the transcript into
+HMAC confirmations, compared in constant time and each paired with a signature.
+An online guess costs the single-use code; a fake host cannot produce the host
+confirmation without the code, so the joiner pins nothing.
+
+**DPAPI FFI: sound, one hardening.** Pointers refer to live locals for the
+whole call, output is copied, wiped and freed exactly once, and the entropy
+label separates identity blobs from the browser inbox. `take` now returns an
+empty buffer for a null output pointer instead of building a slice from it.
+
+**Credential boundary: one defect, fixed.** Serving requires LAN mode on, a
+pinned and authenticated peer, and a `Public` entry; absent, `Credentialed`
+and LAN-off requests get the same `not_available`, and LAN mode is re-checked
+on every request. But the pin was checked only at the handshake, and
+`lan serve` read the pin list once at start-up, so `lan unpair`, run as it
+must be from another process, did not revoke a running server's peer until
+restart. The server now re-checks the pin on every request, and `lan serve`
+reloads the pin list every two seconds alongside the LAN flag, failing closed
+(no one pinned) if the file is unreadable. Tests:
+`unpairing_a_device_takes_effect_within_its_live_session` (fails with the
+per-request check removed) and `a_reload_sees_another_processs_unpairing_and_fails_closed`.
+
+**Identity creation: one race, fixed.** Two processes creating the identity at
+once wrote the same temporary file and renamed over each other, so one could
+keep a key that was not the one on disk, and every device that paired with it
+would later fail. The sealed key is now written to a uniquely named temporary
+and published with a hard link that fails if the file exists; the loser loads
+the winner's key. `concurrent_first_launches_agree_on_one_identity` runs six
+threads over twenty rounds.
+
+**Accepted and recorded, not changed:**
+
+- Pairing is not a PAKE. An attacker who impersonates the host can try the
+  joiner's confirmation offline, but must search 2^50 codes within the
+  two-minute lifetime, about 10^13 HMAC evaluations a second.
+- Anyone on the network can spend a pairing code by connecting first. The
+  person generates another.
+- The `not_paired` refusal tells a prober whether a public key is pinned.
+- Unauthenticated connections can hold the four session slots for up to the
+  ten-second handshake timeout at a time.
+- Two processes pinning at the same moment can lose one pin (last writer wins).
+
+**End to end, real CLI, two data directories on loopback:** paired with a real
+code; the server cached a public object from a mirror; with the mirror stopped
+the client received it from the peer (`source: peer`, outcome `delivered`);
+after `lan unpair` in a separate process, the still-running server refused the
+same client within three seconds and nothing was written.
+
+After the fixes: `cargo test --workspace --locked` 236 passed, 0 failed, 5
+ignored; clippy `-D warnings` and `cargo fmt --check` clean.

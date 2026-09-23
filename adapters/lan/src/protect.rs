@@ -48,6 +48,11 @@ mod dpapi {
     /// # Safety
     /// `output` must have been filled by a successful DPAPI call.
     unsafe fn take(output: CRYPT_INTEGER_BLOB) -> Vec<u8> {
+        // An empty result may come back without a buffer, and a slice may not
+        // be built from a null pointer even at length zero.
+        if output.pbData.is_null() {
+            return Vec::new();
+        }
         let len = output.cbData as usize;
         let bytes = unsafe { std::slice::from_raw_parts(output.pbData, len) }.to_vec();
         unsafe {
