@@ -475,3 +475,40 @@ fn a_failed_check_never_leaves_usable_bytes_behind() {
         "a second attempt cannot resurrect the evicted entry"
     );
 }
+
+#[test]
+fn an_entry_pinned_twice_stays_pinned_until_both_holders_release_it() {
+    let dir = TempDir::new("pin-count");
+    let mut cache = ContentCache::open(
+        &dir.path().join("cache"),
+        CacheConfig::new(1 << 20, 1 << 20),
+    )
+    .expect("open");
+    let source = source_file(dir.path(), "a", b"shared bytes");
+    cache
+        .insert(
+            &id(7),
+            &source,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("insert");
+
+    // A local reuse and a peer upload can hold the same entry at once.
+    assert!(cache.pin(&id(7)).is_some());
+    assert!(matches!(
+        cache
+            .acquire_verified(&id(7), &AlwaysValid)
+            .expect("acquire"),
+        Acquired::Hit(_)
+    ));
+    cache.unpin(&id(7));
+    assert!(cache.is_pinned(&id(7)), "one holder remains");
+    assert!(
+        !cache.evict(&id(7)).expect("evict"),
+        "still held, never evicted"
+    );
+    cache.release(&id(7));
+    assert!(!cache.is_pinned(&id(7)));
+    assert!(cache.evict(&id(7)).expect("evict"));
+}

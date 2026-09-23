@@ -16,7 +16,7 @@ pub use entry::{CacheEntry, CachedVerification, Provenance};
 pub use id::ContentId;
 pub use index::CacheIndex;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -74,7 +74,9 @@ pub struct ContentCache {
     root: PathBuf,
     config: CacheConfig,
     index: CacheIndex,
-    pinned: BTreeSet<ContentId>,
+    /// Holders per entry. A local reuse and a peer upload may hold the same
+    /// entry at once, so release by one must not unpin it for the other.
+    pinned: BTreeMap<ContentId, u32>,
 }
 
 impl ContentCache {
@@ -90,12 +92,16 @@ impl ContentCache {
             root: root.to_path_buf(),
             config,
             index: decoded.unwrap_or_default(),
-            pinned: BTreeSet::new(),
+            pinned: BTreeMap::new(),
         };
         if needs_rebuild {
             cache.rebuild_index()?;
         }
         Ok(cache)
+    }
+
+    pub fn config(&self) -> CacheConfig {
+        self.config
     }
 
     pub fn lookup(&self, id: &ContentId) -> Option<CacheEntry> {
@@ -167,16 +173,25 @@ impl ContentCache {
         self.index.get(id)?;
         self.index.touch(id, now_secs());
         let _ = self.persist_index();
-        self.pinned.insert(*id);
+        self.hold(id);
         Some(self.path_for(id))
     }
 
     pub fn unpin(&mut self, id: &ContentId) {
-        self.pinned.remove(id);
+        if let Some(holders) = self.pinned.get_mut(id) {
+            *holders -= 1;
+            if *holders == 0 {
+                self.pinned.remove(id);
+            }
+        }
+    }
+
+    fn hold(&mut self, id: &ContentId) {
+        *self.pinned.entry(*id).or_insert(0) += 1;
     }
 
     pub fn is_pinned(&self, id: &ContentId) -> bool {
-        self.pinned.contains(id)
+        self.pinned.contains_key(id)
     }
 
     /// Looks up an identity, re-verifies the stored bytes, and pins them.
@@ -204,16 +219,16 @@ impl ContentCache {
         }
         self.index.touch(id, now_secs());
         self.persist_index()?;
-        self.pinned.insert(*id);
+        self.hold(id);
         Ok(Acquired::Hit(path))
     }
 
     pub fn release(&mut self, id: &ContentId) {
-        self.pinned.remove(id);
+        self.unpin(id);
     }
 
     pub fn evict(&mut self, id: &ContentId) -> io::Result<bool> {
-        if self.pinned.contains(id) {
+        if self.pinned.contains_key(id) {
             return Ok(false);
         }
         if self.index.remove(id).is_none() {
@@ -232,7 +247,8 @@ impl ContentCache {
     /// when everything that remains is pinned.
     fn make_room_for(&mut self, bytes: u64) -> io::Result<bool> {
         while self.index.total_bytes() + bytes > self.config.quota_bytes {
-            let Some(victim) = self.index.least_recently_used(&self.pinned) else {
+            let held: BTreeSet<ContentId> = self.pinned.keys().copied().collect();
+            let Some(victim) = self.index.least_recently_used(&held) else {
                 return Ok(false);
             };
             self.evict(&victim)?;

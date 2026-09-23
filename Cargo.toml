@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fetchpath-cache", "crates/fetchpath-core", "crates/fetchpath-http", "crates/fetchpath-metalink", "crates/fetchpath-storage", "adapters/media", "apps/cli", "apps/desktop/src-tauri"]
+members = ["crates/fetchpath-cache", "crates/fetchpath-core", "crates/fetchpath-http", "crates/fetchpath-metalink", "crates/fetchpath-storage", "adapters/lan", "adapters/media", "apps/cli", "apps/desktop/src-tauri"]
 exclude = ["tools/spikes/http-backend", "work/http-spike"]
 resolver = "3"
 
