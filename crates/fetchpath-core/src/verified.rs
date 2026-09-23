@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use curl::easy::Easy;
+use fetchpath_cache::{
+    Acquired, CachedVerification, ContentCache, ContentId, Provenance, TrustedCheck,
+};
 use fetchpath_http::TransferError;
 use fetchpath_metalink::{MetalinkFile, PieceMap};
 use fetchpath_storage::{
@@ -93,6 +96,18 @@ pub enum VerificationLevel {
     Unverified,
 }
 
+/// Where the published bytes actually came from.
+///
+/// This is not a performance label. Completion from a local source is reuse,
+/// not throughput, so a benchmark must exclude or flag any completion whose
+/// source is not [`DeliverySource::Network`], and an interface must say the
+/// file came from cache rather than report an implausible transfer rate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeliverySource {
+    Network,
+    LocalCache,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MirrorOutcome {
     /// Never attempted.
@@ -139,6 +154,8 @@ pub struct VerifiedDownload {
     /// An observed local digest, not publisher-authenticity evidence.
     pub observed_sha256: String,
     pub verification: VerificationLevel,
+    /// Where the bytes came from. Reuse is not throughput.
+    pub source: DeliverySource,
     /// Piece indices that trusted piece hashes localized, re-fetched, and
     /// re-verified. Only ever non-empty for [`VerificationLevel::PieceHashes`].
     pub repaired_pieces: Vec<usize>,
@@ -270,6 +287,187 @@ impl VerifiedDownloadRequest {
             ..Self::new(mirrors, destination)
         }
     }
+}
+
+impl VerifiedDownloadRequest {
+    /// The trusted identity of this request's content, if it has one.
+    ///
+    /// Piece hashes take precedence over a whole-file digest because they are
+    /// the stronger construction: they localize damage, and a request carrying
+    /// both is still fundamentally piece-identified.
+    pub fn content_id(&self) -> Option<ContentId> {
+        if let Some(pieces) = &self.pieces {
+            return Some(ContentId::from_piece_map(pieces));
+        }
+        self.expected_sha256
+            .as_deref()
+            .and_then(ContentId::from_expected_sha256)
+    }
+}
+
+/// The trusted check the cache runs before reuse: exactly the digests this
+/// request carries, applied to the cached file.
+struct RequestCheck<'a> {
+    pieces: Option<&'a PieceMap>,
+    expected_sha256: Option<&'a str>,
+}
+
+impl TrustedCheck for RequestCheck<'_> {
+    fn verify(&self, path: &Path) -> io::Result<bool> {
+        if let Some(pieces) = self.pieces
+            && !pieces.verify_file(path)?.is_complete()
+        {
+            return Ok(false);
+        }
+        if let Some(expected) = self.expected_sha256
+            && !sha256_file(path)?.eq_ignore_ascii_case(expected)
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+}
+
+/// A verified download that may complete from the bounded cache instead of the
+/// network.
+///
+/// A cache hit is reuse, not throughput. The result's [`VerifiedDownload::source`]
+/// says where the bytes came from, and callers that report rates must honour it.
+///
+/// The cache is optional at every point and fatal at none: a miss, a failed
+/// check, an unreadable store or a refused insertion all fall through to the
+/// unchanged mirror path.
+pub fn download_verified_cached(
+    request: VerifiedDownloadRequest,
+    cache: &mut ContentCache,
+) -> Result<VerifiedDownload, VerifiedDownloadError> {
+    if let Some(id) = request.content_id()
+        && let Some(result) = reuse_from_cache(&request, cache, &id)?
+    {
+        return Ok(result);
+    }
+
+    let result = download_verified(request.clone())?;
+    insert_into_cache(&request, cache, &result);
+    Ok(result)
+}
+
+fn reuse_from_cache(
+    request: &VerifiedDownloadRequest,
+    cache: &mut ContentCache,
+    id: &ContentId,
+) -> Result<Option<VerifiedDownload>, VerifiedDownloadError> {
+    if request.destination.exists() {
+        return Err(VerifiedDownloadError::DestinationExists {
+            destination: request.destination.clone(),
+            staging: None,
+        });
+    }
+    let check = RequestCheck {
+        pieces: request.pieces.as_ref(),
+        expected_sha256: request.expected_sha256.as_deref(),
+    };
+    // A cache that cannot be read is not a download failure.
+    let Ok(acquired) = cache.acquire_verified(id, &check) else {
+        return Ok(None);
+    };
+    let Acquired::Hit(cached) = acquired else {
+        return Ok(None);
+    };
+
+    let published = publish_from_cache(request, &cached);
+    cache.release(id);
+    published
+}
+
+fn publish_from_cache(
+    request: &VerifiedDownloadRequest,
+    cached: &Path,
+) -> Result<Option<VerifiedDownload>, VerifiedDownloadError> {
+    let key = source_key_with_context("fetchpath:cache", &request.context.fingerprint());
+    let Ok(store) = CheckpointStore::new(&request.destination, &key) else {
+        return Ok(None);
+    };
+    // Stage a copy on the destination volume, then publish through the same
+    // create-only fence the network path uses.
+    match store.reset() {
+        Ok(file) => drop(file),
+        Err(_) => return Ok(None),
+    }
+    if std::fs::copy(cached, store.staging()).is_err() {
+        let _ = store.remove_all();
+        return Ok(None);
+    }
+    let (Ok(observed), Ok(total)) = (
+        sha256_file(store.staging()),
+        std::fs::metadata(store.staging()).map(|meta| meta.len()),
+    ) else {
+        let _ = store.remove_all();
+        return Ok(None);
+    };
+
+    let verification = match (&request.pieces, &request.expected_sha256) {
+        (Some(_), _) => VerificationLevel::PieceHashes,
+        (None, Some(_)) => VerificationLevel::FinalHashOnly,
+        (None, None) => VerificationLevel::Unverified,
+    };
+
+    let published = publish(
+        request,
+        &store,
+        "fetchpath:cache",
+        key,
+        total,
+        observed,
+        &NoFaults,
+    )?;
+
+    Ok(Some(VerifiedDownload {
+        destination: published.destination,
+        bytes: published.bytes,
+        observed_sha256: published.observed_sha256,
+        verification,
+        source: DeliverySource::LocalCache,
+        repaired_pieces: Vec::new(),
+        conservative_restarts: 0,
+        mirrors: reports(&build_mirrors(&request.mirrors)),
+        staging_cleanup_pending: published.staging_cleanup_pending,
+    }))
+}
+
+/// Inserts a completed download. Failing to cache is never a download failure.
+fn insert_into_cache(
+    request: &VerifiedDownloadRequest,
+    cache: &mut ContentCache,
+    result: &VerifiedDownload,
+) {
+    if result.source != DeliverySource::Network {
+        return;
+    }
+    let verification = match result.verification {
+        VerificationLevel::PieceHashes => CachedVerification::PieceHashes,
+        VerificationLevel::FinalHashOnly => CachedVerification::FinalHashOnly,
+        // Not eligible: nothing trusted identifies these bytes.
+        VerificationLevel::Unverified => return,
+    };
+    let Some(id) = request.content_id() else {
+        return;
+    };
+    // Provenance is read from the original mirror URL, not from the report's
+    // redacted copy: `redact` has already stripped the query string, so the
+    // report cannot tell a signed URL from a plain one.
+    let delivered_from_public_url = result
+        .mirrors
+        .iter()
+        .find(|report| report.outcome == MirrorOutcome::Delivered)
+        .and_then(|report| request.mirrors.get(report.mirror_index))
+        .is_some_and(|mirror| !mirror.url.contains(['?', '#']));
+    let provenance = if request.context.is_credential_free() && delivered_from_public_url {
+        Provenance::Public
+    } else {
+        Provenance::Credentialed
+    };
+    let _ = cache.insert(&id, &result.destination, verification, provenance);
 }
 
 /// Downloads one representation from a mirror list, verifying it against
@@ -421,7 +619,7 @@ pub fn download_verified_with_faults(
         let published = publish(
             &request,
             &store,
-            &mirrors[selected],
+            &mirrors[selected].url.clone(),
             key,
             total,
             observed,
@@ -435,6 +633,7 @@ pub fn download_verified_with_faults(
             bytes: published.bytes,
             observed_sha256: published.observed_sha256,
             verification,
+            source: DeliverySource::Network,
             repaired_pieces: repaired,
             conservative_restarts,
             mirrors: reports(&mirrors),
@@ -1026,7 +1225,7 @@ fn expected_body_len(headers: &ResponseHeaders, range: Option<(u64, u64)>) -> Op
 fn publish(
     request: &VerifiedDownloadRequest,
     store: &CheckpointStore,
-    mirror: &Mirror,
+    url: &str,
     key: String,
     total: u64,
     observed: String,
@@ -1037,7 +1236,7 @@ fn publish(
     let intent = store
         .commit(intent, faults)
         .map_err(|error| storage(store, error))?;
-    let download_request = as_download_request(request, &mirror.url);
+    let download_request = as_download_request(request, url);
     transfer::publish(&download_request, store, &intent, faults).map_err(from_download_error)
 }
 
@@ -1544,6 +1743,292 @@ mod tests {
             Err(VerifiedDownloadError::DestinationExists { .. })
         ));
         assert_eq!(fs::read(&destination).unwrap(), b"keep me");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_mirror_delivered_download_reports_a_network_source() {
+        let dir = temp_dir("delivery-source");
+        let body = payload();
+        let server = mirror(body.clone(), 4096, None);
+        let destination = dir.join("payload.bin");
+
+        let done = download_verified(VerifiedDownloadRequest {
+            expected_bytes: Some(body.len() as u64),
+            expected_sha256: Some(hex(&body)),
+            ..request(
+                vec![MirrorSource::new(server.url.clone())],
+                destination,
+                Duration::from_secs(5),
+            )
+        })
+        .expect("download succeeds");
+
+        assert_eq!(done.source, DeliverySource::Network);
+        assert_eq!(done.verification, VerificationLevel::FinalHashOnly);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn open_cache(dir: &Path) -> fetchpath_cache::ContentCache {
+        fetchpath_cache::ContentCache::open(
+            &dir.join("cache"),
+            fetchpath_cache::CacheConfig::new(1 << 20, 1 << 20),
+        )
+        .expect("cache opens")
+    }
+
+    #[test]
+    fn a_populated_cache_completes_the_download_with_every_mirror_unreachable() {
+        let dir = temp_dir("offline-reuse");
+        let body = payload();
+        let digest = hex(&body);
+
+        // Seed the cache from a file that is not the destination.
+        let seed = dir.join("seed.bin");
+        fs::write(&seed, &body).unwrap();
+        let mut cache = open_cache(&dir);
+        let id = fetchpath_cache::ContentId::from_expected_sha256(&digest).expect("valid digest");
+        cache
+            .insert(
+                &id,
+                &seed,
+                fetchpath_cache::CachedVerification::FinalHashOnly,
+                fetchpath_cache::Provenance::Public,
+            )
+            .expect("seeded");
+
+        let destination = dir.join("payload.bin");
+        let done = download_verified_cached(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(digest.clone()),
+                ..request(
+                    vec![MirrorSource::new(offline_url())],
+                    destination.clone(),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("completes from cache");
+
+        assert_eq!(done.source, DeliverySource::LocalCache);
+        assert_eq!(done.verification, VerificationLevel::FinalHashOnly);
+        assert_eq!(done.observed_sha256, digest);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        assert!(
+            done.mirrors.iter().all(|report| report.attempts == 0),
+            "no mirror was contacted"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_verified_network_download_populates_the_cache_for_next_time() {
+        let dir = temp_dir("cache-populate");
+        let body = payload();
+        let digest = hex(&body);
+        let server = mirror(body.clone(), 4096, None);
+        let mut cache = open_cache(&dir);
+
+        let done = download_verified_cached(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(digest.clone()),
+                ..request(
+                    vec![MirrorSource::new(server.url.clone())],
+                    dir.join("payload.bin"),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("downloads");
+        assert_eq!(done.source, DeliverySource::Network);
+
+        let id = fetchpath_cache::ContentId::from_expected_sha256(&digest).expect("valid");
+        let entry = cache
+            .lookup(&id)
+            .expect("cached after a verified completion");
+        assert_eq!(entry.bytes, body.len() as u64);
+        assert_eq!(entry.provenance, fetchpath_cache::Provenance::Public);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_download_carrying_credentials_is_cached_as_credentialed() {
+        let dir = temp_dir("cache-credentialed");
+        let body = payload();
+        let digest = hex(&body);
+        let server = mirror(body.clone(), 4096, None);
+        let mut cache = open_cache(&dir);
+
+        download_verified_cached(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(digest.clone()),
+                context: RequestContext::new(vec!["session=secret".to_owned()], None)
+                    .expect("valid context"),
+                ..request(
+                    vec![MirrorSource::new(server.url.clone())],
+                    dir.join("payload.bin"),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("downloads");
+
+        let id = fetchpath_cache::ContentId::from_expected_sha256(&digest).expect("valid");
+        let entry = cache.lookup(&id).expect("cached");
+        assert_eq!(entry.provenance, fetchpath_cache::Provenance::Credentialed);
+        assert!(
+            !entry.is_shareable(),
+            "credentialed bytes never become shareable"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_download_from_a_signed_url_is_cached_as_credentialed() {
+        let dir = temp_dir("cache-signed-url");
+        let body = payload();
+        let digest = hex(&body);
+        let server = mirror(body.clone(), 4096, None);
+        let mut cache = open_cache(&dir);
+
+        // No cookies, but the mirror URL carries a query string. The report's
+        // redacted URL cannot show this, so provenance must be read from the
+        // original source list instead.
+        let signed = format!("{}?token=secret", server.url);
+        download_verified_cached(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(digest.clone()),
+                ..request(
+                    vec![MirrorSource::new(signed)],
+                    dir.join("payload.bin"),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("downloads");
+
+        let id = fetchpath_cache::ContentId::from_expected_sha256(&digest).expect("valid");
+        let entry = cache.lookup(&id).expect("cached");
+        assert_eq!(entry.provenance, fetchpath_cache::Provenance::Credentialed);
+        assert!(!entry.is_shareable());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unverified_download_is_never_cached() {
+        let dir = temp_dir("cache-unverified");
+        let body = payload();
+        let server = mirror(body.clone(), 4096, None);
+        let mut cache = open_cache(&dir);
+
+        // No expected digest and no piece map: nothing trusted to key on.
+        let done = download_verified_cached(
+            request(
+                vec![MirrorSource::new(server.url.clone())],
+                dir.join("payload.bin"),
+                Duration::from_secs(5),
+            ),
+            &mut cache,
+        )
+        .expect("downloads");
+
+        assert_eq!(done.verification, VerificationLevel::Unverified);
+        assert_eq!(done.source, DeliverySource::Network);
+        assert_eq!(
+            cache.entries().len(),
+            0,
+            "unverified bytes are not eligible"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tampered_cache_entry_falls_through_to_the_network_rather_than_failing() {
+        let dir = temp_dir("cache-tampered-fallthrough");
+        let body = payload();
+        let digest = hex(&body);
+        let server = mirror(body.clone(), 4096, None);
+
+        let seed = dir.join("seed.bin");
+        fs::write(&seed, &body).unwrap();
+        let mut cache = open_cache(&dir);
+        let id = fetchpath_cache::ContentId::from_expected_sha256(&digest).expect("valid");
+        cache
+            .insert(
+                &id,
+                &seed,
+                fetchpath_cache::CachedVerification::FinalHashOnly,
+                fetchpath_cache::Provenance::Public,
+            )
+            .expect("seeded");
+
+        fs::write(cache.path_for(&id), b"not the promised bytes").unwrap();
+
+        let destination = dir.join("payload.bin");
+        let done = download_verified_cached(
+            VerifiedDownloadRequest {
+                expected_bytes: Some(body.len() as u64),
+                expected_sha256: Some(digest.clone()),
+                ..request(
+                    vec![MirrorSource::new(server.url.clone())],
+                    destination.clone(),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("falls through and succeeds");
+
+        assert_eq!(done.source, DeliverySource::Network);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_piece_identified_download_round_trips_through_the_cache() {
+        let dir = temp_dir("cache-pieces");
+        let body = payload();
+        let map = piece_map(&body);
+
+        let seed = dir.join("seed.bin");
+        fs::write(&seed, &body).unwrap();
+        let mut cache = open_cache(&dir);
+        let id = fetchpath_cache::ContentId::from_piece_map(&map);
+        cache
+            .insert(
+                &id,
+                &seed,
+                fetchpath_cache::CachedVerification::PieceHashes,
+                fetchpath_cache::Provenance::Public,
+            )
+            .expect("seeded");
+
+        let destination = dir.join("payload.bin");
+        let done = download_verified_cached(
+            VerifiedDownloadRequest {
+                pieces: Some(map),
+                ..request(
+                    vec![MirrorSource::new(offline_url())],
+                    destination.clone(),
+                    Duration::from_secs(5),
+                )
+            },
+            &mut cache,
+        )
+        .expect("completes from cache");
+
+        assert_eq!(done.source, DeliverySource::LocalCache);
+        assert_eq!(done.verification, VerificationLevel::PieceHashes);
+        assert!(done.repaired_pieces.is_empty(), "nothing was repaired");
+        assert_eq!(fs::read(&destination).unwrap(), body);
         fs::remove_dir_all(dir).unwrap();
     }
 }

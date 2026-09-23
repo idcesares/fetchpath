@@ -593,12 +593,19 @@
       "dependsOn": [
         "FP-019"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "cache_lan",
       "modelTier": "terra-medium",
       "files": [
-        "crates",
-        "adapters/lan"
+        "crates/fetchpath-cache",
+        "adapters/lan",
+        "crates/fetchpath-core/src/verified.rs",
+        "crates/fetchpath-core/src/lib.rs",
+        "apps/cli",
+        "Cargo.toml",
+        "docs/development/CACHE-AND-LAN.md",
+        "docs/development/evidence/cache",
+        "docs/superpowers/specs"
       ],
       "acceptanceIds": [
         "A02",
@@ -606,8 +613,11 @@
         "A10"
       ],
       "acceptance": "Authorized offline reuse, explicit pairing/sharing, eviction and quota tests; no private-content leakage.",
-      "verification": "Authorized offline reuse, explicit pairing/sharing, eviction and quota tests; no private-content leakage.",
-      "evidence": [],
+      "verification": "The bounded content cache half is implemented and tested; the paired LAN half is not implemented, so this task stays in_progress. crates/fetchpath-cache stores only content carrying a trusted digest, keyed by an identity that encodes construction as well as algorithm, so a flat SHA-256 and a digest over a trusted piece map are never interchangeable. Reuse re-verifies against the digests the request itself carries before publishing through the unchanged create-only fence; a cached file that fails is evicted and reported as a miss, never published and never raised as a download failure. Authorized offline reuse is proven with every mirror unreachable: the published file is byte-identical, verified, and no mirror was contacted. Quota and eviction are proven: an oversize entry is refused without emptying the store, a quota breach evicts the least recently used entry and only that one, and a pinned entry is never evicted. Provenance is decided at insertion and immutable; a credentialed or signed-URL download is never shareable, and a rebuilt index fails closed because provenance is not recoverable from bytes. The signed-URL case was verified adversarially: reverting to the report's redacted URL makes that test fail. Recorded 22 September 2026 on Windows 11 Pro 26200 x64: cargo test --workspace 158 passed 0 failed against a 120-test baseline, 38 recorded cases all passing, clippy -D warnings clean, cargo fmt --check clean. Completion from cache is reuse, not throughput; no speed claim is made. A trusted digest establishes representation identity, not publisher authenticity. No power-loss testing was performed.",
+      "evidence": [
+        "docs/development/CACHE-AND-LAN.md",
+        "docs/development/evidence/cache/fp020-cache-matrix.json"
+      ],
       "blockedReason": null
     },
     {

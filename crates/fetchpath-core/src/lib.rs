@@ -12,11 +12,16 @@ pub use fetchpath_metalink::{
 pub use fetchpath_storage::{FaultInjector, FaultPoint, NoFaults};
 pub use transfer::download_with_faults;
 pub use verified::{
-    DEFAULT_MIRROR_ATTEMPT_TIMEOUT, LOWEST_PRIORITY, MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS,
-    MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS, MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome,
-    MirrorReport, MirrorSource, VerificationLevel, VerifiedDownload, VerifiedDownloadError,
-    VerifiedDownloadRequest, download_verified, download_verified_with_faults,
+    DEFAULT_MIRROR_ATTEMPT_TIMEOUT, DeliverySource, LOWEST_PRIORITY,
+    MAX_CONCURRENT_MIRROR_ATTEMPTS, MAX_MIRRORS, MAX_REPAIR_MIRRORS_PER_PIECE, MAX_REPAIR_ROUNDS,
+    MAX_WHOLE_FILE_ATTEMPTS, MirrorOutcome, MirrorReport, MirrorSource, VerificationLevel,
+    VerifiedDownload, VerifiedDownloadError, VerifiedDownloadRequest, download_verified,
+    download_verified_cached, download_verified_with_faults,
 };
+
+/// The bounded content cache, re-exported so callers need only depend on this
+/// crate. Completion from it is reuse, not throughput.
+pub use fetchpath_cache;
 
 use std::path::PathBuf;
 use std::sync::{
@@ -128,10 +133,16 @@ impl RequestContext {
         })
     }
 
+    /// True when no credential-bearing context is attached. Used to decide
+    /// cache provenance; it must stay consistent with `fingerprint`.
+    pub fn is_credential_free(&self) -> bool {
+        self.cookie_lines.is_empty() && self.referer.is_none()
+    }
+
     fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
 
-        if self.cookie_lines.is_empty() && self.referer.is_none() {
+        if self.is_credential_free() {
             return String::new();
         }
         let mut digest = Sha256::new();
@@ -506,6 +517,19 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn a_default_request_context_is_credential_free_and_a_populated_one_is_not() {
+        assert!(RequestContext::default().is_credential_free());
+
+        let with_cookie = RequestContext::new(vec!["a=b".to_owned()], None).expect("valid");
+        assert!(!with_cookie.is_credential_free());
+
+        let with_referer =
+            RequestContext::new(Vec::new(), Some("https://example.test/".to_owned()))
+                .expect("valid");
+        assert!(!with_referer.is_credential_free());
+    }
 
     fn temp_dir(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
