@@ -16,7 +16,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use url::Url;
 
-const OUTPUT_LIMIT: usize = 512 * 1024;
+/// Per stream. Inspection output is kept small by `inspect_args`; this is the
+/// ceiling, not the expected size.
+const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(60);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -196,13 +198,7 @@ impl MediaTools {
         validate_source(source)?;
         let cancel = AtomicBool::new(false);
         let pid = AtomicU32::new(0);
-        let args = vec![
-            "--ignore-config".into(),
-            "--no-playlist".into(),
-            "--no-warnings".into(),
-            "--dump-single-json".into(),
-            source.into(),
-        ];
+        let args = inspect_args(source);
         let output = run_helper(&self.yt_dlp, &args, &cancel, &pid, INSPECT_TIMEOUT)?;
         if !output.status.success() {
             return Err(classify_helper_failure(&output.stderr));
@@ -384,13 +380,7 @@ impl MediaJob {
     }
 
     fn inspect_for_job(&self) -> Result<MediaInspection, MediaError> {
-        let args = vec![
-            "--ignore-config".into(),
-            "--no-playlist".into(),
-            "--no-warnings".into(),
-            "--dump-single-json".into(),
-            self.source.clone(),
-        ];
+        let args = inspect_args(&self.source);
         let output = run_helper(
             &self.tools.yt_dlp,
             &args,
@@ -508,6 +498,22 @@ impl MediaJob {
         let _ = fs::remove_file(output);
         Ok((bytes, hash))
     }
+}
+
+/// Asks the helper for only the fields `parse_inspection` reads. The full
+/// `--dump-single-json` record of an ordinary YouTube talk is over 800 KiB,
+/// mostly automatic captions in 160 languages; it overran the output limit,
+/// was cut off mid-JSON, and every such video failed as "verification_failed".
+fn inspect_args(source: &str) -> Vec<String> {
+    vec![
+        "--ignore-config".into(),
+        "--no-playlist".into(),
+        "--no-warnings".into(),
+        "--skip-download".into(),
+        "--print".into(),
+        "%(.{title,duration,formats})j".into(),
+        source.into(),
+    ]
 }
 
 fn validate_source(source: &str) -> Result<(), MediaError> {
@@ -682,7 +688,9 @@ fn run_helper(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0000_0200);
+        // CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW: the desktop app has no
+        // console, so without the second flag every helper flashes one.
+        command.creation_flags(0x0000_0200 | 0x0800_0000);
     }
     let mut child = command.spawn().map_err(|_| MediaError::HelperUnavailable)?;
     active_pid.store(child.id(), Ordering::Release);
@@ -790,8 +798,10 @@ fn executable(name: &str) -> String {
 
 #[cfg(windows)]
 fn terminate_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
     let _ = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(0x0800_0000)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -921,5 +931,47 @@ mod tests {
         assert_eq!(job.snapshot().state, MediaJobState::Cancelled);
         assert!(!destination.exists());
         assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+    }
+
+    /// The real regression: a YouTube talk whose full metadata is over 800 KiB
+    /// because of automatic captions. Before `inspect_args` it was cut off at
+    /// the output limit and failed as "verification_failed". Needs network and
+    /// real helpers, so it runs only when pointed at them:
+    /// `FETCHPATH_TEST_MEDIA_TOOLS=<folder with yt-dlp.exe and bin\ffmpeg.exe>`
+    /// `cargo test -p fetchpath-media -- --ignored real_captioned_talk`
+    #[test]
+    #[ignore = "needs network and real yt-dlp/ffmpeg"]
+    fn real_captioned_talk_inspects_and_downloads() {
+        let Some(root) = std::env::var_os("FETCHPATH_TEST_MEDIA_TOOLS") else {
+            panic!("set FETCHPATH_TEST_MEDIA_TOOLS");
+        };
+        let tools = MediaTools::discover_in(Path::new(&root)).expect("tools");
+        let source = "https://www.youtube.com/watch?v=arj7oStGLkU";
+        let inspection = tools.inspect(source).expect("inspection");
+        assert!(inspection.title.contains("Procrastinator"));
+        assert!(
+            inspection
+                .variants
+                .iter()
+                .any(|v| v.kind == MediaKind::Video)
+        );
+        let audio = inspection
+            .variants
+            .iter()
+            .find(|v| v.kind == MediaKind::Audio)
+            .expect("an audio variant");
+
+        let temporary =
+            std::env::temp_dir().join(format!("fetchpath-media-real-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temporary);
+        fs::create_dir_all(&temporary).unwrap();
+        let destination = temporary.join("talk.mp3");
+        let job = MediaJob::create(source.into(), audio.id.clone(), destination.clone(), tools);
+        job.start().unwrap();
+        job.join();
+        let done = job.snapshot();
+        assert_eq!(done.state, MediaJobState::Completed, "{:?}", done.error);
+        assert!(fs::metadata(&destination).unwrap().len() > 1_000_000);
+        let _ = fs::remove_dir_all(&temporary);
     }
 }

@@ -69,10 +69,13 @@ pub fn reveal_extension_folder(resource_dir: Option<&Path>) -> Result<(), String
 }
 
 fn registered_manifest(key: &str) -> Option<PathBuf> {
+    use std::os::windows::process::CommandExt;
     let output = Command::new("reg.exe")
         .args(["query", key, "/ve"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
+        // CREATE_NO_WINDOW: no console flash each time Settings opens.
+        .creation_flags(0x0800_0000)
         .output()
         .ok()?;
     if !output.status.success() {

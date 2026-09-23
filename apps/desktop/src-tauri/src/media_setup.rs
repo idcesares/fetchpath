@@ -321,6 +321,7 @@ fn sha256_file(path: &Path) -> io::Result<String> {
 fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
+    use std::os::windows::process::CommandExt;
     let status = Command::new("tar")
         .arg("-xf")
         .arg(archive)
@@ -329,6 +330,8 @@ fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        // CREATE_NO_WINDOW: no console flash during guided setup.
+        .creation_flags(0x0800_0000)
         .status()
         .map_err(|error| format!("Could not run the system archive extractor: {error}"))?;
     if !status.success() {

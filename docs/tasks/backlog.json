@@ -1144,6 +1144,106 @@
         "docs/development/MEDIA-INTEGRATION.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-040",
+      "title": "Make media downloads work for ordinary YouTube videos and run helpers without console windows",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-014",
+        "FP-039"
+      ],
+      "status": "done",
+      "owner": "media_fixes",
+      "modelTier": "astra-high",
+      "files": [
+        "adapters/media",
+        "apps/desktop/src-tauri/src/media_setup.rs",
+        "apps/desktop/src-tauri/src/browser_setup.rs"
+      ],
+      "acceptanceIds": [
+        "A11"
+      ],
+      "acceptance": "A YouTube video whose metadata exceeds the old 512 KiB output limit inspects and downloads; no console window appears for any helper the desktop starts; proven by a real-network test through MediaJob.",
+      "verification": "Reproduced: the 512 KiB inspection cap truncated an 848 KB yt-dlp record (automatic captions), which failed as verification_failed. Inspection now prints only title, duration and formats (108 KB) under an 8 MiB ceiling; the ignored real-network test real_captioned_talk_inspects_and_downloads passed in 25 s through MediaJob with the pinned helpers. CREATE_NO_WINDOW added to yt-dlp/ffmpeg/ffprobe, taskkill, tar and reg.exe.",
+      "evidence": [
+        "docs/development/FIELD-FEEDBACK.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-041",
+      "title": "Analyze links automatically in Add download",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-035",
+        "FP-040"
+      ],
+      "status": "todo",
+      "owner": "link_analysis",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop/src",
+        "apps/desktop/index.html",
+        "apps/desktop/src-tauri/src",
+        "docs/user/GUIDE.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A11"
+      ],
+      "acceptance": "A pasted link is classified without user input: known media sites and extensionless pages that yt-dlp recognises switch to video with a default quality chosen, file links stay files; inspection starts automatically; the manual switch remains as an override.",
+      "verification": "A pasted link is classified without user input: known media sites and extensionless pages that yt-dlp recognises switch to video with a default quality chosen, file links stay files; inspection starts automatically; the manual switch remains as an override.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-042",
+      "title": "Make browser capture work from the toolbar and without the app open",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-036"
+      ],
+      "status": "todo",
+      "owner": "browser_ux",
+      "modelTier": "astra-high",
+      "files": [
+        "extensions/browser",
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/src",
+        "docs/user/GUIDE.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07",
+        "A08"
+      ],
+      "acceptance": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
+      "verification": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-043",
+      "title": "Run the clean-machine lifecycle in Windows Sandbox",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-017"
+      ],
+      "status": "todo",
+      "owner": "sandbox",
+      "modelTier": "astra-high",
+      "files": [
+        "tests/compatibility/windows",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A12"
+      ],
+      "acceptance": "A scripted Windows Sandbox run installs the release build on a clean image, launches it, exercises a download and uninstalls, recording evidence in the repository.",
+      "verification": "A scripted Windows Sandbox run installs the release build on a clean image, launches it, exercises a download and uninstalls, recording evidence in the repository.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }
