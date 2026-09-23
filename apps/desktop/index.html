@@ -138,7 +138,7 @@
           placeholder="https://example.com/archive.zip"
         ></textarea>
         <p id="url-hint" class="hint field-note">
-          Paste one link, or several for a batch. <kbd>Esc</kbd> closes this and keeps what you typed.
+          Paste one link, or several for a batch. Fetchpath tells files and videos apart for you. <kbd>Esc</kbd> closes this and keeps what you typed.
         </p>
 
         <section id="media-options" class="media-options" aria-labelledby="media-options-heading" hidden>
@@ -156,11 +156,10 @@
           <div id="media-inspect-controls">
             <div class="media-inspect-row">
               <div>
-                <strong>Inspect available quality</strong>
-                <p class="hint" id="media-inspect-hint">Fetchpath shows only formats confirmed by the media engine.</p>
+                <p class="hint" id="media-inspect-hint">Checked automatically when you paste a link. Only formats the media engine confirmed are listed.</p>
               </div>
               <button id="inspect-media" class="secondary" type="button" aria-describedby="media-inspect-hint">
-                Inspect link
+                Inspect again
               </button>
             </div>
             <label for="media-quality">Quality</label>

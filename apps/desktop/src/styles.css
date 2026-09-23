@@ -105,7 +105,9 @@ button.compact { min-height: 32px; padding: 4px 11px; font-size: .84rem; }
 .add-dialog .section-heading { align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .composer > label:first-of-type { margin-top: 10px; }
 /* The actions stay reachable however long the batch preview grows. */
-.add-dialog { padding-bottom: 0; }
+/* dialog.dialog sets padding with higher specificity; the sticky footer needs
+   the bottom edge, or content scrolls visibly beneath it. */
+dialog.dialog.add-dialog { padding-bottom: 0; }
 .add-dialog .submit-row { position: sticky; bottom: 0; margin: 16px -22px 0; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--surface-raised); }
 
 .mode-switch { display: flex; gap: 8px; margin: 0; padding: 0; border: 0; }

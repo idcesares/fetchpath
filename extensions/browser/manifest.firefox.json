@@ -2,14 +2,16 @@
   "manifest_version": 3,
   "name": "Fetchpath",
   "version": "0.1.0",
-  "description": "Explicitly send a download link to the Fetchpath desktop queue.",
-  "permissions": ["contextMenus", "cookies", "nativeMessaging", "storage"],
+  "description": "Send links, pages and downloads to the Fetchpath download manager.",
+  "permissions": ["contextMenus", "cookies", "nativeMessaging", "storage", "activeTab"],
+  "optional_permissions": ["downloads"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "scripts": ["policy.js", "background.js"]
   },
   "action": {
     "default_title": "Fetchpath",
+    "default_popup": "popup.html",
     "default_icon": { "32": "icons/icon-32.png" }
   },
   "icons": { "32": "icons/icon-32.png", "128": "icons/icon-128.png" },

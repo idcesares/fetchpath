@@ -1179,7 +1179,7 @@
         "FP-035",
         "FP-040"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": "link_analysis",
       "modelTier": "astra-high",
       "files": [
@@ -1193,8 +1193,10 @@
         "A11"
       ],
       "acceptance": "A pasted link is classified without user input: known media sites and extensionless pages that yt-dlp recognises switch to video with a default quality chosen, file links stay files; inspection starts automatically; the manual switch remains as an override.",
-      "verification": "A pasted link is classified without user input: known media sites and extensionless pages that yt-dlp recognises switch to video with a default quality chosen, file links stay files; inspection starts automatically; the manual switch remains as an override.",
-      "evidence": [],
+      "verification": "Verified live over DevTools with pinned helpers: a pasted YouTube link became Video with 1080p selected and a title-based name in 4.6 s with no clicks; a .exe link stayed a file with its own name; example.com stayed a file. The manual type choice sticks per link. Accessibility harness passes with the new dialog.",
+      "evidence": [
+        "docs/development/FIELD-FEEDBACK.md"
+      ],
       "blockedReason": null
     },
     {
@@ -1204,7 +1206,7 @@
       "dependsOn": [
         "FP-036"
       ],
-      "status": "todo",
+      "status": "in_progress",
       "owner": "browser_ux",
       "modelTier": "astra-high",
       "files": [
@@ -1219,7 +1221,7 @@
         "A08"
       ],
       "acceptance": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
-      "verification": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
+      "verification": "Implemented and unit-tested (five extension tests, two desktop tests): toolbar popup with connection probe, send page, recent sends and opt-in automatic capture with hand-back; page and video menus; host launches or wakes Fetchpath; captured media pages open Add download. Not yet exercised in a real Chromium, which is what remains before done.",
       "evidence": [],
       "blockedReason": null
     },

@@ -162,10 +162,16 @@ already have them…** and pick the folder that contains them.
 
 **Then:**
 
-1. In **Add download**, choose **Video or audio**.
-2. Paste the page's link and choose **Inspect link**.
-3. Pick a quality. The list shows only formats `yt-dlp` confirmed.
+1. Copy the video page's link and paste it into Fetchpath.
+2. Fetchpath recognises it as video, checks the available qualities and picks
+   the best one up to 1080p, named after the video. This takes a few seconds.
+3. Choose another quality if you like. The list shows only formats `yt-dlp`
+   confirmed, plus **Audio only**.
 4. Choose **Add to queue**.
+
+Fetchpath decides on its own whether a link is a file or a video. If it guesses
+wrong, choose **File or batch** or **Video or audio** yourself; that choice
+sticks for that link.
 
 **Good to know:**
 
@@ -196,16 +202,30 @@ add the extension to your browser once:
 
    **Copy folder path** in Settings copies exactly this folder, and
    **Open extension folder** shows it in File Explorer.
-5. Fetchpath appears in the browser's extension list. Pin it to the toolbar
-   if you like; nothing needs configuring.
+5. Pin Fetchpath to the toolbar (the puzzle-piece icon, then the pin) and
+   click it. It should say **Connected to Fetchpath**.
 
-Now right-click any link and choose **Send link to Fetchpath**. The first time
-you do this on a website, the browser asks whether Fetchpath may use that
-site; this lets it pass along your sign-in for that site only, so downloads
-that need you to be signed in keep working.
+**Using it:**
 
-The extension never watches or takes over your browser's own downloads. It
-only acts when you choose **Send link to Fetchpath**.
+- **Click the Fetchpath button** in the toolbar. It shows whether Fetchpath is
+  connected, and **Send this page to Fetchpath** sends the page you're on,
+  which is how you save a video from its page.
+- **Right-click** a link and choose **Send link to Fetchpath**, a video and
+  choose **Send this video to Fetchpath**, or an empty part of a page and
+  choose **Send this page to Fetchpath**.
+- Fetchpath opens (or comes to the front) with what you sent. A file starts
+  downloading; a video page opens **Add download** with a quality chosen, so
+  you only need to confirm.
+
+The first time you send from a website, the browser asks whether Fetchpath may
+use that site; this lets it pass along your sign-in for that site only, so
+downloads that need you to be signed in keep working. (Video pages are handed
+over without your sign-in.)
+
+**Automatic mode.** In the toolbar popup, turn on **Send downloads to Fetchpath
+automatically** and allow the permissions the browser asks for. From then on,
+downloads you start in the browser go to Fetchpath instead. If Fetchpath can't
+take one, the browser downloads it as usual. It's off until you turn it on.
 
 **Why "Developer mode"?** Version 0.1.0 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
@@ -269,6 +289,7 @@ extensions page.
 | **Checksum doesn't match** | See [Checking a download against a checksum](#checking-a-download-against-a-checksum). |
 | **"Media tools are not set up yet"** | Open **Settings → Video and audio** and choose **Download and set up**. |
 | **Send link to Fetchpath is missing** | Check the extension is added and turned on in your browser's extensions page, and that **Settings → Browser extension** shows a check mark. |
+| **The toolbar popup says "Fetchpath isn't answering"** | Fetchpath must be installed with its installer on this computer. Reinstall it, then close and reopen the popup. |
 | **The `fetchpath` command isn't found** | Open a new terminal after installing. If it still isn't found, your PATH was too long to change safely; add `%LOCALAPPDATA%\Fetchpath` to it yourself. |
 | **A download doesn't resume after a restart** | The website may not support resuming, or the file changed. Fetchpath starts again rather than joining two different files. |
 

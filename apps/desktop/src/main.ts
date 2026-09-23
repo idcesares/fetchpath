@@ -672,45 +672,168 @@ kindChooser.addEventListener("change", () => {
   renderPreview();
 });
 
-inspectMediaButton.addEventListener("click", async () => {
+inspectMediaButton.addEventListener("click", () => {
   clearError(formError);
   const urls = parseUrls();
   if (urls.length !== 1) {
     showError(formError, "Enter one media address to inspect.");
     return;
   }
+  void inspectMedia(urls[0], false);
+});
+
+/**
+ * Inspects one media link and fills the quality list. `quiet` is the automatic
+ * path: a failure leaves the form as it was instead of showing an error, so a
+ * link that turns out not to be media simply stays a file.
+ */
+async function inspectMedia(url: string, quiet: boolean): Promise<MediaInspection | null> {
   const wasFocused = document.activeElement === inspectMediaButton;
   inspectMediaButton.disabled = true;
   inspectMediaButton.textContent = "Inspecting…";
+  if (!quiet || downloadKind() === "media") mediaTitle.textContent = "Checking the available qualities…";
   announce("Inspecting the media link.");
   try {
-    const inspection = await invoke<MediaInspection>("inspect_media", { url: urls[0] });
-    mediaInspection = inspection;
-    inspectedMediaUrl = urls[0];
-    mediaQuality.replaceChildren(...inspection.variants.map((variant) => new Option(variant.label, variant.id)));
-    mediaQuality.disabled = false;
-    mediaTitle.textContent = inspection.durationSeconds
-      ? `${inspection.title} · ${formatDuration(inspection.durationSeconds)}`
-      : inspection.title;
-    if (!destinationInput.value.trim()) setMediaDestination(inspection.variants[0]);
-    renderPreview();
-    announce(
-      inspection.variants.length === 1
-        ? "1 quality is available. Choose it in the Quality list."
-        : `${inspection.variants.length} qualities are available. Choose one in the Quality list.`,
-    );
+    const inspection = await invoke<MediaInspection>("inspect_media", { url });
+    // The link may have changed while the helper ran; a late answer for an
+    // old link must not overwrite the current one.
+    if (parseUrls()[0] !== url) return null;
+    return inspection;
   } catch (error) {
+    if (parseUrls()[0] !== url) return null;
     mediaInspection = null;
     inspectedMediaUrl = "";
-    showError(formError, error);
+    if (!quiet) {
+      mediaTitle.textContent = "";
+      showError(formError, error);
+    } else if (downloadKind() === "media") {
+      mediaTitle.textContent = "No video or audio was found at this link.";
+    }
     // The helpers may have gone missing since the last check; re-reading the
     // status turns a repeated failure into the setup path.
     void refreshToolsStatus();
+    return null;
   } finally {
     inspectMediaButton.disabled = false;
-    inspectMediaButton.textContent = "Inspect link";
+    inspectMediaButton.textContent = "Inspect again";
     if (wasFocused) inspectMediaButton.focus({ preventScroll: true });
   }
+}
+
+/** Shows an inspection and picks the best quality up to 1080p by default. */
+function applyInspection(url: string, inspection: MediaInspection): void {
+  mediaInspection = inspection;
+  inspectedMediaUrl = url;
+  mediaQuality.replaceChildren(...inspection.variants.map((variant) => new Option(variant.label, variant.id)));
+  mediaQuality.disabled = false;
+  const preferred =
+    inspection.variants.find((variant) => variant.kind === "video" && (variant.height ?? 0) <= 1080) ??
+    inspection.variants[0];
+  mediaQuality.value = preferred.id;
+  mediaTitle.textContent = inspection.durationSeconds
+    ? `${inspection.title} · ${formatDuration(inspection.durationSeconds)}`
+    : inspection.title;
+  setMediaDestination(preferred, true);
+  renderPreview();
+  announce(`${inspection.title}. ${preferred.label} selected; ${inspection.variants.length} qualities available.`);
+}
+
+/* Automatic link analysis --------------------------------------------------
+   People paste a link; deciding whether it is a file or a video is
+   Fetchpath's job. The radio buttons remain as an override, and a choice made
+   there is respected for the rest of that draft. */
+
+const MEDIA_HOSTS = [
+  "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com", "dai.ly", "twitch.tv", "tiktok.com",
+  "instagram.com", "facebook.com", "fb.watch", "x.com", "twitter.com", "soundcloud.com", "bandcamp.com",
+  "bilibili.com", "rumble.com", "odysee.com", "streamable.com", "ted.com", "reddit.com", "v.redd.it",
+  "mixcloud.com", "nicovideo.jp", "archive.org",
+];
+const FILE_EXTENSIONS = new Set([
+  "7z", "aab", "apk", "appx", "bin", "bz2", "cab", "csv", "deb", "dmg", "doc", "docx", "epub", "exe", "flac",
+  "gz", "img", "iso", "jar", "json", "m4a", "mkv", "mobi", "mov", "mp3", "mp4", "msi", "msix", "ogg", "pdf",
+  "pkg", "ppt", "pptx", "rar", "rpm", "svg", "tar", "tgz", "torrent", "txt", "wav", "webm", "xls", "xlsx",
+  "xml", "xz", "zip", "zst", "png", "jpg", "jpeg", "gif", "webp",
+]);
+
+type LinkKind = "file" | "media" | "unknown";
+
+function classifyLink(value: string): LinkKind {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "unknown";
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\.|^m\.|^music\./, "");
+  const lastSegment = url.pathname.split("/").pop() ?? "";
+  const extension = lastSegment.includes(".") ? lastSegment.split(".").pop()!.toLowerCase() : "";
+  // A direct file on a media site (an .mp4 on archive.org) is still a file.
+  if (FILE_EXTENSIONS.has(extension)) return "file";
+  if (MEDIA_HOSTS.some((media) => host === media || host.endsWith(`.${media}`))) return "media";
+  return "unknown";
+}
+
+let kindChosenByPerson = false;
+let settingKindAutomatically = false;
+let analysisTimer = 0;
+let analyzedUrl = "";
+
+function setKind(kind: "file" | "media"): void {
+  if (downloadKind() === kind) return;
+  const radio = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${kind}"]`);
+  if (!radio) return;
+  radio.checked = true;
+  settingKindAutomatically = true;
+  kindChooser.dispatchEvent(new Event("change"));
+  settingKindAutomatically = false;
+  // The suggestion ran for the old kind when the link was typed.
+  if (kind === "file") suggestDestination();
+}
+
+kindChooser.addEventListener("change", () => {
+  if (!settingKindAutomatically) kindChosenByPerson = true;
+});
+
+async function analyzeLink(): Promise<void> {
+  const urls = parseUrls();
+  if (editingJobId || urls.length !== 1) return;
+  const url = urls[0];
+  if (url === analyzedUrl) return;
+  analyzedUrl = url;
+  const ready = toolsStatus?.ready ?? false;
+  if (kindChosenByPerson) {
+    if (downloadKind() === "media" && ready) {
+      const inspection = await inspectMedia(url, true);
+      if (inspection) applyInspection(url, inspection);
+    }
+    return;
+  }
+  const kind = classifyLink(url);
+  if (kind === "file") {
+    setKind("file");
+    return;
+  }
+  if (kind === "media") {
+    // Without the helpers this shows the setup step instead of a dead end.
+    setKind("media");
+    if (!ready) return;
+  } else if (!ready) {
+    return;
+  }
+  const inspection = await inspectMedia(url, true);
+  if (!inspection) return;
+  setKind("media");
+  applyInspection(url, inspection);
+}
+
+urlInput.addEventListener("input", () => {
+  if (!urlInput.value.trim()) {
+    kindChosenByPerson = false;
+    analyzedUrl = "";
+  }
+  window.clearTimeout(analysisTimer);
+  analysisTimer = window.setTimeout(() => void analyzeLink(), 400);
 });
 
 mediaQuality.addEventListener("change", () => {
@@ -1067,6 +1190,14 @@ async function refreshQueue(): Promise<void> {
     jobs = await invoke<JobSnapshot[]>("list_downloads");
     renderQueue();
     if (settingsView?.settings.powerMode) await refreshStats();
+    // A video page sent from the browser opens here so its quality can be
+    // chosen; the link analysis picks a sensible one on its own.
+    const reviews = await invoke<string[]>("take_link_reviews");
+    if (reviews.length && !settingsDialog.open && !shortcutsDialog.open) {
+      if (addDialog.open && urlInput.value.trim()) return;
+      openComposer(reviews.join("\n"));
+      announce("A link from your browser is ready to add.");
+    }
   } catch (error) {
     showError(formError, typeof error === "string" ? error : "Could not refresh the queue.");
   } finally {
@@ -1542,6 +1673,9 @@ function clearComposer(): void {
   editingChecksum = false;
   form.reset();
   destinationIsSuggested = true;
+  kindChosenByPerson = false;
+  analyzedUrl = "";
+  window.clearTimeout(analysisTimer);
   mediaInspection = null;
   inspectedMediaUrl = "";
   mediaOptions.hidden = true;
@@ -1719,9 +1853,10 @@ function selectedMediaVariant(): MediaVariant | null {
 function setMediaDestination(variant: MediaVariant, replaceExtension = false): void {
   const current = destinationInput.value.trim();
   const title = sanitizeFilename(mediaInspection?.title ?? "media");
-  if (!current) {
+  // Fetchpath's own suggestion (for a YouTube link, "watch") gives way to the
+  // video's title; a name the person typed or picked is kept.
+  if (!current || destinationIsSuggested) {
     destinationInput.value = joinPath(defaultDestinationDir, `${title}.${variant.extension}`);
-    destinationIsSuggested = false;
     return;
   }
   if (replaceExtension) {

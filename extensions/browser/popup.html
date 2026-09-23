@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Fetchpath</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon-32.png" alt="" width="24" height="24" />
+      <h1>Fetchpath</h1>
+    </header>
+
+    <p id="status" class="status" role="status" data-state="checking">Checking the connection to Fetchpath…</p>
+    <p id="status-help" class="help" hidden>
+      Install Fetchpath for Windows, open it once, then reopen this window.
+    </p>
+
+    <button id="send-page" type="button" disabled>Send this page to Fetchpath</button>
+    <p class="help" id="send-help">Use it on a video page, or right-click any link and choose <strong>Send link to Fetchpath</strong>.</p>
+
+    <label class="switch">
+      <input id="auto-capture" type="checkbox" />
+      <span>Send downloads to Fetchpath automatically</span>
+    </label>
+    <p class="help">When on, downloads you start in this browser go to Fetchpath instead. If Fetchpath can't take one, the browser downloads it as usual.</p>
+
+    <p id="result" class="result" role="status" hidden></p>
+
+    <section id="recent-section" hidden>
+      <h2>Recently sent</h2>
+      <ul id="recent"></ul>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

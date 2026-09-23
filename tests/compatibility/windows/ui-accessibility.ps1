@@ -317,7 +317,7 @@ try {
     $mediaToolsReady = [bool] (Find-ById $renderer 'inspect-media')
     $observation.mediaToolsReadyOnThisMachine = $mediaToolsReady
     if ($mediaToolsReady) {
-        $expectations += @{ id = 'inspect-media'; type = 'Button'; name = 'Inspect link' }
+        $expectations += @{ id = 'inspect-media'; type = 'Button'; name = 'Inspect' }
         $expectations += @{ id = 'media-quality'; type = 'ComboBox'; name = 'Quality' }
     } else {
         $expectations += @{ id = 'media-open-settings'; type = 'Button'; name = 'Set them up' }

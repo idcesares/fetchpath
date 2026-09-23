@@ -43,6 +43,11 @@ struct DesktopJobs {
 #[derive(Default)]
 struct QueueState {
     records: Vec<QueueRecord>,
+    /// Pages captured from the browser that are media rather than files. They
+    /// open in Add download, where the quality is chosen, instead of being
+    /// saved as a web page. In memory only: the interface takes them within a
+    /// poll, and the browser inbox has already recorded the capture.
+    link_reviews: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -349,7 +354,10 @@ impl DesktopJobs {
             })
             .unwrap_or_default();
         Ok(Self {
-            inner: Mutex::new(QueueState { records }),
+            inner: Mutex::new(QueueState {
+                records,
+                ..QueueState::default()
+            }),
             state_path: Some(state_path),
             settings_path: Some(settings_path),
             settings: Mutex::new(stored),
@@ -1063,6 +1071,16 @@ impl DesktopJobs {
             let secret = store
                 .load_secret(&capture.credential_ref)
                 .map_err(|error| format!("Protected browser capture is unavailable: {error}"))?;
+            // A page on a media site saved as a file would be its HTML. It goes
+            // to Add download instead, where the video and its quality are
+            // found. Its cookies are not carried over.
+            if is_media_page(&secret.url) {
+                if !state.link_reviews.contains(&secret.url) {
+                    state.link_reviews.push(secret.url);
+                }
+                processed.push((capture.capture_id, "link-review".into()));
+                continue;
+            }
             let context = RequestContext::new(secret.cookie_lines, secret.referer)
                 .map_err(|code| format!("Browser request context was rejected ({code})."))?;
             let destination = unique_browser_destination(
@@ -1084,6 +1102,60 @@ impl DesktopJobs {
         }
         Ok(processed)
     }
+}
+
+/// Sites whose pages are video or audio rather than files. Kept in step with
+/// `MEDIA_HOSTS` in the desktop interface, which uses it for pasted links.
+const MEDIA_HOSTS: &[&str] = &[
+    "youtube.com",
+    "youtu.be",
+    "vimeo.com",
+    "dailymotion.com",
+    "dai.ly",
+    "twitch.tv",
+    "tiktok.com",
+    "instagram.com",
+    "facebook.com",
+    "fb.watch",
+    "x.com",
+    "twitter.com",
+    "soundcloud.com",
+    "bandcamp.com",
+    "bilibili.com",
+    "rumble.com",
+    "odysee.com",
+    "streamable.com",
+    "ted.com",
+    "reddit.com",
+    "v.redd.it",
+    "mixcloud.com",
+    "nicovideo.jp",
+    "archive.org",
+];
+
+/// A page on a known media site, not a direct file on it (an `.mp4` on
+/// archive.org is still a file).
+fn is_media_page(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let host = ["www.", "m.", "music."]
+        .iter()
+        .find_map(|prefix| host.strip_prefix(prefix))
+        .unwrap_or(&host)
+        .to_owned();
+    let on_media_site = MEDIA_HOSTS
+        .iter()
+        .any(|media| host == *media || host.ends_with(&format!(".{media}")));
+    let last = url
+        .path_segments()
+        .and_then(|mut s| s.next_back())
+        .unwrap_or("");
+    let has_extension = last
+        .rsplit_once('.')
+        .is_some_and(|(stem, ext)| !stem.is_empty() && (2..=5).contains(&ext.len()));
+    on_media_site && !has_extension
 }
 
 fn unique_browser_destination(
@@ -1923,6 +1995,18 @@ fn list_downloads(jobs: State<'_, DesktopJobs>) -> Result<Vec<JobSnapshot>, Stri
     jobs.list()
 }
 
+/// Media pages sent from the browser, taken once each by the interface.
+#[tauri::command]
+fn take_link_reviews(jobs: State<'_, DesktopJobs>) -> Vec<String> {
+    std::mem::take(
+        &mut jobs
+            .inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .link_reviews,
+    )
+}
+
 #[tauri::command]
 fn get_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<JobSnapshot, String> {
     jobs.snapshot(&job_id)
@@ -2233,6 +2317,7 @@ pub fn run() {
             inspect_media,
             start_media_download,
             list_downloads,
+            take_link_reviews,
             get_download,
             cancel_download,
             start_now,
@@ -3031,6 +3116,7 @@ mod tests {
                     None,
                 ),
             ],
+            link_reviews: Vec::new(),
         };
         state.records[1].view.state = "cancelled".into();
         state.records[1].finished_at_ms = Some(now_ms());
@@ -3121,6 +3207,54 @@ mod tests {
             .unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].job_id, queued[0].job_id);
+    }
+
+    /// A YouTube page sent from the browser used to be queued as a file, which
+    /// saved the page's HTML. It now waits for Add download instead.
+    #[test]
+    fn a_captured_media_page_goes_to_review_instead_of_the_file_queue() {
+        use crate::browser_bridge::{BrowserCookie, CaptureRequest, SCHEMA_VERSION};
+
+        let dir = tempfile::tempdir().unwrap();
+        let download_dir = dir.path().join("downloads");
+        fs::create_dir_all(&download_dir).unwrap();
+        let store = BridgeStore::new(dir.path().to_path_buf());
+        let page = "https://www.youtube.com/watch?v=arj7oStGLkU";
+        store
+            .accept(&CaptureRequest {
+                schema_version: SCHEMA_VERSION,
+                capture_id: uuid::Uuid::new_v4().to_string(),
+                method: "GET".into(),
+                url: page.into(),
+                suggested_filename: "watch".into(),
+                referrer: None,
+                cookies: Vec::<BrowserCookie>::new(),
+                user_initiated: true,
+            })
+            .unwrap();
+
+        let jobs =
+            DesktopJobs::load_with_browser(dir.path().join("queue-v1.json"), 1, Some(download_dir))
+                .unwrap();
+        assert!(jobs.list().unwrap().is_empty(), "not queued as a file");
+        assert!(
+            store.pending().unwrap().is_empty(),
+            "the capture is consumed"
+        );
+        let reviews = std::mem::take(&mut jobs.inner.lock().unwrap().link_reviews);
+        assert_eq!(reviews, vec![page.to_owned()]);
+    }
+
+    #[test]
+    fn media_pages_are_told_apart_from_files_on_media_sites() {
+        assert!(is_media_page("https://www.youtube.com/watch?v=abc"));
+        assert!(is_media_page("https://youtu.be/abc"));
+        assert!(is_media_page("https://m.youtube.com/shorts/abc"));
+        assert!(is_media_page("https://vimeo.com/12345"));
+        assert!(!is_media_page("https://archive.org/download/item/film.mp4"));
+        assert!(!is_media_page("https://example.com/watch?v=abc"));
+        assert!(!is_media_page("https://notyoutube.com/watch"));
+        assert!(!is_media_page("not a url"));
     }
 
     #[cfg(windows)]
@@ -3342,6 +3476,7 @@ mod tests {
                 dir.path().join("private.bin"),
                 None,
             )],
+            link_reviews: Vec::new(),
         };
         save_persisted(&state_path, &state).unwrap();
         let text = fs::read_to_string(&state_path).unwrap();

@@ -47,6 +47,9 @@
       "../../../extensions/browser/manifest.chromium.json": "browser-extension/manifest.json",
       "../../../extensions/browser/background.js": "browser-extension/background.js",
       "../../../extensions/browser/policy.js": "browser-extension/policy.js",
+      "../../../extensions/browser/popup.html": "browser-extension/popup.html",
+      "../../../extensions/browser/popup.css": "browser-extension/popup.css",
+      "../../../extensions/browser/popup.js": "browser-extension/popup.js",
       "../../../extensions/browser/icons/icon-32.png": "browser-extension/icons/icon-32.png",
       "../../../extensions/browser/icons/icon-128.png": "browser-extension/icons/icon-128.png"
     },

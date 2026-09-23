@@ -387,13 +387,53 @@ pub fn run_native_host() {
                 .map_err(storage_reason)
                 .and_then(|store| store.accept(&request))
             {
-                Ok(deduplicated) => accepted(Some(request.capture_id), deduplicated, "capture_ack"),
+                Ok(deduplicated) => {
+                    launch_desktop();
+                    accepted(Some(request.capture_id), deduplicated, "capture_ack")
+                }
                 Err(reason) => rejected(Some(request.capture_id), &reason),
             },
             Err(error) => rejected(None, &format!("bridge.invalid_message:{error}")),
         }
     };
     let _ = write_message(io::stdout(), &response);
+}
+
+/// Starts Fetchpath, or brings it forward when it is already running (a
+/// second instance activates the first and exits), so a capture is seen at
+/// once instead of waiting in the inbox until the next launch.
+///
+/// The browser runs this host inside a job object that may end the host's
+/// children with it, so the app is started outside the job where the job
+/// allows that, and inside it otherwise.
+fn launch_desktop() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let Some(app) = std::env::current_exe()
+            .ok()
+            .and_then(|host| host.parent().map(|dir| dir.join("fetchpath-desktop.exe")))
+            .filter(|app| app.is_file())
+        else {
+            return;
+        };
+        let spawn = |flags: u32| {
+            Command::new(&app)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(flags)
+                .spawn()
+        };
+        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        if spawn(base | CREATE_BREAKAWAY_FROM_JOB).is_err() {
+            let _ = spawn(base);
+        }
+    }
 }
 
 fn accepted(

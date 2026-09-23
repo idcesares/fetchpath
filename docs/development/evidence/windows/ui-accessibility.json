@@ -1,7 +1,7 @@
 {
   "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
   "osBuild": "10.0.26200.0",
-  "foregroundWindowClass": "Windows.UI.Core.CoreWindow",
+  "foregroundWindowClass": "Tauri Window",
   "keyboardInputMethod": {
     "target": "Chrome_RenderWidgetHostHWND",
     "tab": "SendMessage WM_KEYDOWN/WM_KEYUP, which TranslateMessage never sees, so no character is typed",
@@ -340,9 +340,9 @@
     }
   ],
   "keyboardOnlyJourney": {
-    "typedAddress": "http://127.0.0.1:22158/keyboard.bin",
+    "typedAddress": "http://127.0.0.1:56603/keyboard.bin",
     "typedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
-    "typedUrlReadBack": "http://127.0.0.1:22158/keyboard.bin",
+    "typedUrlReadBack": "http://127.0.0.1:56603/keyboard.bin",
     "typedDestinationReadBack": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
     "tabsFromDestinationToSubmit": 8,
     "finalStatus": "Complete",
@@ -352,7 +352,7 @@
   },
   "fixtureServer": {
     "state": "Running",
-    "port": 22158,
+    "port": 56603,
     "unexpectedOutput": [],
     "errors": []
   },
@@ -534,7 +534,7 @@
     }
   },
   "styleChecks": {
-    "stylesheet": "index-BJItvBJU.css",
+    "stylesheet": "index-BTmf_6l2.css",
     "prefersReducedMotion": true,
     "forcedColors": true,
     "focusVisible": true,
