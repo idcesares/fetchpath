@@ -17,13 +17,32 @@ pub use id::ContentId;
 pub use index::CacheIndex;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const INDEX_FILE: &str = "index";
 const TEMP_FILE: &str = "index.writing";
+const LOCK_FILE: &str = "lock";
+/// Incoming copies live at the store root, which a rebuild never walks, so a
+/// rebuild in another process cannot delete a copy that is still being made.
+const INCOMING_PREFIX: &str = "incoming-";
+const INCOMING_SUFFIX: &str = ".part";
+/// An incoming copy older than this belongs to a process that died mid-copy.
+const ABANDONED_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+static INCOMING: AtomicU64 = AtomicU64::new(0);
+
+/// Removes a file on drop unless it has already been moved away.
+struct Incoming(PathBuf);
+
+impl Drop for Incoming {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheConfig {
@@ -80,24 +99,82 @@ pub struct ContentCache {
 }
 
 impl ContentCache {
+    /// Opens a store that other handles, in this process or others, may share.
+    ///
+    /// Every mutation takes an exclusive lock on the store, reloads the index
+    /// from disk, applies its change and persists before releasing, so no
+    /// handle can overwrite another's entries with a stale view. Reads use the
+    /// view as of the last operation; call [`ContentCache::refresh`] first when
+    /// another handle may have written since.
+    ///
+    /// Pins are per handle. A pin keeps this handle from evicting an entry, but
+    /// another handle may still evict it; a reader that loses its file that
+    /// way sees a miss, never wrong bytes.
     pub fn open(root: &Path, config: CacheConfig) -> io::Result<Self> {
         fs::create_dir_all(root)?;
-        let decoded = match fs::read_to_string(root.join(INDEX_FILE)) {
-            Ok(text) => CacheIndex::decode(&text),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Some(CacheIndex::default()),
-            Err(error) => return Err(error),
-        };
-        let needs_rebuild = decoded.is_none();
         let mut cache = Self {
             root: root.to_path_buf(),
             config,
-            index: decoded.unwrap_or_default(),
+            index: CacheIndex::default(),
             pinned: BTreeMap::new(),
         };
-        if needs_rebuild {
-            cache.rebuild_index()?;
-        }
+        let _lock = cache.exclusive()?;
+        cache.remove_abandoned_incoming();
         Ok(cache)
+    }
+
+    /// Takes the store lock and reloads the index. The lock is released when
+    /// the returned handle is dropped.
+    fn exclusive(&mut self) -> io::Result<File> {
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.root.join(LOCK_FILE))?;
+        lock.lock()?;
+        self.reload()?;
+        Ok(lock)
+    }
+
+    fn reload(&mut self) -> io::Result<()> {
+        match fs::read_to_string(self.root.join(INDEX_FILE)) {
+            Ok(text) => match CacheIndex::decode(&text) {
+                Some(index) => self.index = index,
+                None => self.rebuild_index()?,
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.index = CacheIndex::default();
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(())
+    }
+
+    /// Brings this handle's view up to date with what every handle has written.
+    pub fn refresh(&mut self) -> io::Result<()> {
+        self.exclusive().map(drop)
+    }
+
+    fn remove_abandoned_incoming(&self) {
+        let Ok(listing) = fs::read_dir(&self.root) else {
+            return;
+        };
+        for file in listing.flatten() {
+            let name = file.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let abandoned = file
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > ABANDONED_AFTER);
+            if name.starts_with(INCOMING_PREFIX) && name.ends_with(INCOMING_SUFFIX) && abandoned {
+                let _ = fs::remove_file(file.path());
+            }
+        }
     }
 
     pub fn config(&self) -> CacheConfig {
@@ -127,6 +204,7 @@ impl ContentCache {
         verification: CachedVerification,
         provenance: Provenance,
     ) -> io::Result<InsertOutcome> {
+        drop(self.exclusive()?);
         if self.index.get(id).is_some() {
             return Ok(InsertOutcome::AlreadyPresent);
         }
@@ -134,22 +212,31 @@ impl ContentCache {
         if bytes > self.config.max_entry_bytes || bytes > self.config.quota_bytes {
             return Ok(InsertOutcome::RefusedOversize);
         }
+
+        // The copy can be large, so it is made without holding the lock.
+        let incoming = Incoming(self.root.join(format!(
+            "{INCOMING_PREFIX}{}-{}{INCOMING_SUFFIX}",
+            std::process::id(),
+            INCOMING.fetch_add(1, Ordering::Relaxed)
+        )));
+        fs::copy(source, &incoming.0)?;
+        sync_file(&incoming.0)?;
+
+        let _lock = self.exclusive()?;
+        if self.index.get(id).is_some() {
+            return Ok(InsertOutcome::AlreadyPresent);
+        }
         if !self.make_room_for(bytes)? {
             return Ok(InsertOutcome::RefusedQuota);
         }
-
         let destination = self.path_for(id);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        let temporary = destination.with_extension("writing");
-        let _ = fs::remove_file(&temporary);
-        fs::copy(source, &temporary)?;
-        sync_file(&temporary)?;
         // The store is content-addressed, so an existing file at this path is
         // the same content. Replacing it keeps the store coherent. This is not
         // the destination-publication fence, which stays create-only.
-        fs::rename(&temporary, &destination)?;
+        fs::rename(&incoming.0, &destination)?;
 
         let now = now_secs();
         self.index.insert(CacheEntry {
@@ -166,10 +253,12 @@ impl ContentCache {
 
     /// Marks an entry as in use and returns its stored path.
     ///
-    /// A pinned entry is never chosen for eviction, so a reuse in flight cannot
-    /// have its bytes deleted underneath it. Pinning also counts as a use,
-    /// which is what moves the entry away from the eviction front.
+    /// A pinned entry is never chosen for eviction by this handle, so a reuse
+    /// in flight cannot have its bytes deleted underneath it by the same
+    /// process. Pinning also counts as a use, which is what moves the entry
+    /// away from the eviction front for every handle.
     pub fn pin(&mut self, id: &ContentId) -> Option<PathBuf> {
+        let _lock = self.exclusive().ok()?;
         self.index.get(id)?;
         self.index.touch(id, now_secs());
         let _ = self.persist_index();
@@ -198,21 +287,31 @@ impl ContentCache {
     ///
     /// A cached file that fails the check is evicted and reported as a failed
     /// check. It is never published and it is never raised as a download
-    /// failure: the caller falls through to the network.
+    /// failure: the caller falls through to the network. Verification reads the
+    /// whole file, so it runs without holding the store lock.
     pub fn acquire_verified(
         &mut self,
         id: &ContentId,
         check: &dyn TrustedCheck,
     ) -> io::Result<Acquired> {
+        drop(self.exclusive()?);
         if self.index.get(id).is_none() {
             return Ok(Acquired::Miss);
         }
         let path = self.path_for(id);
         if !path.exists() {
+            let _lock = self.exclusive()?;
             self.drop_entry(id)?;
             return Ok(Acquired::Miss);
         }
-        if !check.verify(&path)? {
+        let verified = check.verify(&path)?;
+
+        let _lock = self.exclusive()?;
+        if self.index.get(id).is_none() {
+            // Another handle evicted it while it was being checked.
+            return Ok(Acquired::Miss);
+        }
+        if !verified {
             self.drop_entry(id)?;
             let _ = fs::remove_file(&path);
             return Ok(Acquired::FailedCheck);
@@ -228,6 +327,11 @@ impl ContentCache {
     }
 
     pub fn evict(&mut self, id: &ContentId) -> io::Result<bool> {
+        let _lock = self.exclusive()?;
+        self.evict_locked(id)
+    }
+
+    fn evict_locked(&mut self, id: &ContentId) -> io::Result<bool> {
         if self.pinned.contains_key(id) {
             return Ok(false);
         }
@@ -244,20 +348,20 @@ impl ContentCache {
     }
 
     /// Evicts least-recently-used entries until `bytes` will fit. Returns false
-    /// when everything that remains is pinned.
+    /// when everything that remains is pinned. Called with the lock held.
     fn make_room_for(&mut self, bytes: u64) -> io::Result<bool> {
         while self.index.total_bytes() + bytes > self.config.quota_bytes {
             let held: BTreeSet<ContentId> = self.pinned.keys().copied().collect();
             let Some(victim) = self.index.least_recently_used(&held) else {
                 return Ok(false);
             };
-            self.evict(&victim)?;
+            self.evict_locked(&victim)?;
         }
         Ok(true)
     }
 
     /// Removes an entry from accounting regardless of pinning. Used only when
-    /// the entry is already known to be unusable.
+    /// the entry is already known to be unusable, with the lock held.
     fn drop_entry(&mut self, id: &ContentId) -> io::Result<()> {
         self.pinned.remove(id);
         self.index.remove(id);

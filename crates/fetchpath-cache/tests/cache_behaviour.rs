@@ -512,3 +512,144 @@ fn an_entry_pinned_twice_stays_pinned_until_both_holders_release_it() {
     assert!(!cache.is_pinned(&id(7)));
     assert!(cache.evict(&id(7)).expect("evict"));
 }
+
+// Two handles on one directory stand in for two processes: each holds its own
+// in-memory view, exactly as separate processes do.
+fn two_handles(dir: &TempDir) -> (ContentCache, ContentCache) {
+    let root = dir.path().join("cache");
+    let config = CacheConfig::new(1 << 20, 1 << 20);
+    (
+        ContentCache::open(&root, config).expect("first"),
+        ContentCache::open(&root, config).expect("second"),
+    )
+}
+
+#[test]
+fn two_handles_on_one_store_never_drop_each_others_entries() {
+    let dir = TempDir::new("two-writers");
+    let (mut first, mut second) = two_handles(&dir);
+    let a = source_file(dir.path(), "a", b"first writer");
+    let b = source_file(dir.path(), "b", b"second writer");
+    first
+        .insert(
+            &id(1),
+            &a,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("first insert");
+    // The second handle's view predates the first insert. Persisting that
+    // stale view must not erase the first writer's entry.
+    second
+        .insert(
+            &id(2),
+            &b,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("second insert");
+
+    let fresh = ContentCache::open(
+        &dir.path().join("cache"),
+        CacheConfig::new(1 << 20, 1 << 20),
+    )
+    .expect("reopen");
+    assert!(
+        fresh.lookup(&id(1)).is_some(),
+        "first writer's entry survived"
+    );
+    assert!(fresh.lookup(&id(2)).is_some());
+    assert_eq!(fresh.total_bytes(), 12 + 13);
+}
+
+#[test]
+fn a_refreshed_handle_sees_entries_another_handle_inserted() {
+    let dir = TempDir::new("refresh");
+    let (mut writer, mut reader) = two_handles(&dir);
+    let a = source_file(dir.path(), "a", b"bytes");
+    writer
+        .insert(
+            &id(3),
+            &a,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("insert");
+    assert!(
+        reader.lookup(&id(3)).is_none(),
+        "a stale view until refreshed"
+    );
+    reader.refresh().expect("refresh");
+    let entry = reader.lookup(&id(3)).expect("visible after refresh");
+    assert!(entry.is_shareable(), "provenance is read back, not guessed");
+}
+
+#[test]
+fn quota_is_enforced_against_what_every_handle_inserted() {
+    let dir = TempDir::new("shared-quota");
+    let root = dir.path().join("cache");
+    let config = CacheConfig::new(20, 20);
+    let mut first = ContentCache::open(&root, config).expect("first");
+    let mut second = ContentCache::open(&root, config).expect("second");
+    let a = source_file(dir.path(), "a", &[1_u8; 12]);
+    let b = source_file(dir.path(), "b", &[2_u8; 12]);
+    first
+        .insert(
+            &id(4),
+            &a,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("first");
+    second
+        .insert(
+            &id(5),
+            &b,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .expect("second");
+    let fresh = ContentCache::open(&root, config).expect("reopen");
+    assert!(
+        fresh.total_bytes() <= 20,
+        "{} bytes over a 20-byte quota",
+        fresh.total_bytes()
+    );
+    assert!(fresh.lookup(&id(5)).is_some());
+    assert!(fresh.lookup(&id(4)).is_none(), "the older entry made room");
+    assert!(!fresh.path_for(&id(4)).exists(), "and its bytes are gone");
+}
+
+#[test]
+fn concurrent_writers_through_separate_handles_lose_nothing() {
+    let dir = TempDir::new("concurrent");
+    let root = dir.path().join("cache");
+    let config = CacheConfig::new(1 << 20, 1 << 20);
+    let writers: Vec<_> = (0..2_u8)
+        .map(|writer| {
+            let root = root.clone();
+            let sources = dir.path().to_path_buf();
+            std::thread::spawn(move || {
+                let mut cache = ContentCache::open(&root, config).expect("open");
+                for item in 0..20_u8 {
+                    let tag = writer * 20 + item + 10;
+                    let source = source_file(&sources, &format!("s{tag}"), &[tag; 7]);
+                    cache
+                        .insert(
+                            &id(tag),
+                            &source,
+                            CachedVerification::FinalHashOnly,
+                            Provenance::Public,
+                        )
+                        .expect("insert");
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().expect("writer");
+    }
+    let fresh = ContentCache::open(&root, config).expect("reopen");
+    assert_eq!(fresh.entries().len(), 40);
+    assert_eq!(fresh.total_bytes(), 40 * 7);
+}

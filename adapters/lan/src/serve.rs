@@ -183,7 +183,11 @@ impl PeerServer {
     ) -> Result<Option<u64>, SessionError> {
         let admitted = {
             let mut cache = self.cache.lock().map_err(|_| poisoned())?;
-            match cache.lookup(id) {
+            // Another process on this device may have inserted or evicted
+            // entries since the last request. A store that cannot be read is
+            // treated as holding nothing.
+            let fresh = cache.refresh().is_ok();
+            match cache.lookup(id).filter(|_| fresh) {
                 // Checked again here, not only at connect: turning LAN mode off
                 // takes effect on the next request of a live session.
                 Some(entry) if self.enabled.load(Ordering::SeqCst) && entry.is_shareable() => {

@@ -616,3 +616,32 @@ fn an_unreadable_sealed_identity_is_an_error_not_a_silent_replacement() {
         "left untouched"
     );
 }
+
+#[test]
+fn a_running_server_serves_an_entry_another_process_inserted_after_it_started() {
+    let fixture = Fixture::new("late-insert", 1000);
+    // A second handle on the same store stands in for another process, such
+    // as a download finishing while `lan serve` runs.
+    let root = fixture.dir.join("cache");
+    let mut other = ContentCache::open(&root, CacheConfig::new(1 << 24, 1 << 24)).unwrap();
+    let late = ContentId::FlatSha256([9; 32]);
+    let source = fixture.dir.join("late.bin");
+    fs::write(&source, b"arrived later").unwrap();
+    other
+        .insert(
+            &late,
+            &source,
+            CachedVerification::FinalHashOnly,
+            Provenance::Public,
+        )
+        .unwrap();
+
+    let (address, server) = fixture.serve_once(unpaced());
+    let into = fixture.dir.join("late-received.bin");
+    fixture
+        .client(address)
+        .fetch(&late, 1 << 20, &into)
+        .expect("served from the refreshed view");
+    assert_eq!(fs::read(&into).unwrap(), b"arrived later");
+    server.join().unwrap().unwrap();
+}

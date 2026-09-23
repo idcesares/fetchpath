@@ -173,6 +173,27 @@ detect the leak rather than merely pass:
   `corrupt_peer_bytes_are_discarded_unpublished_and_that_peer_is_not_asked_again`
   and `when_every_peer_fails_the_mirrors_are_used_and_nothing_bad_is_published`.
 
+### Cross-process coherence
+
+Recorded 23 September 2026. Before this change, two handles on one store each
+persisted their own view. The second writer silently erased the first writer's
+entries, and quota was enforced against a partial picture. Five tests cover
+the fix:
+
+- `two_handles_on_one_store_never_drop_each_others_entries`
+- `a_refreshed_handle_sees_entries_another_handle_inserted`
+- `quota_is_enforced_against_what_every_handle_inserted`
+- `concurrent_writers_through_separate_handles_lose_nothing` (two threads, 20
+  inserts each, through separate handles)
+- `a_running_server_serves_an_entry_another_process_inserted_after_it_started`
+
+Skipping the reload makes the concurrent-writer test fail, and skipping the
+server's refresh makes the running-server test fail.
+
+After this change: `cargo test --workspace --locked` 210 passed, 0 failed,
+4 ignored (pre-existing); clippy with `-D warnings` and `cargo fmt --check`
+clean.
+
 ### A pre-existing test race, fixed
 
 `tests::cancellation_removes_or_retains_unpublished_staging_by_policy` in
@@ -235,14 +256,17 @@ performed; process-level tests cannot establish power-loss behaviour.
 3. **The desktop settings surface is deferred.** Quota and the LAN flag are
    controlled from the CLI only. The CLI uses a fixed 2 GiB quota and a 1 GiB
    per-entry ceiling.
-4. **The store is single-process, and the CLI can now reach that limit.**
-   `ContentCache` performs no cross-process locking. A `lan serve` process and a
-   `fetch-verified` process on the *same* device each hold their own view of
-   the index. The serving view does not see entries the other process inserts
-   until it restarts, and its writes can drop them from the index, leaving
-   unaccounted files. This is privacy-safe: provenance is never upgraded, and a
-   file with no index entry is never served. Quota accounting can drift,
-   though. Cross-process locking is not implemented.
+4. **Pins are per handle.** Since 23 September 2026 the store is safe to share
+   between processes: every mutation takes an exclusive lock on `cache/lock`,
+   reloads the index, applies its change and persists before releasing. Large
+   copies and verification run outside the lock, and incoming copies are
+   written at the store root, where a rebuild never walks. A running
+   `lan serve` refreshes its view before every request. What is *not* shared
+   is pinning. A pin stops this handle from evicting an entry but not another
+   process. A reader that loses its file that way sees a miss and falls
+   through, never wrong bytes, because every reuse is re-verified and every
+   peer transfer is re-verified by the receiver. No power-loss testing covers
+   the lock.
 5. **Eviction resolution is one second.** `last_used_at_secs` has second
    granularity; entries used within the same second are ordered by content id.
 6. **No cache-hit path for partial content.** A hit is whole-artifact only. A

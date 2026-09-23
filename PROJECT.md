@@ -33,7 +33,7 @@ Progress is now reported from engine-confirmed values end to end: the total a so
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. FP-020 needs an independent strong-model review of `adapters/lan` (credential boundary, handshake cryptography, DPAPI FFI) before it can be marked done; its implementation, tests and evidence are recorded. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is single-process, which a `lan serve` beside `fetch-verified` on one device can now reach.
+Run `node tools/tasks.mjs next`. FP-020 needs an independent strong-model review of `adapters/lan` (credential boundary, handshake cryptography, DPAPI FFI) before it can be marked done; its implementation, tests and evidence are recorded. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; pins remain per process.
 
 FP-018, the first public release candidate, is the remaining release gate and now depends on FP-026 through FP-030. The generated license manifest and the uninstaller's data-removal branch are done. Media integration is proven on lawful local HLS/DASH fixtures; the supported public-source corpus remains a release gate, as do clean-machine and ARM64 coverage and recording the media-helper checksums with `node tools/media-tools/pin.mjs`.
 
