@@ -3,7 +3,7 @@ pub mod media_setup;
 pub mod settings;
 
 use browser_bridge::BridgeStore;
-use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext};
+use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext, normalize_sha256};
 use fetchpath_media::{MediaInspection, MediaJob, MediaJobState, MediaTools};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -193,6 +193,9 @@ struct JobDraft {
     url: String,
     destination: String,
     not_before_ms: Option<u64>,
+    /// A SHA-256 as the person pasted it. Normalized when the draft is queued.
+    #[serde(default)]
+    checksum: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -228,6 +231,10 @@ struct JobSnapshot {
     attempt: u32,
     destination: Option<String>,
     observed_sha256: Option<String>,
+    /// The SHA-256 the person supplied, normalized. When present the engine
+    /// publishes nothing that does not match it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_sha256: Option<String>,
     cleanup_pending: bool,
     error: Option<String>,
     action: Option<String>,
@@ -426,6 +433,16 @@ impl DesktopJobs {
         if drafts.len() > 100 {
             return Err("A batch can contain at most 100 downloads.".into());
         }
+        // A checksum describes exactly one file.
+        if drafts.len() > 1
+            && drafts
+                .iter()
+                .any(|draft| has_checksum(draft.checksum.as_deref()))
+        {
+            return Err(
+                "A checksum describes one file. Add links with a checksum one at a time.".into(),
+            );
+        }
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         self.reconcile_locked(&mut state);
         let mut destinations = HashSet::new();
@@ -454,7 +471,11 @@ impl DesktopJobs {
                     destination.display()
                 ));
             }
-            let record = QueueRecord::new(url, destination, draft.not_before_ms);
+            let checksum = match draft.checksum.as_deref() {
+                Some(text) => checked_checksum(text)?,
+                None => None,
+            };
+            let record = QueueRecord::new_checked(url, destination, draft.not_before_ms, checksum);
             created_ids.push(record.id.clone());
             state.records.push(record);
         }
@@ -582,7 +603,9 @@ impl DesktopJobs {
         job_id: &str,
         url: Option<String>,
         destination: Option<String>,
+        checksum: Option<String>,
     ) -> Result<JobSnapshot, String> {
+        let checksum = checksum.map(|text| checked_checksum(&text)).transpose()?;
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         let record = find_record_mut(&mut state, job_id)?;
         if !matches!(
@@ -612,6 +635,10 @@ impl DesktopJobs {
         if let Some(destination) = destination {
             record.destination = validated_destination(&destination)?;
         }
+        // An empty field clears the checksum; anything else replaces it.
+        if let Some(checksum) = checksum {
+            record.view.expected_sha256 = checksum;
+        }
         let live_url = record.live_url.clone().ok_or_else(|| {
             "This source included private query values. Paste a refreshed link to continue."
                 .to_string()
@@ -634,11 +661,12 @@ impl DesktopJobs {
                     tools,
                 ))
             } else {
-                JobHandle::File(FileJob::create_recoverable_with_context(
+                JobHandle::File(file_job(
                     live_url,
                     record.destination.clone(),
                     record.live_context.clone(),
-                ))
+                    record.view.expected_sha256.as_deref(),
+                )?)
             });
             record.not_before_ms = None;
             record.finished_at_ms = None;
@@ -741,11 +769,12 @@ impl DesktopJobs {
             // A recoverable job validates the retained checkpoint against the
             // source before reusing a single byte of it, so a source that
             // changed while paused restarts instead of splicing.
-            record.job = Some(JobHandle::File(FileJob::create_recoverable_with_context(
+            record.job = Some(JobHandle::File(file_job(
                 url,
                 record.destination.clone(),
                 record.live_context.clone(),
-            )));
+                record.view.expected_sha256.as_deref(),
+            )?));
         }
         record.view.state = "queued".into();
         record.view.error = None;
@@ -819,11 +848,14 @@ impl DesktopJobs {
                         ))
                     })
                 } else {
-                    Some(JobHandle::File(FileJob::create_recoverable_with_context(
+                    file_job(
                         url,
                         record.destination.clone(),
                         record.live_context.clone(),
-                    )))
+                        record.view.expected_sha256.as_deref(),
+                    )
+                    .ok()
+                    .map(JobHandle::File)
                 };
                 record.view.state = if record.not_before_ms.is_some_and(|due| due > now_ms()) {
                     "scheduled".into()
@@ -935,11 +967,14 @@ impl DesktopJobs {
                     tools,
                 )))
             } else {
-                Some(JobHandle::File(FileJob::create_recoverable_with_context(
+                file_job(
                     url,
                     record.destination.clone(),
                     record.live_context.clone(),
-                )))
+                    record.view.expected_sha256.as_deref(),
+                )
+                .ok()
+                .map(JobHandle::File)
             };
             record.not_before_ms = Some(due_at);
             record.retry_at_ms = Some(due_at);
@@ -1040,6 +1075,7 @@ impl DesktopJobs {
                 None,
                 Some(capture.credential_ref),
                 context,
+                None,
             );
             let job_id = record.id.clone();
             state.records.push(record);
@@ -1078,13 +1114,26 @@ fn unique_browser_destination(
 }
 
 impl QueueRecord {
+    #[cfg(test)]
     fn new(url: String, destination: PathBuf, not_before_ms: Option<u64>) -> Self {
+        Self::new_checked(url, destination, not_before_ms, None)
+    }
+
+    /// A record for a pasted link. `expected_sha256` must already have been
+    /// normalized by [`checked_checksum`].
+    fn new_checked(
+        url: String,
+        destination: PathBuf,
+        not_before_ms: Option<u64>,
+        expected_sha256: Option<String>,
+    ) -> Self {
         Self::new_with_context(
             url,
             destination,
             not_before_ms,
             None,
             RequestContext::default(),
+            expected_sha256,
         )
     }
 
@@ -1094,6 +1143,7 @@ impl QueueRecord {
         not_before_ms: Option<u64>,
         credential_ref: Option<String>,
         live_context: RequestContext,
+        expected_sha256: Option<String>,
     ) -> Self {
         let now = now_ms();
         let id = uuid::Uuid::new_v4().to_string();
@@ -1101,13 +1151,21 @@ impl QueueRecord {
         let restart_url = restartable_url(&url);
         let conflict = destination.exists();
         let scheduled = not_before_ms.is_some_and(|due| due > now);
-        let job = (!conflict).then(|| {
-            JobHandle::File(FileJob::create_recoverable_with_context(
-                url.clone(),
-                destination.clone(),
-                live_context.clone(),
-            ))
-        });
+        // The checksum was normalized before it reached here, so this only
+        // fails if that contract is broken; the record then has no job rather
+        // than one that downloads unchecked.
+        let job = (!conflict)
+            .then(|| {
+                file_job(
+                    url.clone(),
+                    destination.clone(),
+                    live_context.clone(),
+                    expected_sha256.as_deref(),
+                )
+                .ok()
+                .map(JobHandle::File)
+            })
+            .flatten();
         let state = if conflict {
             "failed"
         } else if scheduled {
@@ -1143,6 +1201,7 @@ impl QueueRecord {
                 attempt: 0,
                 destination: Some(destination.display().to_string()),
                 observed_sha256: None,
+                expected_sha256,
                 cleanup_pending: false,
                 error: conflict.then(|| "A file already exists at this destination.".into()),
                 action: conflict.then(|| "choose_new_path".into()),
@@ -1213,6 +1272,7 @@ impl QueueRecord {
                 attempt: 0,
                 destination: Some(destination.display().to_string()),
                 observed_sha256: None,
+                expected_sha256: None,
                 cleanup_pending: false,
                 error: conflict.then(|| "A file already exists at this destination.".into()),
                 action: conflict.then(|| "choose_new_path".into()),
@@ -1298,13 +1358,25 @@ impl QueueRecord {
                     ))
                 })
             } else {
-                Some(JobHandle::File(FileJob::create_recoverable_with_context(
+                file_job(
                     url.clone(),
                     PathBuf::from(&saved.destination),
                     live_context.clone(),
-                )))
+                    saved.view.expected_sha256.as_deref(),
+                )
+                .ok()
+                .map(JobHandle::File)
             };
-            if saved.media_variant_id.is_some() && job.is_none() {
+            if saved.media_variant_id.is_none() && job.is_none() {
+                // Only an unreadable saved checksum gets here. Fail closed.
+                (
+                    None,
+                    "failed".into(),
+                    Some(UNREADABLE_CHECKSUM.into()),
+                    Some("check_checksum".into()),
+                    true,
+                )
+            } else if saved.media_variant_id.is_some() && job.is_none() {
                 (
                     None,
                     "failed".into(),
@@ -1456,12 +1528,52 @@ fn sample_rate(record: &mut QueueRecord) {
     }
 }
 
+fn has_checksum(text: Option<&str>) -> bool {
+    text.is_some_and(|text| !text.trim().is_empty())
+}
+
+/// Normalizes a pasted checksum. Blank means none; anything else must be a
+/// SHA-256, and a person gets a plain explanation when it is not.
+fn checked_checksum(text: &str) -> Result<Option<String>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    normalize_sha256(text).map(Some).ok_or_else(|| {
+        "That checksum isn't a SHA-256. It should be 64 characters, each 0-9 or a-f.".to_string()
+    })
+}
+
+const UNREADABLE_CHECKSUM: &str = "integrity.checksum_unreadable: the checksum saved with this download cannot be read, so it will not be downloaded unchecked. Remove it and add it again.";
+
+/// Creates a file job that enforces the record's checksum when it has one.
+///
+/// Fails closed: a checksum that cannot be read never produces a job that
+/// downloads without it.
+fn file_job(
+    url: String,
+    destination: PathBuf,
+    context: RequestContext,
+    expected_sha256: Option<&str>,
+) -> Result<FileJob, String> {
+    let job = FileJob::create_recoverable_with_context(url, destination, context);
+    match expected_sha256 {
+        None => Ok(job),
+        Some(expected) => job
+            .with_expected_sha256(expected)
+            .map_err(|_| UNREADABLE_CHECKSUM.to_string()),
+    }
+}
+
 fn recovery_action(snapshot: &JobSnapshot) -> (Option<String>, bool) {
     if snapshot.state != "failed" {
         return (None, false);
     }
     let error = snapshot.error.as_deref().unwrap_or_default();
-    if error.contains("source_expired") || error.contains("unknown_variant") {
+    // A checksum failure needs a person: the source or the checksum is wrong.
+    // It is deliberately not "retry", so automatic retry never repeats it.
+    if error.contains("checksum_mismatch") || error.contains("checksum_unreadable") {
+        (Some("check_checksum".into()), true)
+    } else if error.contains("source_expired") || error.contains("unknown_variant") {
         (Some("refresh_source".into()), true)
     } else if error.contains("helper_unavailable") {
         (Some("configure_media_tools".into()), true)
@@ -1755,6 +1867,7 @@ fn start_download(
         url,
         destination,
         not_before_ms: None,
+        checksum: None,
     }])?
     .into_iter()
     .next()
@@ -1807,9 +1920,10 @@ fn retry_download(
     job_id: String,
     url: Option<String>,
     destination: Option<String>,
+    checksum: Option<String>,
     jobs: State<'_, DesktopJobs>,
 ) -> Result<JobSnapshot, String> {
-    jobs.retry(&job_id, url, destination)
+    jobs.retry(&job_id, url, destination, checksum)
 }
 
 #[tauri::command]
@@ -2331,6 +2445,185 @@ mod tests {
         panic!("desktop job did not finish");
     }
 
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    fn checked_draft(url: String, destination: &Path, checksum: &str) -> JobDraft {
+        JobDraft {
+            checksum: Some(checksum.into()),
+            url,
+            destination: destination.display().to_string(),
+            not_before_ms: None,
+        }
+    }
+
+    #[test]
+    fn a_download_matching_its_pasted_checksum_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![0x41; 64 * 1024];
+        let digest = sha256_hex(&body);
+        let (url, server) = fixture(body.clone(), false);
+        let jobs = DesktopJobs::in_memory(3);
+        let destination = dir.path().join("checked.bin");
+        // Pasted the way checksum files often print it.
+        let pasted = format!("  SHA256:{}  ", digest.to_uppercase());
+        let started = jobs
+            .enqueue(vec![checked_draft(url, &destination, &pasted)])
+            .unwrap()
+            .remove(0);
+        assert_eq!(started.expected_sha256.as_deref(), Some(digest.as_str()));
+
+        let completed = wait_for_terminal(&jobs, &started.job_id);
+        server.join().unwrap();
+        assert_eq!(completed.state, "completed");
+        assert_eq!(completed.observed_sha256.as_deref(), Some(digest.as_str()));
+        assert_eq!(completed.expected_sha256.as_deref(), Some(digest.as_str()));
+        assert_eq!(fs::read(&destination).unwrap(), body);
+    }
+
+    #[test]
+    fn a_checksum_mismatch_saves_nothing_and_is_never_retried_automatically() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![0x42; 64 * 1024];
+        let (url, server) = fixture(body, false);
+        let jobs = DesktopJobs::in_memory(3);
+        let destination = dir.path().join("mismatch.bin");
+        let wrong = sha256_hex(b"a different file");
+        let started = jobs
+            .enqueue(vec![checked_draft(url, &destination, &wrong)])
+            .unwrap()
+            .remove(0);
+
+        let failed = wait_for_terminal(&jobs, &started.job_id);
+        server.join().unwrap();
+        assert_eq!(failed.state, "failed");
+        assert_eq!(failed.action.as_deref(), Some("check_checksum"));
+        assert!(failed.retryable, "a person can still retry by hand");
+        let error = failed.error.unwrap();
+        assert!(error.contains("checksum_mismatch"), "{error}");
+        assert!(
+            error.contains(&wrong),
+            "the expected value is shown: {error}"
+        );
+        assert!(!destination.exists(), "nothing was saved");
+
+        // Automatic retry is on by default and only repeats plain transport
+        // failures. A checksum mismatch needs a person, so it is left alone.
+        let mut state = jobs.inner.lock().unwrap();
+        jobs.schedule_automatic_retries(&mut state, &jobs.settings());
+        let record = find_record(&state, &started.job_id).unwrap();
+        assert_eq!(record.retry_at_ms, None);
+        assert_eq!(record.view.state, "failed");
+    }
+
+    #[test]
+    fn a_malformed_checksum_is_refused_with_a_plain_explanation() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(3);
+        let error = jobs
+            .enqueue(vec![checked_draft(
+                "http://127.0.0.1:9/file.bin".into(),
+                &dir.path().join("x.bin"),
+                "d41d8cd98f00b204e9800998ecf8427e",
+            )])
+            .unwrap_err();
+        assert!(error.contains("isn't a SHA-256"), "{error}");
+        assert!(jobs.list().unwrap().is_empty(), "nothing was queued");
+    }
+
+    #[test]
+    fn a_blank_checksum_means_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(0);
+        let queued = jobs
+            .enqueue(vec![checked_draft(
+                "http://127.0.0.1:9/file.bin".into(),
+                &dir.path().join("x.bin"),
+                "   ",
+            )])
+            .unwrap()
+            .remove(0);
+        assert_eq!(queued.expected_sha256, None);
+    }
+
+    #[test]
+    fn a_checksum_is_refused_on_a_batch_because_it_describes_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let jobs = DesktopJobs::in_memory(3);
+        let error = jobs
+            .enqueue(vec![
+                checked_draft(
+                    "http://127.0.0.1:9/a.bin".into(),
+                    &dir.path().join("a.bin"),
+                    &"ab".repeat(32),
+                ),
+                draft("http://127.0.0.1:9/b.bin", &dir.path().join("b.bin")),
+            ])
+            .unwrap_err();
+        assert!(error.contains("one file"), "{error}");
+    }
+
+    #[test]
+    fn retrying_with_a_corrected_checksum_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = vec![0x43; 32 * 1024];
+        let digest = sha256_hex(&body);
+        let (url, server) = fixture(body.clone(), false);
+        let jobs = DesktopJobs::in_memory(3);
+        let destination = dir.path().join("corrected.bin");
+        let started = jobs
+            .enqueue(vec![checked_draft(url, &destination, &"00".repeat(32))])
+            .unwrap()
+            .remove(0);
+        assert_eq!(wait_for_terminal(&jobs, &started.job_id).state, "failed");
+        server.join().unwrap();
+
+        let (url, server) = fixture(body.clone(), false);
+        jobs.retry(&started.job_id, Some(url), None, Some(digest.clone()))
+            .unwrap();
+        let completed = wait_for_terminal(&jobs, &started.job_id);
+        server.join().unwrap();
+        assert_eq!(completed.state, "completed");
+        assert_eq!(completed.expected_sha256.as_deref(), Some(digest.as_str()));
+        assert_eq!(fs::read(&destination).unwrap(), body);
+    }
+
+    #[test]
+    fn an_unreadable_saved_checksum_fails_closed_after_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = QueueRecord::new_checked(
+            "http://127.0.0.1:9/file.bin".into(),
+            dir.path().join("file.bin"),
+            None,
+            Some("ab".repeat(32)),
+        );
+        let mut view = record.view.clone();
+        view.state = "queued".into();
+        view.expected_sha256 = Some("not a checksum".into());
+        let saved = PersistedRecord {
+            id: record.id.clone(),
+            restart_url: record.restart_url.clone(),
+            credential_ref: None,
+            display_url: record.display_url.clone(),
+            destination: record.destination.display().to_string(),
+            not_before_ms: None,
+            created_at_ms: record.created_at_ms,
+            finished_at_ms: None,
+            media_variant_id: None,
+            media_quality: None,
+            view,
+        };
+        let restored = QueueRecord::restore(saved, now_ms(), None, None);
+        assert!(
+            restored.job.is_none(),
+            "never a job that downloads unchecked"
+        );
+        assert_eq!(restored.view.state, "failed");
+        assert_eq!(restored.view.action.as_deref(), Some("check_checksum"));
+    }
+
     #[test]
     fn a_stated_length_reaches_the_queue_view_as_a_total() {
         let dir = tempfile::tempdir().unwrap();
@@ -2340,6 +2633,7 @@ mod tests {
         let jobs = DesktopJobs::in_memory(3);
         let started = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url,
                 destination: dir.path().join("sized.bin").display().to_string(),
                 not_before_ms: None,
@@ -2372,6 +2666,7 @@ mod tests {
         let jobs = DesktopJobs::in_memory(3);
         let started = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url,
                 destination: destination.display().to_string(),
                 not_before_ms: None,
@@ -2435,11 +2730,13 @@ mod tests {
         let created = jobs
             .enqueue(vec![
                 JobDraft {
+                    checksum: None,
                     url: slow_url,
                     destination: dir.path().join("slow.bin").display().to_string(),
                     not_before_ms: None,
                 },
                 JobDraft {
+                    checksum: None,
                     url: waiting_url,
                     destination: dir.path().join("waiting.bin").display().to_string(),
                     not_before_ms: None,
@@ -2477,6 +2774,7 @@ mod tests {
             let jobs = DesktopJobs::load(state_path.clone(), 1).unwrap();
             let created = jobs
                 .enqueue(vec![JobDraft {
+                    checksum: None,
                     url,
                     destination: dir.path().join("paused.bin").display().to_string(),
                     not_before_ms: None,
@@ -2509,6 +2807,7 @@ mod tests {
         let jobs = DesktopJobs::in_memory(1);
         let created = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url,
                 destination: dir.path().join("file.bin").display().to_string(),
                 not_before_ms: None,
@@ -2561,11 +2860,13 @@ mod tests {
         let created = jobs
             .enqueue(vec![
                 JobDraft {
+                    checksum: None,
                     url: first_url,
                     destination: dir.path().join("one.bin").display().to_string(),
                     not_before_ms: None,
                 },
                 JobDraft {
+                    checksum: None,
                     url: second_url,
                     destination: dir.path().join("two.bin").display().to_string(),
                     not_before_ms: None,
@@ -2607,6 +2908,7 @@ mod tests {
         let jobs = DesktopJobs::in_memory(3);
         let started = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url,
                 destination: destination.display().to_string(),
                 not_before_ms: None,
@@ -2631,11 +2933,13 @@ mod tests {
         let created = jobs
             .enqueue(vec![
                 JobDraft {
+                    checksum: None,
                     url: first_url,
                     destination: dir.path().join("first.bin").display().to_string(),
                     not_before_ms: None,
                 },
                 JobDraft {
+                    checksum: None,
                     url: second_url,
                     destination: dir.path().join("second.bin").display().to_string(),
                     not_before_ms: Some(due),
@@ -2697,6 +3001,7 @@ mod tests {
         let jobs = DesktopJobs::in_memory(1);
         let record = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url: "http://127.0.0.1:9/file".into(),
                 destination: destination.display().to_string(),
                 not_before_ms: None,
@@ -2805,6 +3110,7 @@ mod tests {
 
     fn draft(url: &str, destination: &Path) -> JobDraft {
         JobDraft {
+            checksum: None,
             url: url.into(),
             destination: destination.display().to_string(),
             not_before_ms: None,
@@ -2824,6 +3130,7 @@ mod tests {
 
         let relative = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url: "http://127.0.0.1:9/file".into(),
                 destination: "escaped.bin".into(),
                 not_before_ms: None,
@@ -2860,6 +3167,7 @@ mod tests {
         ] {
             let error = jobs
                 .enqueue(vec![JobDraft {
+                    checksum: None,
                     url: "http://127.0.0.1:9/file".into(),
                     destination: destination.into(),
                     not_before_ms: None,
@@ -2890,6 +3198,7 @@ mod tests {
         // attach bytes to a file the user never chose.
         let stream = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url: "http://127.0.0.1:9/file".into(),
                 destination: format!("{}\\notes.txt:hidden", dir.path().display()),
                 not_before_ms: None,
@@ -2908,6 +3217,7 @@ mod tests {
 
         let control = jobs
             .enqueue(vec![JobDraft {
+                checksum: None,
                 url: "http://127.0.0.1:9/file".into(),
                 destination: format!("{}\u{1}bad.bin", dir.path().display()),
                 not_before_ms: None,
@@ -2939,7 +3249,7 @@ mod tests {
         assert!(!error.contains("aaaa"), "oversized address was echoed back");
 
         assert!(
-            jobs.retry("not-a-job", None, None)
+            jobs.retry("not-a-job", None, None, None)
                 .unwrap_err()
                 .contains("no longer")
         );

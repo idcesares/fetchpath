@@ -147,9 +147,9 @@
         </p>
 
         <details id="advanced-options" class="advanced">
-          <summary>
+          <summary id="advanced-summary">
             Advanced options
-            <span class="hint">start time</span>
+            <span class="hint">start time, checksum</span>
           </summary>
           <div class="schedule-row">
             <div>
@@ -164,6 +164,21 @@
             A start time only applies while Fetchpath is running or after its next launch. Fetchpath never wakes a
             sleeping computer.
           </p>
+          <div id="checksum-field" class="checksum-field">
+            <label for="checksum">SHA-256 checksum <span class="hint">optional</span></label>
+            <input
+              id="checksum"
+              name="checksum"
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="checksum-hint"
+              placeholder="64 characters, 0–9 and a–f"
+            />
+            <p id="checksum-hint" class="hint field-note">
+              If the publisher lists a SHA-256 for this file, paste it here. Fetchpath saves the file only if it matches.
+              One file at a time.
+            </p>
+          </div>
         </details>
 
         <section id="batch-preview" class="preview" aria-labelledby="preview-heading" hidden>

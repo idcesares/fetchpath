@@ -166,6 +166,26 @@ pub struct DownloadRequest {
     pub cancellation: CancellationToken,
     pub cancel_cleanup: CancelCleanup,
     pub context: RequestContext,
+    /// A whole-file SHA-256 the person supplied, lowercase hex. When present,
+    /// nothing is published unless the staged bytes match it, on every
+    /// publication path including recovery. A match shows the bytes are the
+    /// ones that checksum describes; it is not publisher authenticity.
+    pub expected_sha256: Option<String>,
+}
+
+/// Normalizes a SHA-256 as people paste it: surrounding whitespace, an
+/// optional `sha256:` or `SHA256=` prefix, and either case. Anything that is
+/// not then exactly 64 hex digits is refused rather than guessed at.
+pub fn normalize_sha256(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let digits = ["sha256:", "sha256=", "sha-256:", "sha256 "]
+        .iter()
+        .find_map(|prefix| lower.strip_prefix(prefix))
+        .unwrap_or(&lower)
+        .trim();
+    (digits.len() == 64 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| digits.to_owned())
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -198,6 +218,15 @@ pub enum DownloadError {
         path: PathBuf,
         detail: String,
         staging: Option<PathBuf>,
+    },
+    /// The bytes do not match the checksum the person supplied. When
+    /// `published` is `None` nothing was saved and the bytes were discarded.
+    /// When it is a path, an earlier run had already published that file
+    /// before crashing; it is reported, never deleted.
+    ChecksumMismatch {
+        expected: String,
+        observed: String,
+        published: Option<PathBuf>,
     },
 }
 impl std::fmt::Display for DownloadError {
@@ -239,6 +268,23 @@ impl std::fmt::Display for DownloadError {
                 write!(f, "storage.failed at {}: {detail}", path.display())?;
                 write_retained(f, staging)
             }
+            Self::ChecksumMismatch {
+                expected,
+                observed,
+                published: None,
+            } => write!(
+                f,
+                "integrity.checksum_mismatch: expected sha256 {expected}, received {observed}; nothing was saved"
+            ),
+            Self::ChecksumMismatch {
+                expected,
+                observed,
+                published: Some(path),
+            } => write!(
+                f,
+                "integrity.checksum_mismatch: expected sha256 {expected}, but {} holds {observed}",
+                path.display()
+            ),
         }
     }
 }
@@ -395,12 +441,29 @@ impl FileJob {
                     cancellation: cancellation.clone(),
                     cancel_cleanup,
                     context,
+                    expected_sha256: None,
                 }),
                 worker: None,
             })),
             cancellation,
         }
     }
+    /// Requires the published file to match `checksum`, as a person would
+    /// paste it. Refused once the job has started, and refused for anything
+    /// that is not a SHA-256.
+    pub fn with_expected_sha256(self, checksum: &str) -> Result<Self, &'static str> {
+        let normalized = normalize_sha256(checksum).ok_or("input.invalid_checksum")?;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let request = inner
+                .request
+                .as_mut()
+                .ok_or("contract.invalid_transition")?;
+            request.expected_sha256 = Some(normalized);
+        }
+        Ok(self)
+    }
+
     pub fn start(&self) -> Result<(), &'static str> {
         let mut inner = self.inner.lock().unwrap();
         if inner.snapshot.state != FileJobState::Queued {
@@ -438,7 +501,9 @@ impl FileJob {
                         | DownloadError::Transport { staging, .. }
                         | DownloadError::Storage { staging, .. } => staging.clone(),
                         DownloadError::Cancelled { staging } => staging.clone(),
-                        DownloadError::InvalidUrl | DownloadError::InvalidDestination(_) => None,
+                        DownloadError::InvalidUrl
+                        | DownloadError::InvalidDestination(_)
+                        | DownloadError::ChecksumMismatch { .. } => None,
                     };
                     state.snapshot.error = Some(error.to_string());
                     transition(&mut state, FileJobState::Failed);
@@ -698,6 +763,7 @@ Connection: close
             cancellation: token,
             cancel_cleanup: cleanup,
             context: RequestContext::default(),
+            expected_sha256: None,
         }
     }
 
@@ -861,6 +927,53 @@ Connection: close
             assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
             fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    #[test]
+    fn a_pasted_checksum_is_normalized_or_refused() {
+        let digest = "ab".repeat(32);
+        for pasted in [
+            digest.clone(),
+            digest.to_uppercase(),
+            format!(
+                "  sha256:{digest}
+"
+            ),
+            format!("SHA256={}", digest.to_uppercase()),
+        ] {
+            assert_eq!(
+                normalize_sha256(&pasted),
+                Some(digest.clone()),
+                "{pasted:?}"
+            );
+        }
+        assert_eq!(normalize_sha256(&digest[..63]), None, "too short");
+        assert_eq!(normalize_sha256(&format!("{digest}0")), None, "too long");
+        assert_eq!(normalize_sha256(&"zz".repeat(32)), None, "not hex");
+        assert_eq!(
+            normalize_sha256(&format!("md5:{digest}")),
+            None,
+            "wrong algorithm"
+        );
+    }
+
+    #[test]
+    fn a_job_takes_a_checksum_only_before_it_starts() {
+        let job = FileJob::create(
+            "http://127.0.0.1:9/never".into(),
+            temp_dir("builder").join("x"),
+        );
+        assert!(job.clone().with_expected_sha256("nope").is_err());
+        let job = job
+            .with_expected_sha256(&"cd".repeat(32))
+            .expect("accepted before start");
+        job.start().expect("starts");
+        assert_eq!(
+            job.clone().with_expected_sha256(&"cd".repeat(32)).err(),
+            Some("contract.invalid_transition")
+        );
+        job.cancel();
+        job.join();
     }
 
     #[test]

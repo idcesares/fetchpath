@@ -161,6 +161,12 @@ h2:focus-visible { outline-offset: 6px; }
 .advanced[open] > summary { border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
 .advanced > :not(summary) { margin-inline: 14px; }
 .advanced > .schedule-row { margin-top: 4px; }
+.checksum-field { margin-top: 14px; }
+.checksum-field input { width: 100%; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.checksum-field > p:last-child { margin-bottom: 12px; }
+.digest-pair { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 10px 0 0; font-size: .8rem; }
+.digest-pair dt { color: var(--muted); }
+.digest-pair dd { margin: 0; }
 .advanced > p:last-child { margin-bottom: 12px; }
 
 .submit-messages { flex: 1; min-width: 0; }

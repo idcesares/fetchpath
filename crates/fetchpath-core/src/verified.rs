@@ -1402,6 +1402,8 @@ fn as_download_request(request: &VerifiedDownloadRequest, url: &str) -> Download
         cancellation: request.cancellation.clone(),
         cancel_cleanup: request.cancel_cleanup,
         context: request.context.clone(),
+        // This path verifies against its own trusted digests and piece hashes.
+        expected_sha256: None,
     }
 }
 
@@ -1431,6 +1433,15 @@ fn from_download_error(error: DownloadError) -> VerifiedDownloadError {
             detail,
             staging,
         },
+        // Not produced here: this path never sets `expected_sha256` and checks
+        // its own trusted digests instead. Mapped to a failure, not a panic.
+        mismatch @ DownloadError::ChecksumMismatch { .. } => {
+            VerifiedDownloadError::MirrorsExhausted {
+                detail: mismatch.to_string(),
+                mirrors: Vec::new(),
+                staging: None,
+            }
+        }
     }
 }
 

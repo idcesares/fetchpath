@@ -222,6 +222,25 @@ function Find-VisibleText($Root, [string] $Pattern) {
     return $null
 }
 
+function Open-AdvancedOptions($Root, $Process) {
+    if (Find-ById $Root 'checksum') { return }
+    $summary = Find-ById $Root 'advanced-summary'
+    if (-not $summary) { throw 'Advanced options are not exposed.' }
+    [FetchpathWindowChildren]::SetForegroundWindow($Process.MainWindowHandle) | Out-Null
+    $summary.SetFocus()
+    $pattern = $null
+    if ($summary.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref] $pattern)) {
+        $pattern.Expand()
+    } else {
+        $summary.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (-not (Find-ById $Root 'checksum') -and [DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not (Find-ById $Root 'checksum')) { throw 'The checksum field did not appear under Advanced options.' }
+}
+
 function Wait-ForStatus($Root, [string[]] $Statuses, [int] $TimeoutSeconds = 30) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
@@ -246,8 +265,10 @@ $process = $null
 $fixtureJobs = [System.Collections.Generic.List[object]]::new()
 $completedPath = Join-Path $outputDirectory 'completed.bin'
 $cancelledPath = Join-Path $outputDirectory 'cancelled.bin'
+$checksumMismatchPath = Join-Path $outputDirectory 'checksum-mismatch.bin'
+$checksumMatchPath = Join-Path $outputDirectory 'checksum-match.bin'
 
-foreach ($path in @($completedPath, $cancelledPath)) {
+foreach ($path in @($completedPath, $cancelledPath, $checksumMismatchPath, $checksumMatchPath)) {
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
 }
 
@@ -316,8 +337,53 @@ try {
     if ($cancelStatus -ne 'Cancelled') { throw "Expected cancellation, reached: $cancelStatus" }
     if (Test-Path -LiteralPath $cancelledPath) { throw 'Cancelled download published a destination file.' }
 
+    # A pasted checksum: a mismatch saves nothing and says so; a match completes.
+    $checksumSize = 256 * 1024
+    $fixtureBytes = [byte[]]::new($checksumSize)
+    for ($offset = 0; $offset -lt $checksumSize; $offset++) { $fixtureBytes[$offset] = [byte] 0x5A }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $expectedHash = -join ($sha.ComputeHash($fixtureBytes) | ForEach-Object { $_.ToString('x2') })
+
+    Open-AdvancedOptions $renderer $process
+    $mismatchFixture = Start-FixtureServer -Size $checksumSize -DelayMilliseconds 0
+    $fixtureJobs.Add($mismatchFixture.Job)
+    Set-Field $renderer 'url' $mismatchFixture.Url
+    Set-Field $renderer 'destination' $checksumMismatchPath
+    Set-Field $renderer 'checksum' ('0' * 64)
+    Invoke-Control $renderer 'start-download' $process
+    $mismatchStatus = Wait-ForStatus $renderer @('Complete', 'Needs attention')
+    if ($mismatchStatus -ne 'Needs attention') { throw "A wrong checksum reached: $mismatchStatus" }
+    if (Test-Path -LiteralPath $checksumMismatchPath) { throw 'A checksum mismatch published a file.' }
+    $mismatchMessage = Get-ControlText $renderer 'job-error'
+    if ($mismatchMessage -notmatch "doesn't match the checksum") { throw "Unexpected mismatch message: $mismatchMessage" }
+    $editChecksum = Find-VisibleText $renderer '^Edit checksum: '
+    if (-not $editChecksum) { throw 'The mismatch row does not offer Edit checksum.' }
+    $receivedShown = Find-VisibleText $renderer "^$expectedHash$"
+    if (-not $receivedShown) { throw 'The mismatch row does not show the received SHA-256.' }
+
+    Open-AdvancedOptions $renderer $process
+    $matchFixture = Start-FixtureServer -Size $checksumSize -DelayMilliseconds 0
+    $fixtureJobs.Add($matchFixture.Job)
+    Set-Field $renderer 'url' $matchFixture.Url
+    Set-Field $renderer 'destination' $checksumMatchPath
+    # Pasted the way checksum listings often print it.
+    Set-Field $renderer 'checksum' ('SHA256:' + $expectedHash.ToUpperInvariant())
+    Invoke-Control $renderer 'start-download' $process
+    $matchStatus = Wait-ForStatus $renderer @('Complete', 'Needs attention')
+    if ($matchStatus -ne 'Complete') { throw "A matching checksum reached: $matchStatus ($(Get-ControlText $renderer 'job-error'))" }
+    $matchedHash = (Get-FileHash -LiteralPath $checksumMatchPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($matchedHash -ne $expectedHash) { throw 'The published file does not match the checksum it was accepted against.' }
+    $matchLabel = Find-VisibleText $renderer 'matches the checksum you entered'
+    if (-not $matchLabel) { throw 'A matching download does not say it matched the checksum.' }
+
     [pscustomobject]@{
         application = $ApplicationPath
+        checksumMismatchStatus = $mismatchStatus
+        checksumMismatchPublished = $false
+        checksumMismatchMessage = $mismatchMessage
+        checksumMatchStatus = $matchStatus
+        checksumMatchLabel = $matchLabel
+        checksumExpected = $expectedHash
         batchPreviewCount = $previewCount
         completedStatus = $completeStatus
         completedBytes = $completedBytes

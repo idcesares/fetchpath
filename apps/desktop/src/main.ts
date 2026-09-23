@@ -25,9 +25,19 @@ interface JobSnapshot {
   attempt: number;
   destination: string | null;
   observedSha256: string | null;
+  /** The SHA-256 the person supplied. Nothing that differs from it is saved. */
+  expectedSha256?: string | null;
   cleanupPending: boolean;
   error: string | null;
-  action: "retry" | "choose_new_path" | "edit_link" | "recapture" | "refresh_source" | "configure_media_tools" | null;
+  action:
+    | "retry"
+    | "choose_new_path"
+    | "edit_link"
+    | "recapture"
+    | "refresh_source"
+    | "configure_media_tools"
+    | "check_checksum"
+    | null;
   retryable: boolean;
   createdAtMs: number;
   notBeforeMs: number | null;
@@ -40,6 +50,7 @@ interface JobDraft {
   url: string;
   destination: string;
   notBeforeMs: number | null;
+  checksum: string | null;
 }
 
 interface MediaVariant {
@@ -116,6 +127,9 @@ const form = required<HTMLFormElement>("download-form");
 const urlInput = required<HTMLTextAreaElement>("url");
 const destinationInput = required<HTMLInputElement>("destination");
 const scheduleInput = required<HTMLInputElement>("schedule");
+const checksumInput = required<HTMLInputElement>("checksum");
+const checksumField = required<HTMLDivElement>("checksum-field");
+const advancedOptions = required<HTMLDetailsElement>("advanced-options");
 const clearScheduleButton = required<HTMLButtonElement>("clear-schedule");
 const chooseButton = required<HTMLButtonElement>("choose-destination");
 const startButton = required<HTMLButtonElement>("start-download");
@@ -185,6 +199,8 @@ const mediaToolsLocate = required<HTMLButtonElement>("media-tools-locate");
 let jobs: JobSnapshot[] = [];
 let selectedFilter: QueueFilter = "all";
 let editingJobId: string | null = null;
+/** True while the composer is correcting a checksum, where the link is optional. */
+let editingChecksum = false;
 let refreshRunning = false;
 let refreshTimer = 0;
 let mediaInspection: MediaInspection | null = null;
@@ -504,6 +520,9 @@ kindChooser.addEventListener("change", () => {
   mediaTitle.textContent = "";
   const media = downloadKind() === "media";
   mediaOptions.hidden = !media;
+  // A checksum describes one file's bytes; a media variant is assembled
+  // locally, so there is nothing a published checksum could describe.
+  checksumField.hidden = media;
   urlInput.rows = media ? 2 : 3;
   urlInput.placeholder = media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
   if (media && !toolsStatus) void refreshToolsStatus();
@@ -643,20 +662,26 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError(formError);
   const drafts = buildDrafts();
-  if (!drafts.length) {
+  if (!editingJobId && !drafts.length) {
     showError(formError, "Add at least one download address.");
     return;
   }
   setComposerAvailability(false, editingJobId ? "Saving…" : "Adding…");
   try {
     if (editingJobId) {
-      if (drafts.length !== 1) throw new Error("Edit one recovery item at a time.");
+      const urls = parseUrls();
+      if (urls.length > 1) throw new Error("Edit one recovery item at a time.");
+      // Correcting only the checksum keeps the link already on record, which
+      // may carry private values that were never shown.
+      if (!urls.length && !editingChecksum) throw new Error("Paste a refreshed address to continue.");
       await invoke<JobSnapshot>("retry_download", {
         jobId: editingJobId,
-        url: drafts[0].url,
-        destination: drafts[0].destination,
+        url: urls[0] ?? null,
+        destination: destinationInput.value.trim() || null,
+        checksum: checksumInput.value,
       });
       editingJobId = null;
+      editingChecksum = false;
     } else if (downloadKind() === "media") {
       const variant = selectedMediaVariant();
       if (!variant || inspectedMediaUrl !== drafts[0].url) {
@@ -791,6 +816,9 @@ jobList.addEventListener("click", async (event) => {
       case "edit-link":
         beginEdit(job);
         return;
+      case "edit-checksum":
+        beginChecksumEdit(job);
+        return;
       case "recapture":
         setQueueSummary("Open the source in your browser and choose Send link to Fetchpath again.");
         return;
@@ -857,7 +885,8 @@ function buildDrafts(): JobDraft[] {
     let destination = index === 0 ? baseDestination : siblingDestination(baseDestination, suggestedFilename(url));
     destination = uniqueDestination(destination, used);
     used.add(destination.toLocaleLowerCase());
-    return { url, destination, notBeforeMs };
+    const checksum = downloadKind() === "file" ? checksumInput.value.trim() || null : null;
+    return { url, destination, notBeforeMs, checksum };
   });
 }
 
@@ -1015,6 +1044,7 @@ function queueRowSignature(job: JobSnapshot): string {
     job.totalBytes === null ? "no-total" : "total",
     job.destination ?? "",
     job.observedSha256 ?? "",
+    job.expectedSha256 ?? "",
     job.error ?? "",
     job.action ?? "",
     job.notBeforeMs ?? "",
@@ -1103,19 +1133,43 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   }
 
   if (job.observedSha256) {
+    const matched = job.state === "completed" && !!job.expectedSha256;
     const completion = document.createElement("div");
     completion.className = "completion";
     const label = document.createElement("p");
     label.className = "digest-label";
-    label.textContent = "Observed SHA-256";
+    label.textContent = matched ? "SHA-256 · matches the checksum you entered" : "Observed SHA-256";
     const digest = document.createElement("code");
     digest.textContent = job.observedSha256;
     if (primary) digest.id = "observed-hash";
     const note = document.createElement("p");
     note.className = "fine-print";
-    note.textContent = "Observed locally; compare with a trusted publisher hash for authenticity.";
+    // A match proves the bytes are the ones the checksum describes. Whether
+    // the checksum itself is trustworthy depends on where it came from.
+    note.textContent = matched
+      ? "The file is exactly what that checksum describes. Trust it as far as you trust where the checksum came from."
+      : "Observed locally; compare with a trusted publisher hash for authenticity.";
     completion.append(label, digest, note);
     article.append(completion);
+  }
+
+  const mismatch = checksumMismatch(job);
+  if (mismatch) {
+    const pair = document.createElement("dl");
+    pair.className = "digest-pair";
+    for (const [term, value] of [
+      ["Expected", mismatch.expected],
+      ["Received", mismatch.received],
+    ]) {
+      const dt = document.createElement("dt");
+      dt.textContent = term;
+      const dd = document.createElement("dd");
+      const code = document.createElement("code");
+      code.textContent = value;
+      dd.append(code);
+      pair.append(dt, dd);
+    }
+    article.append(pair);
   }
 
   if (settingsView?.settings.powerMode) article.append(diagnostics(job));
@@ -1230,7 +1284,10 @@ function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; da
     else if (job.action === "recapture") actions.push({ action: "recapture", label: "Send again from browser" });
     else if (job.action === "refresh_source") actions.push({ action: "edit-link", label: "Refresh source" });
     else if (job.action === "configure_media_tools") actions.push({ action: "configure-media", label: "Set up media tools" });
-    else actions.push({ action: "retry", label: "Retry" });
+    else if (job.action === "check_checksum") {
+      actions.push({ action: "edit-checksum", label: "Edit checksum" });
+      actions.push({ action: "retry", label: "Retry" });
+    } else actions.push({ action: "retry", label: "Retry" });
   }
   if (job.state === "completed") {
     actions.push({ action: "open-folder", label: "Open folder" });
@@ -1280,6 +1337,7 @@ function beginEdit(job: JobSnapshot): void {
   const kind = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${job.kind}"]`);
   if (kind) kind.checked = true;
   mediaOptions.hidden = job.kind !== "media";
+  checksumField.hidden = job.kind === "media";
   if (job.kind === "media") {
     mediaTitle.textContent = `${job.qualityLabel ?? "Selected quality"} will be revalidated before retrying.`;
   }
@@ -1287,6 +1345,8 @@ function beginEdit(job: JobSnapshot): void {
   destinationInput.value = job.destination ?? "";
   destinationIsSuggested = false;
   scheduleInput.value = "";
+  // Kept, so refreshing a link never silently drops its check.
+  checksumInput.value = job.expectedSha256 ?? "";
   startButton.textContent = "Save and retry";
   clearError(formError);
   showNotice("Paste a refreshed address. Private query values are never restored from history.");
@@ -1294,13 +1354,24 @@ function beginEdit(job: JobSnapshot): void {
   urlInput.focus();
 }
 
+function beginChecksumEdit(job: JobSnapshot): void {
+  beginEdit(job);
+  editingChecksum = true;
+  advancedOptions.open = true;
+  showNotice("Correct the checksum, then choose Save and retry. Leave the address empty to keep the current link.");
+  checksumInput.focus();
+  checksumInput.select();
+}
+
 function clearComposer(): void {
   editingJobId = null;
+  editingChecksum = false;
   form.reset();
   destinationIsSuggested = true;
   mediaInspection = null;
   inspectedMediaUrl = "";
   mediaOptions.hidden = true;
+  checksumField.hidden = false;
   mediaQuality.replaceChildren(new Option("Inspect a link first", ""));
   mediaQuality.disabled = true;
   mediaTitle.textContent = "";
@@ -1405,7 +1476,20 @@ function friendlyError(job: JobSnapshot): string {
   if (job.action === "recapture") return "The protected browser context is unavailable. Send the link from your browser again.";
   if (job.action === "refresh_source") return "This media session expired or its qualities changed. Paste a refreshed source to retry.";
   if (job.action === "configure_media_tools") return "Video and audio need yt-dlp and ffmpeg. Set them up, then retry.";
+  if (job.action === "check_checksum") {
+    return job.error?.includes("checksum_unreadable")
+      ? "The checksum saved with this download can't be read, so it won't be downloaded unchecked. Edit the checksum to continue."
+      : "The downloaded file doesn't match the checksum you entered, so nothing was saved. Check the checksum, or retry if the download may have been damaged.";
+  }
   return job.error ?? "The download stopped. Retry when the source is available.";
+}
+
+/** Both digests from an engine checksum-mismatch report, when there is one. */
+function checksumMismatch(job: JobSnapshot): { expected: string; received: string } | null {
+  if (job.state !== "failed" || !job.error?.includes("checksum_mismatch")) return null;
+  const expected = /expected sha256 ([0-9a-f]{64})/.exec(job.error)?.[1];
+  const received = /(?:received|holds) ([0-9a-f]{64})/.exec(job.error)?.[1];
+  return expected && received ? { expected, received } : null;
 }
 
 function formatBytes(bytes: number): string {

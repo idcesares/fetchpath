@@ -76,6 +76,13 @@ pub fn download_with_faults(
         {
             PublicationRecovery::Completed => {
                 request.cancellation.mark_published();
+                if let Some(expected) = mismatch(&request, &record.local_sha256) {
+                    return Err(DownloadError::ChecksumMismatch {
+                        expected,
+                        observed: record.local_sha256.clone(),
+                        published: Some(request.destination.clone()),
+                    });
+                }
                 return Ok(completed(&request, record, None));
             }
             PublicationRecovery::Conflict => {
@@ -96,6 +103,14 @@ pub fn download_with_faults(
                             "publication intent does not match retained staging bytes",
                         ),
                     ));
+                }
+                if let Some(expected) = mismatch(&request, &record.local_sha256) {
+                    let _ = store.remove_all();
+                    return Err(DownloadError::ChecksumMismatch {
+                        expected,
+                        observed: record.local_sha256.clone(),
+                        published: None,
+                    });
                 }
                 return publish(&request, &store, record, faults);
             }
@@ -172,6 +187,15 @@ pub fn download_with_faults(
         .map_err(|error| storage_detail(&store, error))?;
     drop(file);
     let digest = sha256_file(store.staging()).map_err(|error| storage_detail(&store, error))?;
+    if let Some(expected) = mismatch(&request, &digest) {
+        // Known-bad bytes are discarded, not retained for a resume to build on.
+        let _ = store.remove_all();
+        return Err(DownloadError::ChecksumMismatch {
+            expected,
+            observed: digest,
+            published: None,
+        });
+    }
     let response_validator = strong_etag(attempt.headers.etag.as_deref());
     let expected_total = response_total(&attempt.headers, attempt.final_len);
     let mut intent = CheckpointRecord::downloading(
@@ -504,6 +528,15 @@ fn response_total(headers: &ResponseHeaders, fallback: u64) -> Option<u64> {
     }
 }
 
+/// The expected checksum, when one was supplied and `observed` differs from it.
+fn mismatch(request: &DownloadRequest, observed: &str) -> Option<String> {
+    request
+        .expected_sha256
+        .as_deref()
+        .filter(|expected| !expected.eq_ignore_ascii_case(observed))
+        .map(str::to_owned)
+}
+
 pub(crate) fn publish(
     request: &DownloadRequest,
     store: &CheckpointStore,
@@ -682,6 +715,7 @@ mod tests {
             cancellation: CancellationToken::default(),
             cancel_cleanup: CancelCleanup::RemoveStaging,
             context: crate::RequestContext::default(),
+            expected_sha256: None,
         }
     }
 
@@ -945,6 +979,121 @@ mod tests {
             assert!(!destination.exists());
             fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    fn checked(url: String, destination: PathBuf, expected: &str) -> DownloadRequest {
+        DownloadRequest {
+            expected_sha256: Some(expected.to_owned()),
+            ..request(url, destination)
+        }
+    }
+
+    #[test]
+    fn a_matching_checksum_publishes() {
+        let dir = temp_dir("checksum-match");
+        let destination = dir.join("file.bin");
+        let body = vec![3; 20 * 1024];
+        let (url, _, worker) = server(vec![Reply::Full {
+            body: body.clone(),
+            etag: "\"v1\"",
+        }]);
+        let done = download(checked(url, destination.clone(), &sha256_hex(&body))).unwrap();
+        worker.join().unwrap();
+        assert_eq!(done.observed_sha256, sha256_hex(&body));
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_mismatched_checksum_publishes_nothing_and_discards_the_bad_bytes() {
+        let dir = temp_dir("checksum-mismatch");
+        let destination = dir.join("file.bin");
+        let body = vec![4; 20 * 1024];
+        let (url, _, worker) = server(vec![Reply::Full {
+            body: body.clone(),
+            etag: "\"v1\"",
+        }]);
+        let wrong = sha256_hex(b"something else");
+        let error = download(checked(url, destination.clone(), &wrong)).unwrap_err();
+        worker.join().unwrap();
+        match error {
+            DownloadError::ChecksumMismatch {
+                expected,
+                observed,
+                published,
+            } => {
+                assert_eq!(expected, wrong);
+                assert_eq!(observed, sha256_hex(&body));
+                assert_eq!(published, None);
+            }
+            other => panic!("expected a checksum mismatch, got {other:?}"),
+        }
+        assert!(!destination.exists());
+        // Known-bad bytes are not kept for a resume to build on.
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_pending_publication_is_checked_before_it_is_completed_on_recovery() {
+        let dir = temp_dir("checksum-pending");
+        let destination = dir.join("file.bin");
+        let body = vec![5; 8 * 1024];
+        let (url, _, worker) = server(vec![Reply::Full {
+            body: body.clone(),
+            etag: "\"v1\"",
+        }]);
+        let faults = FailOnce(Mutex::new(Some(FaultPoint::PublicationFence)));
+        assert!(download_with_faults(request(url.clone(), destination.clone()), &faults).is_err());
+        worker.join().unwrap();
+        assert!(
+            !destination.exists(),
+            "the fence failed, so nothing is published yet"
+        );
+
+        let wrong = sha256_hex(b"not these bytes");
+        let error = download(checked(url.clone(), destination.clone(), &wrong)).unwrap_err();
+        assert!(matches!(
+            error,
+            DownloadError::ChecksumMismatch {
+                published: None,
+                ..
+            }
+        ));
+        assert!(!destination.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_already_published_file_that_does_not_match_is_reported_not_deleted() {
+        let dir = temp_dir("checksum-completed");
+        let destination = dir.join("file.bin");
+        let body = vec![6; 8 * 1024];
+        let (url, _, worker) = server(vec![Reply::Full {
+            body: body.clone(),
+            etag: "\"v1\"",
+        }]);
+        let faults = FailOnce(Mutex::new(Some(FaultPoint::PublicationReconcile)));
+        assert!(download_with_faults(request(url.clone(), destination.clone()), &faults).is_err());
+        worker.join().unwrap();
+
+        let wrong = sha256_hex(b"different");
+        let error = download(checked(url, destination.clone(), &wrong)).unwrap_err();
+        assert!(matches!(
+            error,
+            DownloadError::ChecksumMismatch { published: Some(ref path), .. } if path == &destination
+        ));
+        assert_eq!(
+            fs::read(&destination).unwrap(),
+            body,
+            "a published file is never deleted"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

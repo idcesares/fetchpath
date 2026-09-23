@@ -20,6 +20,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 1. Select **Add link** (`Ctrl+L`), paste a URL, optionally name it, and select a destination.
 2. Choose **Add to queue**. The item enters `Queued`, then `Connecting`, then `Downloading` only after confirmation from the download engine.
 3. Pause/resume is immediate in the interface and is reconciled with the engine. Completion shows the saved location and an **Open folder** action.
+4. Optionally, under **Advanced options**, paste the SHA-256 a publisher lists for the file. Fetchpath then saves the file only if it matches. Surrounding spaces, either case and a `sha256:` prefix are accepted. A checksum describes one file, so it is refused on a batch, and it is not offered for video or audio, which are assembled locally.
 
 ### Save video or audio
 
@@ -42,8 +43,9 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 | Downloading | Percent, received of total, speed, time remaining | Pause, cancel |
 | Paused | “Paused”, with the bytes already verified | Resume, cancel |
 | Cancelling | “Cancelling…” | none while it unwinds |
-| Complete | “Complete”, with the observed SHA-256 | Open folder, copy path, remove from list |
+| Complete | “Complete”, with the observed SHA-256; when a checksum was supplied, “matches the checksum you entered” | Open folder, copy path, remove from list |
 | Needs attention | Specific reason plus one next action | Retry, edit link, choose new path, set up media tools |
+| Checksum mismatch | “Doesn't match the checksum you entered, so nothing was saved”, with the expected and received values | Edit checksum, retry |
 | Link needed | The private source was not saved | Paste a refreshed link, or re-send from the browser |
 
 **Progress is only ever reported from engine-confirmed numbers.** A source that
@@ -59,6 +61,8 @@ refused.
 
 Offline is not yet a modelled state; a connection failure appears as a transport
 failure with a retry, and automatic retry is the setting that governs it.
+
+A checksum match means the bytes are exactly the ones the checksum describes. It is never described as proof of who published the file: that depends on where the checksum came from, and the interface says so. A mismatch is never retried automatically, because either the checksum or the source is wrong and a person has to decide which.
 
 Avoid “success” until the file is safely written and verified by the engine. Avoid “unsupported” without naming the limitation where known.
 

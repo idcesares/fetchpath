@@ -244,7 +244,7 @@ fn install_entry(entry: &ManifestEntry, install_dir: &Path) -> Result<(), String
     let _ = fs::remove_file(&staging);
     let _ = fs::remove_dir_all(&staging);
 
-    let downloaded = fetch(&entry.url, &staging)?;
+    let downloaded = fetch(&entry.url, &staging, &entry.sha256)?;
     let digest = sha256_file(&downloaded)
         .map_err(|error| format!("Could not read the downloaded file: {error}"))?;
     if !digest.eq_ignore_ascii_case(&entry.sha256) {
@@ -272,7 +272,9 @@ fn install_entry(entry: &ManifestEntry, install_dir: &Path) -> Result<(), String
 }
 
 /// Fetches one artifact through the verified core download path.
-fn fetch(url: &str, staging: &Path) -> Result<PathBuf, String> {
+/// The engine refuses to publish bytes that do not match `sha256`; the caller
+/// still checks again before installing anything.
+fn fetch(url: &str, staging: &Path, sha256: &str) -> Result<PathBuf, String> {
     use fetchpath_core::{CancelCleanup, CancellationToken, DownloadRequest, download};
 
     let request = DownloadRequest {
@@ -281,6 +283,7 @@ fn fetch(url: &str, staging: &Path) -> Result<PathBuf, String> {
         cancellation: CancellationToken::default(),
         cancel_cleanup: CancelCleanup::RemoveStaging,
         context: fetchpath_core::RequestContext::default(),
+        expected_sha256: fetchpath_core::normalize_sha256(sha256),
     };
     let done = download(request).map_err(|error| format!("Could not download {url}: {error}"))?;
     let length = fs::metadata(&done.destination)

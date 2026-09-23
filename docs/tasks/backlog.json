@@ -875,6 +875,115 @@
         "apps/desktop/src-tauri/THIRD-PARTY-NOTICES.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-031",
+      "title": "Verify desktop downloads against a user-supplied checksum",
+      "milestone": "M7",
+      "dependsOn": [
+        "FP-019",
+        "FP-027"
+      ],
+      "status": "in_progress",
+      "owner": "desktop_verify",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop",
+        "apps/desktop/src-tauri/src/media_setup.rs",
+        "crates/fetchpath-core/src/lib.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-core/src/verified.rs",
+        "docs/development/DESKTOP-CHECKSUM.md",
+        "docs/development/evidence/desktop-checksum",
+        "docs/product/UX.md",
+        "docs/superpowers/specs"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A07"
+      ],
+      "acceptance": "An optional SHA-256 entered in Add link is enforced by the engine before publication on every publication path, including recovery; a mismatch publishes nothing, discards the known-bad staging, and shows both digests with a plain next action; pause, resume and progress are unchanged; the wording never claims publisher authenticity; keyboard and screen-reader checks pass.",
+      "verification": "Implemented and tested; stays in_progress until the UI walkthrough runs. The engine enforces an optional user-supplied SHA-256 at all three publication points: normal completion (known-bad staging is discarded), recovery of a pending publication intent, and recovery that finds a file already published (reported with its real digest, never deleted). Pause, resume and progress are unchanged. The desktop takes the checksum under Advanced options, normalizes what people paste, refuses non-SHA-256 input and batches with a plain explanation, persists it with the row, and applies it at every file-job creation site; an unreadable saved checksum fails closed. A mismatch shows both values with Edit checksum and Retry and is never retried automatically. A match reads 'matches the checksum you entered' with fine print that makes no authenticity claim. The media-tool setup now also passes its recorded SHA-256 to the engine. Removing either recovery check, or classifying a mismatch as a transport failure, makes a named test fail. Recorded 23 September 2026 on Windows 11 Pro 26200 x64: cargo test --workspace --locked 223 passed 0 failed 4 ignored (pre-existing) against a 210 baseline; clippy -D warnings, fmt, tsc and the vite build clean. apps/desktop/tools/ui-smoke.ps1 gained mismatch and match scenarios that have not been run yet because running them drives the real window and injects keystrokes.",
+      "evidence": [
+        "docs/development/DESKTOP-CHECKSUM.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-032",
+      "title": "Reuse cached content in desktop verified downloads and expose the cache in Settings",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-020",
+        "FP-031"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "terra-medium",
+      "files": [
+        "apps/desktop",
+        "docs/product/UX.md",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A05",
+        "A10"
+      ],
+      "acceptance": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota.",
+      "verification": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-033",
+      "title": "Pair devices and control LAN sharing from the desktop",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-020",
+        "FP-032"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "apps/desktop",
+        "docs/product/UX.md",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07",
+        "A10"
+      ],
+      "acceptance": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass.",
+      "verification": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-034",
+      "title": "Discover paired devices on the local network",
+      "milestone": "M8",
+      "dependsOn": [
+        "FP-020"
+      ],
+      "status": "todo",
+      "owner": null,
+      "modelTier": "astra-high",
+      "files": [
+        "adapters/lan",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10"
+      ],
+      "acceptance": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
+      "verification": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }
