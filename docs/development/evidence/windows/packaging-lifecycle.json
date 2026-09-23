@@ -3,8 +3,8 @@
   "machineArchitecture": "AMD64",
   "installerUnderTest": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
   "upgradeInstaller": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
-  "installerSha256": "3fe3223415606a1b3e6edd6a77f252aee61c974acee52c7814b41a81f1fbdda6",
-  "upgradeInstallerSha256": "ae17e324903f99b07bdf4bcc5941759d0034cb0a7be4b545e28549cec3db4a44",
+  "installerSha256": "1695f504a9417edd5899aee86fb851baff57772039374cf0e6411b5b14d55488",
+  "upgradeInstallerSha256": "b1d9b506c86b1833208829b70a5689dc9dd0d633fc27e11c48343cda26fb9522",
   "preflight": {
     "existingUninstallEntries": [],
     "appDataExistedBefore": false,
@@ -17,7 +17,7 @@
     "label": "install 0.1.0",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 2.0,
+    "elapsedSeconds": 3.5,
     "uninstallEntries": [
       {
         "registryKey": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Fetchpath",
@@ -26,7 +26,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 14457
+        "estimatedSizeKb": 14467
       }
     ],
     "installDirectory": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
@@ -95,7 +95,7 @@
     "label": "upgrade to 0.1.1 with the app running",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 2.7,
+    "elapsedSeconds": 3.7,
     "runningInstanceStoppedByInstaller": true,
     "uninstallEntries": [
       {
@@ -105,7 +105,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 14457
+        "estimatedSizeKb": 14467
       }
     ],
     "files": [
@@ -155,7 +155,7 @@
     "installPathRegistryKeyRemains": true,
     "installPathRegistryValueAfterUninstall": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
     "dataRemovalHook": "./installer-hooks.nsh",
-    "dataRemovalPrompt": "Interactive uninstall shows a Yes/No message box defaulting to No; a silent uninstall keeps the data."
+    "dataRemovalPrompt": "Interactive uninstall shows the bundler's unticked Delete the application data checkbox, the only question; a silent uninstall keeps the data."
   },
   "failures": [],
   "passed": true,

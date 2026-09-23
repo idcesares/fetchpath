@@ -257,3 +257,5 @@ Recorded observations: [ui-accessibility.json](evidence/windows/ui-accessibility
 - Builds remain unsigned by decision, with SmartScreen consequences documented.
 - Pause and resume are proven for HTTP file downloads against a local fixture.
   Media downloads are excluded from pause rather than supported.
+
+*Update, 23 September 2026:* the Yes/No message box described above was removed. It appeared after the bundler's own unticked "Delete the application data" checkbox, so uninstalling asked twice, and ticking the box then answering No still deleted the data. The checkbox is now the only question; it removes the same two folders and never touches downloaded files. See [release readiness](RELEASE-READINESS.md).

@@ -37,13 +37,13 @@ Windows 11 on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
 
 ## Installing
 
-Download `Fetchpath_0.1.0_x64-setup.exe` and run it. It installs just for you
-and doesn't need administrator rights.
+Download `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt` from the release
+page, check one against the other, and run the installer. It installs just for
+you and doesn't need administrator rights. Then open Fetchpath from the Start
+menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
-Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns the first time
-it runs**. Check the installer's SHA-256 first, as described in the
-[user guide](docs/user/GUIDE.md#install), then choose **More info → Run
-anyway**.
+Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns when you run
+the installer**. Once the checksum matches, choose **More info → Run anyway**.
 
 ## Limitations in 0.1.0
 

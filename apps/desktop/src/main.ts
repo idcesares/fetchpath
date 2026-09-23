@@ -208,6 +208,8 @@ const browserSetupSteps = required<HTMLOListElement>("browser-setup-steps");
 const browserOpenFolder = required<HTMLButtonElement>("browser-open-folder");
 const browserCopyChrome = required<HTMLButtonElement>("browser-copy-chrome");
 const browserCopyEdge = required<HTMLButtonElement>("browser-copy-edge");
+const browserCopyFolder = required<HTMLButtonElement>("browser-copy-folder");
+const browserExtensionPath = required<HTMLElement>("browser-extension-path");
 
 interface BrowserSetupStatus {
   extensionDir: string | null;
@@ -390,7 +392,8 @@ function renderBrowserSetup(status: BrowserSetupStatus): void {
     ? "Firefox is not supported yet: it only accepts signed add-ons."
     : "This copy was not installed with the installer, so browser capture is unavailable here.";
   browserSetupSteps.hidden = !ready;
-  for (const button of [browserOpenFolder, browserCopyChrome, browserCopyEdge]) button.hidden = !ready;
+  browserExtensionPath.textContent = status.extensionDir ?? "";
+  for (const button of [browserOpenFolder, browserCopyFolder, browserCopyChrome, browserCopyEdge]) button.hidden = !ready;
 }
 
 browserOpenFolder.addEventListener("click", async () => {
@@ -401,6 +404,15 @@ browserOpenFolder.addEventListener("click", async () => {
   } catch (error) {
     showError(settingsError, error);
   }
+});
+
+browserCopyFolder.addEventListener("click", async () => {
+  const folder = browserExtensionPath.textContent ?? "";
+  if (!folder) return;
+  await navigator.clipboard.writeText(folder);
+  settingsStatus.textContent = "Copied the extension folder. Paste it into the folder picker's address bar.";
+  settingsStatus.hidden = false;
+  announce(settingsStatus.textContent);
 });
 
 for (const [button, address, browser] of [

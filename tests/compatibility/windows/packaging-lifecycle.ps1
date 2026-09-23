@@ -407,7 +407,7 @@ try {
     $tauriConfig = Get-Content -LiteralPath (Join-Path $repositoryRoot 'apps\desktop\src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json
     $dataRemovalHook = $tauriConfig.bundle.windows.nsis.installerHooks
     Assert-True ([bool] $dataRemovalHook) `
-        'No NSIS installer hook is configured, so the uninstaller has no data-removal branch.'
+        'No NSIS installer hook is configured, so uninstall would not remove the PATH entry or browser registration.'
     $hookPath = Join-Path (Join-Path $repositoryRoot 'apps\desktop\src-tauri') ($dataRemovalHook -replace '^\./', '')
     Assert-True (Test-Path -LiteralPath $hookPath) "The configured installer hook '$dataRemovalHook' does not exist."
     $started = [DateTime]::UtcNow
@@ -443,7 +443,7 @@ try {
         # previous version of this field hardcoded $true for a control the
         # uninstaller did not actually have.
         dataRemovalHook = $dataRemovalHook
-        dataRemovalPrompt = 'Interactive uninstall shows a Yes/No message box defaulting to No; a silent uninstall keeps the data.'
+        dataRemovalPrompt = 'Interactive uninstall shows the bundler''s unticked Delete the application data checkbox, the only question; a silent uninstall keeps the data.'
     }
     $installed = $observation.uninstall.installDirectoryRemains
     Assert-True ($observation.uninstall.exitCode -eq 0) "The uninstaller exited with code $($observation.uninstall.exitCode)."
@@ -452,7 +452,7 @@ try {
     Assert-True (-not $observation.uninstall.startMenuShortcutRemains) 'Uninstall left the Start menu shortcut behind.'
     Assert-True (-not $observation.uninstall.desktopShortcutRemains) 'Uninstall left the desktop shortcut behind.'
     Assert-True (@($observation.uninstall.uninstallEntriesRemain).Count -eq 0) 'Uninstall left an Apps & features entry behind.'
-    # A silent uninstall takes the keeping branch of NSIS_HOOK_PREUNINSTALL,
+    # A silent uninstall leaves the data checkbox unticked,
     # because there is nobody present to answer and keeping is recoverable.
     # These assert the documented behaviour rather than merely observing it.
     Assert-True $observation.uninstall.appDataDirectoryRemains `

@@ -63,42 +63,32 @@ test('the third-party notices are generated, not hand-edited', async () => {
   assert.ok(rows.length > 100, `expected a full package table, found ${rows.length} rows`);
 });
 
-test('the uninstaller has a data-removal branch that is wired into the bundle', async () => {
+test('uninstall asks one question about user data and reverses what install added', async () => {
   const config = JSON.parse(await read('apps/desktop/src-tauri/tauri.conf.json'));
   const hook = config.bundle?.windows?.nsis?.installerHooks;
-  assert.ok(hook, 'no installerHooks entry, so the uninstaller cannot offer data removal');
+  assert.ok(hook, 'no installerHooks entry, so uninstall would not reverse the PATH or browser registration');
 
   const hookPath = path.join(root, 'apps/desktop/src-tauri', hook.replace(/^\.\//, ''));
   await access(hookPath);
   const source = await readFile(hookPath, 'utf8');
 
-  assert.match(source, /NSIS_HOOK_PREUNINSTALL/, 'the removal branch must run before uninstall');
-  assert.match(source, /MB_DEFBUTTON2/, 'the data-removal prompt must default to keeping the data');
-  assert.match(source, /IfSilent/, 'a silent uninstall must take the keeping branch explicitly');
+  // User data is the bundler's single, unticked "Delete the application data"
+  // checkbox. A second prompt here once contradicted it: ticking the box and
+  // answering No still deleted the data. The hook must neither ask nor delete.
+  assert.doesNotMatch(source, /^\s*MessageBox/m, 'the hook must not ask a second question about user data');
+  assert.doesNotMatch(source, /^\s*RMDir/m, 'the hook must not delete user data itself');
 
-  // The hook removes registers, so resolve them back to the paths they were
-  // assigned. The two directories are the ones the packaging harness observes
-  // on a real machine; a hook that removed anything else would be deleting
-  // something the user never agreed to lose.
-  const assigned = new Map(
-    [...source.matchAll(/StrCpy \$(R\d) "([^"]+)"/g)].map((match) => [`$${match[1]}`, match[2]]),
-  );
-  const removals = [...source.matchAll(/RMDir \/r "([^"]+)"/g)].map((match) => match[1]);
-  assert.ok(removals.length > 0, 'the removal branch deletes nothing at all');
-
-  const resolved = removals.map((target) => {
-    const value = assigned.get(target) ?? target;
-    assert.ok(
-      !/^\$R\d$/.test(value),
-      `${target} is removed but never assigned a path, so the branch deletes an unknown directory`,
-    );
-    return value;
-  });
-  assert.deepEqual(
-    [...resolved].sort(),
-    ['$APPDATA\\app.fetchpath.desktop', '$LOCALAPPDATA\\app.fetchpath.desktop'],
-    "the uninstaller must remove exactly Fetchpath's own two data directories",
-  );
+  // What install added, uninstall removes: the PATH entry, while the script
+  // that removes it still exists, and exactly the three browser keys.
+  const preUninstall = source.slice(source.indexOf('!macro NSIS_HOOK_PREUNINSTALL'));
+  assert.match(preUninstall, /FETCHPATH_USER_PATH Remove/, 'uninstall must remove the PATH entry');
+  const deleted = [...source.matchAll(/^\s*DeleteRegKey HKCU "([^"]+)"/gm)].map((match) => match[1]).sort();
+  const host = '\\NativeMessagingHosts\\${FETCHPATH_HOST}';
+  assert.deepEqual(deleted, [
+    `Software\\Google\\Chrome${host}`,
+    `Software\\Microsoft\\Edge${host}`,
+    `Software\\Mozilla${host}`,
+  ]);
 });
 
 test('the desktop can pick a folder, which settings and media setup both need', async () => {

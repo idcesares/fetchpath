@@ -150,3 +150,31 @@ whatever window is in front.
   publication and were not attempted.
 - The CLI takes the file name from the link only, not from `Content-Disposition`; a link
   with no file name saves as `download`.
+
+## End-user install walkthrough (23 September 2026, after merging to `main`)
+
+The install and uninstall path was re-read as a first-time user would follow
+it, and each step was checked against a real install of the build from `main`.
+
+- **The guide asked users to compare a checksum nobody published.** The
+  release script now writes `SHA256SUMS.txt` beside the installer, and the
+  guide's two PowerShell commands were run exactly as written against it.
+- **Load unpacked said "pick the folder that opened",** which Chrome's folder
+  picker cannot know. Settings now shows the extension folder's path with a
+  **Copy folder path** button, and the guide gives the path.
+- **Uninstall asked twice.** The bundler's "Delete the application data"
+  checkbox came first, then the Yes/No box added in FP-030. Ticking the box and
+  answering No still deleted the data. The Yes/No box is gone; the checkbox,
+  unticked by default and ignored during upgrades, is the one question.
+- The guide now says how to open Fetchpath after installing (Start menu; no
+  desktop shortcut is created), and the README says where the files come from.
+
+Observed on the real install: the Start menu entry `Fetchpath`, the Installed
+apps entry "Fetchpath 0.1.0 by Fetchpath contributors", the extension at
+`%LOCALAPPDATA%\Fetchpath\browser-extension`, and after a silent uninstall no
+program files, shortcuts, browser keys or PATH change. The bundler keeps its
+install-location key when the data is kept, by design.
+
+A build run locally carries no mark of the web, so SmartScreen does not warn
+about it. To see the warning a real user sees, the installer has to arrive
+through a browser download.

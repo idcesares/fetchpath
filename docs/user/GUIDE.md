@@ -26,28 +26,37 @@ two sections are enough to start. After that, use it as a reference.
 **What you need:** Windows 11 on a 64-bit Intel or AMD PC. ARM PCs such as
 Snapdragon laptops aren't supported in this version.
 
-1. Download `Fetchpath_0.1.0_x64-setup.exe`.
-2. *Optional but recommended:* check that the file arrived intact. Open
-   PowerShell in the folder you saved it to and run:
+1. From the Fetchpath release page, download two files:
+   `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt`.
+2. *Recommended:* check the installer arrived intact. In File Explorer, open
+   the folder you saved them to, click the address bar, type `powershell` and
+   press <kbd>Enter</kbd>. Then run:
 
    ```powershell
-   Get-FileHash .\Fetchpath_0.1.0_x64-setup.exe -Algorithm SHA256
+   (Get-FileHash .\Fetchpath_0.1.0_x64-setup.exe).Hash.ToLower()
+   Get-Content .\SHA256SUMS.txt
    ```
 
-   Compare the result with the SHA-256 listed next to the download. If they
-   differ, delete the file and download it again.
-3. Run the installer. Fetchpath installs just for you. It doesn't ask for
-   administrator rights and it goes into `%LOCALAPPDATA%\Fetchpath`.
+   The first line printed must be the same as the long code at the start of
+   the second. If they differ, delete both files and download them again.
+3. Double-click `Fetchpath_0.1.0_x64-setup.exe` and follow the installer.
+   Fetchpath installs just for you, doesn't ask for administrator rights,
+   and goes into `%LOCALAPPDATA%\Fetchpath`. If your PC doesn't have the
+   Microsoft Edge WebView2 Runtime (almost every Windows 11 PC does), the
+   installer downloads it from Microsoft.
+4. Open Fetchpath from the Start menu. A short welcome banner appears the
+   first time; choose **Got it** when you've read it.
 
 **"Windows protected your PC."** Fetchpath 0.1.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
-it yet and warns the first time it runs. If you downloaded it from the
+it and warns when you run the installer. If you downloaded it from the
 official release page and the checksum matched in step 2, choose
 **More info**, then **Run anyway**. If you got the file anywhere else, don't
-run it.
+run it. The installer may also show the publisher as unknown, for the same
+reason.
 
-If your PC doesn't already have the Microsoft Edge WebView2 Runtime (almost
-every Windows 11 PC does), the installer downloads it from Microsoft.
+**"Allow Fetchpath on your network?"** Only if you use the command line's
+paired-device sharing. The desktop app doesn't ask.
 
 ## Your first download
 
@@ -172,11 +181,23 @@ already have them…** and pick the folder that contains them.
 The Fetchpath installer connects Fetchpath to Chrome and Microsoft Edge. You
 add the extension to your browser once:
 
-1. Open **Settings → Browser extension** and choose **Open extension folder**.
+1. Open **Settings → Browser extension**. It should say Fetchpath is
+   connected to Chrome and Edge.
 2. Choose **Copy Chrome address** or **Copy Edge address**, paste it into
    your browser's address bar, and press <kbd>Enter</kbd>.
 3. Turn on **Developer mode** (a switch on that page).
-4. Choose **Load unpacked** and select the folder that opened in step 1.
+4. Choose **Load unpacked**. In the folder picker, paste this into the
+   address bar at the top and press <kbd>Enter</kbd>, then choose
+   **Select Folder**:
+
+   ```text
+   %LOCALAPPDATA%\Fetchpath\browser-extension
+   ```
+
+   **Copy folder path** in Settings copies exactly this folder, and
+   **Open extension folder** shows it in File Explorer.
+5. Fetchpath appears in the browser's extension list. Pin it to the toolbar
+   if you like; nothing needs configuring.
 
 Now right-click any link and choose **Send link to Fetchpath**. The first time
 you do this on a website, the browser asks whether Fetchpath may use that
@@ -225,9 +246,10 @@ See [CLI.md](CLI.md) for everything it can do.
 ## Uninstalling
 
 Use **Settings → Apps → Installed apps** in Windows, find Fetchpath, and
-choose **Uninstall**. The uninstaller asks whether to also remove your
-download list, history and settings. **No** keeps them, which is what you
-want if you're reinstalling.
+choose **Uninstall**. On the uninstaller's confirmation page, tick **Delete the
+application data** only if you also want your download list, history,
+settings and media tools removed. Leave it unticked, as it starts, if you're
+reinstalling.
 
 **Files you downloaded are never removed**, wherever you saved them.
 

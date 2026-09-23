@@ -338,12 +338,13 @@
           <p id="browser-setup-state" class="field-note">Checking…</p>
           <p id="browser-setup-detail" class="hint field-note"></p>
           <ol id="browser-setup-steps" class="setup-steps" hidden>
-            <li>Choose <strong>Open extension folder</strong> below.</li>
-            <li>In Chrome or Edge, open the extensions page. Copy its address with the buttons below and paste it into the address bar.</li>
-            <li>Turn on <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and pick the folder that opened.</li>
+            <li>In Chrome or Edge, open the extensions page: copy its address with a button below and paste it into the address bar.</li>
+            <li>Turn on <strong>Developer mode</strong> and choose <strong>Load unpacked</strong>.</li>
+            <li>In the folder picker, paste this folder into the address bar and choose <strong>Select Folder</strong>: <code id="browser-extension-path" class="inline-path"></code></li>
             <li>Right-click any download link and choose <strong>Send link to Fetchpath</strong>.</li>
           </ol>
           <div class="media-tools-actions">
+            <button id="browser-copy-folder" class="secondary" type="button">Copy folder path</button>
             <button id="browser-open-folder" class="secondary" type="button">Open extension folder</button>
             <button id="browser-copy-chrome" class="secondary" type="button">Copy Chrome address</button>
             <button id="browser-copy-edge" class="secondary" type="button">Copy Edge address</button>

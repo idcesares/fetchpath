@@ -340,9 +340,9 @@
     }
   ],
   "keyboardOnlyJourney": {
-    "typedAddress": "http://127.0.0.1:33848/keyboard.bin",
+    "typedAddress": "http://127.0.0.1:22158/keyboard.bin",
     "typedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
-    "typedUrlReadBack": "http://127.0.0.1:33848/keyboard.bin",
+    "typedUrlReadBack": "http://127.0.0.1:22158/keyboard.bin",
     "typedDestinationReadBack": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
     "tabsFromDestinationToSubmit": 8,
     "finalStatus": "Complete",
@@ -352,7 +352,7 @@
   },
   "fixtureServer": {
     "state": "Running",
-    "port": 33848,
+    "port": 22158,
     "unexpectedOutput": [],
     "errors": []
   },
@@ -534,7 +534,7 @@
     }
   },
   "styleChecks": {
-    "stylesheet": "index-m_JPj_ye.css",
+    "stylesheet": "index-BJItvBJU.css",
     "prefersReducedMotion": true,
     "forcedColors": true,
     "focusVisible": true,
