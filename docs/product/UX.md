@@ -7,7 +7,9 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 ## Information hierarchy
 
 1. **Queue** is the home and primary work surface: status, progress, remaining time, destination, and one clear next action per item.
-2. **Add link** is the primary command. It is an inline composer rather than a dialog: the queue below stays visible while a link is reviewed, which is what a user pasting several links in a row actually needs. `Ctrl+L` focuses it from anywhere, and pasted links are always reviewed before starting.
+2. **Add download** is the primary command, always in the app bar. It opens a dialog that holds the whole composer (links, destination, media quality, start time, checksum, batch preview). Pasting a link anywhere outside a text field opens it pre-filled, and `Ctrl+N` or `Ctrl+L` opens it from anywhere. Pasted links are always reviewed before starting. `Esc` closes it and keeps the draft; **Cancel** clears it.
+
+   *Decision, 23 September 2026 (FP-035):* this replaces the earlier inline composer. The inline composer was chosen so the queue stayed visible while links were reviewed, but on the shipped build the hero, welcome card and composer together pushed the queue below the fold even in a maximized 2560×1550 window, so the queue was never visible in practice. A dialog over a full-window queue serves the same "several links in a row" need through paste-to-add and batch input.
 3. **Item actions** are contextual: pause/resume, open destination when available, remove/cancel. Destructive actions require a confirmation only when completed files would be deleted.
 4. **Filters** reduce a long queue without moving items elsewhere: All, Active, Completed, Failed.
 5. **Power mode** exposes diagnostic and transfer details inline, plus a session statistics panel above the queue. It is off by default, it is turned on in Settings, and it is strictly additive: nothing it shows replaces or moves a control that is available without it.
@@ -68,7 +70,7 @@ Avoid “success” until the file is safely written and verified by the engine.
 
 ## Accessibility and Windows behavior
 
-- Meet keyboard-first operation: `Ctrl+L` opens Add link, `Esc` closes an unsubmitted dialog, `Tab` follows visual order, and dialog focus returns to its trigger.
+- Meet keyboard-first operation: `Ctrl+N`/`Ctrl+L` opens Add download, `Ctrl+F` searches, `Esc` closes an unsubmitted dialog, `Tab` follows visual order, and dialog focus returns to its trigger, or to Add download when the trigger has gone. The two live regions move into whichever modal dialog is on top, because a modal makes the page behind it inert and an inert live region is never announced.
 - Use native buttons, form labels, visible focus rings, status text, and `aria-live` announcements for changes such as pause, resume, and queue additions.
 - Maintain 4.5:1 text contrast, do not rely on color alone for status, support 200% text scaling, and preserve useful layout down to a 900 px-wide window.
 - Honor system reduced motion. Animation conveys progress only and must not be necessary to understand state.

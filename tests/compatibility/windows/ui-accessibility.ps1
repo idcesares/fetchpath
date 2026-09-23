@@ -4,8 +4,9 @@
 # tree Narrator and other Windows assistive technology reads. It asserts rather
 # than describes:
 #
-#   1. tab order follows reading order, starting at the skip link, and the
-#      Advanced options disclosure opens from the keyboard;
+#   1. tab order follows reading order, starting at the skip link, Add download
+#      opens from the keyboard with focus in the links box, and the Advanced
+#      options disclosure opens from the keyboard;
 #   2. every keyboard-focusable control in the renderer has an accessible name;
 #   3. the controls on the primary journey expose the expected role and name;
 #   4. the primary journey completes with keyboard input only - typed characters
@@ -13,8 +14,9 @@
 #      value-pattern shortcut - and tabbing through the composer leaves no text
 #      of its own behind;
 #   5. queue changes reach the polite live region;
-#   6. a rejected address reaches the assertive live region, is present in the
-#      accessibility tree, and is cleared again by Escape;
+#   6. a rejected address reaches the assertive live region and is present in
+#      the accessibility tree; Escape closes Add download and keeps the draft,
+#      and Cancel clears it;
 #   7. exactly one queue filter reports a pressed toggle state, and a filter can
 #      be changed from the keyboard;
 #   8. the modal shortcuts dialog takes focus, hides the page behind it from
@@ -217,26 +219,27 @@ try {
     # Tabbing in from the document, with the disclosure opened by keyboard at
     # the point the summary receives focus.
     $observation.initialFocus = Get-RendererFocus $renderer
+    # FP-035: the queue is the page and Add download is a modal dialog. On a
+    # cold, empty queue the page holds the app bar, the search box and the
+    # empty state's own Add button; the filters appear once there is something
+    # to filter. Enter on that button opens the dialog with focus in the links
+    # box, and the dialog's own order follows from there.
     $expectedOrder = @(
         @{ label = 'skip link'; name = 'Skip to the download queue'; type = 'Hyperlink' },
+        @{ label = 'add-open'; id = 'add-open' },
         @{ label = 'open-settings'; id = 'open-settings' },
         @{ label = 'keyboard-help'; id = 'keyboard-help' },
-        @{ label = 'download type'; name = 'File or batch'; type = 'RadioButton' },
-        @{ label = 'url'; id = 'url' },
+        @{ label = 'queue-search'; id = 'queue-search' },
+        @{ label = 'empty-add'; id = 'empty-add'; openDialog = $true },
         @{ label = 'destination'; id = 'destination' },
         @{ label = 'choose-destination'; id = 'choose-destination' },
         @{ label = 'Advanced options'; name = 'Advanced options'; openDisclosure = $true },
         @{ label = 'start time'; name = 'Start time'; type = 'Spinner' },
         @{ label = 'date picker'; id = 'picker' },
         @{ label = 'clear-schedule'; id = 'clear-schedule' },
-        @{ label = 'start-download'; id = 'start-download' },
-        @{ label = 'queue-search'; id = 'queue-search' },
-        @{ label = 'filter All'; name = '^All$' },
-        @{ label = 'filter Active'; name = '^Active$' },
-        @{ label = 'filter Paused'; name = '^Paused$' },
-        @{ label = 'filter Scheduled'; name = '^Scheduled$' },
-        @{ label = 'filter Completed'; name = '^Completed$' },
-        @{ label = 'filter Needs attention'; name = '^Needs attention$' }
+        @{ label = 'checksum'; id = 'checksum' },
+        @{ label = 'add-cancel'; id = 'add-cancel' },
+        @{ label = 'start-download'; id = 'start-download' }
     )
     $observedOrder = [System.Collections.Generic.List[object]]::new()
     foreach ($step in $expectedOrder) {
@@ -252,6 +255,14 @@ try {
         if ($matched -and $step.Contains('type') -and $focused.controlType -ne $step.type) { $matched = $false }
         if (-not $matched) {
             $failures.Add("Tab order expected '$($step.label)' but focus was on id='$($focused.automationId)' type='$($focused.controlType)' name='$($focused.name)'.")
+        }
+        if ($step.Contains('openDialog')) {
+            [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
+            Start-Sleep -Milliseconds 600
+            $inDialog = Get-RendererFocus $renderer
+            $observation.addDialogOpenedByKeyboard = $inDialog
+            Assert-True ($inDialog -and $inDialog.automationId -eq 'url') `
+                "Enter on Add a download did not open the dialog with focus in the links box. Focus: $($inDialog | ConvertTo-Json -Compress)"
         }
         if ($step.Contains('openDisclosure')) {
             [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
@@ -291,17 +302,13 @@ try {
 
     $expectations = [System.Collections.Generic.List[object]]::new()
     $expectations += @(
-        @{ id = 'url'; type = 'Edit'; name = 'Download addresses' },
-        @{ id = 'destination'; type = 'Edit'; name = 'Save first item as' },
+        @{ id = 'url'; type = 'Edit'; name = 'Links' },
+        @{ id = 'destination'; type = 'Edit'; name = 'Save as' },
         @{ id = 'choose-destination'; type = 'Button'; name = 'destination file' },
         @{ id = 'start-download'; type = 'Button'; name = 'queue' },
-        @{ id = 'keyboard-help'; type = 'Button'; name = 'Keyboard help' },
-        @{ id = 'open-settings'; type = 'Button'; name = 'Settings' },
-        @{ id = 'queue-search'; type = 'Edit'; name = 'Search downloads' },
+        @{ id = 'add-cancel'; type = 'Button'; name = 'Cancel' },
         @{ id = 'clear-schedule'; type = 'Button'; name = 'Start when ready' },
-        @{ id = 'active-stat'; type = 'Group'; name = 'active' },
         @{ id = 'download-kind'; type = 'Group'; name = 'Download type' },
-        @{ id = 'queue-filters'; type = 'Group'; name = 'Filter downloads' },
         @{ id = 'media-options'; type = 'Group'; name = 'Video and audio options' }
     )
     # Whether the helpers are installed is a property of the machine, not of the
@@ -354,8 +361,8 @@ try {
         }
     }
     $observation.liveRegions = $liveRegions
-    Assert-True ($liveRegions['live-status'].present) 'The polite live region is missing from the accessibility tree.'
-    Assert-True ($liveRegions['live-alert'].present) 'The assertive live region is missing from the accessibility tree.'
+    Assert-True ($liveRegions['live-status'].present) 'The polite live region is missing from the accessibility tree while Add download is open.'
+    Assert-True ($liveRegions['live-alert'].present) 'The assertive live region is missing from the accessibility tree while Add download is open.'
 
     Assert-True (Select-Radio $renderer 'File or batch') 'The "File or batch" radio button could not be reselected.'
 
@@ -380,11 +387,40 @@ try {
         ("Tabbing through the composer left text behind: url=$([regex]::Escape([string] $observation.composerAfterKeyboardWalk.url))" +
             " destination=$([regex]::Escape([string] $observation.composerAfterKeyboardWalk.destination))")
 
-    $urlField = Find-ById $renderer 'url'
-    $urlField.SetFocus()
+    # With the dialog closed, the page's own controls are back in the tree.
+    [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
+    Start-Sleep -Milliseconds 700
+    $pageControls = [System.Collections.Generic.List[object]]::new()
+    foreach ($expectation in @(
+            @{ id = 'add-open'; type = 'Button'; name = 'Add download' },
+            @{ id = 'keyboard-help'; type = 'Button'; name = 'Keyboard help' },
+            @{ id = 'open-settings'; type = 'Button'; name = 'Settings' },
+            @{ id = 'queue-search'; type = 'Edit'; name = 'Search downloads' },
+            @{ id = 'empty-add'; type = 'Button'; name = 'Add a download' },
+            @{ id = 'active-stat'; type = 'Group'; name = 'active' },
+            @{ id = 'live-status'; type = ''; name = '' },
+            @{ id = 'live-alert'; type = ''; name = '' })) {
+        $element = Find-ById $renderer $expectation.id
+        if (-not $element) { $failures.Add("Page control '$($expectation.id)' is not in the accessibility tree after Add download closes."); continue }
+        $info = Get-ElementInfo $element
+        $pageControls.Add([pscustomobject]@{ automationId = $expectation.id; controlType = $info.controlType; name = $info.name })
+        if ($expectation.type -and $info.controlType -ne $expectation.type) {
+            $failures.Add("Page control '$($expectation.id)' has role '$($info.controlType)', expected '$($expectation.type)'.")
+        }
+        if ($expectation.name -and $info.name -notmatch [regex]::Escape($expectation.name)) {
+            $failures.Add("Page control '$($expectation.id)' is named '$($info.name)', which does not contain '$($expectation.name)'.")
+        }
+    }
+    $observation.pageControls = $pageControls
+
+    # Open Add download from the keyboard: Enter on the app bar button lands in
+    # the links box, ready to type.
+    $null = Set-ControlFocus $renderer 'add-open' $process
     Start-Sleep -Milliseconds 300
+    [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
+    Start-Sleep -Milliseconds 700
     $focused = Get-RendererFocus $renderer
-    Assert-True ($focused -and $focused.automationId -eq 'url') 'The address box could not be focused to begin typing.'
+    Assert-True ($focused -and $focused.automationId -eq 'url') "Enter on Add download did not put focus in the links box. Focus: $($focused | ConvertTo-Json -Compress)"
     [FetchpathUia]::PostText($renderWidget, $typedAddress)
     Start-Sleep -Milliseconds 400
     $typedUrlReadBack = Get-FieldValue $renderer 'url'
@@ -448,7 +484,15 @@ try {
     Assert-True ($observation.fixtureServer.state -eq 'Running') `
         "The fixture server was not still running after the journey: $($observation.fixtureServer | ConvertTo-Json -Compress)"
 
+    # A successful add closes the dialog and hands focus to a control that is
+    # still on the page, never to the document body.
+    $observation.focusAfterAdd = Get-RendererFocus $renderer
+    Assert-True ($observation.focusAfterAdd -and $observation.focusAfterAdd.automationId -eq 'add-open') `
+        "After adding, focus was not returned to Add download. Focus: $($observation.focusAfterAdd | ConvertTo-Json -Compress)"
+
     # ------------------------------------------------- 6. rejected address ----
+    Open-Popup $renderer 'add-open'
+    Start-Sleep -Milliseconds 600
     Set-Field $renderer 'url' 'javascript:alert(1)'
     Set-Field $renderer 'destination' (Join-Path $workDirectory 'rejected.bin')
     Start-Sleep -Milliseconds 300
@@ -463,22 +507,34 @@ try {
     Assert-True ([bool] $observation.rejectedAddress.visibleErrorText) `
         'The rejection is not present as text in the accessibility tree.'
 
+    # FP-035: Escape closes Add download and keeps the draft; Cancel clears it.
     $urlField = Find-ById $renderer 'url'
     $urlField.SetFocus()
     Start-Sleep -Milliseconds 250
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
     Start-Sleep -Milliseconds 900
-    $observation.rejectedAddress.assertiveLiveRegionAfterEscape = Get-ControlText $renderer 'live-alert'
+    $observation.rejectedAddress.dialogClosedByEscape = -not (Find-ById $renderer 'url')
     $observation.rejectedAddress.visibleErrorTextAfterEscape = Find-VisibleText $renderer 'not an HTTP or HTTPS address'
-    $observation.rejectedAddress.addressValueAfterEscape = Get-FieldValue $renderer 'url'
     $observation.rejectedAddress.focusAfterEscape = Get-RendererFocus $renderer
-    Assert-True ([string]::IsNullOrEmpty($observation.rejectedAddress.addressValueAfterEscape)) `
-        'Escape did not clear the composer.'
+    Assert-True $observation.rejectedAddress.dialogClosedByEscape 'Escape did not close Add download.'
     Assert-True (-not $observation.rejectedAddress.visibleErrorTextAfterEscape) `
-        'Escape cleared the composer but left the error text in the accessibility tree.'
+        'Escape closed Add download but left its error text in the accessibility tree.'
     Assert-True ($observation.rejectedAddress.focusAfterEscape -and
-        $observation.rejectedAddress.focusAfterEscape.automationId -eq 'start-download') `
-        "Escape left focus on '$($observation.rejectedAddress.focusAfterEscape.automationId)' instead of a real control."
+        $observation.rejectedAddress.focusAfterEscape.automationId -eq 'add-open') `
+        "Escape left focus on '$($observation.rejectedAddress.focusAfterEscape.automationId)' instead of Add download."
+
+    $invokeAdd = { Open-Popup $renderer 'add-open' }
+    & $invokeAdd
+    $observation.rejectedAddress.draftKeptAfterEscape = Get-FieldValue $renderer 'url'
+    Assert-True ($observation.rejectedAddress.draftKeptAfterEscape -eq 'javascript:alert(1)') `
+        "Reopening Add download after Escape lost the draft. Read back: '$($observation.rejectedAddress.draftKeptAfterEscape)'"
+    Invoke-Control $renderer 'add-cancel' $process
+    Start-Sleep -Milliseconds 600
+    & $invokeAdd
+    $observation.rejectedAddress.addressAfterCancel = Get-FieldValue $renderer 'url'
+    Assert-True ([string]::IsNullOrEmpty($observation.rejectedAddress.addressAfterCancel)) 'Cancel did not clear Add download.'
+    [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
+    Start-Sleep -Milliseconds 600
 
     # ----------------------------------------------------- 7. queue filters ---
     function Get-FilterStates {
@@ -652,7 +708,7 @@ try {
             skipLink = ($css -match '\.skip-link')
             pressedFilterNotColourOnly = (($css -match 'aria-pressed=.?true') -and ($css -match 'double\s+canvastext'))
             highlightFocusInForcedColors = ($css -match 'solid Highlight')
-            screenReaderTextNotUppercased = ($css -match '\.hero-stat \.stat-unit')
+            screenReaderTextNotUppercased = ($css -match '\.active-chip \.stat-unit')
         }
         foreach ($key in @('prefersReducedMotion', 'forcedColors', 'focusVisible', 'skipLink',
                 'pressedFilterNotColourOnly', 'highlightFocusInForcedColors', 'screenReaderTextNotUppercased')) {

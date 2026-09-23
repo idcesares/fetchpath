@@ -17,71 +17,115 @@
     <p id="live-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     <p id="live-alert" class="sr-only" role="alert" aria-atomic="true"></p>
 
-    <main class="shell">
-      <header class="hero">
-        <div class="hero-text">
-          <p class="eyebrow">FETCHPATH</p>
-          <h1>Your downloads, on a clear path.</h1>
-          <p class="lede">Queue a link or a batch, choose when it starts, and recover safely if the app restarts.</p>
-        </div>
-        <div class="hero-side">
-          <!-- The visible number and the word "active" are two separate text runs.
-               role="group" plus aria-labelledby gives the figure one deliberate
-               sentence as its accessible name instead of two loose fragments. -->
-          <div id="active-stat" class="hero-stat" role="group" aria-labelledby="active-stat-text">
-            <strong id="active-count" aria-hidden="true">0</strong>
-            <span class="stat-unit" aria-hidden="true">active</span>
-            <span id="active-stat-text" class="sr-only">No downloads are active.</span>
-          </div>
-          <div class="hero-actions">
-            <button id="open-settings" class="quiet" type="button" aria-haspopup="dialog">Settings</button>
-            <button id="keyboard-help" class="quiet" type="button" aria-haspopup="dialog">Keyboard help</button>
-          </div>
-        </div>
-      </header>
+    <!-- The download list is the application. The bar above it holds only the
+         things you reach for from anywhere: adding, settings and help. -->
+    <header class="appbar">
+      <div class="brand">
+        <img src="/icon.png" alt="" width="28" height="28" />
+        <span class="brand-name">Fetchpath</span>
+      </div>
+      <!-- The visible number and the word "active" are two separate text runs.
+           role="group" plus aria-labelledby gives the figure one deliberate
+           sentence as its accessible name instead of two loose fragments. -->
+      <div id="active-stat" class="active-chip" role="group" aria-labelledby="active-stat-text">
+        <strong id="active-count" aria-hidden="true">0</strong>
+        <span class="stat-unit" aria-hidden="true">active</span>
+        <span id="active-stat-text" class="sr-only">No downloads are active.</span>
+      </div>
+      <div class="appbar-actions">
+        <button id="add-open" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+N Control+L">
+          <span aria-hidden="true" class="plus">+ </span>Add download
+        </button>
+        <button id="open-settings" class="quiet" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+,">Settings</button>
+        <button id="keyboard-help" class="quiet" type="button" aria-haspopup="dialog">Keyboard help</button>
+      </div>
+    </header>
 
+    <main class="shell">
       <!-- First run only. Dismissing it records the choice, so it never returns
            uninvited. -->
-      <section id="onboarding" class="card onboarding" aria-labelledby="onboarding-title" hidden>
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">WELCOME</p>
-            <h2 id="onboarding-title">Three things worth knowing</h2>
-          </div>
-          <button id="dismiss-onboarding" class="quiet" type="button">Got it</button>
-        </div>
-        <ol class="onboarding-steps">
+      <section id="onboarding" class="banner onboarding" aria-labelledby="onboarding-title" hidden>
+        <h2 id="onboarding-title" class="sr-only">Welcome to Fetchpath</h2>
+        <ul class="onboarding-steps">
           <li>
-            <strong>Paste a link and choose where it goes.</strong>
-            <span>Fetchpath saves to your Downloads folder unless you pick somewhere else. It never overwrites a file that is already there.</span>
+            <strong>Paste a link anywhere</strong>
+            <span>or choose Add download. Files go to your Downloads folder and never overwrite one already there.</span>
           </li>
           <li>
-            <strong>Video and audio need two extra programs.</strong>
-            <span id="onboarding-media-note">Fetchpath does not include <code>yt-dlp</code> and <code>ffmpeg</code>. Set them up once from Settings.</span>
-            <button id="onboarding-open-media" class="secondary" type="button">Set up media tools</button>
+            <strong>Video and audio</strong>
+            <span id="onboarding-media-note">need <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath can set them up for you.</span>
+            <button id="onboarding-open-media" class="secondary compact" type="button">Set up media tools</button>
           </li>
           <li>
-            <strong>Closing the window keeps the queue running.</strong>
-            <span>Fetchpath stays in the notification area. You can change that in Settings.</span>
+            <strong>Closing keeps downloads running</strong>
+            <span>from the notification area. You can change that in Settings.</span>
           </li>
-        </ol>
+        </ul>
+        <button id="dismiss-onboarding" class="quiet compact" type="button">Got it</button>
       </section>
 
-      <form id="download-form" class="card composer" aria-labelledby="add-heading">
+      <section class="queue-heading" aria-labelledby="queue-title">
+        <h1 id="queue-title" tabindex="-1">Downloads</h1>
+        <label class="search" for="queue-search">
+          <span class="sr-only">Search downloads</span>
+          <input id="queue-search" type="search" autocomplete="off" placeholder="Search files or sources" />
+        </label>
+      </section>
+
+      <div id="queue-filters" class="filters" role="group" aria-label="Filter downloads">
+        <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
+        <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
+        <button class="filter" type="button" data-filter="paused" aria-pressed="false">Paused</button>
+        <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>
+        <button class="filter" type="button" data-filter="completed" aria-pressed="false">Completed</button>
+        <button class="filter" type="button" data-filter="failed" aria-pressed="false">Needs attention</button>
+      </div>
+
+      <!-- Power mode only. Additive: nothing here duplicates or replaces a
+           control that is available without it. -->
+      <section id="stats-panel" class="card stats" aria-labelledby="stats-title" hidden>
         <div class="section-heading">
-          <div>
-            <p class="eyebrow">ADD TO QUEUE</p>
-            <h2 id="add-heading">Review before downloading</h2>
-          </div>
+          <h2 id="stats-title">This session</h2>
+          <p class="hint" id="stats-note">Throughput observed across active downloads, not a measure of your connection.</p>
+        </div>
+        <dl id="stats-grid" class="stats-grid" aria-describedby="stats-note"></dl>
+      </section>
+
+      <div class="queue-status-row">
+        <p id="queue-summary" class="queue-summary">No downloads yet.</p>
+        <div class="queue-bulk-actions">
+          <button id="pause-all" class="secondary" type="button" hidden>Pause all</button>
+          <button id="resume-all" class="secondary" type="button" hidden>Resume all</button>
+          <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
+        </div>
+      </div>
+
+      <section id="queue-empty" class="empty-state" aria-labelledby="empty-title" hidden>
+        <img src="/icon.png" alt="" width="56" height="56" />
+        <h2 id="empty-title">Nothing downloading yet</h2>
+        <p>Copy a link and paste it here with <kbd>Ctrl</kbd> <kbd>V</kbd>, or add one yourself.</p>
+        <button id="empty-add" type="button" aria-haspopup="dialog">Add a download</button>
+      </section>
+
+      <section id="job-card" class="queue" aria-label="Download queue" hidden>
+        <div id="job-list" role="list"></div>
+      </section>
+
+      <p class="tray-note" id="tray-note">Closing this window keeps the queue available from the notification area.</p>
+    </main>
+
+    <dialog id="add-dialog" class="card dialog add-dialog" aria-labelledby="add-heading">
+      <form id="download-form" class="composer">
+        <div class="section-heading">
+          <h2 id="add-heading">Add download</h2>
+          <fieldset id="download-kind" class="mode-switch">
+            <legend class="sr-only">Download type</legend>
+            <label><input type="radio" name="download-kind" value="file" checked /> <span>File or batch</span></label>
+            <label><input type="radio" name="download-kind" value="media" /> <span>Video or audio</span></label>
+          </fieldset>
         </div>
 
-        <fieldset id="download-kind" class="mode-switch">
-          <legend class="sr-only">Download type</legend>
-          <label><input type="radio" name="download-kind" value="file" checked /> <span>File or batch</span></label>
-          <label><input type="radio" name="download-kind" value="media" /> <span>Video or audio</span></label>
-        </fieldset>
-
-        <label for="url">Download addresses <span class="hint">one per line</span></label>
+        <label for="url">Links <span class="hint">one per line</span></label>
         <textarea
           id="url"
           name="url"
@@ -94,7 +138,7 @@
           placeholder="https://example.com/archive.zip"
         ></textarea>
         <p id="url-hint" class="hint field-note">
-          Press <kbd>Ctrl</kbd> <kbd>L</kbd> from anywhere to return here. Press <kbd>Esc</kbd> to clear the form.
+          Paste one link, or several for a batch. <kbd>Esc</kbd> closes this and keeps what you typed.
         </p>
 
         <section id="media-options" class="media-options" aria-labelledby="media-options-heading" hidden>
@@ -106,7 +150,7 @@
                so the dead end becomes a next step. -->
           <div id="media-setup-needed" class="media-setup-needed" hidden>
             <strong>Media tools are not set up yet</strong>
-            <p class="hint">Saving video or audio needs <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath does not include them.</p>
+            <p class="hint">Saving video or audio needs <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath can download them for you.</p>
             <button id="media-open-settings" class="secondary" type="button">Set them up</button>
           </div>
           <div id="media-inspect-controls">
@@ -127,7 +171,7 @@
           </div>
         </section>
 
-        <label for="destination">Save first item as</label>
+        <label for="destination">Save as</label>
         <div class="destination-row">
           <input
             id="destination"
@@ -143,7 +187,7 @@
           </button>
         </div>
         <p id="destination-hint" class="hint field-note">
-          For a batch, the remaining files use this folder and their source filenames.
+          For a batch, the other files go in the same folder under their own names.
         </p>
 
         <details id="advanced-options" class="advanced">
@@ -194,71 +238,29 @@
             <p id="form-error" class="error" hidden></p>
             <p id="form-notice" class="field-note notice" hidden></p>
           </div>
+          <button id="add-cancel" class="quiet" type="button">Cancel</button>
           <button id="start-download" type="submit">Add to queue</button>
         </div>
       </form>
-
-      <section class="queue-heading" aria-labelledby="queue-title">
-        <div>
-          <p class="eyebrow">DOWNLOADS</p>
-          <h2 id="queue-title" tabindex="-1">Queue and history</h2>
-        </div>
-        <label class="search" for="queue-search">
-          <span class="sr-only">Search downloads</span>
-          <input id="queue-search" type="search" autocomplete="off" placeholder="Search files or sources" />
-        </label>
-      </section>
-
-      <div id="queue-filters" class="filters" role="group" aria-label="Filter downloads">
-        <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
-        <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
-        <button class="filter" type="button" data-filter="paused" aria-pressed="false">Paused</button>
-        <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>
-        <button class="filter" type="button" data-filter="completed" aria-pressed="false">Completed</button>
-        <button class="filter" type="button" data-filter="failed" aria-pressed="false">Needs attention</button>
-      </div>
-
-      <!-- Power mode only. Additive: nothing here duplicates or replaces a
-           control that is available without it. -->
-      <section id="stats-panel" class="card stats" aria-labelledby="stats-title" hidden>
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">STATISTICS</p>
-            <h2 id="stats-title">This session</h2>
-          </div>
-          <p class="hint" id="stats-note">Throughput observed across active downloads, not a measure of your connection.</p>
-        </div>
-        <dl id="stats-grid" class="stats-grid" aria-describedby="stats-note"></dl>
-      </section>
-
-      <div class="queue-status-row">
-        <p id="queue-summary" class="queue-summary">No downloads yet.</p>
-        <div class="queue-bulk-actions">
-          <button id="pause-all" class="secondary" type="button" hidden>Pause all</button>
-          <button id="resume-all" class="secondary" type="button" hidden>Resume all</button>
-          <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
-        </div>
-      </div>
-      <section id="job-card" class="queue" aria-label="Download queue" hidden>
-        <div id="job-list" role="list"></div>
-      </section>
-
-      <p class="tray-note" id="tray-note">Closing this window keeps the queue available from the notification area.</p>
-    </main>
+    </dialog>
 
     <dialog id="shortcuts-dialog" class="card dialog" aria-labelledby="shortcuts-title">
       <h2 id="shortcuts-title">Keyboard shortcuts</h2>
       <dl class="shortcuts">
-        <dt><kbd>Tab</kbd> / <kbd>Shift</kbd> <kbd>Tab</kbd></dt>
-        <dd>Move through every control in reading order.</dd>
-        <dt><kbd>Ctrl</kbd> <kbd>L</kbd></dt>
-        <dd>Focus the download addresses box and select what is in it.</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>N</kbd> or <kbd>Ctrl</kbd> <kbd>L</kbd></dt>
+        <dd>Add a download.</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>V</kbd></dt>
+        <dd>Paste a link anywhere outside a text box to add it.</dd>
         <dt><kbd>Ctrl</kbd> <kbd>,</kbd></dt>
         <dd>Open Settings.</dd>
-        <dt><kbd>Esc</kbd></dt>
-        <dd>Clear the form, or close this dialog.</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>F</kbd></dt>
+        <dd>Search downloads.</dd>
+        <dt><kbd>Tab</kbd> / <kbd>Shift</kbd> <kbd>Tab</kbd></dt>
+        <dd>Move through every control in reading order.</dd>
         <dt><kbd>Enter</kbd></dt>
-        <dd>Add the previewed downloads to the queue from anywhere in the form.</dd>
+        <dd>Add the previewed downloads to the queue from anywhere in the Add download form.</dd>
+        <dt><kbd>Esc</kbd></dt>
+        <dd>Close a dialog. Add download keeps what you typed.</dd>
         <dt><kbd>Space</kbd></dt>
         <dd>Toggle a filter, or open Advanced options.</dd>
       </dl>
@@ -268,12 +270,7 @@
     </dialog>
 
     <dialog id="settings-dialog" class="card dialog settings-dialog" aria-labelledby="settings-title">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">SETTINGS</p>
-          <h2 id="settings-title">Settings</h2>
-        </div>
-      </div>
+      <h2 id="settings-title">Settings</h2>
 
       <p id="settings-repaired" class="field-note notice" hidden>
         Your saved settings could not be read, so Fetchpath started from its defaults. Anything you change here is
@@ -334,6 +331,23 @@
             <button id="media-tools-locate" class="secondary" type="button">I already have them<span aria-hidden="true">…</span></button>
           </div>
           <p id="media-tools-licence" class="hint field-note"></p>
+        </fieldset>
+
+        <fieldset class="settings-group">
+          <legend>Browser extension</legend>
+          <p id="browser-setup-state" class="field-note">Checking…</p>
+          <p id="browser-setup-detail" class="hint field-note"></p>
+          <ol id="browser-setup-steps" class="setup-steps" hidden>
+            <li>Choose <strong>Open extension folder</strong> below.</li>
+            <li>In Chrome or Edge, open the extensions page. Copy its address with the buttons below and paste it into the address bar.</li>
+            <li>Turn on <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and pick the folder that opened.</li>
+            <li>Right-click any download link and choose <strong>Send link to Fetchpath</strong>.</li>
+          </ol>
+          <div class="media-tools-actions">
+            <button id="browser-open-folder" class="secondary" type="button">Open extension folder</button>
+            <button id="browser-copy-chrome" class="secondary" type="button">Copy Chrome address</button>
+            <button id="browser-copy-edge" class="secondary" type="button">Copy Edge address</button>
+          </div>
         </fieldset>
 
         <fieldset class="settings-group">

@@ -9,3 +9,4 @@ node_modules/
 Thumbs.db
 .codebase-memory/
 .serena/
+/apps/desktop/src-tauri/binaries/

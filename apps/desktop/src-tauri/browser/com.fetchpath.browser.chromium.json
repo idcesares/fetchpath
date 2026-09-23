@@ -1,0 +1,7 @@
+{
+  "name": "com.fetchpath.browser",
+  "description": "Fetchpath browser capture bridge",
+  "path": "fetchpath-browser-host.exe",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://lfikhkjdpjcjaboanknaabncpkbgoele/"]
+}

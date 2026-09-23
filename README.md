@@ -1,141 +1,72 @@
 # Fetchpath
 
-A Windows download manager for everyday and power users, with video and audio
-downloading included in the first public release. The engine is a portable Rust
-core; the desktop client is Tauri 2 on Microsoft-serviced Windows 11 x64.
+A download manager for Windows 11 that keeps your downloads in one list,
+pauses and resumes them, survives restarts, and checks that what arrived is
+exactly what you asked for. It can also save video and audio.
 
-**Current state:** release-candidate work for 0.1.0. The desktop application
-performs real downloads through the native core, with a persistent queue,
-checkpointed pause and resume, schedules, browser capture, media quality
-selection, settings and a statistics panel. It has not been published, and
-interim builds are unsigned by decision.
+**Get started:** install it, then paste a link into the window. The
+[user guide](docs/user/GUIDE.md) covers everything else.
 
-See [PROJECT.md](PROJECT.md) for the current phase and
-[docs/tasks/backlog.json](docs/tasks/backlog.json) for what remains. The backlog
-is authoritative for task state; nothing else in the repository duplicates it.
+## What it does
 
-## What it does today
+- **One list for everything.** Queue a single link or a whole batch, start
+  downloads now or at a set time, and search and filter what you have.
+- **Pause and resume.** A paused download carries on from where it stopped,
+  even after a restart. If the file changed on the website in the meantime,
+  Fetchpath starts again rather than joining two different files.
+- **Never overwrites.** A file that's already there is never replaced.
+- **Honest progress.** Percent and time left appear only when the website says
+  how big the file is. Otherwise you see how much has arrived, not a guess.
+- **Checksums.** Paste a publisher's SHA-256 and Fetchpath saves the file only
+  if it matches. Every finished download shows the SHA-256 of what arrived.
+- **Video and audio.** Choose a quality and save it, using `yt-dlp` and
+  `ffmpeg`. Fetchpath sets both up for you from their official releases and
+  checks them first.
+- **From your browser.** Right-click a link in Chrome or Edge and choose
+  **Send link to Fetchpath**. Downloads that need you to be signed in keep
+  working.
+- **Keyboard and screen reader friendly.** Every control has a name, and
+  everything can be done from the keyboard.
+- **A command line too.** `fetchpath download LINK` for scripts and terminals.
+  See [CLI.md](docs/user/CLI.md).
 
-- **Queue and history.** A persistent bounded queue with search, filters,
-  batch adds, scheduled start times and recovery after a restart.
-- **Honest progress.** Percent, received of total, transfer rate and remaining
-  time, all derived from what the source actually stated. A source that reports
-  no length produces no percentage rather than a guessed one.
-- **Pause and resume.** A running file download pauses to its checkpoint and
-  resumes from that offset, across a restart. Media downloads have no checkpoint
-  to return to, so pause is not offered on them.
-- **Safe publication.** Downloads are staged, verified and published
-  create-only. Fetchpath never overwrites a destination and reports the SHA-256
-  it observed, which is an integrity record and not a publisher-authenticity
-  claim.
-- **Verified multi-source repair.** Metalink 4 piece hashes localize damage and
-  repair only the failing byte ranges from another mirror.
-- **Bounded content cache.** Content carrying a trusted digest is retained under
-  a quota so a later download of the same content can complete with no network
-  at all. Cached bytes are re-verified before they are published, and anything
-  fetched with credentials is recorded as such and is never shareable. A cache
-  hit is reuse, not throughput, and is reported as such rather than as a
-  transfer rate.
-- **Protocols.** HTTP/1.1 and HTTP/2 through a statically linked libcurl, plus
-  FTP, FTPS and SFTP. HTTP/3 is reported unavailable by the packaged build, and
-  no speed claim is made for any of them.
-- **Browser capture.** An extension hands off explicit per-link captures with
-  exact-origin permissions, origin-scoped cookie replay and a DPAPI-protected
-  inbox.
-- **Video and audio.** Engine-confirmed quality lists and selected-variant
-  downloads through supervised `yt-dlp` and `ffmpeg` helpers, which Fetchpath
-  does not bundle and helps you set up instead.
-- **Settings and Power mode.** Concurrency, default save folder, automatic
-  retry, media tool setup, window behaviour and appearance. Power mode adds
-  per-download diagnostics and a session statistics panel without moving
-  anything else.
+## Requirements
 
-## Run and verify
-
-Node.js 24+ and Git are enough for the repository checks. No npm install and no
-third-party JavaScript dependencies are needed for them.
-
-```powershell
-node tools/tasks.mjs next          # the next ready task
-node tools/tasks.mjs show FP-018   # one task in full
-node tools/tasks.mjs check         # backlog graph, contracts and evidence
-node --test                        # fixture, extension and backlog tests
-node tools/licenses/generate.mjs --check   # third-party notices are current
-```
-
-The Rust workspace needs Rust 1.98+:
-
-```powershell
-$cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
-& $cargo test --workspace --locked
-& $cargo clippy --workspace --all-targets -- -D warnings
-& $cargo fmt --check
-& $cargo build --workspace --locked
-target\debug\fetchpath.exe download https://example.com/ example.html
-```
-
-The desktop application needs `pnpm` through corepack:
-
-```powershell
-corepack pnpm --dir apps/desktop install
-corepack pnpm --dir apps/desktop tauri dev     # run it
-corepack pnpm --dir apps/desktop tauri build   # optimized build and installer
-```
-
-On-machine compatibility harnesses, which install and drive the real artifacts:
-
-```powershell
-pwsh -NoProfile -File tests/compatibility/windows/ui-accessibility.ps1
-pwsh -NoProfile -File tests/compatibility/windows/packaging-lifecycle.ps1
-pwsh -NoProfile -File tests/compatibility/metalink/run.ps1
-```
-
-Both Windows scripts throw on a failed assertion and still write their partial
-observation, so a JSON file with `"passed": false` is a failure record rather
-than a missing run. See [benchmark instructions](tools/bench/README.md) for
-fixture and curl baseline commands. Generated files belong under ignored
-`work/`; promote a small verified summary into the validation record.
+Windows 11 on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
+0.1.0.
 
 ## Installing
 
-Interim builds are **unsigned by decision**, so Windows SmartScreen warns the
-first time one runs. That is the expected consequence of shipping without a
-certificate, not a sign that anything is wrong with a build you produced
-yourself. An Authenticode hook is wired into the bundle and is completely inert
-with no certificate configured; setting `FETCHPATH_SIGN_THUMBPRINT` signs every
-binary in the bundle with no other change.
+Download `Fetchpath_0.1.0_x64-setup.exe` and run it. It installs just for you
+and doesn't need administrator rights.
 
-The installer is per-user: it installs to `%LOCALAPPDATA%\Fetchpath`, registers
-under `HKCU`, and never asks for elevation. Uninstalling asks whether to remove
-your queue, history and settings, defaulting to keeping them; files you have
-already downloaded are never removed, wherever you saved them.
+Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns the first time
+it runs**. Check the installer's SHA-256 first, as described in the
+[user guide](docs/user/GUIDE.md#install), then choose **More info → Run
+anyway**.
 
-`yt-dlp` and `ffmpeg` are **not** bundled. Settings detects whether you already
-have them, accepts a folder you point at, or downloads a pinned version and
-checks it against a recorded SHA-256 before installing it. A build whose
-`media-tools.json` has no recorded digest refuses the download and offers only
-the manual path; see [tools/media-tools/pin.mjs](tools/media-tools/pin.mjs) for
-how a maintainer records one.
+## Limitations in 0.1.0
 
-## Documentation
+- HTTP and HTTPS links only. HTTP/2 is used where the server offers it.
+  HTTP/3, FTP and SFTP aren't available in the app yet.
+- Video and audio can't be paused, and no particular website is promised to
+  work; that depends on `yt-dlp`.
+- The browser extension is added in developer mode for now. Firefox isn't
+  supported yet.
+- Fetchpath doesn't claim to download faster than your browser does.
+- Not code-signed, and x64 only.
 
-- [Project direction and current phase](PROJECT.md)
-- [Architecture and roadmap](docs/architecture/PLAN.md)
-- [Repository map and boundaries](docs/architecture/REPOSITORY.md)
-- [UX contract](docs/product/UX.md)
-- [Development workflow](docs/development/WORKFLOW.md)
-- [Windows UX and packaging evidence](docs/development/WINDOWS-PACKAGING.md)
-- [Metalink repair evidence](docs/development/METALINK-REPAIR.md)
-- [Content cache and paired LAN evidence](docs/development/CACHE-AND-LAN.md)
-- [Media integration evidence](docs/development/MEDIA-INTEGRATION.md)
-- [Browser capture evidence](docs/development/BROWSER-CAPTURE.md)
+See the [changelog](CHANGELOG.md) for what's in this version.
 
-## Working on it
+## Licence
 
-[AGENTS.md](AGENTS.md) defines bounded retrieval, task ownership, evidence and
-escalation. Start a task with its backlog ID and record `in_progress`, an owner
-and a narrow owned file area before changing anything.
+Fetchpath is available under either the [MIT licence](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), at your option. Third-party components
+are listed in
+[THIRD-PARTY-NOTICES.md](apps/desktop/src-tauri/THIRD-PARTY-NOTICES.md).
+`yt-dlp` and `ffmpeg` aren't part of Fetchpath and keep their own licences.
 
-The repository has no remote and no published releases. Local development does
-not imply publishing, paid provisioning, external messages, or destructive
-actions.
+## Contributing
+
+Building, testing and the project's working rules are in
+[CONTRIBUTING.md](CONTRIBUTING.md).

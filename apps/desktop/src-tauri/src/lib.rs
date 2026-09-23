@@ -1,4 +1,5 @@
 pub mod browser_bridge;
+pub mod browser_setup;
 pub mod media_setup;
 pub mod settings;
 
@@ -1569,21 +1570,43 @@ fn recovery_action(snapshot: &JobSnapshot) -> (Option<String>, bool) {
         return (None, false);
     }
     let error = snapshot.error.as_deref().unwrap_or_default();
+    (Some(action_for_error(error).into()), true)
+}
+
+/// The next step a failure calls for. Only `retry` is eligible for automatic
+/// retry, so anything that needs a person must map to something else.
+fn action_for_error(error: &str) -> &'static str {
     // A checksum failure needs a person: the source or the checksum is wrong.
     // It is deliberately not "retry", so automatic retry never repeats it.
     if error.contains("checksum_mismatch") || error.contains("checksum_unreadable") {
-        (Some("check_checksum".into()), true)
+        "check_checksum"
     } else if error.contains("source_expired") || error.contains("unknown_variant") {
-        (Some("refresh_source".into()), true)
+        "refresh_source"
     } else if error.contains("helper_unavailable") {
-        (Some("configure_media_tools".into()), true)
+        "configure_media_tools"
     } else if error.contains("destination_conflict") || error.contains("already exists") {
-        (Some("choose_new_path".into()), true)
-    } else if error.contains("invalid_url") || error.contains("invalid_destination") {
-        (Some("edit_link".into()), true)
+        "choose_new_path"
+    } else if error.contains("invalid_url")
+        || error.contains("invalid_destination")
+        || refused_by_server(error)
+    {
+        "edit_link"
     } else {
-        (Some("retry".into()), true)
+        "retry"
     }
+}
+
+/// True for an HTTP client error that repeating will not change, such as 404
+/// or 403. The engine reports every HTTP error as a transfer failure, so the
+/// status is read from its message here. 408 and 429 are the server asking
+/// for time, and stay retryable along with every 5xx.
+fn refused_by_server(error: &str) -> bool {
+    error
+        .split("HTTP status ")
+        .nth(1)
+        .and_then(|rest| rest.get(..3))
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
 }
 
 fn find_record<'a>(state: &'a QueueState, job_id: &str) -> Result<&'a QueueRecord, String> {
@@ -2075,6 +2098,16 @@ fn use_media_tools_dir(
     media_tools_status(app, jobs)
 }
 
+#[tauri::command]
+fn browser_setup_status(app: AppHandle) -> browser_setup::BrowserSetupStatus {
+    browser_setup::status(app.path().resource_dir().ok().as_deref())
+}
+
+#[tauri::command]
+fn reveal_extension_folder(app: AppHandle) -> Result<(), String> {
+    browser_setup::reveal_extension_folder(app.path().resource_dir().ok().as_deref())
+}
+
 fn media_tools_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
@@ -2214,7 +2247,9 @@ pub fn run() {
             reveal_download,
             media_tools_status,
             install_media_tools,
-            use_media_tools_dir
+            use_media_tools_dir,
+            browser_setup_status,
+            reveal_extension_folder
         ])
         .setup(|app| {
             let state_path = app.path().app_data_dir()?.join("queue-v1.json");
@@ -2300,6 +2335,24 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use std::time::Duration;
+
+    /// Settings promises that only connection problems are retried
+    /// automatically. A link the server refuses is not one.
+    #[test]
+    fn a_link_the_server_refuses_waits_for_a_person_instead_of_retrying() {
+        for refused in [400, 401, 403, 404, 410, 451] {
+            let error = format!("source.transfer_failed: HTTP status {refused}");
+            assert_eq!(action_for_error(&error), "edit_link", "HTTP {refused}");
+        }
+        for transient in [408, 429, 500, 502, 503] {
+            let error = format!("source.transfer_failed: HTTP status {transient}");
+            assert_eq!(action_for_error(&error), "retry", "HTTP {transient}");
+        }
+        assert_eq!(
+            action_for_error("source.transfer_failed: [7] Couldn't connect to server"),
+            "retry"
+        );
+    }
 
     fn fixture(body: Vec<u8>, slow: bool) -> (String, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

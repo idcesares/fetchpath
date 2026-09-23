@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 23 September 2026. Phase: M6 — first public release candidate, with M8 distribution work started. Engine, packaging and multi-source repair are done; the release-polish tasks that closed the gap against the UX contract are done; FP-018 is the remaining release gate. Both halves of FP-020, the bounded content cache and paired LAN mode, are implemented and tested; FP-020 remains in progress until the independent strong-model review of `adapters/lan` is done.
+Updated 23 September 2026. Phase: M6 — first public release candidate, with M8 distribution work started. Engine, packaging and multi-source repair are done; the release-polish tasks that closed the gap against the UX contract are done. A deliverability review on 23 September found the product unusable without a developer in several places, and FP-035 to FP-039 closed them: a queue-first desktop layout, browser capture registered by the installer, a user-grade CLI installed on PATH, pinned media helpers, and end-user documentation. FP-018 is the remaining release gate. Both halves of FP-020, the bounded content cache and paired LAN mode, are implemented and tested; FP-020 remains in progress until the independent strong-model review of `adapters/lan` is done.
 
 ## Confirmed purpose
 
@@ -20,6 +20,8 @@ The user uses Codex with Astra High for lead orchestration and explicitly permit
 - Browser capture evidence: [browser capture](docs/development/BROWSER-CAPTURE.md).
 - Windows UX/packaging evidence: [windows packaging](docs/development/WINDOWS-PACKAGING.md).
 - Release polish evidence: [release polish](docs/development/RELEASE-POLISH.md).
+- Release readiness evidence: [release readiness](docs/development/RELEASE-READINESS.md).
+- End-user documentation: [user guide](docs/user/GUIDE.md) and [CLI](docs/user/CLI.md); contributor setup is in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Verified multi-source evidence: [metalink repair](docs/development/METALINK-REPAIR.md).
 - Content cache evidence: [cache and paired LAN](docs/development/CACHE-AND-LAN.md).
 
@@ -35,11 +37,11 @@ Progress is now reported from engine-confirmed values end to end: the total a so
 
 Run `node tools/tasks.mjs next`. FP-020 needs an independent strong-model review of `adapters/lan` (credential boundary, handshake cryptography, DPAPI FFI) before it can be marked done; its implementation, tests and evidence are recorded. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; pins remain per process.
 
-FP-018, the first public release candidate, is the remaining release gate and now depends on FP-026 through FP-030. The generated license manifest and the uninstaller's data-removal branch are done. Media integration is proven on lawful local HLS/DASH fixtures; the supported public-source corpus remains a release gate, as do clean-machine and ARM64 coverage and recording the media-helper checksums with `node tools/media-tools/pin.mjs`.
+FP-018, the first public release candidate, is the remaining release gate. Decided on 23 September 2026: 0.1.0 names no supported media site (media is best-effort), and 0.1.0 is x64 only. The helper checksums are pinned. What remains is one packaging-lifecycle run on a freshly imaged Windows 11 x64 PC, and either FP-020's review of `adapters/lan` or a release CLI built without the LAN commands, which are compiled in but unlisted. See [the release candidate record](docs/development/RELEASE-CANDIDATE.md).
 
 ## Remaining choices
 
-Ordinary third-party websites are the working source assumption. The accepted desktop baseline is Tauri 2 on Microsoft-serviced Windows 11 x64 releases; ARM64 is deferred until its complete native/helper/installer path is tested. Distribution is direct download and interim builds are unsigned by decision, with SmartScreen consequences documented and an inert Authenticode hook wired for a future certificate. Media scope is confirmed; the first supported-site corpus still needs explicit selection. Cloud infrastructure, paid provisioning, and external publication are not implied by local development.
+Ordinary third-party websites are the working source assumption. The accepted desktop baseline is Tauri 2 on Microsoft-serviced Windows 11 x64 releases; ARM64 is deferred until its complete native/helper/installer path is tested. Distribution is direct download and interim builds are unsigned by decision, with SmartScreen consequences documented and an inert Authenticode hook wired for a future certificate. Media scope is confirmed; 0.1.0 promises no named site (decided 23 September 2026). Cloud infrastructure, paid provisioning, and external publication are not implied by local development.
 
 ## Research provenance
 

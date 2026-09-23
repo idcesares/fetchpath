@@ -263,9 +263,18 @@ fn install_entry(entry: &ManifestEntry, install_dir: &Path) -> Result<(), String
                 .map_err(|error| format!("Could not place {}: {error}", target.display()))?;
         }
         ArtifactKind::Zip => {
-            extract_zip(&downloaded, install_dir)?;
+            // Unpacked apart from the install folder: that folder may already
+            // hold another helper, and the wrapper directory can only be
+            // recognised as the sole entry of a folder of its own.
+            let unpack = install_dir.join(format!(".{}-unpack", entry.name));
+            let _ = fs::remove_dir_all(&unpack);
+            fs::create_dir_all(&unpack)
+                .map_err(|error| format!("Could not create {}: {error}", unpack.display()))?;
+            let extracted = extract_zip(&downloaded, &unpack)
+                .and_then(|()| move_unpacked_into(&unpack, install_dir));
             let _ = fs::remove_file(&downloaded);
-            flatten_single_root(install_dir)?;
+            let _ = fs::remove_dir_all(&unpack);
+            extracted?;
         }
     }
     Ok(())
@@ -357,6 +366,28 @@ fn flatten_single_root(install_dir: &Path) -> Result<(), String> {
             .map_err(|error| format!("Could not move {}: {error}", target.display()))?;
     }
     let _ = fs::remove_dir_all(wrapper.path());
+    Ok(())
+}
+
+/// Flattens an unpacked archive and moves its contents into the install
+/// folder. A same-named leftover from an earlier incomplete install is
+/// replaced: `is_present` already found it unusable.
+fn move_unpacked_into(unpack: &Path, install_dir: &Path) -> Result<(), String> {
+    flatten_single_root(unpack)?;
+    let items: Vec<_> = fs::read_dir(unpack)
+        .map_err(|error| format!("Could not read {}: {error}", unpack.display()))?
+        .filter_map(Result::ok)
+        .collect();
+    for item in items {
+        let target = install_dir.join(item.file_name());
+        if target.is_dir() {
+            let _ = fs::remove_dir_all(&target);
+        } else if target.exists() {
+            let _ = fs::remove_file(&target);
+        }
+        fs::rename(item.path(), &target)
+            .map_err(|error| format!("Could not move {}: {error}", target.display()))?;
+    }
     Ok(())
 }
 
@@ -469,6 +500,51 @@ mod tests {
 
         assert!(dir.join("yt-dlp.exe").is_file());
         assert!(dir.join("ffmpeg.exe").is_file());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Regression: yt-dlp is installed first, so the ffmpeg archive used to be
+    /// unpacked beside it, the wrapper was never the folder's only entry, and
+    /// ffmpeg stayed two levels below where discovery looks.
+    #[test]
+    fn an_archive_is_flattened_even_when_another_helper_is_already_installed() {
+        let install = temp_dir("beside-yt-dlp");
+        fs::write(install.join("yt-dlp.exe"), b"binary").unwrap();
+        let unpack = install.join(".ffmpeg-unpack");
+        let wrapper = unpack.join("ffmpeg-9.0.2-essentials_build");
+        fs::create_dir_all(wrapper.join("bin")).unwrap();
+        fs::write(wrapper.join("bin").join("ffmpeg.exe"), b"binary").unwrap();
+        fs::write(wrapper.join("bin").join("ffprobe.exe"), b"binary").unwrap();
+
+        move_unpacked_into(&unpack, &install).unwrap();
+
+        assert!(install.join("yt-dlp.exe").is_file());
+        assert!(install.join("bin").join("ffmpeg.exe").is_file());
+        assert!(install.join("bin").join("ffprobe.exe").is_file());
+        fs::remove_dir_all(&install).unwrap();
+    }
+
+    /// The real guided path: fetch every pinned helper from its publisher,
+    /// verify it against the recorded digest, install it, and prove it runs.
+    /// Needs network access, so it is run by hand:
+    /// `cargo test -p fetchpath-desktop --locked -- --ignored guided_install`
+    #[test]
+    #[ignore = "downloads the pinned helpers from their publishers"]
+    fn guided_install_fetches_verifies_and_runs_the_pinned_helpers() {
+        let dir = temp_dir("guided");
+        let outcome = install(&dir).expect("the pinned helpers install and run");
+        assert_eq!(outcome.installed.len(), manifest().tools.len());
+
+        let status = status(None, &dir);
+        assert!(
+            status.ready,
+            "installed helpers must report ready: {:?}",
+            status.problem
+        );
+        assert!(status.available.iter().all(|tool| tool.pinned));
+
+        // A second run finds everything present and fetches nothing.
+        assert!(install(&dir).unwrap().installed.is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

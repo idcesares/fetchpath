@@ -35,9 +35,21 @@
     "category": "Utility",
     "shortDescription": "Download manager for Windows",
     "longDescription": "Fetchpath queues downloads, verifies what arrived, and recovers safely after a restart.",
-    "resources": [
-      "THIRD-PARTY-NOTICES.md"
-    ],
+    "resources": {
+      "THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "tools/user-path.ps1": "tools/user-path.ps1",
+      "../../../LICENSE-MIT": "LICENSE-MIT.txt",
+      "../../../LICENSE-APACHE": "LICENSE-APACHE.txt",
+      "../../../docs/user/GUIDE.md": "docs/GUIDE.md",
+      "../../../docs/user/CLI.md": "docs/CLI.md",
+      "browser/com.fetchpath.browser.chromium.json": "com.fetchpath.browser.chromium.json",
+      "browser/com.fetchpath.browser.firefox.json": "com.fetchpath.browser.firefox.json",
+      "../../../extensions/browser/manifest.chromium.json": "browser-extension/manifest.json",
+      "../../../extensions/browser/background.js": "browser-extension/background.js",
+      "../../../extensions/browser/policy.js": "browser-extension/policy.js",
+      "../../../extensions/browser/icons/icon-32.png": "browser-extension/icons/icon-32.png",
+      "../../../extensions/browser/icons/icon-128.png": "browser-extension/icons/icon-128.png"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

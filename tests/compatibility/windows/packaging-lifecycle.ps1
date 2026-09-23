@@ -374,7 +374,11 @@ try {
     $observation.retainedQueue.cardsAfterUpgrade = $recoveredCards
     Assert-True (@($recoveredCards | Where-Object { $_ -match 'retained-complete\.bin, Complete' }).Count -eq 1) `
         "The completed history item did not survive the upgrade. Cards: $($recoveredCards -join ' | ')"
-    Assert-True (@($recoveredCards | Where-Object { $_ -match 'retained-failed\.bin, Needs attention' }).Count -eq 1) `
+    # A refused connection is a transport failure, which automatic retry (on by
+    # default since FP-028) reschedules within one scheduler tick. Either state
+    # proves the item and its recovery path survived; which one depends only on
+    # when the card is sampled.
+    Assert-True (@($recoveredCards | Where-Object { $_ -match 'retained-failed\.bin, (Needs attention|Scheduled)' }).Count -eq 1) `
         "The safe-source recovery item did not survive the upgrade. Cards: $($recoveredCards -join ' | ')"
     Assert-True (@($recoveredCards | Where-Object { $_ -match 'retained-private\.bin, Link needed' }).Count -eq 1) `
         "The private-source item must require an explicit refresh after restore. Cards: $($recoveredCards -join ' | ')"

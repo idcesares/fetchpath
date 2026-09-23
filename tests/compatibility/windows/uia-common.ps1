@@ -431,7 +431,7 @@ function Get-RendererRoot($Process, [int] $TimeoutSeconds = 40) {
             foreach ($handle in [FetchpathUia]::Children($Process.MainWindowHandle)) {
                 if ([FetchpathUia]::ClassName($handle) -ne 'Chrome_RenderWidgetHostHWND') { continue }
                 $candidate = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
-                if (Find-ById $candidate 'url') { return $candidate }
+                if (Find-ById $candidate 'add-open') { return $candidate }
             }
         }
         Start-Sleep -Milliseconds 150
@@ -439,8 +439,28 @@ function Get-RendererRoot($Process, [int] $TimeoutSeconds = 40) {
     throw 'The desktop renderer did not expose its accessible controls.'
 }
 
+function Open-Popup($Root, [string] $AutomationId) {
+    # A button with aria-haspopup is exposed by Chromium through
+    # ExpandCollapse rather than Invoke; both perform its default action.
+    $element = Find-ById $Root $AutomationId
+    if (-not $element) { throw "Control not found: $AutomationId" }
+    $invoke = $null
+    if ($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref] $invoke)) {
+        $invoke.Invoke()
+    } else {
+        $element.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+    }
+    Start-Sleep -Milliseconds 600
+}
+
 function Set-Field($Root, [string] $AutomationId, [string] $Value) {
     $element = Find-ById $Root $AutomationId
+    # FP-035: the composer lives in the Add download dialog, which is out of
+    # the accessibility tree until it opens. Open it the way a person would.
+    if (-not $element -and (Find-ById $Root 'add-open')) {
+        Open-Popup $Root 'add-open'
+        $element = Find-ById $Root $AutomationId
+    }
     if (-not $element) { throw "Field not found: $AutomationId" }
     $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value)
 }

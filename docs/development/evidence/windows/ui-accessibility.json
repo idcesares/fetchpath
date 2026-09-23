@@ -8,7 +8,7 @@
     "enterAndEscape": "PostMessage WM_KEYDOWN/WM_KEYUP, translated to WM_CHAR, because Blink activates on keypress",
     "text": "PostMessage WM_CHAR per character"
   },
-  "appDataExistedBeforeRun": true,
+  "appDataExistedBeforeRun": false,
   "onboardingShownOnLaunch": true,
   "onboardingDismissedByKeyboard": true,
   "onboardingReturnedAfterRestart": false,
@@ -16,6 +16,11 @@
     "automationId": "RootWebArea",
     "name": "Fetchpath",
     "controlType": "Document"
+  },
+  "addDialogOpenedByKeyboard": {
+    "automationId": "url",
+    "name": "Links one per line",
+    "controlType": "Edit"
   },
   "advancedOptionsOpenedByKeyboard": true,
   "tabOrder": [
@@ -25,6 +30,14 @@
         "automationId": "",
         "name": "Skip to the download queue",
         "controlType": "Hyperlink"
+      }
+    },
+    {
+      "expected": "add-open",
+      "focused": {
+        "automationId": "add-open",
+        "name": "Add download",
+        "controlType": "Button"
       }
     },
     {
@@ -44,26 +57,26 @@
       }
     },
     {
-      "expected": "download type",
+      "expected": "queue-search",
       "focused": {
-        "automationId": "",
-        "name": "File or batch",
-        "controlType": "RadioButton"
+        "automationId": "queue-search",
+        "name": "Search downloads",
+        "controlType": "Edit"
       }
     },
     {
-      "expected": "url",
+      "expected": "empty-add",
       "focused": {
-        "automationId": "url",
-        "name": "Download addresses one per line",
-        "controlType": "Edit"
+        "automationId": "empty-add",
+        "name": "Add a download",
+        "controlType": "Button"
       }
     },
     {
       "expected": "destination",
       "focused": {
         "automationId": "destination",
-        "name": "Save first item as",
+        "name": "Save as",
         "controlType": "Edit"
       }
     },
@@ -78,8 +91,8 @@
     {
       "expected": "Advanced options",
       "focused": {
-        "automationId": "",
-        "name": "Advanced options start time",
+        "automationId": "advanced-summary",
+        "name": "Advanced options start time, checksum",
         "controlType": "Button"
       }
     },
@@ -108,87 +121,32 @@
       }
     },
     {
+      "expected": "checksum",
+      "focused": {
+        "automationId": "checksum",
+        "name": "SHA-256 checksum optional",
+        "controlType": "Edit"
+      }
+    },
+    {
+      "expected": "add-cancel",
+      "focused": {
+        "automationId": "add-cancel",
+        "name": "Cancel",
+        "controlType": "Button"
+      }
+    },
+    {
       "expected": "start-download",
       "focused": {
         "automationId": "start-download",
         "name": "Add to queue",
         "controlType": "Button"
       }
-    },
-    {
-      "expected": "queue-search",
-      "focused": {
-        "automationId": "queue-search",
-        "name": "Search downloads",
-        "controlType": "Edit"
-      }
-    },
-    {
-      "expected": "filter All",
-      "focused": {
-        "automationId": "",
-        "name": "All",
-        "controlType": "Button"
-      }
-    },
-    {
-      "expected": "filter Active",
-      "focused": {
-        "automationId": "",
-        "name": "Active",
-        "controlType": "Button"
-      }
-    },
-    {
-      "expected": "filter Paused",
-      "focused": {
-        "automationId": "",
-        "name": "Paused",
-        "controlType": "Button"
-      }
-    },
-    {
-      "expected": "filter Scheduled",
-      "focused": {
-        "automationId": "",
-        "name": "Scheduled",
-        "controlType": "Button"
-      }
-    },
-    {
-      "expected": "filter Completed",
-      "focused": {
-        "automationId": "",
-        "name": "Completed",
-        "controlType": "Button"
-      }
-    },
-    {
-      "expected": "filter Needs attention",
-      "focused": {
-        "automationId": "",
-        "name": "Needs attention",
-        "controlType": "Button"
-      }
     }
   ],
   "mediaModeSelected": true,
   "focusableControls": [
-    {
-      "automationId": "",
-      "controlType": "Hyperlink",
-      "name": "Skip to the download queue"
-    },
-    {
-      "automationId": "open-settings",
-      "controlType": "Button",
-      "name": "Settings"
-    },
-    {
-      "automationId": "keyboard-help",
-      "controlType": "Button",
-      "name": "Keyboard help"
-    },
     {
       "automationId": "",
       "controlType": "RadioButton",
@@ -202,7 +160,7 @@
     {
       "automationId": "url",
       "controlType": "Edit",
-      "name": "Download addresses one per line"
+      "name": "Links one per line"
     },
     {
       "automationId": "media-open-settings",
@@ -212,7 +170,7 @@
     {
       "automationId": "destination",
       "controlType": "Edit",
-      "name": "Save first item as"
+      "name": "Save as"
     },
     {
       "automationId": "choose-destination",
@@ -220,9 +178,9 @@
       "name": "Choose a destination file"
     },
     {
-      "automationId": "",
+      "automationId": "advanced-summary",
       "controlType": "Button",
-      "name": "Advanced options start time"
+      "name": "Advanced options start time, checksum"
     },
     {
       "automationId": "schedule",
@@ -265,404 +223,14 @@
       "name": "Start when ready , clearing the start time"
     },
     {
+      "automationId": "add-cancel",
+      "controlType": "Button",
+      "name": "Cancel"
+    },
+    {
       "automationId": "start-download",
       "controlType": "Button",
       "name": "Add to queue"
-    },
-    {
-      "automationId": "queue-search",
-      "controlType": "Edit",
-      "name": "Search downloads"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "All"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Active"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Paused"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Scheduled"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Completed"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Needs attention"
-    },
-    {
-      "automationId": "pause-all",
-      "controlType": "Button",
-      "name": "Pause all (2)"
-    },
-    {
-      "automationId": "cancel-download",
-      "controlType": "Button",
-      "name": "Cancel the current download, cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Retry: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Pause: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Cancel: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Pause: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Cancel: cancelled.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Open folder: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Copy path: completed.bin"
-    },
-    {
-      "automationId": "",
-      "controlType": "Button",
-      "name": "Remove: completed.bin"
     }
   ],
   "unnamedFocusableControls": [],
@@ -671,12 +239,12 @@
     {
       "automationId": "url",
       "controlType": "Edit",
-      "name": "Download addresses one per line"
+      "name": "Links one per line"
     },
     {
       "automationId": "destination",
       "controlType": "Edit",
-      "name": "Save first item as"
+      "name": "Save as"
     },
     {
       "automationId": "choose-destination",
@@ -689,19 +257,9 @@
       "name": "Add to queue"
     },
     {
-      "automationId": "keyboard-help",
+      "automationId": "add-cancel",
       "controlType": "Button",
-      "name": "Keyboard help"
-    },
-    {
-      "automationId": "open-settings",
-      "controlType": "Button",
-      "name": "Settings"
-    },
-    {
-      "automationId": "queue-search",
-      "controlType": "Edit",
-      "name": "Search downloads"
+      "name": "Cancel"
     },
     {
       "automationId": "clear-schedule",
@@ -709,19 +267,9 @@
       "name": "Start when ready , clearing the start time"
     },
     {
-      "automationId": "active-stat",
-      "controlType": "Group",
-      "name": "2 downloads active now."
-    },
-    {
       "automationId": "download-kind",
       "controlType": "Group",
       "name": "Download type"
-    },
-    {
-      "automationId": "queue-filters",
-      "controlType": "Group",
-      "name": "Filter downloads"
     },
     {
       "automationId": "media-options",
@@ -749,12 +297,54 @@
     "url": "",
     "destination": ""
   },
+  "pageControls": [
+    {
+      "automationId": "add-open",
+      "controlType": "Button",
+      "name": "Add download"
+    },
+    {
+      "automationId": "keyboard-help",
+      "controlType": "Button",
+      "name": "Keyboard help"
+    },
+    {
+      "automationId": "open-settings",
+      "controlType": "Button",
+      "name": "Settings"
+    },
+    {
+      "automationId": "queue-search",
+      "controlType": "Edit",
+      "name": "Search downloads"
+    },
+    {
+      "automationId": "empty-add",
+      "controlType": "Button",
+      "name": "Add a download"
+    },
+    {
+      "automationId": "active-stat",
+      "controlType": "Group",
+      "name": "No downloads are active."
+    },
+    {
+      "automationId": "live-status",
+      "controlType": "StatusBar",
+      "name": ""
+    },
+    {
+      "automationId": "live-alert",
+      "controlType": "Text",
+      "name": ""
+    }
+  ],
   "keyboardOnlyJourney": {
-    "typedAddress": "http://127.0.0.1:59099/keyboard.bin",
+    "typedAddress": "http://127.0.0.1:33848/keyboard.bin",
     "typedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
-    "typedUrlReadBack": "http://127.0.0.1:59099/keyboard.bin",
+    "typedUrlReadBack": "http://127.0.0.1:33848/keyboard.bin",
     "typedDestinationReadBack": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
-    "tabsFromDestinationToSubmit": 6,
+    "tabsFromDestinationToSubmit": 8,
     "finalStatus": "Complete",
     "bytesOnDisk": 262144,
     "politeLiveRegion": "keyboard-only.bin finished downloading.",
@@ -762,21 +352,27 @@
   },
   "fixtureServer": {
     "state": "Running",
-    "port": 59099,
+    "port": 33848,
     "unexpectedOutput": [],
     "errors": []
+  },
+  "focusAfterAdd": {
+    "automationId": "add-open",
+    "name": "Add download",
+    "controlType": "Button"
   },
   "rejectedAddress": {
     "assertiveLiveRegion": "javascript:alert(1) is not an HTTP or HTTPS address.",
     "visibleErrorText": "javascript:alert(1) is not an HTTP or HTTPS address.",
-    "assertiveLiveRegionAfterEscape": "",
+    "dialogClosedByEscape": true,
     "visibleErrorTextAfterEscape": null,
-    "addressValueAfterEscape": "",
     "focusAfterEscape": {
-      "automationId": "start-download",
-      "name": "Add to queue",
+      "automationId": "add-open",
+      "name": "Add download",
       "controlType": "Button"
-    }
+    },
+    "draftKeptAfterEscape": "javascript:alert(1)",
+    "addressAfterCancel": ""
   },
   "queueFilters": {
     "before": [
@@ -886,6 +482,11 @@
         "name": "Attempts before giving up"
       },
       {
+        "automationId": "media-tools-install",
+        "controlType": "Button",
+        "name": "Download and set up"
+      },
+      {
         "automationId": "media-tools-locate",
         "controlType": "Button",
         "name": "I already have them"
@@ -928,12 +529,12 @@
     "controlType": "Hyperlink",
     "focusAfterActivation": {
       "automationId": "queue-title",
-      "name": "Queue and history",
+      "name": "Downloads",
       "controlType": "Text"
     }
   },
   "styleChecks": {
-    "stylesheet": "index-FJ3Ubp57.css",
+    "stylesheet": "index-m_JPj_ye.css",
     "prefersReducedMotion": true,
     "forcedColors": true,
     "focusVisible": true,
@@ -945,8 +546,10 @@
   "failures": [],
   "passed": true,
   "machineRestored": {
-    "appDataPresentAtExit": true,
-    "webviewProfilePresentAtExit": true,
+    "appDataCreatedByThisRunRemoved": true,
+    "webviewProfileCreatedByThisRunRemoved": true,
+    "appDataPresentAtExit": false,
+    "webviewProfilePresentAtExit": false,
     "workDirectoryPresentAtExit": false,
     "matchesPreflight": true
   }

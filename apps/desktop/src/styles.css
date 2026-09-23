@@ -24,6 +24,7 @@
   --danger: #ffb5ae;
   --hover: #26342e;
   --track: #223029;
+  --appbar: #0b100ecc;
 }
 
 * { box-sizing: border-box; }
@@ -44,26 +45,39 @@ button, input, textarea, select { font: inherit; }
 .shell {
   width: min(1080px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 40px 0 36px;
+  padding: 18px 0 36px;
 }
 
 h1, h2, h3, p { margin-top: 0; }
-h1 { max-width: 14ch; margin-bottom: 10px; font-size: clamp(2.35rem, 5vw, 4rem); line-height: 1; letter-spacing: -.045em; }
+h1 { margin-bottom: 0; font-size: 1.6rem; line-height: 1.2; letter-spacing: -.025em; }
 h2 { margin-bottom: 0; font-size: 1.38rem; letter-spacing: -.02em; }
 h3 { margin-bottom: 0; font-size: 1.04rem; }
 
-.hero { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 28px; }
-.hero-text { min-width: 0; }
-.hero-side { display: flex; align-items: center; gap: 12px; }
-.hero-actions { display: flex; flex-direction: column; gap: 8px; }
-.lede { max-width: 62ch; margin-bottom: 0; color: var(--muted); font-size: 1.06rem; }
+/* App bar ----------------------------------------------------------------- */
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px max(24px, calc((100% - 1080px) / 2));
+  border-bottom: 1px solid var(--line);
+  background: var(--appbar);
+  backdrop-filter: blur(14px);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 760; font-size: 1.08rem; letter-spacing: -.01em; }
+.brand img { display: block; border-radius: 7px; }
+.appbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.appbar-actions button { min-height: 38px; }
+.plus { margin-right: 2px; font-size: 1.15em; line-height: 1; }
 .eyebrow { margin-bottom: 5px; color: var(--accent); font-size: .7rem; font-weight: 780; letter-spacing: .18em; }
-.hero-stat { min-width: 92px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: #0d1411aa; text-align: center; }
-.hero-stat strong { display: block; color: var(--accent); font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.active-chip { display: flex; align-items: baseline; gap: 6px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--inset); }
+.active-chip strong { color: var(--accent); font-size: 1rem; font-variant-numeric: tabular-nums; }
 /* Scoped to .stat-unit so `text-transform: uppercase` cannot reach the
    screen-reader sentence, which some readers would then spell out letter by
    letter. */
-.hero-stat .stat-unit { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+.active-chip .stat-unit { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
 
 .card {
   border: 1px solid var(--line);
@@ -72,16 +86,29 @@ h3 { margin-bottom: 0; font-size: 1.04rem; }
   box-shadow: 0 18px 46px #00000028;
 }
 
-.composer { padding: 22px; }
-.onboarding { margin-bottom: 20px; padding: 22px; }
-.onboarding-steps { display: grid; gap: 14px; margin: 0; padding-left: 22px; }
-.onboarding-steps li { padding-left: 4px; }
-.onboarding-steps strong { display: block; }
-.onboarding-steps span { display: block; margin-top: 3px; color: var(--muted); font-size: .9rem; }
-.onboarding-steps button { margin-top: 10px; }
+/* First-run banner: three facts on one line, dismissed for good. */
+.banner { display: flex; align-items: start; gap: 18px; margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface); }
+.onboarding-steps { display: grid; flex: 1; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 22px; margin: 0; padding: 0; list-style: none; }
+.onboarding-steps strong { display: block; font-size: .92rem; }
+.onboarding-steps span { display: block; margin-top: 2px; color: var(--muted); font-size: .84rem; }
+.onboarding-steps button { margin-top: 8px; }
 .onboarding code { display: inline; padding: 1px 5px; border-radius: 4px; background: var(--inset); font-size: .88em; }
+button.compact { min-height: 32px; padding: 4px 11px; font-size: .84rem; }
 
-.mode-switch { display: flex; gap: 8px; margin: 18px 0; padding: 0; border: 0; }
+/* Empty queue: the one place the app explains itself at length. */
+.empty-state { display: grid; justify-items: center; gap: 6px; max-width: 560px; margin: 28px auto 8px; padding: 44px 24px; border: 1px dashed var(--line-soft); border-radius: 16px; text-align: center; }
+.empty-state img { margin-bottom: 6px; border-radius: 12px; }
+.empty-state p { margin: 0 0 12px; color: var(--muted); }
+
+/* Add download dialog */
+.add-dialog { width: min(720px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+.add-dialog .section-heading { align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.composer > label:first-of-type { margin-top: 10px; }
+/* The actions stay reachable however long the batch preview grows. */
+.add-dialog { padding-bottom: 0; }
+.add-dialog .submit-row { position: sticky; bottom: 0; margin: 16px -22px 0; padding: 14px 22px; border-top: 1px solid var(--line); background: var(--surface-raised); }
+
+.mode-switch { display: flex; gap: 8px; margin: 0; padding: 0; border: 0; }
 .mode-switch label { display: flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid var(--line-soft); border-radius: 999px; cursor: pointer; }
 .mode-switch input { width: auto; min-height: 0; margin: 0; accent-color: var(--accent); }
 .media-options { margin: 14px 0; padding: 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--inset); }
@@ -178,7 +205,8 @@ dialog.dialog {
   padding: 22px;
   color: inherit;
 }
-dialog.dialog::backdrop { background: #04070699; }
+dialog.dialog { background: var(--surface-raised); box-shadow: 0 24px 80px #000000a0; }
+dialog.dialog::backdrop { background: #040706c4; backdrop-filter: blur(3px); }
 dialog.dialog h2 { margin-bottom: 14px; }
 .shortcuts { display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; margin: 0; }
 .shortcuts dt { white-space: nowrap; }
@@ -199,7 +227,10 @@ dialog.dialog h2 { margin-bottom: 14px; }
 .check input { flex: 0 0 auto; width: auto; min-height: 0; margin: 3px 0 0; accent-color: var(--accent); }
 .settings-group select { width: 100%; padding: 10px 12px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: inherit; }
 .media-tools-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-#media-tools-state { font-weight: 680; }
+#media-tools-state, #browser-setup-state { font-weight: 680; }
+.setup-steps { margin: 10px 0 0; padding-left: 22px; color: var(--muted); font-size: .88rem; }
+.setup-steps li { margin: 4px 0; }
+#browser-setup-state[data-ready="true"]::before { content: "\2713\00a0"; color: var(--accent); }
 #media-tools-state[data-ready="true"]::before { content: "\2713\00a0"; color: var(--accent); }
 #media-tools-state[data-ready="false"]::before { content: "\26a0\00a0"; color: var(--warning); }
 
@@ -217,10 +248,10 @@ dialog.dialog h2 { margin-bottom: 14px; }
 .preview li { padding: 5px 0 6px 3px; }
 .preview li strong, .preview li span { display: block; }
 .preview li span { max-width: 90ch; color: var(--quiet); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.submit-row { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 20px; }
+.submit-row { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .submit-row .error { flex: 1; margin: 0; }
 
-.queue-heading { align-items: end; margin: 34px 2px 14px; }
+.queue-heading { align-items: center; margin: 6px 2px 12px; }
 .queue-heading .eyebrow { margin-bottom: 2px; }
 .search { width: min(340px, 45vw); margin: 0; }
 .filters { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 7px; }
@@ -234,9 +265,11 @@ button.filter[aria-pressed="true"] { border-color: var(--accent); color: var(--o
 .queue-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .queue-status-row button { min-height: 36px; padding: 5px 12px; font-size: .84rem; }
 .queue { display: block; }
-#job-list { display: grid; gap: 12px; }
+#job-list { display: grid; gap: 8px; }
+/* Grid items default to their content width; a long path must not widen the row. */
+#job-list > *, .job-header > div { min-width: 0; }
 
-.job { padding: 18px 20px; }
+.job { padding: 14px 18px; border-radius: 12px; box-shadow: none; }
 .job-header { align-items: center; }
 .job-source { max-width: 72ch; margin: 3px 0 0; color: var(--quiet); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status { flex: 0 0 auto; padding: 5px 10px; border-radius: 999px; color: var(--accent); background: #153328; font-size: .82rem; font-weight: 680; }
@@ -244,9 +277,11 @@ button.filter[aria-pressed="true"] { border-color: var(--accent); color: var(--o
 .status[data-state="paused"] { color: #cddbd4; background: #2b3a34; }
 .status[data-state="failed"], .status[data-state="cancelled"], .status[data-state="needs_source"] { color: #ffd4d0; background: #46221f; }
 .status[data-state="completed"] { color: var(--on-accent); background: var(--accent); }
-.destination { margin: 12px 0 8px; color: var(--muted); overflow-wrap: anywhere; }
+.destination { margin: 2px 0 10px; overflow: hidden; color: var(--muted); font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
 .schedule-note { margin: -2px 0 9px; color: #f9d98b; font-size: .86rem; }
-progress { width: 100%; height: 10px; accent-color: var(--accent); }
+progress { width: 100%; height: 6px; border: 0; border-radius: 999px; background: var(--track); accent-color: var(--accent); appearance: none; }
+/* A stopped download has no progress worth drawing; its message says what happened. */
+.job:is([data-state="failed"], [data-state="cancelled"], [data-state="needs_source"]) progress { display: none; }
 /* A determinate bar needs an explicit track and fill in both engines; without
    them a themed WebView draws a bar that is nearly invisible against the card. */
 progress::-webkit-progress-bar { border-radius: 999px; background: var(--track); }
@@ -258,9 +293,12 @@ progress::-webkit-progress-value { border-radius: 999px; background: var(--accen
 .metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; color: var(--muted); font-size: .86rem; font-variant-numeric: tabular-nums; }
 .metrics .primary { color: inherit; font-weight: 680; }
 .bytes { display: block; margin: 6px 0 0; color: var(--muted); font-size: .86rem; font-variant-numeric: tabular-nums; }
-.job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 15px; }
-.job-actions button { min-height: 36px; padding: 5px 12px; font-size: .84rem; }
-.completion { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.job-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 8px; }
+.job-footer .metrics { margin: 0; }
+.job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-left: auto; }
+.job-actions button { min-height: 32px; padding: 4px 11px; font-size: .82rem; }
+.completion { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.completion code { color: var(--muted); font: .76rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .digest-label { margin-bottom: 4px; color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
 code { display: block; color: inherit; overflow-wrap: anywhere; }
 .diagnostics { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
@@ -269,18 +307,19 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 .diagnostics dd { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .fine-print, .tray-note { color: var(--quiet); font-size: .78rem; }
 .fine-print { margin: 8px 0 0; }
-.tray-note { margin: 18px 4px 0; text-align: center; }
+.tray-note { margin: 22px 4px 0; text-align: center; }
 .error { margin: 14px 0 0; color: var(--danger); }
 .job-error { padding: 10px 12px; border-left: 3px solid var(--danger); background: #351a18; }
+.job-note { margin: 10px 0 0; padding: 8px 12px; border-left: 3px solid var(--warning); color: var(--muted); font-size: .86rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 720px) {
-  .shell { width: min(100% - 28px, 1080px); padding-top: 26px; }
-  .hero { align-items: start; flex-direction: column; }
-  .hero-stat { display: none; }
-  .hero-side { width: 100%; }
-  .hero-actions { flex-direction: row; width: 100%; }
-  .hero-actions button { flex: 1; }
+  .shell { width: min(100% - 28px, 1080px); padding-top: 14px; }
+  .appbar { flex-wrap: wrap; padding-inline: 14px; }
+  .active-chip { display: none; }
+  .appbar-actions { width: 100%; }
+  .appbar-actions button { flex: 1; }
+  .banner { flex-direction: column; }
   .destination-row, .schedule-row { grid-template-columns: 1fr; }
   .destination-row button, .submit-row button { width: 100%; }
   .submit-row { align-items: stretch; flex-direction: column; }
@@ -303,7 +342,7 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
     --surface: #fffffff2; --surface-raised: #fff; --inset: #ffffffb8;
     --line: #c2d0c9; --line-soft: #b4c6bd; --field: #fff; --field-line: #74827b;
     --muted: #4d5d55; --quiet: #64756c; --hover: #e5eee9; --track: #d6e3dc;
-    --danger: #a3231a;
+    --danger: #a3231a; --appbar: #f3f7f4d9;
   }
   :root:not([data-theme="dark"]) body {
     background: radial-gradient(circle at 8% -4%, #ccecdf 0, transparent 31rem),
@@ -318,7 +357,8 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
   :root:not([data-theme="dark"]) .status[data-state="needs_source"] { color: #7d1811; background: #fbdedb; }
   :root:not([data-theme="dark"]) .job-error { background: #fff0ee; }
   :root:not([data-theme="dark"]) .stats-grid dd { color: #15563f; }
-  :root:not([data-theme="dark"]) .eyebrow { color: #15563f; }
+  :root:not([data-theme="dark"]) .eyebrow,
+  :root:not([data-theme="dark"]) .active-chip strong { color: #15563f; }
   :root:not([data-theme="dark"]) button.filter[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #0d3527; }
 }
 
@@ -329,7 +369,7 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
   --surface: #fffffff2; --surface-raised: #fff; --inset: #ffffffb8;
   --line: #c2d0c9; --line-soft: #b4c6bd; --field: #fff; --field-line: #74827b;
   --muted: #4d5d55; --quiet: #64756c; --hover: #e5eee9; --track: #d6e3dc;
-  --danger: #a3231a;
+  --danger: #a3231a; --appbar: #f3f7f4d9;
 }
 :root[data-theme="light"] body {
   background: radial-gradient(circle at 8% -4%, #ccecdf 0, transparent 31rem),
@@ -344,17 +384,19 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 :root[data-theme="light"] .status[data-state="needs_source"] { color: #7d1811; background: #fbdedb; }
 :root[data-theme="light"] .job-error { background: #fff0ee; }
 :root[data-theme="light"] .stats-grid dd { color: #15563f; }
-:root[data-theme="light"] .eyebrow { color: #15563f; }
+:root[data-theme="light"] .eyebrow,
+:root[data-theme="light"] .active-chip strong { color: #15563f; }
 :root[data-theme="light"] button.filter[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #0d3527; }
 
 @media (forced-colors: active) {
-  .card, input, textarea, button, select, .completion, .preview, .advanced, dialog.dialog, .settings-group { border: 1px solid CanvasText; }
+  .card, input, textarea, button, select, .completion, .preview, .advanced, dialog.dialog, .settings-group, .banner, .empty-state, .appbar, .active-chip { border: 1px solid CanvasText; }
+  .active-chip strong { color: CanvasText; }
   .status { border: 1px solid CanvasText; color: CanvasText; background: Canvas; }
   /* System colours replace every fill, so the pressed filter keeps a border-only cue. */
   button.filter[aria-pressed="true"] { border: 3px double CanvasText; box-shadow: none; forced-color-adjust: none; }
   .skip-link { background: Canvas; color: LinkText; }
   :is(a, button, input, textarea, select, summary, [tabindex]):focus-visible { outline: 3px solid Highlight; }
-  .error, .job-error { border-left: 3px solid CanvasText; color: CanvasText; }
+  .error, .job-error, .job-note { border-left: 3px solid CanvasText; color: CanvasText; }
   progress { forced-color-adjust: none; }
   .stats-grid dd, .eyebrow { color: CanvasText; }
   #media-tools-state[data-ready="true"]::before,

@@ -20,8 +20,8 @@ interface JobSnapshot {
   bytesReceived: number;
   /** Absent whenever the source never stated a length. Never guessed. */
   totalBytes: number | null;
-  bytesPerSecond: number | null;
-  etaSeconds: number | null;
+  bytesPerSecond?: number | null;
+  etaSeconds?: number | null;
   attempt: number;
   destination: string | null;
   observedSha256: string | null;
@@ -196,6 +196,24 @@ const mediaToolsLicence = required<HTMLParagraphElement>("media-tools-licence");
 const mediaToolsInstall = required<HTMLButtonElement>("media-tools-install");
 const mediaToolsLocate = required<HTMLButtonElement>("media-tools-locate");
 
+const addDialog = required<HTMLDialogElement>("add-dialog");
+const addOpenButton = required<HTMLButtonElement>("add-open");
+const addCancelButton = required<HTMLButtonElement>("add-cancel");
+const emptyAddButton = required<HTMLButtonElement>("empty-add");
+const queueEmpty = required<HTMLElement>("queue-empty");
+
+const browserSetupState = required<HTMLParagraphElement>("browser-setup-state");
+const browserSetupDetail = required<HTMLParagraphElement>("browser-setup-detail");
+const browserSetupSteps = required<HTMLOListElement>("browser-setup-steps");
+const browserOpenFolder = required<HTMLButtonElement>("browser-open-folder");
+const browserCopyChrome = required<HTMLButtonElement>("browser-copy-chrome");
+const browserCopyEdge = required<HTMLButtonElement>("browser-copy-edge");
+
+interface BrowserSetupStatus {
+  extensionDir: string | null;
+  browsers: Array<{ browser: string; registered: boolean }>;
+}
+
 let jobs: JobSnapshot[] = [];
 let selectedFilter: QueueFilter = "all";
 let editingJobId: string | null = null;
@@ -219,8 +237,6 @@ let settingsView: SettingsView | null = null;
 let toolsStatus: ToolsStatus | null = null;
 let systemDownloadDir: string | null = null;
 let defaultDestinationDir: string | null = null;
-
-const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 /**
  * Polite announcements. The queue polls several times a second, so the same
@@ -247,23 +263,40 @@ function setQueueSummary(message: string): void {
   announce(message);
 }
 
-function scrollTo(element: HTMLElement): void {
-  element.scrollIntoView({ behavior: reducedMotion.matches ? "auto" : "smooth", block: "start" });
-}
-
 /* Dialogs ------------------------------------------------------------------
    `<dialog>` traps focus natively while modal. Every open records its trigger
    and every close restores it, including the Escape path, so keyboard focus is
    never dropped onto the document body. */
 
 function openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void {
-  dialogOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Opened from the page itself (a paste, a shortcut), there is no control to
+  // return to, and the dialog's fallback is used instead of the body.
+  const active = document.activeElement;
+  dialogOpener = active instanceof HTMLElement && active !== document.body ? active : null;
   dialog.showModal();
+  placeLiveRegions();
   focus.focus();
 }
 
+/**
+ * A modal dialog makes the rest of the page inert, and inert live regions are
+ * never announced. The two regions therefore live in whichever dialog is on
+ * top, and go back to the page when the last one closes.
+ */
+function placeLiveRegions(): void {
+  const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+  const top = open.length ? open[open.length - 1] : null;
+  const home = top ?? document.body;
+  if (liveStatus.parentElement !== home) home.prepend(liveStatus, liveAlert);
+}
+
+for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("close", placeLiveRegions);
+
 function restoreDialogFocus(fallback: HTMLElement): void {
-  (dialogOpener ?? fallback).focus();
+  // The opener may have gone while the dialog was open: the empty state's Add
+  // button disappears once the first download exists.
+  const opener = dialogOpener?.isConnected && dialogOpener.offsetParent !== null ? dialogOpener : null;
+  (opener ?? fallback).focus();
   dialogOpener = null;
 }
 
@@ -283,7 +316,105 @@ settingsForm.addEventListener("submit", (event) => event.preventDefault());
 async function showSettings(): Promise<void> {
   clearError(settingsError);
   openDialog(settingsDialog, settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup()]);
+}
+
+/* Add download -------------------------------------------------------------
+   The composer lives in a modal dialog so the queue can be the whole window.
+   Closing it keeps whatever was typed; Cancel clears it. */
+
+function openComposer(prefill?: string): void {
+  if (prefill !== undefined) {
+    if (!editingJobId) urlInput.value = prefill;
+    urlInput.dispatchEvent(new Event("input"));
+  }
+  if (!addDialog.open) openDialog(addDialog, urlInput);
+  else urlInput.focus();
+  urlInput.select();
+}
+
+addOpenButton.addEventListener("click", () => openComposer());
+emptyAddButton.addEventListener("click", () => openComposer());
+addCancelButton.addEventListener("click", () => {
+  clearComposer();
+  addDialog.close();
+});
+addDialog.addEventListener("close", () => {
+  // A half-made correction is not kept: reopening starts a new download.
+  if (editingJobId) clearComposer();
+  // The draft and its error stay in the dialog for next time, but an alert
+  // about a form that is no longer on screen would only confuse.
+  liveAlert.textContent = "";
+  announcedAlert = "";
+  restoreDialogFocus(addOpenButton);
+});
+
+/**
+ * Pasting a link anywhere outside a text field opens Add download with it,
+ * the way people already move links from a browser.
+ */
+document.addEventListener("paste", (event) => {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, select, [contenteditable]")) return;
+  if (settingsDialog.open || shortcutsDialog.open) return;
+  const text = event.clipboardData?.getData("text")?.trim() ?? "";
+  const links = text.split(/\s+/).filter((part) => /^https?:\/\//i.test(part));
+  if (!links.length) return;
+  event.preventDefault();
+  openComposer(links.join("\n"));
+});
+
+/* Browser extension ------------------------------------------------------- */
+
+async function refreshBrowserSetup(): Promise<void> {
+  try {
+    renderBrowserSetup(await invoke<BrowserSetupStatus>("browser_setup_status"));
+  } catch (error) {
+    browserSetupState.textContent = "Could not check the browser extension.";
+    browserSetupDetail.textContent = String(error);
+  }
+}
+
+function renderBrowserSetup(status: BrowserSetupStatus): void {
+  // Firefox's host is registered for a future signed add-on, but it cannot load
+  // this extension yet, so it is not named as connected.
+  const registered = status.browsers
+    .filter((entry) => entry.registered && entry.browser !== "Firefox")
+    .map((entry) => entry.browser);
+  const ready = registered.length > 0 && status.extensionDir !== null;
+  browserSetupState.dataset.ready = String(ready);
+  browserSetupState.textContent = ready
+    ? `Fetchpath is connected to ${registered.join(" and ")}. Add the extension to your browser to send links.`
+    : "The browser connection is set up by the Fetchpath installer.";
+  browserSetupDetail.textContent = ready
+    ? "Firefox is not supported yet: it only accepts signed add-ons."
+    : "This copy was not installed with the installer, so browser capture is unavailable here.";
+  browserSetupSteps.hidden = !ready;
+  for (const button of [browserOpenFolder, browserCopyChrome, browserCopyEdge]) button.hidden = !ready;
+}
+
+browserOpenFolder.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    await invoke("reveal_extension_folder");
+    announce("Opened the extension folder in File Explorer.");
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+for (const [button, address, browser] of [
+  [browserCopyChrome, "chrome://extensions", "Chrome"],
+  [browserCopyEdge, "edge://extensions", "Edge"],
+] as const) {
+  button.addEventListener("click", async () => {
+    // Browsers refuse to open their internal pages from another program, so
+    // the address is copied for the person to paste instead.
+    await navigator.clipboard.writeText(address);
+    settingsStatus.textContent = `Copied ${address}. Paste it into ${browser}'s address bar.`;
+    settingsStatus.hidden = false;
+    announce(settingsStatus.textContent);
+  });
 }
 
 /* Settings ---------------------------------------------------------------- */
@@ -402,7 +533,7 @@ settingClearDestination.addEventListener("click", () => {
 dismissOnboarding.addEventListener("click", () => {
   onboarding.hidden = true;
   void changeSettingWithoutDialog({ onboardingCompleted: true });
-  openSettingsButton.focus({ preventScroll: true });
+  addOpenButton.focus({ preventScroll: true });
 });
 
 onboardingOpenMedia.addEventListener("click", () => void showSettings());
@@ -701,6 +832,10 @@ form.addEventListener("submit", async (event) => {
     }
     const count = drafts.length;
     clearComposer();
+    // The empty state's Add button is about to disappear with the first
+    // download, so focus returns to the app bar's Add download instead.
+    dialogOpener = null;
+    addDialog.close();
     renderedQueueSignature = "";
     setQueueSummary(count === 1 ? "Added 1 download to the queue." : `Added ${count} downloads to the queue.`);
     await refreshQueue();
@@ -857,19 +992,20 @@ jobList.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  // While a dialog is modal it owns Escape and every other key.
+  // While Settings or help is modal it owns every key. Escape in Add download
+  // is the dialog's own cancel, which closes it and keeps the draft.
   if (shortcutsDialog.open || settingsDialog.open) return;
-  if (event.ctrlKey && event.key.toLowerCase() === "l") {
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && (key === "l" || key === "n")) {
     event.preventDefault();
-    urlInput.focus();
-    urlInput.select();
+    openComposer();
   } else if (event.ctrlKey && event.key === ",") {
     event.preventDefault();
     void showSettings();
-  } else if (event.key === "Escape" && (editingJobId || urlInput.value || destinationInput.value)) {
+  } else if (event.ctrlKey && key === "f" && !addDialog.open) {
     event.preventDefault();
-    clearComposer();
-    startButton.focus();
+    queueSearch.focus();
+    queueSearch.select();
   }
 });
 
@@ -990,6 +1126,11 @@ function renderQueue(): void {
   const query = queueSearch.value.trim().toLocaleLowerCase();
   const visible = jobs.filter((job) => matchesFilter(job, selectedFilter) && matchesSearch(job, query));
   jobCard.hidden = visible.length === 0;
+  // With nothing in the list, the empty state says it all: the filters have
+  // nothing to act on and the summary stays for screen readers only.
+  queueEmpty.hidden = jobs.length > 0;
+  queueFilters.hidden = jobs.length === 0;
+  queueSummary.classList.toggle("sr-only", jobs.length === 0);
 
   if (!jobs.length) {
     setQueueSummary("No downloads yet. Add a link to begin.");
@@ -1020,8 +1161,13 @@ function renderQueue(): void {
   const replacement = Array.from(jobList.querySelectorAll<HTMLButtonElement>("button[data-job-id][data-action]")).find(
     (button) => button.dataset.jobId === focusedAction.jobId && button.dataset.action === focusedAction.action,
   );
-  if (replacement) {
-    replacement.focus({ preventScroll: true });
+  // Pause becomes Resume and Start now becomes Pause: when the exact control
+  // is gone, the same row's first action is the natural place to land.
+  const sameRow = replacement ?? jobList.querySelector<HTMLButtonElement>(
+    `button[data-job-id="${CSS.escape(focusedAction.jobId)}"]`,
+  );
+  if (sameRow) {
+    sameRow.focus({ preventScroll: true });
   } else {
     // The control the user was on is gone, so focus lands on a stable heading
     // instead of falling back to the document body.
@@ -1096,6 +1242,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   destination.textContent = job.qualityLabel
     ? `${job.qualityLabel} · ${job.destination ?? "Destination unavailable"}`
     : job.destination ?? "Destination unavailable";
+  destination.title = destination.textContent;
   article.append(destination);
 
   if (job.state === "scheduled" && job.notBeforeMs) {
@@ -1119,11 +1266,11 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   metrics.setAttribute("aria-live", "off");
   if (primary) metrics.id = "job-bytes";
   metrics.replaceChildren(...metricSpans(job));
-  article.append(metrics);
 
   if (job.error) {
     const error = document.createElement("p");
-    error.className = "error job-error";
+    // A pending automatic retry is information, not a failure.
+    error.className = job.state === "failed" || job.state === "needs_source" ? "error job-error" : "job-note";
     error.textContent = friendlyError(job);
     // Not a live region: `#live-alert` announces a new failure exactly once, and
     // this copy is the description of the card it belongs to.
@@ -1174,10 +1321,14 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
 
   if (settingsView?.settings.powerMode) article.append(diagnostics(job));
 
+  // Measurements and actions share the last line, so a row stays compact.
+  const footer = document.createElement("div");
+  footer.className = "job-footer";
   const actions = document.createElement("div");
   actions.className = "job-actions";
   for (const action of actionsFor(job)) actions.append(actionButton(job, action));
-  article.append(actions);
+  footer.append(metrics, actions);
+  article.append(footer);
   return article;
 }
 
@@ -1193,6 +1344,13 @@ function applyProgress(progress: HTMLProgressElement, job: JobSnapshot): void {
     progress.max = 1;
     progress.value = 1;
     progress.setAttribute("aria-valuetext", "Complete");
+    return;
+  }
+  // A download that is waiting has no motion to show.
+  if (job.state === "scheduled" || job.state === "queued" || job.state === "failed" || job.state === "cancelled") {
+    progress.max = 1;
+    progress.value = job.totalBytes ? Math.min(job.bytesReceived / job.totalBytes, 1) : 0;
+    progress.setAttribute("aria-valuetext", `${formatBytes(job.bytesReceived)} received`);
     return;
   }
   if (job.totalBytes && job.totalBytes > 0) {
@@ -1219,7 +1377,9 @@ function metricSpans(job: JobSnapshot): HTMLElement[] {
     spans.push(span);
   };
 
-  if (job.totalBytes && job.totalBytes > 0) {
+  // A failed or cancelled row saved nothing, so a percentage would read as success.
+  const stopped = job.state === "failed" || job.state === "cancelled" || job.state === "needs_source";
+  if (!stopped && job.totalBytes && job.totalBytes > 0) {
     const percent = Math.floor(Math.min(job.bytesReceived / job.totalBytes, 1) * 100);
     add(`${percent}%`, true);
     add(`${formatBytes(job.bytesReceived)} of ${formatBytes(job.totalBytes)}`);
@@ -1227,8 +1387,11 @@ function metricSpans(job: JobSnapshot): HTMLElement[] {
     add(`${formatBytes(job.bytesReceived)} received`, true);
     if (job.state === "running") add("total size unknown");
   }
-  if (job.bytesPerSecond) add(`${formatBytes(job.bytesPerSecond)}/s`);
-  if (job.etaSeconds !== null) add(`${formatDurationLong(job.etaSeconds)} left`);
+  // Speed and time left describe motion; a stopped row keeps neither.
+  const moving = job.state === "running";
+  if (moving && job.bytesPerSecond) add(`${formatBytes(job.bytesPerSecond)}/s`);
+  // Absent from the snapshot, not null, when unknown.
+  if (moving && job.etaSeconds != null) add(`${formatDurationLong(job.etaSeconds)} left`);
   if (job.state === "paused") add("Paused at this point");
   return spans;
 }
@@ -1350,8 +1513,7 @@ function beginEdit(job: JobSnapshot): void {
   startButton.textContent = "Save and retry";
   clearError(formError);
   showNotice("Paste a refreshed address. Private query values are never restored from history.");
-  scrollTo(form);
-  urlInput.focus();
+  openComposer();
 }
 
 function beginChecksumEdit(job: JobSnapshot): void {
@@ -1472,7 +1634,14 @@ function stateLabel(state: JobState): string {
 
 function friendlyError(job: JobSnapshot): string {
   if (job.action === "choose_new_path") return "A file already exists there. Choose a different destination to continue.";
-  if (job.action === "edit_link") return "This link needs attention. Paste a refreshed address to continue safely.";
+  if (job.action === "edit_link") {
+    const status = job.error?.match(/HTTP status (\d{3})/)?.[1];
+    if (status) {
+      const reason = status === "404" || status === "410" ? "says this file isn't there" : status === "401" || status === "403" ? "refused access" : "refused this link";
+      return `The website ${reason} (HTTP ${status}). Check the link, or paste a fresh one from the website.`;
+    }
+    return "This link needs attention. Paste a refreshed address to continue safely.";
+  }
   if (job.action === "recapture") return "The protected browser context is unavailable. Send the link from your browser again.";
   if (job.action === "refresh_source") return "This media session expired or its qualities changed. Paste a refreshed source to retry.";
   if (job.action === "configure_media_tools") return "Video and audio need yt-dlp and ffmpeg. Set them up, then retry.";

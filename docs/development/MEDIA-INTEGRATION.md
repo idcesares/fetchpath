@@ -33,3 +33,7 @@ Automated tests cover variant sorting/deduplication, expected-stream verificatio
 ## Remaining release gates
 
 This proves the production integration against lawful local DASH plus the earlier HLS/DASH spike coverage. It does not claim compatibility with arbitrary public sites. Before a public release, the project still needs an explicit supported-source corpus, repeatable compatibility runs for that corpus, and a distribution/licensing decision for the helper binaries. Helper updates must remain controlled and compatibility-tested.
+
+## Pinned helpers (FP-039, 23 September 2026)
+
+yt-dlp 2026.08.19 and the GyanD ffmpeg 9.0.2 essentials build are pinned in `apps/desktop/src-tauri/media-tools.json` against their publishers' checksum files. The first real guided install exposed and fixed an archive-flattening defect; the ignored network test `guided_install_fetches_verifies_and_runs_the_pinned_helpers` now passes. No public site is promised. See [release readiness](RELEASE-READINESS.md).

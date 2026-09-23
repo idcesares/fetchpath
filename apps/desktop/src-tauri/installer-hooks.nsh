@@ -33,13 +33,45 @@
 ; to `tauri.conf.json` `identifier` fails the packaging test loudly instead of
 ; silently pointing this branch at a directory that does not exist.
 
+; Browser capture (FP-036). The host manifests are installed beside
+; fetchpath-browser-host.exe with a relative `path`, which Chrome, Edge and
+; Firefox all resolve against the manifest's own folder on Windows. Only these
+; three per-user keys are written, and the uninstaller removes exactly them.
+!define FETCHPATH_HOST "com.fetchpath.browser"
+
+; Command line (FP-037). The install folder is added to the per-user PATH so
+; `fetchpath` works in a new terminal. That edit is made by tools\user-path.ps1,
+; never here: an NSIS registry read returns an EMPTY string for any value longer
+; than NSIS_MAX_STRLEN (1024), so a long PATH looks empty, and an earlier version
+; of this file wiped a real PATH that way. The script reads the raw value with
+; no length limit and refuses any write that would shorten or empty it.
+!macro FETCHPATH_USER_PATH ACTION
+  Push $R9
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\tools\user-path.ps1" -Action ${ACTION} -Dir "$INSTDIR"'
+  Pop $R9
+  StrCmp $R9 0 +2
+  DetailPrint "Could not update your PATH for the fetchpath command ($R9). Add $INSTDIR to it yourself."
+  Pop $R9
+  ; HWND_BROADCAST, WM_SETTINGCHANGE: new terminals pick up the change.
+  SendMessage 0xFFFF 0x001A 0 "STR:Environment" /TIMEOUT=5000
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
+  WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
+  WriteRegStr HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.firefox.json"
+  DetailPrint "Registered the Fetchpath browser bridge for Chrome, Edge and Firefox."
+
+  !insertmacro FETCHPATH_USER_PATH Add
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; First, while tools\user-path.ps1 is still installed.
+  !insertmacro FETCHPATH_USER_PATH Remove
+
   StrCpy $R0 "$APPDATA\app.fetchpath.desktop"
   StrCpy $R1 "$LOCALAPPDATA\app.fetchpath.desktop"
 
@@ -73,4 +105,7 @@ fetchpath_uninstall_done:
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}"
+  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}"
+  DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
 !macroend

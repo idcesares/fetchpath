@@ -9,8 +9,10 @@
     "scripts": ["policy.js", "background.js"]
   },
   "action": {
-    "default_title": "Fetchpath"
+    "default_title": "Fetchpath",
+    "default_icon": { "32": "icons/icon-32.png" }
   },
+  "icons": { "32": "icons/icon-32.png", "128": "icons/icon-128.png" },
   "browser_specific_settings": {
     "gecko": {
       "id": "browser@fetchpath.app",
