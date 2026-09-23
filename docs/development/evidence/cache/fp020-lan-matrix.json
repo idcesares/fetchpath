@@ -1,0 +1,250 @@
+{
+  "task": "FP-020",
+  "recorded": "2026-09-23T03:11:12Z",
+  "harness": "cargo test --offline --locked -p fetchpath-lan; -p fetchpath-core --lib peer; -p fetchpath-cache --test cache_behaviour pinned_twice",
+  "platform": "Windows 11 Pro 26200 x64",
+  "scope": "paired LAN mode: identity, pairing, sessions, serving, budget, and the core peer path",
+  "note": "all networking is loopback TCP on one machine; no second physical device, no real LAN and no mDNS were involved. Pairing is not a PAKE. Peer retrieval is sequential and no speed claim is made. A trusted digest establishes representation identity, not publisher authenticity. An independent strong-model review of adapters/lan has not been performed.",
+  "totals": {
+    "recorded_cases": 47,
+    "passed": 47,
+    "not_passed": 0
+  },
+  "cases": [
+    {
+      "test": "a_code_is_consumed_by_a_failed_attempt_and_cannot_be_retried",
+      "proves": "a failed pairing attempt spends the code; the right code afterwards is refused as already used and nothing is pinned",
+      "result": "ok"
+    },
+    {
+      "test": "a_credentialed_entry_is_refused_exactly_as_an_absent_one_is",
+      "proves": "a Credentialed entry and an absent entry receive the same not_available refusal; no bytes are sent and no file is created",
+      "result": "ok"
+    },
+    {
+      "test": "a_hostile_frame_length_is_refused_under_bounded_memory",
+      "proves": "a frame declaring 4 GiB is refused by the server before allocation",
+      "result": "ok"
+    },
+    {
+      "test": "a_malformed_typed_code_is_rejected_before_the_host_spends_its_code",
+      "proves": "a malformed typed code is rejected locally and the host's code remains unspent",
+      "result": "ok"
+    },
+    {
+      "test": "a_paired_peer_retrieves_a_public_entry_byte_for_byte",
+      "proves": "a paired peer retrieves a Public entry spanning several chunks byte-identically, and the upload releases its cache pin",
+      "result": "ok"
+    },
+    {
+      "test": "a_sealed_identity_reloads_as_the_same_key_and_is_not_stored_in_the_clear",
+      "proves": "the DPAPI-sealed identity reloads as the same key and is not stored as a raw seed",
+      "result": "ok"
+    },
+    {
+      "test": "a_server_presenting_an_unexpected_key_is_refused_by_the_client",
+      "proves": "a client refuses a server whose key is not the pinned one it asked for",
+      "result": "ok"
+    },
+    {
+      "test": "a_tampered_frame_in_transit_fails_authentication",
+      "proves": "one flipped bit in an encrypted content frame is detected and the transfer fails",
+      "result": "ok"
+    },
+    {
+      "test": "a_wrong_code_fails_on_both_sides_and_pins_nothing",
+      "proves": "a code one character wrong fails confirmation on both sides and pins nothing",
+      "result": "ok"
+    },
+    {
+      "test": "an_entry_pinned_twice_stays_pinned_until_both_holders_release_it",
+      "proves": "cache pins are reference-counted, so a peer upload and a local reuse cannot unpin each other",
+      "result": "ok"
+    },
+    {
+      "test": "an_expired_code_fails_and_pins_nothing",
+      "proves": "a code older than two minutes is refused and nothing is pinned",
+      "result": "ok"
+    },
+    {
+      "test": "an_offer_larger_than_the_receivers_ceiling_is_abandoned_unread",
+      "proves": "an offer above the receiver's declared ceiling is abandoned before any byte is read or any file created",
+      "result": "ok"
+    },
+    {
+      "test": "an_unpaired_device_is_refused_before_a_single_byte_is_served",
+      "proves": "an unpinned device receives exactly one refusal frame and not even the server's hello",
+      "result": "ok"
+    },
+    {
+      "test": "an_unreadable_sealed_identity_is_an_error_not_a_silent_replacement",
+      "proves": "an unreadable sealed identity is an error and the file is left untouched rather than replaced",
+      "result": "ok"
+    },
+    {
+      "test": "copying_a_pinned_public_key_without_its_private_key_fails_authentication",
+      "proves": "presenting a pinned public key without its private key fails transcript authentication",
+      "result": "ok"
+    },
+    {
+      "test": "frame::tests::a_frame_round_trips",
+      "proves": "a frame survives encoding and decoding",
+      "result": "ok"
+    },
+    {
+      "test": "frame::tests::a_hostile_length_is_refused_before_allocation",
+      "proves": "a 4 GiB declared length is refused before allocation",
+      "result": "ok"
+    },
+    {
+      "test": "frame::tests::a_truncated_frame_is_an_error_not_a_short_read",
+      "proves": "a truncated frame is an error, not a short read",
+      "result": "ok"
+    },
+    {
+      "test": "frame::tests::an_oversize_payload_is_never_written",
+      "proves": "an oversize payload is refused and nothing is written",
+      "result": "ok"
+    },
+    {
+      "test": "handshake::tests::a_hello_round_trips_and_a_wrong_version_is_refused",
+      "proves": "a hello round-trips; a wrong version or length is refused",
+      "result": "ok"
+    },
+    {
+      "test": "handshake::tests::a_hostile_refusal_reason_is_not_echoed",
+      "proves": "a refusal reason containing control characters is not echoed to people",
+      "result": "ok"
+    },
+    {
+      "test": "handshake::tests::a_small_order_peer_key_is_refused",
+      "proves": "an X25519 key producing an all-zero secret is refused",
+      "result": "ok"
+    },
+    {
+      "test": "handshake::tests::both_sides_agree_on_the_shared_secret",
+      "proves": "both sides derive the same X25519 shared secret",
+      "result": "ok"
+    },
+    {
+      "test": "handshake::tests::the_transcript_depends_on_order_and_label",
+      "proves": "the transcript hash binds order, label and part boundaries",
+      "result": "ok"
+    },
+    {
+      "test": "identity::tests::a_public_key_round_trips_through_hex",
+      "proves": "a public key round-trips through hex; malformed hex is refused",
+      "result": "ok"
+    },
+    {
+      "test": "identity::tests::a_signature_verifies_only_for_its_message_and_key",
+      "proves": "a signature verifies only for its message and its key",
+      "result": "ok"
+    },
+    {
+      "test": "identity::tests::debug_output_never_contains_the_signing_key",
+      "proves": "Debug output of an identity never contains the signing key",
+      "result": "ok"
+    },
+    {
+      "test": "identity::tests::the_display_fingerprint_is_grouped",
+      "proves": "the display fingerprint is grouped for reading aloud",
+      "result": "ok"
+    },
+    {
+      "test": "identity::tests::two_generated_identities_differ",
+      "proves": "two generated identities differ",
+      "result": "ok"
+    },
+    {
+      "test": "pairing::tests::a_code_is_ten_characters_of_the_alphabet_and_displays_with_a_dash",
+      "proves": "a code is ten alphabet characters displayed as XXXXX-XXXXX",
+      "result": "ok"
+    },
+    {
+      "test": "pairing::tests::codes_differ",
+      "proves": "two generated codes differ",
+      "result": "ok"
+    },
+    {
+      "test": "pairing::tests::debug_output_never_contains_the_code",
+      "proves": "Debug output of a pairing code never contains the code",
+      "result": "ok"
+    },
+    {
+      "test": "pairing::tests::typing_is_forgiving_but_not_loose",
+      "proves": "typed codes accept case, dashes, spaces and Crockford substitutions, and refuse wrong length or characters",
+      "result": "ok"
+    },
+    {
+      "test": "pins::tests::a_malformed_file_is_refused_rather_than_partly_read",
+      "proves": "a malformed pin file is refused rather than partly read",
+      "result": "ok"
+    },
+    {
+      "test": "pins::tests::pins_survive_reopening",
+      "proves": "pins survive reopening, and control characters are stripped from labels",
+      "result": "ok"
+    },
+    {
+      "test": "pins::tests::unpinning_is_persisted",
+      "proves": "unpinning is persisted",
+      "result": "ok"
+    },
+    {
+      "test": "the_right_code_pairs_both_devices_and_pins_each_key",
+      "proves": "the right code, typed in lower case, pairs both devices and each pins the other's key",
+      "result": "ok"
+    },
+    {
+      "test": "the_session_budget_refuses_a_request_before_sending_any_of_it",
+      "proves": "a request exceeding the remaining session budget is refused before any byte is sent",
+      "result": "ok"
+    },
+    {
+      "test": "the_upload_rate_is_paced",
+      "proves": "256 KiB at a 1 MiB/s limit takes at least 240 ms (lower bound only)",
+      "result": "ok"
+    },
+    {
+      "test": "turning_lan_mode_off_takes_effect_within_a_live_session",
+      "proves": "turning LAN mode off makes the next request in an established session receive not_available",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_paired_peer_completes_the_download_after_verification_with_every_mirror_unreachable",
+      "proves": "with every mirror offline, a peer's bytes are verified and published with DeliverySource::Peer, after an unavailable peer is skipped",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_peer_is_never_asked_for_more_than_the_declared_size",
+      "proves": "a peer is never asked for more than the size the request declares",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::a_request_without_a_trusted_digest_never_asks_a_peer",
+      "proves": "a request without a trusted digest never asks a peer",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::bytes_from_a_peer_are_not_inserted_into_the_cache",
+      "proves": "bytes delivered by a peer are not inserted into the receiver's cache",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::corrupt_peer_bytes_are_discarded_unpublished_and_that_peer_is_not_asked_again",
+      "proves": "corrupt peer bytes are discarded unpublished, the peer is reported Corrupt and asked only once, and an honest peer completes",
+      "result": "ok"
+    },
+    {
+      "test": "verified::tests::when_every_peer_fails_the_mirrors_are_used_and_nothing_bad_is_published",
+      "proves": "when every peer fails, the mirror completes the download and nothing corrupt is published",
+      "result": "ok"
+    },
+    {
+      "test": "with_lan_mode_off_the_server_answers_nothing",
+      "proves": "with LAN mode off the server closes the connection without sending a single frame",
+      "result": "ok"
+    }
+  ]
+}

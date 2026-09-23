@@ -23,6 +23,8 @@ Use a single repository while the product shares identity, lifecycle, and releas
 - `apps/cli`: engineering and power-user interface over the same core.
 - `extensions/browser`: extension capture and native control bridge, no payload transport.
 - `adapters/media`: supervised extractor/muxer lifecycle and normalized progress/errors.
+- `crates/fetchpath-cache`: bounded content-addressed store keyed by trusted digests, quota, eviction and immutable provenance; no networking.
+- `adapters/lan`: device identity, pairing, authenticated peer sessions and upload budget; depends on the cache only, and core reaches it through the `PeerSource` trait.
 - `tests/compatibility`: browser/auth/media/protocol matrices; explicit supported/partial/unsupported/untested states.
 
 Split crates only at useful compile/test/ownership boundaries. One small core crate may initially contain several modules; avoid a crate per abstraction. A Cargo workspace and lockfile are introduced with the first real Rust slice, not merely to make the tree look complete.

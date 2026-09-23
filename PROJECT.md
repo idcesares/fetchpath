@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 22 September 2026. Phase: M6 — first public release candidate, with M8 distribution work started. Engine, packaging and multi-source repair are done; the release-polish tasks that closed the gap against the UX contract are done; FP-018 is the remaining release gate. FP-020's bounded content cache is implemented and tested; its paired LAN half is not, so FP-020 remains in progress.
+Updated 23 September 2026. Phase: M6 — first public release candidate, with M8 distribution work started. Engine, packaging and multi-source repair are done; the release-polish tasks that closed the gap against the UX contract are done; FP-018 is the remaining release gate. Both halves of FP-020, the bounded content cache and paired LAN mode, are implemented and tested; FP-020 remains in progress until the independent strong-model review of `adapters/lan` is done.
 
 ## Confirmed purpose
 
@@ -33,7 +33,7 @@ Progress is now reported from engine-confirmed values end to end: the total a so
 
 ## Next development
 
-Run `node tools/tasks.mjs next`. FP-020's remaining half is paired LAN mode: device identity, out-of-band pairing with pinned keys, peer serving restricted to credential-free entries, and an upload budget. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026, and CLI controls for the cache have not landed yet.
+Run `node tools/tasks.mjs next`. FP-020 needs an independent strong-model review of `adapters/lan` (credential boundary, handshake cryptography, DPAPI FFI) before it can be marked done; its implementation, tests and evidence are recorded. mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is single-process, which a `lan serve` beside `fetch-verified` on one device can now reach.
 
 FP-018, the first public release candidate, is the remaining release gate and now depends on FP-026 through FP-030. The generated license manifest and the uninstaller's data-removal branch are done. Media integration is proven on lawful local HLS/DASH fixtures; the supported public-source corpus remains a release gate, as do clean-machine and ARM64 coverage and recording the media-helper checksums with `node tools/media-tools/pin.mjs`.
 
