@@ -1436,7 +1436,7 @@
       "dependsOn": [
         "FP-048"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -1455,8 +1455,13 @@
         "A05"
       ],
       "acceptance": "crates/fetchpath-session owns the queue model, persistence, scheduler, retry policy, rate estimates, history, settings and media orchestration, with no Tauri or UI types; the desktop calls it in-process and behaves identically; file formats and the data folder are unchanged, so a 0.1.0 queue loads; the characterization tests move with the code and still pass; the crate is in the repository map.",
-      "verification": "cargo test --workspace --locked, clippy -D warnings and fmt pass; FP-048 tests pass unchanged against the session; a desktop walkthrough of add, pause, resume, restart recovery and history matches before and after; independent strong-model review of persistence ordering.",
-      "evidence": [],
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: the moved code differs from the original only in visibility, two accessors, the type rename and test paths; the same 71 tests (70 run, 1 ignored) pass, including the FP-048 characterization tests; cargo test --workspace --locked, clippy -D warnings and fmt clean. A driven desktop walkthrough (add, pause, resume, kill and restart recovery, history search and filter, a second restart) produced byte-identical transcripts from the before (d7376aa) and after builds, with matching request sequences and SHA-256 checks. Independent strong-model review of persistence ordering: approve with nits, nits fixed. See docs/development/ENGINE-SESSION.md.",
+      "evidence": [
+        "crates/fetchpath-session/src/lib.rs",
+        "docs/development/ENGINE-SESSION.md",
+        "docs/development/evidence/engine-session/fp-049-walkthrough/after-transcript.json",
+        "docs/development/evidence/engine-session/fp-049-walkthrough/before-transcript.json"
+      ],
       "blockedReason": null
     },
     {

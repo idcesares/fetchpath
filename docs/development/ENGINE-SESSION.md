@@ -91,11 +91,40 @@ dependencies. `Cargo.lock` gained no third-party package.
 - `node --test`: 39 passed, including the repository-structure check.
 - `node tools/tasks.mjs check`: pass.
 
-### Not yet done
+### Desktop walkthrough, before and after
 
-- The desktop walkthrough (add, pause, resume, restart recovery, history)
-  before and after. A running Fetchpath held `fetchpath-desktop.exe` during
-  this work, so the app binary was not rebuilt or launched.
+Recorded 24 September 2026. The desktop was built twice with its frontend
+embedded (`cargo build -p fetchpath-desktop --features tauri/custom-protocol`):
+"before" from `d7376aa` in a separate worktree, "after" from the FP-049 tree.
+Each ran against an empty data folder and a local server
+([`server.mjs`](evidence/engine-session/fp-049-walkthrough/server.mjs))
+that sends files at about 1 MB/s with a strong ETag and byte ranges. A
+driver ([`drive.mjs`](evidence/engine-session/fp-049-walkthrough/drive.mjs))
+worked the real window through WebView2's DevTools port, clicking the same
+buttons a person would:
+
+1. First start: empty queue, onboarding dismissed.
+2. Add a small file: it completes.
+3. Add a 12 MB file, pause it while it runs, resume it, pause it again.
+4. Add an 8 MB file and, while it runs, kill the process (`taskkill /F`).
+5. Restart: the killed download continues from its checkpoint; the paused
+   one is still paused. Resume it; both complete.
+6. History: searching "second" shows only that row; the Completed filter
+   shows all three.
+7. Every file's SHA-256 matches the source.
+8. Kill and restart again: all three are still listed as completed.
+
+The two transcripts
+([before](evidence/engine-session/fp-049-walkthrough/before-transcript.json),
+[after](evidence/engine-session/fp-049-walkthrough/after-transcript.json))
+are byte-identical: the same states, row actions, saved queue records and
+file checks at every step. The request logs
+([before](evidence/engine-session/fp-049-walkthrough/before-requests.txt),
+[after](evidence/engine-session/fp-049-walkthrough/after-requests.txt)) have
+the same sequence, with every resume a range request carrying `If-Range`.
+They differ only in the byte offset of the final resume, which depends on
+how much arrived before the second pause. Screenshots at each step matched;
+they show local paths, so they are not checked in.
 
 ### Review
 

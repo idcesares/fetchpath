@@ -1,0 +1,216 @@
+[
+  {
+    "step": "launched",
+    "label": "first start, empty data folder"
+  },
+  {
+    "step": "onboarding dismissed"
+  },
+  {
+    "step": "empty queue",
+    "rows": 0,
+    "summary": "No downloads yet. Add a link to begin."
+  },
+  {
+    "step": "added",
+    "file": "small.bin"
+  },
+  {
+    "step": "small completed",
+    "state": "completed"
+  },
+  {
+    "step": "added",
+    "file": "big.bin"
+  },
+  {
+    "step": "big paused",
+    "state": "paused",
+    "actions": [
+      "cancel",
+      "details",
+      "resume"
+    ]
+  },
+  {
+    "step": "big resumed",
+    "state": "running"
+  },
+  {
+    "step": "added",
+    "file": "second.bin"
+  },
+  {
+    "step": "before kill",
+    "rows": [
+      {
+        "source": "second.bin",
+        "state": "running"
+      },
+      {
+        "source": "big.bin",
+        "state": "paused"
+      },
+      {
+        "source": "small.bin",
+        "state": "completed"
+      }
+    ]
+  },
+  {
+    "step": "killed",
+    "label": "while second.bin runs and big.bin is paused"
+  },
+  {
+    "step": "persisted after kill",
+    "records": [
+      {
+        "source": "big.bin",
+        "state": "paused",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": false
+      },
+      {
+        "source": "second.bin",
+        "state": "running",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": false
+      },
+      {
+        "source": "small.bin",
+        "state": "completed",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": true
+      }
+    ]
+  },
+  {
+    "step": "launched",
+    "label": "restart after kill"
+  },
+  {
+    "step": "after restart",
+    "rows": [
+      {
+        "source": "second.bin",
+        "state": "running",
+        "actions": [
+          "cancel",
+          "details",
+          "pause"
+        ]
+      },
+      {
+        "source": "big.bin",
+        "state": "paused",
+        "actions": [
+          "cancel",
+          "details",
+          "resume"
+        ]
+      },
+      {
+        "source": "small.bin",
+        "state": "completed",
+        "actions": [
+          "copy-path",
+          "details",
+          "open-folder",
+          "remove"
+        ]
+      }
+    ]
+  },
+  {
+    "step": "second recovered",
+    "state": "completed"
+  },
+  {
+    "step": "big completed",
+    "state": "completed"
+  },
+  {
+    "step": "search \"second\"",
+    "visible": [
+      "second.bin"
+    ]
+  },
+  {
+    "step": "filter completed",
+    "visible": [
+      "big.bin",
+      "second.bin",
+      "small.bin"
+    ]
+  },
+  {
+    "step": "files match the source",
+    "small.bin": true,
+    "big.bin": true,
+    "second.bin": true
+  },
+  {
+    "step": "killed",
+    "label": "end, to check what survives a second restart"
+  },
+  {
+    "step": "launched",
+    "label": "second restart"
+  },
+  {
+    "step": "history after second restart",
+    "rows": [
+      {
+        "source": "big.bin",
+        "state": "completed"
+      },
+      {
+        "source": "second.bin",
+        "state": "completed"
+      },
+      {
+        "source": "small.bin",
+        "state": "completed"
+      }
+    ]
+  },
+  {
+    "step": "persisted at end",
+    "records": [
+      {
+        "source": "big.bin",
+        "state": "completed",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": true
+      },
+      {
+        "source": "second.bin",
+        "state": "completed",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": true
+      },
+      {
+        "source": "small.bin",
+        "state": "completed",
+        "kind": "file",
+        "action": null,
+        "restart": true,
+        "complete": true
+      }
+    ]
+  },
+  {
+    "step": "killed",
+    "label": "done"
+  }
+]
