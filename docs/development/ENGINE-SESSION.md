@@ -67,7 +67,7 @@ in-process through `Session` (formerly `DesktopJobs`).
 
 | Moved | From | To |
 |---|---|---|
-| Queue, persistence, scheduler, retry, rates, media jobs, and their tests | `apps/desktop/src-tauri/src/lib.rs` (lines 21–1995 and its test module) | `crates/fetchpath-session/src/lib.rs` |
+| Queue, persistence, scheduler, retry, rates, media jobs, and their tests | `apps/desktop/src-tauri/src/lib.rs` (its imports, lines 21–1995 and its test module) | `crates/fetchpath-session/src/lib.rs` |
 | Settings | `apps/desktop/src-tauri/src/settings.rs` | `crates/fetchpath-session/src/settings.rs` (unchanged; re-exported as `fetchpath_desktop_lib::settings`) |
 | Browser inbox store, validation, DPAPI | `apps/desktop/src-tauri/src/browser_bridge.rs` | `crates/fetchpath-session/src/browser_inbox.rs` (the host loop stays in `browser_bridge.rs` and re-exports the inbox types) |
 | Characterization tests and fixtures | `apps/desktop/src-tauri/src/characterization.rs`, `tests/fixtures` | `crates/fetchpath-session/src/characterization.rs`, `tests/fixtures` |
@@ -75,7 +75,7 @@ in-process through `Session` (formerly `DesktopJobs`).
 Changes to the moved code, all checked by diffing it against the original:
 `pub` on the types and methods the desktop calls and on the draft and
 snapshot fields; two accessors (`settings_repaired`, `take_link_reviews`)
-replacing the desktop's direct field reads; the type rename; the test
+replacing the desktop's direct field reads; `browser_inbox::storage_reason` made `pub` for the host, which keeps its own copy of the one-line `invalid_data` helper; the type rename; the test
 imports' module path; and one test fixture path made relative to the new
 crate. No logic, message text, file name, serialized field or data folder
 changed. The characterization tests differ from FP-048 only in the type
@@ -96,5 +96,14 @@ dependencies. `Cargo.lock` gained no third-party package.
 - The desktop walkthrough (add, pause, resume, restart recovery, history)
   before and after. A running Fetchpath held `fetchpath-desktop.exe` during
   this work, so the app binary was not rebuilt or launched.
-- The independent strong-model review of persistence ordering the task
-  requires.
+
+### Review
+
+Independent strong-model review, 24 September 2026: **approve with nits**.
+It diffed the parent commit against the new files and found that the queue
+save, load fallback, settings, inbox write ordering, `mark_processed` against
+the queue save, secret removal, lock scope, file names and data folder are
+unchanged. The DPAPI code, entropy and flags are byte-identical. The session
+has no Tauri or UI dependency, nothing secret is newly exposed, and the test
+sets match (71 names). Its nits: a duplicated workspace member (fixed) and two
+omissions in the list above (added).
