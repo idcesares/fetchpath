@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -9,9 +9,19 @@ import test from "node:test";
 const hostPath = resolve("target/debug/fetchpath-browser-host.exe");
 const caller = "chrome-extension://lfikhkjdpjcjaboanknaabncpkbgoele/";
 
-function invokeHost(request, dataDir) {
+// The host starts the desktop app that sits beside it after a capture. Run a
+// copy from a folder with no app beside it, so the test neither opens a real
+// window nor waits on the app holding the host's output pipes.
+async function isolatedHost() {
+  const binDir = await mkdtemp(join(tmpdir(), "fetchpath-browser-host-bin-"));
+  const host = join(binDir, "fetchpath-browser-host.exe");
+  await copyFile(hostPath, host);
+  return { host, binDir };
+}
+
+function invokeHost(host, request, dataDir) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(hostPath, [caller], {
+    const child = spawn(host, [caller], {
       env: { ...process.env, FETCHPATH_APP_DATA_DIR: dataDir },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -38,6 +48,7 @@ function invokeHost(request, dataDir) {
 
 test("native host durably accepts, deduplicates, redacts, and rejects unsupported capture", { skip: process.platform !== "win32" }, async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "fetchpath-browser-host-"));
+  const { host, binDir } = await isolatedHost();
   try {
     const captureId = randomUUID();
     const request = {
@@ -59,10 +70,10 @@ test("native host durably accepts, deduplicates, redacts, and rejects unsupporte
       }],
       user_initiated: true,
     };
-    const accepted = await invokeHost(request, dataDir);
+    const accepted = await invokeHost(host, request, dataDir);
     assert.equal(accepted.accepted, true);
     assert.equal(accepted.deduplicated, false);
-    const duplicate = await invokeHost(request, dataDir);
+    const duplicate = await invokeHost(host, request, dataDir);
     assert.equal(duplicate.accepted, true);
     assert.equal(duplicate.deduplicated, true);
 
@@ -71,10 +82,11 @@ test("native host durably accepts, deduplicates, redacts, and rejects unsupporte
     const protectedSecret = await readFile(join(dataDir, "browser-secrets", `${captureId}.bin`));
     assert.doesNotMatch(protectedSecret.toString("utf8"), /top-secret|cookie-secret/);
 
-    const rejected = await invokeHost({ ...request, capture_id: randomUUID(), method: "POST" }, dataDir);
+    const rejected = await invokeHost(host, { ...request, capture_id: randomUUID(), method: "POST" }, dataDir);
     assert.equal(rejected.accepted, false);
     assert.equal(rejected.reason, "bridge.unsupported_method");
   } finally {
     await rm(dataDir, { recursive: true, force: true });
+    await rm(binDir, { recursive: true, force: true });
   }
 });
