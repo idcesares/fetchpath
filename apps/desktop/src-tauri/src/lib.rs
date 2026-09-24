@@ -3582,3 +3582,6 @@ mod tests {
         assert!(!unusable.exists());
     }
 }
+
+#[cfg(test)]
+mod characterization;

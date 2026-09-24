@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "maxActiveDownloads": 5,
+  "defaultDestinationDir": "C:\\Downloads\\Fetchpath",
+  "autoRetry": false,
+  "autoRetryMaxAttempts": 5,
+  "autoRetryBaseDelaySeconds": 30,
+  "closeToTray": false,
+  "powerMode": true,
+  "mediaToolsDir": null,
+  "confirmRemoveCompleted": false,
+  "theme": "dark",
+  "onboardingCompleted": true
+}

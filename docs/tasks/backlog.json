@@ -1402,15 +1402,17 @@
       "dependsOn": [
         "FP-047"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
+        "apps/desktop/src-tauri/src/characterization.rs",
         "apps/desktop/src-tauri/src/lib.rs",
-        "apps/desktop/src-tauri/src/settings.rs",
-        "apps/desktop/src-tauri/tests"
+        "apps/desktop/src-tauri/tests/fixtures",
+        "docs/development/ENGINE-SESSION.md",
+        "docs/development/README.md"
       ],
       "acceptanceIds": [
         "A02",
