@@ -1146,6 +1146,14 @@ impl Session {
         }
     }
 
+    /// True while a job is queued, scheduled (including an automatic retry)
+    /// or running: work that happens without a person. The engine stays up
+    /// for it (FP-053).
+    pub fn has_own_work(&self) -> bool {
+        let stats = self.stats();
+        stats.running + stats.queued + stats.scheduled > 0
+    }
+
     /// Aggregate figures for the statistics panel.
     pub fn stats(&self) -> QueueStats {
         let mut state = self.inner.lock().expect("desktop jobs poisoned");

@@ -255,6 +255,7 @@ fn raw_handshake(file: &mut File, client_nonce: &Nonce) -> (Nonce, Vec<u8>) {
             transport: auth::TRANSPORT.into(),
             version: auth::TRANSPORT_VERSION,
             client_nonce: client_nonce.to_hex(),
+            intent: None,
         },
     )
     .unwrap();

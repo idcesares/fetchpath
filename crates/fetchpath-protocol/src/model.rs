@@ -352,6 +352,10 @@ pub struct EngineSettings {
     pub confirm_remove_completed: bool,
     pub theme: Theme,
     pub onboarding_completed: bool,
+    /// Start the engine when the person signs in to Windows, so schedules
+    /// survive a restart. Off unless the person turns it on.
+    #[serde(default)]
+    pub start_engine_at_sign_in: bool,
 }
 
 /// Settings as stored plus the limits the engine enforces.

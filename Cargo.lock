@@ -1231,7 +1231,11 @@ dependencies = [
  "ctrlc",
  "fetchpath-core",
  "fetchpath-lan",
+ "fetchpath-protocol",
+ "fetchpath-session",
  "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

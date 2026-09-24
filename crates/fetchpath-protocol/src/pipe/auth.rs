@@ -270,6 +270,11 @@ pub enum Handshake {
         transport: String,
         version: u32,
         client_nonce: String,
+        /// `restart` asks the engine to stop once the connection is
+        /// authenticated, so a client of any protocol version can replace
+        /// an engine it cannot otherwise talk to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        intent: Option<String>,
     },
     Challenge {
         server_nonce: String,

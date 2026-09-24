@@ -15,6 +15,8 @@ pub mod command;
 pub mod error;
 pub mod frame;
 pub mod ids;
+#[cfg(windows)]
+pub mod launch;
 pub mod message;
 pub mod model;
 #[cfg(windows)]

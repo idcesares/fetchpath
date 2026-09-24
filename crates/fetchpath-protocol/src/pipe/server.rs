@@ -189,6 +189,7 @@ impl PendingConnection {
             transport,
             version,
             client_nonce,
+            intent,
         } = hello
         else {
             return Err(self.stream.fail(handshake_failed("expected hello")));
@@ -233,6 +234,7 @@ impl PendingConnection {
             stream: self.stream,
             limits: self.limits,
             idle_timeout: std::sync::Mutex::new(self.limits.idle_timeout),
+            restart_requested: intent.as_deref() == Some("restart"),
             _live: self._live,
         })
     }
@@ -246,10 +248,17 @@ pub struct ServerConnection {
     sender: ConnectionSender,
     limits: Limits,
     idle_timeout: std::sync::Mutex<Option<Duration>>,
+    restart_requested: bool,
     _live: LiveGuard,
 }
 
 impl ServerConnection {
+    /// The client authenticated only to ask the engine to stop so a new one
+    /// can start (see [`PipeClient::request_restart`](super::PipeClient::request_restart)).
+    pub fn restart_requested(&self) -> bool {
+        self.restart_requested
+    }
+
     /// Changes how long this connection may stay silent. The engine turns it
     /// off for a connection that subscribed to events, because a subscriber
     /// only listens after its subscribe command.

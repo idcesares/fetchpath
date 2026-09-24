@@ -76,6 +76,11 @@ pub struct Settings {
     pub theme: Theme,
     /// Set once the first-run walkthrough has been seen or dismissed.
     pub onboarding_completed: bool,
+    /// Start the engine when the person signs in to Windows (FP-053). Off by
+    /// default, and written only when on, so a settings file from before it
+    /// writes back unchanged.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub start_engine_at_sign_in: bool,
 }
 
 impl Default for Settings {
@@ -92,6 +97,7 @@ impl Default for Settings {
             confirm_remove_completed: true,
             theme: Theme::System,
             onboarding_completed: false,
+            start_engine_at_sign_in: false,
         }
     }
 }

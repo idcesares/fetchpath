@@ -1,4 +1,5 @@
 mod download;
+mod engine;
 mod lan;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -9,6 +10,7 @@ Usage:
   fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
   fetchpath --version
   fetchpath --help
+
 
 Paired devices (advanced; off until you run `fetchpath lan enable`):
   fetchpath lan id | enable | disable | peers | unpair KEY
@@ -49,6 +51,9 @@ fn main() {
             0
         }
         Some("download") => download::run(&args[1..]),
+        // Not in the help yet: until the desktop is an engine client
+        // (FP-055), no build given to people offers both owners of the queue.
+        Some("engine") => engine::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

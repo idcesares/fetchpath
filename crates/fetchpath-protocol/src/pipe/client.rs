@@ -26,6 +26,28 @@ impl PipeClient {
         limits: Limits,
         connect_timeout: Duration,
     ) -> Result<Self, ProtocolError> {
+        Self::open(name, secret, limits, connect_timeout, None)
+    }
+
+    /// Asks the engine to stop so a new one can start. Works whatever
+    /// protocol version the engine speaks, because it is part of the
+    /// handshake, and needs the engine secret like any connection.
+    pub fn request_restart(
+        name: &PipeName,
+        secret: &EngineSecret,
+        limits: Limits,
+        connect_timeout: Duration,
+    ) -> Result<(), ProtocolError> {
+        Self::open(name, secret, limits, connect_timeout, Some("restart")).map(drop)
+    }
+
+    fn open(
+        name: &PipeName,
+        secret: &EngineSecret,
+        limits: Limits,
+        connect_timeout: Duration,
+        intent: Option<&str>,
+    ) -> Result<Self, ProtocolError> {
         let handle = ffi::open_client(&name.wide(), connect_timeout).map_err(|error| {
             let detail = match error {
                 ffi::OpenError::NotFound => "the engine is not running".to_owned(),
@@ -45,6 +67,7 @@ impl PipeClient {
                 transport: auth::TRANSPORT.into(),
                 version: auth::TRANSPORT_VERSION,
                 client_nonce: client_nonce.to_hex(),
+                intent: intent.map(str::to_owned),
             },
             deadline.saturating_duration_since(Instant::now()),
         )?;
