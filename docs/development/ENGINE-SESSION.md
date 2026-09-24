@@ -205,6 +205,18 @@ this tree, produced the same transcript as FP-049's.
 - If `engine-v1.json` itself is damaged, the engine starts with an empty
   ledger and event log; a resend of a command from the last 12 minutes could
   then apply again. The file is only ever replaced by an atomic rename.
+- When a damaged queue file falls back to its backup (at most one save old),
+  the ledger entries of the lost save go with it. Their changes are lost too,
+  so a resend re-applies something that is really missing; a file already
+  published by then is protected by the destination-conflict check, which
+  asks for a new path instead of overwriting.
+- The numbers skipped after such a load come from the retained events (512).
+  If one lost save had produced more events than that, the oldest of them
+  would be missing from the per-job numbers; the queue cursor is unaffected.
+- Queue cursors can therefore have gaps. Clients must not treat a cursor gap
+  as a lost event; per-job `seq` is contiguous except across such a load,
+  where the gap sends the client to a snapshot boundary. Every crash between
+  the two writes costs resubscribing clients one snapshot.
 
 ### Independent review
 
@@ -223,3 +235,5 @@ ledger rules, and F2 to F4. Findings and fixes:
 | Low: a job removed during a command's commit returned early without writing | The change is written before the error returns | Reviewed |
 | Nit: ledger retention one tick short | `<=` | Reviewed |
 | Nit: revision check not atomic with desktop changes | Documented above | — |
+
+Re-review of the fixes, 24 September 2026: **approve with nits**. Every fix was re-probed, including a per-job case: after a backup fallback, `SubscribeJob` from the last seen `seq` gets a snapshot boundary, and a command with the old `expected_revision` gets `contract.revision_conflict`. The nits are the last three limitations above.

@@ -1504,7 +1504,7 @@
         "FP-049",
         "FP-050"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -1518,8 +1518,13 @@
         "A07"
       ],
       "acceptance": "The session implements protocol commands through an in-process EngineClient: a durable ledger dedupes by (client_id, command_id) and acknowledges only after the mutation commits; expected_revision conflicts return the current revision without mutation; durable events carry per-job seq with SubscribeJob and SubscribeQueue replay-or-snapshot boundaries; progress samples are coalesced per subscriber so a slow client cannot stall transfers. Unrecognized and internal errors are not retryable and are never retried automatically (finding F2), and clients act on the engine's error code and action rather than message text (finding F3).",
-      "verification": "Adversarial tests: duplicate and conflicting commands, revision races between two clients, event gaps and replay after reconnect, a stalled subscriber under load, crash between mutation and acknowledgement; independent strong-model review.",
-      "evidence": [],
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: cargo test -p fetchpath-session 62 unit and 11 engine tests pass: duplicate and conflicting commands, stale and future commands, a revision race between two clients, replay after reconnect, compaction to a snapshot boundary, a subscriber that never reads while real downloads run, a failed commit and a resend while the disk still fails, a crash between the engine and queue writes, and a queue restored from its backup never reusing numbers. F2 and F3 fixed and their characterization tests changed on purpose; F4 (half-queued batches) found and fixed. Nine mutations each failed a named test. Workspace tests, clippy -D warnings, fmt and node --test clean; the FP-049 desktop walkthrough gives an identical transcript. Independent strong-model review: changes required, all fixed; re-review approve with nits, nits documented. See docs/development/ENGINE-SESSION.md.",
+      "evidence": [
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/durable.rs",
+        "crates/fetchpath-session/tests/engine.rs",
+        "docs/development/ENGINE-SESSION.md"
+      ],
       "blockedReason": null
     },
     {

@@ -223,6 +223,8 @@ kind, public_payload, correlation { command_id?, attempt_id? }
 
 `seq` increases by exactly one for durable events within a job. The coordinator persists the event and state mutation in the same metadata transaction, together with the command ledger/result when command-driven. Delivery may be duplicated; clients deduplicate by `(job_id, seq)`.
 
+The engine-wide `cursor` that orders a queue subscription (protocol v1, FP-051) may have gaps; a gap is not a lost event. Per-job `seq` stays contiguous; after a crash that cost engine data, the engine skips numbers so that a resubscribing client gets a snapshot boundary rather than a reused number.
+
 Required durable event families are `job_created`, `state_changed`, `policy_changed`, `source_changed`, `media_choices_ready`, `checkpoint_committed`, `integrity_changed`, `waiting`, `warning`, `error_recorded`, and `publication_completed`.
 
 High-rate `progress_sampled` messages use a separate ephemeral `sample_cursor`; they never consume `seq` and may be dropped or coalesced before delivery. The current progress aggregate is included in every snapshot. Durable checkpoint/integrity/state events carry the authoritative progress facts.
