@@ -249,6 +249,8 @@ An error has stable `code`, user-facing `message_key`, `retryable`, `action`, `s
 
 Retryable errors specify a bounded `retry_after` or backoff category. UI buttons come from `action`, not string parsing. An unrecognized error remains safe and visible as `internal.unknown`; clients do not assume it is retryable.
 
+At the process boundary (protocol v1, `crates/fetchpath-protocol`, FP-050, 24 September 2026) the `contract.*` family also carries `contract.malformed_message` (a frame that is not a readable JSON object, or a known command with an invalid field), `contract.message_too_large` (a frame over the protocol's size cap), `contract.unknown_command` (a command type this engine does not know; refused with its `command_id` so a newer client can explain it), `contract.unknown_job`, and `contract.engine_unavailable` (a client that cannot reach the engine). The first three close only the offending connection.
+
 ## 10. Checkpoint and publication contract
 
 A checkpoint covers explicit completed ranges and the identity evidence under which they were accepted. A range becomes reusable only after:
@@ -281,7 +283,7 @@ Until durable-mode testing exists, the product promises only the `recoverable` p
 
 ## 12. Contract examples
 
-Creating the same job command twice:
+Creating the same job command twice, in the protocol v1 wire form (FP-050). The link travels whole once, as a sensitive value the engine never logs or displays; the ledger keeps its fingerprint, not the link. A browser capture instead names its stored context with `{ "type": "credential_ref", "credential_ref": "…" }`. Destination directory references and network profiles are not in v1; they are additive fields when they land.
 
 ```json
 {
@@ -293,15 +295,14 @@ Creating the same job command twice:
     "type": "CreateJob",
     "request": {
       "kind": "file",
-      "input": { "type": "url", "display_url": "https://example.test/file.bin", "secret_ref": null },
-      "destination": { "directory_ref": "downloads", "suggested_name": "file.bin", "conflict": "ask" },
-      "profile": "balanced"
+      "input": { "type": "url", "url": "https://example.test/file.bin" },
+      "destination": { "path": "C:\\Users\\person\\Downloads\\file.bin", "conflict": "ask" }
     }
   }
 }
 ```
 
-The second submission returns the original `job_id` and revision. It does not create a duplicate.
+The second submission returns the original `job_id` and revision. It does not create a duplicate. `crates/fetchpath-protocol/tests/protocol.rs` decodes both examples in this section.
 
 A safe progress event:
 

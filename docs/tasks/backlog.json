@@ -1466,8 +1466,8 @@
       "dependsOn": [
         "FP-047"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
       "review": "standard",
@@ -1482,8 +1482,13 @@
         "A07"
       ],
       "acceptance": "crates/fetchpath-protocol defines versioned command envelopes, replies, durable and ephemeral events, snapshots and errors following the job contract (schema_version, client_id, command_id, expected_revision, per-job seq, stable error codes and actions); length-prefixed framing with a hard size cap; JSON Schema export for every public type; an EngineClient trait that later has pipe and in-process implementations. No queue logic and no transport yet.",
-      "verification": "Round-trip and schema tests for every message; unsupported major versions, oversize frames and malformed JSON are rejected with the contract codes; the exported schema is checked in and a test fails when it drifts.",
-      "evidence": [],
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: cargo test -p fetchpath-protocol 20 passed (every command, result and event round-trips through frames and matches the exported schema; wrong major versions, oversize, empty and truncated frames, malformed JSON and unknown commands are refused with contract codes; unknown fields, states and event kinds from a newer engine are tolerated); the checked-in schema test fails on drift; four mutations each made a named test fail; cargo test --workspace --locked, clippy -D warnings and fmt clean; notices regenerated at 568 packages. See docs/development/ENGINE-PROTOCOL.md.",
+      "evidence": [
+        "crates/fetchpath-protocol/src/lib.rs",
+        "crates/fetchpath-protocol/tests/protocol.rs",
+        "crates/fetchpath-protocol/schema/protocol-v1.schema.json",
+        "docs/development/ENGINE-PROTOCOL.md"
+      ],
       "blockedReason": null
     },
     {
