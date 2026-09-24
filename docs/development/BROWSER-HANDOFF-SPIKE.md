@@ -1,5 +1,7 @@
 # Browser handoff spike (FP-006)
 
+> Historical record. The source it describes (`tools/spikes/browser`) was retired on 23 September 2026 after production code superseded it; the commands below need it restored from history first: `git restore --source b7a5fc3 -- <path>`.
+
 **Result: PASS for the documented capability matrix and an automated Chrome runtime proof; Edge and Firefox runtime execution remain NOT RUN.**
 
 Run date: 20 September 2026 on Windows x64 with the official Chrome for Testing stable 153.0.8010.52. The machine also had Google Chrome 153.0.8010.50; Edge and Firefox executables were not detected in the standard install locations. Chrome for Testing was used because branded Chrome removed the `--load-extension` test switch in version 137. The runner uses a fresh ignored profile and never opens the user's normal browser profile.

@@ -1,5 +1,7 @@
 # Media helper spike (FP-007)
 
+> Historical record. The source it describes (`tools/spikes/media`) was retired on 23 September 2026 after production code superseded it; the commands below need it restored from history first: `git restore --source b7a5fc3 -- <path>`.
+
 **Result: PASS for a supervised Windows helper proof; not a production integration.**
 
 Run date: 20 September 2026 on Windows 10.0.26200.0, Python 3.14.7, and Node 24.20.0. No `yt-dlp` or `ffmpeg` was installed globally before the spike. All downloaded tools and generated media stay under `work/media-spike/`; evidence is text only under `docs/development/evidence/media/`.

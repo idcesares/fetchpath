@@ -96,7 +96,6 @@
       "acceptance": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
       "verification": "Tracked Rust/libcurl spike builds with a lockfile and passes controlled H1, public TLS, explicit proxy, and bounded cancellation checks. Runtime feature detection correctly fails the HTTP/2 and HTTP/3 capability gate; protocol transfers remain not-run.",
       "evidence": [
-        "tools/spikes/http-backend/README.md",
         "docs/development/HTTP-BACKEND-SPIKE.md",
         "docs/development/evidence/http-backend/http-backend-spike.json"
       ],
@@ -151,7 +150,6 @@
       "acceptance": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
       "verification": "Chrome for Testing 153.0.8010.52 exercised real downloads, webRequest, cookies, and nativeMessaging APIs. Controlled plain and signed GETs were durably acknowledged before observed browser cancellation; cookie-authenticated GET, POST, and blob cases preserved the browser path; duplicate capture ID was idempotent; secret-persistence assertions passed. Hidden Authorization headers remain an explicit generic auto-capture limitation. Edge and Firefox API differences are documented; runtime execution is explicitly not run.",
       "evidence": [
-        "tools/spikes/browser/README.md",
         "docs/development/BROWSER-HANDOFF-SPIKE.md",
         "docs/development/evidence/browser/browser-spike.json"
       ],
@@ -177,8 +175,6 @@
       "acceptance": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
       "verification": "Tracked helper harness passes controlled local direct MP4, HLS, DASH enumeration, separate video/audio mux, MP3 extraction, process-tree cancellation, and bounded 404 failure using yt-dlp 2026.08.19 and FFmpeg 9.0.1. Public extractor compatibility remains an explicit FP-014 release gate.",
       "evidence": [
-        "tools/spikes/media/run-media-spike.ps1",
-        "tools/spikes/media/supervise-helper.mjs",
         "docs/development/MEDIA-SPIKE.md",
         "docs/development/evidence/media/run.jsonl"
       ],
@@ -611,9 +607,9 @@
         "Cargo.toml",
         "docs/development/CACHE-AND-LAN.md",
         "docs/development/evidence/cache",
-        "docs/superpowers/specs",
+        "docs/architecture/specs",
         "Cargo.lock",
-        "docs/superpowers/plans"
+        "docs/development/plans"
       ],
       "acceptanceIds": [
         "A02",
@@ -902,7 +898,7 @@
         "docs/development/DESKTOP-CHECKSUM.md",
         "docs/development/evidence/desktop-checksum",
         "docs/product/UX.md",
-        "docs/superpowers/specs"
+        "docs/architecture/specs"
       ],
       "acceptanceIds": [
         "A01",
@@ -1297,6 +1293,41 @@
       "acceptance": "Opening a download shows a window with its current speed, a speed-over-time graph, and for a segmented transfer each in-flight range with its bounds and bytes received, all from engine-reported values; closing it leaves the queue unchanged. Observation adds no allocation or lock to the per-write path beyond an atomic add.",
       "verification": "Engine unit test that segment progress is reported and cleared; desktop build; a real segmented download observed in the window.",
       "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-046",
+      "title": "Organize the repository: retire superseded prototype and spikes, relocate design documents, and enforce the repository map",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-001"
+      ],
+      "status": "done",
+      "owner": "lead",
+      "modelTier": "astra-high",
+      "files": [
+        "docs/architecture/REPOSITORY.md",
+        "docs/architecture/specs",
+        "docs/development/README.md",
+        "docs/development/plans",
+        "docs/development/WORKFLOW.md",
+        "tests/repo/structure.test.mjs",
+        "AGENTS.md",
+        "package.json",
+        "Cargo.toml",
+        ".gitignore",
+        ".github/workflows/checks.yml"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "The simulated prototype and the backend, browser and media spikes are removed with their records kept and pointed at the commit holding the source; design specs and plans live in tool-neutral locations; the repository map describes the actual tree; a test fails when a component is unmapped, a Markdown link is broken, a workspace entry is missing, or a file is tracked under work/ or target/.",
+      "verification": "node tools/tasks.mjs check; node --test; the structure test fails against an unmapped directory and a broken link, then passes once they are removed.",
+      "evidence": [
+        "tests/repo/structure.test.mjs",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/README.md"
+      ],
       "blockedReason": null
     }
   ]

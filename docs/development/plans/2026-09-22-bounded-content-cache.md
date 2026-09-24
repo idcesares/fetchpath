@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2024 edition, `sha2`, `fetchpath-metalink` (for `PieceMap`), `fetchpath-storage` (for the existing create-only publication fence). No new third-party dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-09-22-content-cache-and-paired-lan-design.md`
+**Spec:** `docs/architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md`
 
 **Backlog task:** FP-020 (`docs/tasks/backlog.json`), owner `cache_lan`.
 

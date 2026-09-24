@@ -19,6 +19,13 @@ The initial model pairing is a practical trial. Measure accepted changes, correc
 
 ## Daily verification
 
-`node tools/tasks.mjs check` validates IDs, statuses, ownership, dependencies, cycles, done prerequisites, and evidence paths. `node --test` runs foundation tests. Validate the prototype through real browser interactions after behavioral changes. When Rust lands, add native build/test checks and only the useful additional CI matrix.
+`node tools/tasks.mjs check` validates IDs, statuses, ownership, dependencies, cycles, done prerequisites, and evidence paths. `node --test` runs the repository, fixture, extension and installer tests, including `tests/repo/structure.test.mjs`, which keeps the [repository map](../architecture/REPOSITORY.md), documentation links and workspace entries in step with the tree. The Rust and desktop checks are listed in [CONTRIBUTING.md](../../CONTRIBUTING.md); CI (`.github/workflows/checks.yml`) runs only the Node checks.
 
-GitHub CI is prepared but cannot be described as passed until a remote run occurs. Publishing a remote repository remains separate from organizing this local project.
+## Keeping the tree clean
+
+- A new component is added to the repository map in the same change; the structure test enforces it.
+- Task records go in `docs/development` and are listed in [its index](README.md); design specs in `docs/architecture/specs`; implementation plans in `docs/development/plans`. Tool-specific default locations are not used.
+- Spikes and prototypes are disposable. Once production code supersedes one, delete it, keep its record and evidence, and point the record at the commit that still holds the source.
+- Scratch output lives in ignored `work/` and must be safe to delete; anything a record depends on is promoted into `docs/development/evidence`.
+
+GitHub CI cannot be described as passed until a remote run occurs. Publishing a remote repository remains separate from organizing this local project.

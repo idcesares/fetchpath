@@ -1,5 +1,7 @@
 # Foundation validation — 19 September 2026
 
+> Historical record. The source it describes (`prototypes/desktop` and `tools/serve-prototype.mjs`) was retired on 23 September 2026 after production code superseded it; the commands below need it restored from history first: `git restore --source b7a5fc3 -- <path>`.
+
 Scope: FP-001 repository/task organization, FP-002 simulated UX prototype, FP-003 local fixture/baseline. M0 as a whole remains open. Commands below were run on native Windows; timestamps in raw logs use UTC, which may show 20 September.
 
 ## Observed environment

@@ -4,10 +4,10 @@
 trusted-digest cache entries over a LAN, behind a default-off flag, without a
 content hash ever acting as permission to redistribute an object.
 
-**Spec:** `docs/superpowers/specs/2026-09-22-content-cache-and-paired-lan-design.md`, section 5.
+**Spec:** `docs/architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md`, section 5.
 
 **Backlog task:** FP-020, owner `cache_lan`. This is the second half; the
-bounded cache landed in `docs/superpowers/plans/2026-09-22-bounded-content-cache.md`.
+bounded cache landed in `docs/development/plans/2026-09-22-bounded-content-cache.md`.
 
 ## Global constraints
 

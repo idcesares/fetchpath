@@ -10,3 +10,4 @@ Thumbs.db
 .codebase-memory/
 .serena/
 /apps/desktop/src-tauri/binaries/
+.claude/settings.local.json

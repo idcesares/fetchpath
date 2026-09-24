@@ -6,9 +6,9 @@ independent strong-model review of `adapters/lan`, which AGENTS.md requires for
 credential boundaries and FFI, has **not** been performed yet, so FP-020 stays
 `in_progress`.
 
-Design: [content cache and paired LAN design](../superpowers/specs/2026-09-22-content-cache-and-paired-lan-design.md).
-Plans: [bounded content cache](../superpowers/plans/2026-09-22-bounded-content-cache.md),
-[paired LAN](../superpowers/plans/2026-09-22-paired-lan.md).
+Design: [content cache and paired LAN design](../architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md).
+Plans: [bounded content cache](plans/2026-09-22-bounded-content-cache.md),
+[paired LAN](plans/2026-09-22-paired-lan.md).
 
 ## What exists: the cache
 

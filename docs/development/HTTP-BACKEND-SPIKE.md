@@ -1,5 +1,7 @@
 # HTTP backend packaging spike (FP-004)
 
+> Historical record. The source it describes (`tools/spikes/http-backend`) was retired on 23 September 2026 after production code superseded it; the commands below need it restored from history first: `git restore --source b7a5fc3 -- <path>`.
+
 Checked on native Windows on 20 September 2026. This is a disposable, reproducible Rust/libcurl candidate under `tools/spikes/http-backend`; it is not a production downloader, installer, or performance result.
 
 ## Result
