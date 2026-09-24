@@ -15,6 +15,7 @@ and limitations behind it.
 - [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; tasks FP-048 to FP-069 in the backlog.
 - [Engine session](ENGINE-SESSION.md) — FP-048 characterization of the desktop queue, then FP-049.
 - [Engine protocol](ENGINE-PROTOCOL.md) — FP-050 protocol v1 and the `EngineClient` interface.
+- [Engine host](ENGINE-HOST.md) — FP-053 `fetchpath engine`: single owner, launch or attach, idle exit.
 
 ## Release
 

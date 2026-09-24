@@ -11,11 +11,11 @@ Use a single repository while the product shares identity, lifecycle, and releas
 | `crates/fetchpath-storage` | Staging files, checkpoints, transactional metadata, publication |
 | `crates/fetchpath-metalink` | Metalink 4 parsing and trusted piece hashes for verified multi-source repair |
 | `crates/fetchpath-cache` | Bounded content-addressed store keyed by trusted digests, quota, eviction, provenance; no networking |
-| `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, the `EngineClient` interface, and on Windows the authenticated per-user named pipe with its engine secret and pipe-backed client; no queue logic |
+| `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, the `EngineClient` interface, and on Windows the authenticated per-user named pipe with its engine secret, the pipe-backed client, and launch-or-attach; no queue logic |
 | `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration and the browser capture inbox; the protocol engine over it (command ledger, revisions, durable events, subscriptions) and the in-process `EngineClient`. No UI or transport types. The desktop calls it in-process until the engine host lands |
 | `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors |
 | `adapters/lan` | Device identity, pairing, authenticated peer sessions, upload budget; depends on the cache only, and core reaches it through `PeerSource` |
-| `apps/cli` | The `fetchpath` command line over the same core |
+| `apps/cli` | The `fetchpath` command line over the same core, and `fetchpath engine`: the single-owner host of the session behind the authenticated pipe |
 | `apps/desktop` | Tauri 2 Windows client: commands over the session, tray and single instance, the browser native-messaging host, media-tool setup, installer hooks, pinned media-tool manifest, third-party notices |
 | `extensions/browser` | Browser capture and native control bridge; no payload transport |
 
