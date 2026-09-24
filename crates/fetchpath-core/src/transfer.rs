@@ -5,7 +5,7 @@ use crate::{BUFFER_BYTES, CancelCleanup, DownloadError, DownloadRequest, Downloa
 use curl::easy::{Easy, List};
 use fetchpath_http::{
     Chunk, GlobalBudget, RequestContext as HttpRequestContext, TransferError, TransferLimits,
-    transfer_adaptive,
+    transfer_adaptive_observed,
 };
 use fetchpath_storage::{
     CheckpointPhase, CheckpointRecord, CheckpointStore, FaultInjector, NoFaults,
@@ -227,11 +227,12 @@ fn perform_adaptive_attempt(
     };
     let current_offset = Cell::new(0_u64);
     let last_checkpoint = Cell::new(0_u64);
-    let result = transfer_adaptive(
+    let result = transfer_adaptive_observed(
         &request.url,
         &context,
         limits,
         budget,
+        request.cancellation.segment_monitor(),
         || request.cancellation.is_cancelled(),
         |chunk: Chunk<'_>| {
             if chunk.offset != current_offset.get() {
@@ -1138,6 +1139,75 @@ mod tests {
                 .iter()
                 .all(|request| request.contains("If-Range: \"adaptive-v1\""))
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn segments_in_flight_are_observable_and_cleared_when_written() {
+        let dir = temp_dir("adaptive-segments");
+        let destination = dir.join("file.bin");
+        let body: Vec<u8> = (0..2 * 1024 * 1024 + 1)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture", listener.local_addr().unwrap());
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let served = body.clone();
+        let server = thread::spawn(move || {
+            let mut first_range = true;
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let (start, end) = exact_range(&read_request(&mut stream)).unwrap();
+                let selected = &served[start..=end];
+                let headers = format!(
+                    "HTTP/1.1 206 Partial Content\r\nETag: \"segments-v1\"\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nConnection: close\r\n\r\n",
+                    selected.len(),
+                    served.len()
+                );
+                stream.write_all(headers.as_bytes()).unwrap();
+                if start > 0 && first_range {
+                    // Hold the first real range half-sent until the test has looked.
+                    first_range = false;
+                    let half = selected.len() / 2;
+                    stream.write_all(&selected[..half]).unwrap();
+                    stream.flush().unwrap();
+                    held.recv().unwrap();
+                    stream.write_all(&selected[half..]).unwrap();
+                } else {
+                    stream.write_all(selected).unwrap();
+                }
+            }
+        });
+
+        let download_request = request(url, destination.clone());
+        let token = download_request.cancellation.clone();
+        let worker = thread::spawn(move || download(download_request));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let observed = loop {
+            let segments = token.segment_monitor().snapshot();
+            if segments
+                .first()
+                .is_some_and(|segment| segment.received == 512 * 1024)
+            {
+                break segments;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "segment progress never observed"
+            );
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(observed.len(), 1);
+        assert_eq!((observed[0].start, observed[0].end), (1, 1024 * 1024));
+        // Still in memory, so the persisted count has not moved past the probe byte.
+        assert_eq!(token.received(), 1);
+        release.send(()).unwrap();
+
+        let done = worker.join().unwrap().unwrap();
+        server.join().unwrap();
+        assert_eq!(done.bytes, body.len() as u64);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+        assert!(token.segment_monitor().snapshot().is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 }

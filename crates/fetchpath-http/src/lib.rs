@@ -2,7 +2,8 @@ use curl::easy::{Easy, HttpVersion, List};
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::io;
-use std::sync::{Condvar, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 mod compatibility;
@@ -292,6 +293,80 @@ pub struct Chunk<'a> {
     pub total_bytes: Option<u64>,
 }
 
+/// One range a segmented transfer has in flight, as last observed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SegmentProgress {
+    /// First byte of the range.
+    pub start: u64,
+    /// Last byte of the range, inclusive.
+    pub end: u64,
+    /// Bytes of this range received so far. They are held in memory, not yet
+    /// written, until every range in the batch has arrived.
+    pub received: u64,
+}
+
+struct LiveSegment {
+    start: u64,
+    end: u64,
+    received: AtomicU64,
+}
+
+/// A read-only view of the ranges a segmented transfer has in flight.
+///
+/// Observation only: it never changes what is requested or written. The
+/// transfer takes the lock once when a batch starts and once when it ends; each
+/// write adds to one atomic counter.
+#[derive(Default)]
+pub struct SegmentMonitor {
+    live: Mutex<Vec<Arc<LiveSegment>>>,
+}
+
+impl SegmentMonitor {
+    /// The ranges in flight now, in file order. Empty between batches and for
+    /// a transfer that is not segmented.
+    pub fn snapshot(&self) -> Vec<SegmentProgress> {
+        self.live
+            .lock()
+            .expect("segment monitor poisoned")
+            .iter()
+            .map(|segment| SegmentProgress {
+                start: segment.start,
+                end: segment.end,
+                received: segment.received.load(Ordering::Relaxed),
+            })
+            .collect()
+    }
+
+    fn begin(&self, specs: &[(u64, u64)]) -> Vec<Arc<LiveSegment>> {
+        let segments: Vec<_> = specs
+            .iter()
+            .map(|&(start, end)| {
+                Arc::new(LiveSegment {
+                    start,
+                    end,
+                    received: AtomicU64::new(0),
+                })
+            })
+            .collect();
+        *self.live.lock().expect("segment monitor poisoned") = segments.clone();
+        segments
+    }
+
+    fn clear(&self) {
+        self.live.lock().expect("segment monitor poisoned").clear();
+    }
+}
+
+/// Empties the monitor however the transfer ends, so a failed or cancelled
+/// download never shows ranges that are no longer moving.
+struct ClearOnDrop<'a>(&'a SegmentMonitor);
+
+impl Drop for ClearOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.clear();
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct BatchObservation {
     pub concurrency: usize,
@@ -407,12 +482,31 @@ pub fn transfer_adaptive<F, C>(
     limits: TransferLimits,
     budget: &GlobalBudget,
     cancelled: C,
+    sink: F,
+) -> Result<TransferReport, TransferError>
+where
+    F: FnMut(Chunk<'_>) -> io::Result<()>,
+    C: Fn() -> bool + Sync + Send,
+{
+    let monitor = SegmentMonitor::default();
+    transfer_adaptive_observed(url, context, limits, budget, &monitor, cancelled, sink)
+}
+
+/// [`transfer_adaptive`], also reporting the ranges in flight to `monitor`.
+pub fn transfer_adaptive_observed<F, C>(
+    url: &str,
+    context: &RequestContext,
+    limits: TransferLimits,
+    budget: &GlobalBudget,
+    monitor: &SegmentMonitor,
+    cancelled: C,
     mut sink: F,
 ) -> Result<TransferReport, TransferError>
 where
     F: FnMut(Chunk<'_>) -> io::Result<()>,
     C: Fn() -> bool + Sync + Send,
 {
+    let _clear = ClearOnDrop(monitor);
     let limits = limits.validate()?;
     let capabilities = ProtocolCapabilities::detect();
     let decision = decide_protocol(capabilities);
@@ -497,10 +591,12 @@ where
         let started = Instant::now();
         let decision_ref = &decision;
         let cancelled_ref = &cancelled;
+        let live = monitor.begin(&specs);
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = specs
                 .iter()
-                .map(|&(start, end)| {
+                .zip(&live)
+                .map(|(&(start, end), segment)| {
                     let etag = etag.clone();
                     scope.spawn(move || {
                         fetch_range(
@@ -513,6 +609,7 @@ where
                             end,
                             range.total,
                             &etag,
+                            &segment.received,
                         )
                     })
                 })
@@ -543,6 +640,8 @@ where
             })
             .map_err(TransferError::Sink)?;
         }
+        // Written, so no longer in flight.
+        monitor.clear();
         observations.push(BatchObservation {
             concurrency,
             bytes: batch_bytes,
@@ -722,6 +821,7 @@ fn fetch_range<C>(
     end: u64,
     total: u64,
     etag: &str,
+    progress: &AtomicU64,
 ) -> Result<RangeChunk, TransferError>
 where
     C: Fn() -> bool + Sync,
@@ -752,6 +852,7 @@ where
                     return Ok(0);
                 }
                 body.extend_from_slice(data);
+                progress.fetch_add(data.len() as u64, Ordering::Relaxed);
                 Ok(data.len())
             })
             .map_err(curl_error)?;

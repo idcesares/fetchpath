@@ -5,6 +5,7 @@ mod checkpoint;
 mod transfer;
 mod verified;
 
+pub use fetchpath_http::SegmentProgress;
 pub use fetchpath_metalink::{
     FileHash, Metalink, MetalinkError, MetalinkFile, MetalinkUrl, ParseLimits, PieceMap,
     PieceVerification, parse_metalink, parse_with_limits,
@@ -24,6 +25,7 @@ pub use verified::{
 /// crate. Completion from it is reuse, not throughput.
 pub use fetchpath_cache;
 
+use fetchpath_http::SegmentMonitor;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
@@ -41,6 +43,8 @@ struct CancelState {
     total: AtomicU64,
     published: AtomicBool,
     publication_gate: Mutex<()>,
+    /// Ranges a segmented transfer has in flight. Observation only.
+    segments: SegmentMonitor,
 }
 #[derive(Clone)]
 pub struct CancellationToken(Arc<CancelState>);
@@ -52,6 +56,7 @@ impl Default for CancellationToken {
             total: AtomicU64::new(0),
             published: AtomicBool::new(false),
             publication_gate: Mutex::new(()),
+            segments: SegmentMonitor::default(),
         }))
     }
 }
@@ -99,6 +104,9 @@ impl CancellationToken {
             0 => None,
             total => Some(total),
         }
+    }
+    pub(crate) fn segment_monitor(&self) -> &SegmentMonitor {
+        &self.0.segments
     }
 }
 
@@ -537,6 +545,12 @@ impl FileJob {
             FileJobState::Cancelling => CancelResult::Accepted,
         }
     }
+    /// The byte ranges this download has in flight right now, received but
+    /// not yet written. Empty unless the transfer is segmented.
+    pub fn segments(&self) -> Vec<SegmentProgress> {
+        self.cancellation.segment_monitor().snapshot()
+    }
+
     pub fn snapshot(&self) -> FileJobSnapshot {
         let mut state = self.inner.lock().unwrap();
         if matches!(

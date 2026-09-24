@@ -268,6 +268,48 @@
       </div>
     </dialog>
 
+    <dialog id="details-dialog" class="card dialog details-dialog" aria-labelledby="details-title">
+      <header class="details-header">
+        <div>
+          <h2 id="details-title">Download details</h2>
+          <p id="details-source" class="job-source"></p>
+        </div>
+        <output id="details-status" class="status"></output>
+      </header>
+
+      <dl id="details-figures" class="stats-grid details-figures" aria-live="off"></dl>
+
+      <section class="details-section" aria-labelledby="details-speed-title">
+        <h3 id="details-speed-title">Speed</h3>
+        <svg id="details-graph" class="speed-graph" role="img" viewBox="0 0 600 140" preserveAspectRatio="none"
+             aria-labelledby="details-graph-label">
+          <title id="details-graph-label">Speed over the last minute</title>
+        </svg>
+        <p id="details-graph-note" class="hint"></p>
+      </section>
+
+      <section class="details-section" aria-labelledby="details-map-title">
+        <h3 id="details-map-title">File</h3>
+        <svg id="details-map" class="file-map" role="img" viewBox="0 0 600 18" preserveAspectRatio="none"
+             aria-labelledby="details-map-label">
+          <title id="details-map-label">Which parts of the file have arrived</title>
+        </svg>
+        <p class="hint legend">
+          <span class="swatch written" aria-hidden="true"></span> Written to disk
+          <span class="swatch inflight" aria-hidden="true"></span> Arriving now
+          <span class="swatch pending" aria-hidden="true"></span> Not yet requested
+        </p>
+        <ol id="details-segments" class="segments" aria-label="Connections"></ol>
+        <p id="details-segments-note" class="hint"></p>
+      </section>
+
+      <dl id="details-info" class="details-info"></dl>
+
+      <div class="dialog-actions">
+        <button id="details-close" type="button">Close</button>
+      </div>
+    </dialog>
+
     <dialog id="settings-dialog" class="card dialog settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>
 

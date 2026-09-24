@@ -278,6 +278,24 @@ struct QueueStats {
     max_active_downloads: usize,
 }
 
+/// One byte range in flight: received into memory, not yet written.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SegmentView {
+    start: u64,
+    /// Inclusive.
+    end: u64,
+    received: u64,
+}
+
+/// What the details window shows: the row itself plus its ranges in flight.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobDetails {
+    job: JobSnapshot,
+    segments: Vec<SegmentView>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CancelResponse {
@@ -574,6 +592,29 @@ impl DesktopJobs {
             .into_iter()
             .find(|job| job.job_id == job_id)
             .ok_or_else(|| "This download is no longer available.".to_string())
+    }
+
+    fn details(&self, job_id: &str) -> Result<JobDetails, String> {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        let record = find_record(&state, job_id)?;
+        // Only a running file download has ranges in flight; media reports none.
+        let segments = match (&record.job, record.view.state.as_str()) {
+            (Some(JobHandle::File(job)), "running") => job
+                .segments()
+                .into_iter()
+                .map(|segment| SegmentView {
+                    start: segment.start,
+                    end: segment.end,
+                    received: segment.received,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        Ok(JobDetails {
+            job: record.view.clone(),
+            segments,
+        })
     }
 
     fn cancel(&self, job_id: &str) -> Result<CancelResponse, String> {
@@ -2013,6 +2054,11 @@ fn get_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<JobSnaps
 }
 
 #[tauri::command]
+fn download_details(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<JobDetails, String> {
+    jobs.details(&job_id)
+}
+
+#[tauri::command]
 fn cancel_download(job_id: String, jobs: State<'_, DesktopJobs>) -> Result<CancelResponse, String> {
     jobs.cancel(&job_id)
 }
@@ -2329,6 +2375,7 @@ pub fn run() {
             list_downloads,
             take_link_reviews,
             get_download,
+            download_details,
             cancel_download,
             start_now,
             retry_download,

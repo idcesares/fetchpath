@@ -1271,6 +1271,33 @@
       "verification": "PE import check of the release CLI; fetchpath --help prints in Windows Sandbox from a new terminal after install.",
       "evidence": [],
       "blockedReason": null
+    },
+    {
+      "id": "FP-045",
+      "title": "Show a live details window for a download: speed graph, segments and connections",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-015",
+        "FP-026"
+      ],
+      "status": "in_progress",
+      "owner": "lead",
+      "modelTier": "astra-high",
+      "files": [
+        "crates/fetchpath-http/src/lib.rs",
+        "crates/fetchpath-core/src",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/index.html",
+        "apps/desktop/src/styles.css"
+      ],
+      "acceptanceIds": [
+        "A01"
+      ],
+      "acceptance": "Opening a download shows a window with its current speed, a speed-over-time graph, and for a segmented transfer each in-flight range with its bounds and bytes received, all from engine-reported values; closing it leaves the queue unchanged. Observation adds no allocation or lock to the per-write path beyond an atomic add.",
+      "verification": "Engine unit test that segment progress is reported and cleared; desktop build; a real segmented download observed in the window.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }
