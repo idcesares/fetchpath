@@ -109,6 +109,8 @@ flowchart TD
 
 **Core:** Rust, a small async runtime, explicit state transitions, and bounded channels. Start as one reusable library plus a CLI. The desktop host can keep jobs alive independently of windows without requiring a system-wide privileged service. Introduce a separate user-level daemon only when lifecycle or browser integration requires it.
 
+**Update, 24 September 2026:** that point has been reached. A shared queue across the desktop, the command line, an interactive terminal, the browser host and agents (MCP) needs one owner, so a per-user headless engine now owns the queue and every front end is a client of one versioned protocol. See [the engine platform design](specs/2026-09-24-engine-platform-design.md) (FP-047); it does not need a privileged service.
+
 **HTTP:** one backend owner using libcurl's multi interface, with cancellable commands and bounded delivery into the writer/verifier. Prove callback lifetime, pause/resume behavior, connection reuse, TLS trust-store behavior, and Rust/native packaging in a small spike. Do not build a second scheduler accidentally inside each job. A pure Rust backend is an alternative if this integration fails the agreed constraints; implement only one initially.
 
 **Storage:** one staging file on the destination volume, positional writes, a bounded buffer pool, and SQLite metadata. Avoid mandatory CAS duplication on the first release. Define conflict behavior for existing destinations; do not silently overwrite. Size, preallocation, sparse support, disk-full behavior, filesystem limits, and rename semantics need native-platform tests.
@@ -166,9 +168,12 @@ These are dependent milestones, not calendar estimates. Estimate effort after th
 | M6 — First public-release candidate | Cohesive UI, installer/uninstaller, update strategy, compatibility documentation, accessibility and reliability review | M3/M4 plus confirmed M5 scope | Release acceptance matrix and native installation tests; versioned evidence; remaining limitations documented |
 | M7 — Verified multi-source and reuse | Metalink, trusted expected digests/piece maps, mirror failover, bounded cache | M2/M4 | Corrupt/slow/offline mirror tests; final identity; honest retry behavior with final-only hashes |
 | M8 — Additional distribution modes | Torrents/magnets, provider-specific adapters, paired LAN/offline distribution | Relevant M7 identity and adapter contracts | Separate protocol/resource/privacy gates; benefits on representative workloads |
+| M10 — Engine platform | Queue, persistence, history, settings and policy in one per-user engine; protocol v1 over an authenticated pipe; principals and approval; desktop and browser host as clients | M6 | Characterization tests unchanged across the move; adversarial protocol, ownership and recovery tests; desktop journeys re-verified; upgrade from 0.1.0 with a retained queue |
+| M11 — Terminal client | Full command set over the engine; interactive inline terminal with dashboard, flows, personalization, remembered context and smart rules | M10 protocol | Integration tests over the real engine; render snapshots; keyboard-only and plain-mode walkthroughs in Windows Terminal and the console host |
+| M12 — Agent client | MCP server under an agent principal; approval surfaces; adversarial review; platform release gate | M10 policy; M11 for terminal approvals | Policy-escape and injection tests; end-to-end agent download; re-run release matrix |
 | M9 — Advanced efficiency research | CDC/delta, multi-interface paths, specialized QUIC, FEC/coding; mobile as its own product track | Evidence of a remaining bottleneck | Reproducible net gain, interoperability, operating cost, and maintenance justification |
 
-M0 UX and baseline tasks can run independently. After the shared job/event contract, desktop/browser work can overlap engine work. M2's persistence and recovery contract stays under a single architectural owner. Do not postpone public-release polish until every research feature exists.
+M10–M12 (engine platform, terminal and agent clients) take priority over the remaining M8 and M9 work; new M8 job kinds land in the engine session so every client gets them. M0 UX and baseline tasks can run independently. After the shared job/event contract, desktop/browser work can overlap engine work. M2's persistence and recovery contract stays under a single architectural owner. Do not postpone public-release polish until every research feature exists.
 
 ## 9. Benchmark plan: earn the speed claim
 
@@ -215,6 +220,7 @@ All criteria below are currently **not implemented and not tested**. They define
 | A10 | Optional sharing is explicit and obeys authorization and upload/cache budgets | Opt-in/offline/privacy scenarios and unauthorized-peer tests |
 | A11 | Compatibility packs deliver correct outputs and bounded failure handling | Protocol fixtures, media assembly checks, helper crash/update compatibility tests |
 | A12 | A supported Windows installation can install, update, recover, and uninstall predictably | Clean-machine packaging run; upgrade with retained queue; documented data-removal behavior |
+| A13 | Automation and agent clients act only within the permissions a person granted; anything beyond waits for that person's approval | Policy-escape, credential-smuggling, self-approval and prompt-injected-metadata tests |
 
 ## 11. Open decisions and research stop conditions
 

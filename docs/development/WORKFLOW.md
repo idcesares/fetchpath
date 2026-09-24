@@ -1,12 +1,12 @@
-# Codex task workflow
+# Task workflow
 
-Open the Fetchpath folder in Codex and keep Astra High as the lead. Repository instructions express routing intent; no project file silently changes Codex model settings.
+Open the Fetchpath folder in Codex or Claude Code and keep the strongest model as the lead (Astra High or Opus). Repository instructions express routing intent; no project file silently changes either tool's model settings. Both tools read `AGENTS.md`.
 
-1. Run `node tools/tasks.mjs next`; choose a ready task.
-2. Read `node tools/tasks.mjs show FP-XXX` and its relevant specification. Resolve blocking contracts before delegation.
+1. Run `node tools/tasks.mjs next`; it shows active work, then ready tasks ordered by priority (P0 blocks the phase, P1 is a headline outcome, P2 is next, P3 is later or research). Choose the highest priority ready task unless the user says otherwise.
+2. Read `node tools/tasks.mjs show FP-XXX` and its relevant specification. Resolve blocking contracts before delegation. For a task larger than one sitting, write its implementation plan in `docs/development/plans` first.
 3. Lead records owner/status, a branch such as `fp-004-http-backend-spike`, file ownership, and exact acceptance. Use a worktree after the first baseline commit exists.
 4. Delegate independent tasks to a suitable smaller model. Start with two implementers at most. Lead retains shared-file and integration ownership.
-5. Implement the smallest working behavior. Record commands, results, and limitations. Strong-model review covers protected invariants.
+5. Implement the smallest working behavior. Record commands, results, and limitations. Strong-model review covers protected invariants and is mandatory for tasks marked `review: "strong"`.
 6. Integrate, run affected checks, update evidence and task state, then choose the next ready task. Do not dispatch blocked dependants.
 
 The executable backlog replaces scattered TODO lists. Milestones remain in the plan; a task can be complete while its milestone still has outstanding tasks. `next` reports eligible work, not an instruction to execute every task automatically.

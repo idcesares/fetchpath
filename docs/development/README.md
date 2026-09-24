@@ -10,6 +10,10 @@ and limitations behind it.
 - [Building with agents](ORCHESTRATION.md) — model routing and required evidence per kind of work.
 - [Task packet template](../tasks/TEMPLATE.md).
 
+## Next phase: engine platform
+
+- [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; tasks FP-048 to FP-069 in the backlog.
+
 ## Release
 
 - [Release candidate](RELEASE-CANDIDATE.md) — FP-018 acceptance matrix and decision.
@@ -46,6 +50,6 @@ in history at commit `b7a5fc3` (for example
 ## Where things go
 
 - A new task record: `docs/development/<TOPIC>.md`, listed here.
-- Raw evidence a record cites: `docs/development/evidence/<area>/`.
+- Raw evidence a record cites: `docs/development/evidence/<area>/`, never beside source code.
 - Implementation plans: [plans](plans/). Design specs: [architecture/specs](../architecture/specs/).
 - Scratch output, downloaded toolchains, build trees: ignored `work/`, never cited as the only evidence.

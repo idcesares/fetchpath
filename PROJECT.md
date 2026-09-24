@@ -1,16 +1,17 @@
 # Fetchpath project state
 
-Updated 24 September 2026. Phase: M6 complete — Fetchpath 0.1.0 is ready to publish as a GitHub release when the user says so (FP-018 done; see [the release candidate record](docs/development/RELEASE-CANDIDATE.md)). M8 distribution and sharing work continues after it. Engine, packaging, multi-source repair, release polish, clean-machine validation (Windows Sandbox, FP-043), the browser toolbar (FP-042), the clean-Windows CLI (FP-044) and the details window (FP-045) are done.
+Updated 24 September 2026. Phase: **M10–M12, the engine platform.** Fetchpath 0.1.0 passed its release gate (FP-018) and is published only when the user decides; release timing is not tied to the plan. The next phase turns Fetchpath into one engine with many clients: the desktop app, a full command line, an interactive terminal, the browser extension, and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md) (FP-047, accepted 24 September 2026).
 
 ## Confirmed purpose
 
 Build a general-purpose Windows download manager with exceptional usability for ordinary users and optional advanced controls for power users. Compatibility ambition is comparable to IDM and related tools. Video/audio downloading and quality selection are confirmed requirements for the first public release. Keep the production core portable.
 
-The user uses Codex with Astra High for lead orchestration and explicitly permits smaller agents for bounded work. The initial delegated foundation tasks use Terra Medium; this is a trial, not evidence of a globally optimal model choice.
+The user builds with agents in Codex (Astra High lead, Terra Medium for bounded work) and Claude Code, and explicitly permits smaller agents for bounded work. The backlog's `modelTier` names a role, mapped to concrete models per tool in [building with agents](docs/development/ORCHESTRATION.md); the pairing is a trial, not evidence of a globally optimal model choice.
 
 ## Source of truth
 
 - Product/technical direction: [architecture plan](docs/architecture/PLAN.md).
+- Engine platform (next phase): [platform design](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 - UX journeys: [UX contract](docs/product/UX.md).
 - Task state, dependencies, ownership, and evidence: [backlog](docs/tasks/backlog.json).
 - Repository and future component boundaries: [repository map](docs/architecture/REPOSITORY.md).
@@ -33,11 +34,20 @@ Repository organization, reproducible HTTP fixtures, backend/media packaging spi
 
 Progress is now reported from engine-confirmed values end to end: the total a source states reaches the queue, and percent, transfer rate and remaining time are derived from it. A source that states no length produces no percentage and no remaining time rather than a guessed one. A running file download pauses to its retained checkpoint and resumes from that offset, including across a restart; a resume is proven by the `If-Range` request it sends. Media downloads have no checkpoint to return to, so pause is not offered on them rather than offered and refused. A bounded, self-repairing settings file governs concurrency, the default save folder, automatic retry, window behavior and appearance, and an optional Power mode adds per-download diagnostics and a session statistics panel without moving anything else. Automatic retry applies only to failures the engine classified as transport trouble, never to ones that need a person to decide something. Missing media helpers now lead to a guided setup rather than a bare error; the guided download installs only an artifact whose SHA-256 this build has recorded, and refuses by name otherwise. Uninstall asks whether to remove the queue, history and settings, defaults to keeping them, and never touches downloaded files. The third-party notice file is generated from `Cargo.lock` and covers 566 packages. A production browser extension provides explicit per-link capture, exact-origin permissions and exclusions, origin-scoped cookie replay, a DPAPI-protected durable inbox, and idempotent desktop ingestion. Production media inspection and selected-quality video/audio downloads share the desktop queue, with supervised helpers, mux verification, cancellation, and expired-session recovery on serviced Windows 11 x64 releases.
 
+## Direction (decided 24 September 2026)
+
+- **One engine, many clients.** A per-user headless engine (`fetchpath engine`, inside `fetchpath.exe`) is the only owner of the queue, history, settings, rules and policy. The desktop, command line, terminal UI, browser host and MCP server all talk to it through one versioned protocol that implements [the job contract](docs/architecture/JOB-CONTRACT.md). Closing a window or terminal does not stop downloads; the engine exits when nothing is left to do.
+- **Terminal-first build order.** The terminal is the first complete client and proves the protocol. The desktop is still the product for ordinary users, and its journeys must not regress.
+- **Agents are principals, not users.** An agent reaches Fetchpath through `fetchpath mcp` under a policy the person grants (folders, size, no credentials, no sharing). Anything beyond that waits for the person's approval in the terminal or desktop. Same-user malware is out of scope, and the docs say so.
+- **Existing work re-sequenced.** The cache and LAN desktop surfaces (FP-032, FP-033) and new job kinds (FP-021, FP-022) land on the engine session so every client gets them.
+
 ## Next development
 
-Run `node tools/tasks.mjs next`. FP-020 is done: the independent review of `adapters/lan` on 23 September 2026 found the cryptography and DPAPI FFI sound and fixed two defects (unpairing did not revoke a running server; a race in identity creation); see [cache and paired LAN](docs/development/CACHE-AND-LAN.md). mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; cache pins remain per process, and a running server reloads the paired-device list every two seconds.
+Run `node tools/tasks.mjs next`: it lists active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). With the spec accepted, FP-048 (characterize the desktop queue) and FP-050 (protocol types) can run in parallel. The lanes and review requirements are in §11 of the spec.
 
-FP-018 is done: the candidate checks were re-run on the final tree on 24 September 2026 and the decision is ready to publish. Publication is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`), made only on the user's word; no remote exists yet. Decided 23 September 2026: 0.1.0 names no supported media site, is x64 only, and a Windows Sandbox run is the clean-machine check.
+The FP-018 record stays valid for the 0.1.0 tree at commit `ce6615a`. Publishing it is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`) made only on the user's word; no remote exists yet. FP-069 re-runs the gate on the platform.
+
+The cache and LAN work (FP-020) is done and reviewed; see [cache and paired LAN](docs/development/CACHE-AND-LAN.md). mDNS discovery (FP-034) and research tasks (FP-023 to FP-025) are P3.
 
 ## Remaining choices
 

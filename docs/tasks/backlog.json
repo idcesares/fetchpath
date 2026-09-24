@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-23",
+  "updated": "2026-09-24",
   "tasks": [
     {
       "id": "FP-001",
@@ -203,7 +203,7 @@
       "verification": "Tauri 2 and WinUI 3 implemented the same Windows journey and passed release builds, Windows UI Automation discovery, and close-to-tray probes. Five UIA-ready startup and process-tree memory samples plus installer artifacts were recorded. Tauri 2 was selected for direct Rust-core integration and smaller/faster delivery despite its higher measured renderer footprint. Support is Windows 11 x64 on Microsoft-serviced releases; 24H2 is the current floor and 25H2 the primary QA target.",
       "evidence": [
         "docs/architecture/DESKTOP-FRAMEWORK.md",
-        "docs/architecture/evidence/ui/framework-spike.json"
+        "docs/development/evidence/ui/framework-spike.json"
       ],
       "blockedReason": null
     },
@@ -265,7 +265,7 @@
         "apps/desktop/src-tauri/src/lib.rs",
         "apps/desktop/src/main.ts",
         "apps/desktop/tools/ui-smoke.ps1",
-        "apps/desktop/evidence/desktop-e2e.json"
+        "docs/development/evidence/desktop/desktop-e2e.json"
       ],
       "blockedReason": null
     },
@@ -324,7 +324,7 @@
         "apps/desktop/src-tauri/Cargo.toml",
         "apps/desktop/tools/ui-smoke.ps1",
         "apps/desktop/README.md",
-        "apps/desktop/evidence/desktop-e2e.json",
+        "docs/development/evidence/desktop/desktop-e2e.json",
         "crates/fetchpath-core/src/lib.rs",
         "Cargo.lock",
         "docs/development/DESKTOP-QUEUE-RECOVERY.md",
@@ -339,7 +339,7 @@
       "verification": "The optimized Windows application UI smoke covers a two-item batch preview, real completion with matching observed digest, non-zero progress, and cancellation without destination publication. Rust command-path tests cover bounded concurrency, due-schedule catch-up, persistent history recovery, query-secret omission with refreshed-link recovery, destination conflicts without overwrite, and user-facing invalid-input errors. The renderer provides native labeled controls, Ctrl+L/Escape shortcuts, search and status filters, start-now/retry/edit-link/choose-path actions, and close-to-tray behavior.",
       "evidence": [
         "docs/development/DESKTOP-QUEUE-RECOVERY.md",
-        "apps/desktop/evidence/desktop-e2e.json",
+        "docs/development/evidence/desktop/desktop-e2e.json",
         "apps/desktop/src-tauri/src/lib.rs",
         "apps/desktop/src/main.ts",
         "apps/desktop/tools/ui-smoke.ps1"
@@ -636,30 +636,34 @@
       "title": "Integrate torrents and magnets through isolated engine",
       "milestone": "M8",
       "dependsOn": [
-        "FP-019"
+        "FP-019",
+        "FP-049"
       ],
       "status": "todo",
       "owner": null,
       "modelTier": "terra-medium",
       "files": [
-        "adapters/torrent"
+        "adapters/torrent",
+        "crates/fetchpath-session"
       ],
       "acceptanceIds": [
         "A02",
         "A05",
         "A10"
       ],
-      "acceptance": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
+      "acceptance": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests. Lands as a session job kind so every client (desktop, CLI, TUI, agents) gets it.",
       "verification": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P2"
     },
     {
       "id": "FP-022",
       "title": "Add provider-specific model/data acceleration",
       "milestone": "M8",
       "dependsOn": [
-        "FP-019"
+        "FP-019",
+        "FP-049"
       ],
       "status": "todo",
       "owner": null,
@@ -672,10 +676,11 @@
         "A07",
         "A09"
       ],
-      "acceptance": "Provider auth/version identity correct; compare to official client, including Xet where applicable.",
+      "acceptance": "Provider auth/version identity correct; compare to official client, including Xet where applicable. Lands as a session source adapter so every client gets it.",
       "verification": "Provider auth/version identity correct; compare to official client, including Xet where applicable.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P2"
     },
     {
       "id": "FP-023",
@@ -698,7 +703,8 @@
       "acceptance": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
       "verification": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P3"
     },
     {
       "id": "FP-024",
@@ -722,7 +728,8 @@
       "acceptance": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
       "verification": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P3"
     },
     {
       "id": "FP-025",
@@ -745,7 +752,8 @@
       "acceptance": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
       "verification": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P3"
     },
     {
       "id": "FP-026",
@@ -925,14 +933,18 @@
       "milestone": "M8",
       "dependsOn": [
         "FP-020",
-        "FP-031"
+        "FP-031",
+        "FP-055"
       ],
       "status": "todo",
       "owner": null,
       "modelTier": "terra-medium",
       "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
         "apps/desktop",
-        "docs/product/UX.md",
+        "apps/cli",
+        "docs/user",
         "docs/development"
       ],
       "acceptanceIds": [
@@ -940,10 +952,11 @@
         "A05",
         "A10"
       ],
-      "acceptance": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota.",
+      "acceptance": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota. Cache reuse is implemented in the session and exposed to the desktop and the terminal through the protocol.",
       "verification": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P2"
     },
     {
       "id": "FP-033",
@@ -951,7 +964,8 @@
       "milestone": "M8",
       "dependsOn": [
         "FP-020",
-        "FP-032"
+        "FP-032",
+        "FP-055"
       ],
       "status": "todo",
       "owner": null,
@@ -966,10 +980,11 @@
         "A07",
         "A10"
       ],
-      "acceptance": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass.",
+      "acceptance": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass. Pairing and sharing controls go through the engine protocol; agents never receive them.",
       "verification": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P2"
     },
     {
       "id": "FP-034",
@@ -992,7 +1007,8 @@
       "acceptance": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
       "verification": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
       "evidence": [],
-      "blockedReason": null
+      "blockedReason": null,
+      "priority": "P3"
     },
     {
       "id": "FP-035",
@@ -1346,6 +1362,633 @@
         "docs/architecture/REPOSITORY.md",
         "docs/development/README.md"
       ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-047",
+      "title": "Design the engine platform: one engine, many clients, agents included",
+      "milestone": "M10",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "lead",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "standard",
+      "files": [
+        "docs/architecture/specs/2026-09-24-engine-platform-design.md",
+        "docs/architecture/PLAN.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/tasks/backlog.json",
+        "tools/tasks.mjs",
+        "PROJECT.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A13"
+      ],
+      "acceptance": "A written design places the queue, persistence, policy and history in one engine that the desktop, command line, terminal UI, browser host and an MCP server reach through one versioned protocol; it records the user decisions of 24 September 2026, the principal and approval model with an honest threat model, the migration order, the testing strategy and a prioritized task map; the user has reviewed and accepted it.",
+      "verification": "The user reviewed and accepted the written spec on 24 September 2026. node tools/tasks.mjs check passes with 69 tasks; node --test passes 39/39 (one earlier run hung in the pre-existing native-host integration test against a stale debug host build and passed on rerun with a per-test timeout).",
+      "evidence": [
+        "docs/architecture/specs/2026-09-24-engine-platform-design.md",
+        "docs/tasks/backlog.json",
+        "tools/tasks.mjs"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-048",
+      "title": "Pin the desktop queue behavior with characterization tests before moving it",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-047"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/src/settings.rs",
+        "apps/desktop/src-tauri/tests"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A04"
+      ],
+      "acceptance": "Tests exercise the current desktop queue through its Rust functions without a window: persisted queue load and save including a 0.1.0 file, recovery actions and retry classification, pause and resume, batch and schedule handling, destination validation and redaction, rate estimates and settings repair. They pass on the unchanged code and name what they pin.",
+      "verification": "cargo test -p fetchpath-desktop --locked passes; removing a pinned behavior (for example, retrying a checksum mismatch) makes a named test fail.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-049",
+      "title": "Move the queue into a fetchpath-session crate with no behavior change",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-048"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "apps/desktop/src-tauri",
+        "Cargo.toml",
+        "Cargo.lock",
+        "docs/architecture/REPOSITORY.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A04",
+        "A05"
+      ],
+      "acceptance": "crates/fetchpath-session owns the queue model, persistence, scheduler, retry policy, rate estimates, history, settings and media orchestration, with no Tauri or UI types; the desktop calls it in-process and behaves identically; file formats and the data folder are unchanged, so a 0.1.0 queue loads; the characterization tests move with the code and still pass; the crate is in the repository map.",
+      "verification": "cargo test --workspace --locked, clippy -D warnings and fmt pass; FP-048 tests pass unchanged against the session; a desktop walkthrough of add, pause, resume, restart recovery and history matches before and after; independent strong-model review of persistence ordering.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-050",
+      "title": "Define protocol v1 and the EngineClient interface",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-047"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-protocol",
+        "docs/architecture/JOB-CONTRACT.md",
+        "Cargo.toml",
+        "Cargo.lock",
+        "docs/architecture/REPOSITORY.md"
+      ],
+      "acceptanceIds": [
+        "A07"
+      ],
+      "acceptance": "crates/fetchpath-protocol defines versioned command envelopes, replies, durable and ephemeral events, snapshots and errors following the job contract (schema_version, client_id, command_id, expected_revision, per-job seq, stable error codes and actions); length-prefixed framing with a hard size cap; JSON Schema export for every public type; an EngineClient trait that later has pipe and in-process implementations. No queue logic and no transport yet.",
+      "verification": "Round-trip and schema tests for every message; unsupported major versions, oversize frames and malformed JSON are rejected with the contract codes; the exported schema is checked in and a test fails when it drifts.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-051",
+      "title": "Add the command ledger, revisions and event sequencing to the session",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-049",
+        "FP-050"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A04",
+        "A07"
+      ],
+      "acceptance": "The session implements protocol commands through an in-process EngineClient: a durable ledger dedupes by (client_id, command_id) and acknowledges only after the mutation commits; expected_revision conflicts return the current revision without mutation; durable events carry per-job seq with SubscribeJob and SubscribeQueue replay-or-snapshot boundaries; progress samples are coalesced per subscriber so a slow client cannot stall transfers.",
+      "verification": "Adversarial tests: duplicate and conflicting commands, revision races between two clients, event gaps and replay after reconnect, a stalled subscriber under load, crash between mutation and acknowledgement; independent strong-model review.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-052",
+      "title": "Carry the protocol over an authenticated per-user named pipe",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-050"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-protocol/src/pipe",
+        "crates/fetchpath-protocol/tests"
+      ],
+      "acceptanceIds": [
+        "A07"
+      ],
+      "acceptance": "A Windows named pipe whose access list admits only the current user SID, created first-instance so it cannot be pre-empted by a lower-integrity process; both sides prove knowledge of a per-install secret in the user data folder by challenge and response without sending it; per-connection limits on frame size, pending requests and idle time; a bad peer closes only its own connection.",
+      "verification": "Tests for wrong secret, missing secret file, replayed handshake, oversize and truncated frames, flood of connections, and a client killed mid-frame; unsafe/FFI code reviewed independently by a strong model.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-053",
+      "title": "Run the session as the fetchpath engine: single owner, launch-or-attach, idle exit",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-051",
+        "FP-052"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/cli/src/engine",
+        "crates/fetchpath-protocol/src/launch",
+        "apps/cli/Cargo.toml",
+        "Cargo.lock"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A07",
+        "A12"
+      ],
+      "acceptance": "fetchpath engine hosts one session behind the pipe and holds the single-instance claim; any client connects or starts a detached, windowless engine and connects within a bounded wait; the engine runs while a client is connected or a job is non-terminal and exits after an idle grace period; startup recovery completes before commands are accepted; a version mismatch is refused with the contract code and the client can ask the engine to restart; an opt-in sign-in start setting exists and is off by default.",
+      "verification": "Tests start two engines concurrently (one wins), kill the engine mid-download and verify recovery on relaunch, verify idle exit and that scheduled jobs keep it alive, and exercise version refusal; independent strong-model review of ownership and recovery ordering.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-054",
+      "title": "Enforce principals, agent policy and the awaiting_approval state in the engine",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-051"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/policy",
+        "crates/fetchpath-protocol",
+        "docs/architecture/JOB-CONTRACT.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Every connection declares a principal (user, browser, agent:<name>); the engine enforces each principal policy: browser submits captures only; agents create jobs only inside granted folders, within size and rate limits, never with credentials, cookies or replace_existing, never change settings, rules, LAN, cache or sharing, and see only their own jobs. Out-of-policy requests become awaiting_approval jobs that only a user principal can approve or deny; an unknown-size job crossing the limit pauses into awaiting_approval. The job contract gains the state and its matrix rows through a superseding decision entry before code.",
+      "verification": "Policy-escape tests: traversal and symlinks out of a grant, size crossing, credential smuggling, an agent approving itself or reading other jobs, settings and sharing attempts; independent strong-model review of the credential and policy boundary.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-055",
+      "title": "Make the desktop app a client of the engine",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-053"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/desktop"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A04",
+        "A12"
+      ],
+      "acceptance": "Tauri commands become EngineClient calls and the UI updates from the event stream; closing the window no longer stops downloads and the tray reopens it; the queue, pause and resume, media, batch, schedules, checksum, details window, recovery and settings journeys behave as before; the desktop never hosts a session in-process in a shipped build.",
+      "verification": "Desktop queue and recovery walkthrough and the accessibility harness pass against the engine; kill the engine during a desktop download and verify the window reports and recovers; strong-model review of the no-second-owner guarantee.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-056",
+      "title": "Hand browser captures to the engine without the desktop window",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-053",
+        "FP-054"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop/src-tauri/src/browser_bridge.rs",
+        "apps/desktop/src-tauri/src/bin"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A08"
+      ],
+      "acceptance": "The browser host keeps the DPAPI inbox as the durable handoff, connects as the browser principal and nudges the engine, which ingests idempotently; a capture reaches the shared queue with only the engine running; duplicates and a stopped engine still lose nothing.",
+      "verification": "Browser capture tests pass with and without the desktop window; duplicate capture and engine-down cases verified.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-057",
+      "title": "Install, upgrade and uninstall with a running engine",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-055"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/desktop/src-tauri/tauri.conf.json",
+        "apps/desktop/src-tauri/tools",
+        "tests/installer"
+      ],
+      "acceptanceIds": [
+        "A12"
+      ],
+      "acceptance": "The installer asks a running engine to stop and waits for it to release its files before replacing them; upgrading from 0.1.0 keeps the persisted queue, history and settings; uninstall stops the engine first and keeps downloads; no engine outlives an uninstall.",
+      "verification": "Upgrade over a running engine mid-download and from a 0.1.0 install with a persisted queue; uninstall with the engine running; installer tests pass; strong-model review.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-058",
+      "title": "Give the command line the whole queue through the engine",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-053"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P0",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src",
+        "docs/user/CLI.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07"
+      ],
+      "acceptance": "add, ls, show, pause, resume, cancel, retry, rm, watch, inspect, batch, history, settings and engine status/stop work through the engine; job arguments accept a unique id prefix or queue index; --json prints protocol types; download keeps its arguments, streams, --quiet, --json and exit codes and now appears in the shared queue and history; lan, cache and fetch-verified are unchanged.",
+      "verification": "CLI integration tests against a real engine over the pipe for every command, including exit codes 0/2/3/4/5/6/130 and --json shapes; the existing CLI tests pass unchanged.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-059",
+      "title": "Build the interactive terminal: inline live panel, prompt and slash commands",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-051"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/tui",
+        "apps/cli/Cargo.toml",
+        "Cargo.lock"
+      ],
+      "acceptanceIds": [
+        "A01"
+      ],
+      "acceptance": "fetchpath with no arguments in a terminal opens inline mode: finished jobs print as receipts into scrollback, a live panel shows active, paused, queued, scheduled and awaiting-approval jobs, and a prompt accepts links and / commands with completion; --plain (automatic under NO_COLOR or a dumb terminal) prints append-only lines; works in Windows Terminal and the classic console host; line-editor choice recorded after a short console probe.",
+      "verification": "Render snapshot tests against recorded event streams; plain-mode output tests; keyboard-only walkthrough in Windows Terminal and conhost recorded; without a terminal it prints help and exits 2.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-060",
+      "title": "Add the full-screen dashboard with details, speed graph and segments",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-059",
+        "FP-058"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/tui/dashboard"
+      ],
+      "acceptanceIds": [
+        "A01"
+      ],
+      "acceptance": "A key toggles a full-screen view with the queue, a details pane (speed graph, segments and connections from the engine details data) and single-key actions with an on-screen key map; leaving restores the inline view and scrollback; resizing never corrupts the screen.",
+      "verification": "Render snapshot tests at several sizes; walkthrough through the real engine including resize and toggling during a download.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-061",
+      "title": "Handle media, batch, conflict, checksum and approval flows in the terminal",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-059",
+        "FP-054",
+        "FP-058"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/tui/flows"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A11",
+        "A13"
+      ],
+      "acceptance": "Inline prompts pick a media quality, preview and confirm a batch, resolve a destination conflict without silent replacement, enter and normalize a checksum, and approve or deny an agent request with its principal, size and folder shown; every prompt can be cancelled by Esc and has a plain-mode form.",
+      "verification": "Flow tests against a real engine for each prompt, including cancelling each one; an agent request approved and denied from the terminal.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-062",
+      "title": "Personalize the terminal: themes, glyphs, keybindings, aliases and custom commands",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-059"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/tui/config",
+        "docs/user"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07"
+      ],
+      "acceptance": "cli.toml in the data folder holds theme, glyph set, density, keybindings and aliases; built-in themes include high-contrast and plain; /theme, /keys and /alias edit it live; aliases and custom commands expand only to Fetchpath commands and can never run a shell or external program; invalid entries are reported with their line and ignored, never fatal.",
+      "verification": "Config parse and error-report tests; alias expansion tests including recursion limits and a refused shell escape; theme contrast check for built-ins.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-063",
+      "title": "Remember context: prompt history, recent folders and what happened while away",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-062"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/tui/history"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07"
+      ],
+      "acceptance": "Prompt history and completion persist across sessions with query strings and user info stripped from links by default; recent destinations and past links feed completion; opening the terminal summarizes jobs that finished or failed since it was last open, from engine history; history can be cleared with one command.",
+      "verification": "Tests that a signed link never reaches the history file; completion tests; summary test against engine history.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-064",
+      "title": "Apply smart rules in the engine for every client",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-051",
+        "FP-058"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session/src/rules",
+        "apps/cli/src/rules"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A13"
+      ],
+      "acceptance": "Rules by domain, file type or size choose destination, media quality, checksum requirement and concurrency for any principal; an agent rule-chosen folder must still be inside its grant; rules test LINK explains which rule matched and why; rules persist with the engine settings and are editable from the command line and terminal.",
+      "verification": "Rule matching and precedence tests; explain output tests; an agent job whose rule points outside its grant goes to awaiting_approval.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-065",
+      "title": "Serve Fetchpath to agents as an MCP server",
+      "milestone": "M12",
+      "dependsOn": [
+        "FP-053",
+        "FP-054"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/cli/src/mcp",
+        "apps/cli/Cargo.toml",
+        "Cargo.lock",
+        "docs/user"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A13"
+      ],
+      "acceptance": "fetchpath mcp speaks MCP over stdio as an agent principal with tools download, inspect_link, list_downloads, get_download, wait_for_download, pause, resume, cancel and search_history; tool schemas are generated from protocol types; progress arrives as MCP progress notifications; results mark page titles, file names and server text as untrusted; saved paths appear only inside granted folders; an observed hash is never described as publisher authenticity; setup instructions for common agent hosts are documented. The SDK is chosen from current documentation.",
+      "verification": "MCP conformance tests with a scripted client; end-to-end download from a real agent host recorded; strong-model review of the agent boundary.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-066",
+      "title": "Show agent requests and agent access in the desktop and command line",
+      "milestone": "M12",
+      "dependsOn": [
+        "FP-055",
+        "FP-065"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop",
+        "apps/cli/src/agents"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A13"
+      ],
+      "acceptance": "The desktop queue shows awaiting-approval jobs with approve and deny; Settings lists agents with their folders and limits and can grant, change and revoke them; fetchpath agents and fetchpath approvals do the same from the command line; revoking an agent stops its running jobs from continuing without approval.",
+      "verification": "Desktop walkthrough and accessibility harness for the approval card and agent settings; CLI tests for grant, limit, revoke and approvals.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-067",
+      "title": "Attack the agent boundary and fix what breaks",
+      "milestone": "M12",
+      "dependsOn": [
+        "FP-065",
+        "FP-066"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/tests",
+        "apps/cli/tests",
+        "docs/development"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A13"
+      ],
+      "acceptance": "An independent reviewer derives attacks from the spec: prompt-injected titles and file names, traversal and symlinks out of grants, size-limit games, credential and cookie smuggling, self-approval, reading other principals jobs, enabling sharing or LAN, and flooding; every finding is fixed or recorded as a residual risk with a reason.",
+      "verification": "Adversarial test suite added and passing; review record in docs/development with findings, fixes and residual risks.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-068",
+      "title": "Document the terminal, agents and the engine for users and contributors",
+      "milestone": "M12",
+      "dependsOn": [
+        "FP-060",
+        "FP-061",
+        "FP-063",
+        "FP-064",
+        "FP-065"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "docs/user",
+        "docs/product/UX.md",
+        "README.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md"
+      ],
+      "acceptanceIds": [
+        "A01"
+      ],
+      "acceptance": "The user guide and CLI guide cover the engine, the interactive terminal, personalization, rules, approvals and agent setup, including the honest threat model; the UX contract gains terminal and agent journeys; the changelog records the platform.",
+      "verification": "Every documented command and example is run against the build; node --test link checks pass.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-069",
+      "title": "Re-run the release gate on the engine platform",
+      "milestone": "M12",
+      "dependsOn": [
+        "FP-055",
+        "FP-056",
+        "FP-057",
+        "FP-058",
+        "FP-060",
+        "FP-061",
+        "FP-062",
+        "FP-063",
+        "FP-064",
+        "FP-065",
+        "FP-066",
+        "FP-067",
+        "FP-068"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "standard",
+      "files": [
+        "docs/development",
+        "docs/development/evidence/release"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A07",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "The FP-018 acceptance matrix is re-run on the new architecture with added rows for the engine, terminal and agents, including a clean-machine lifecycle, upgrade from a 0.1.0 install with a persisted queue, and uninstall with the engine running; the record states ready or not ready with remaining limitations. Publishing stays the user decision.",
+      "verification": "Recorded matrix with commands, results and limitations in docs/development; node tools/tasks.mjs check and node --test pass.",
+      "evidence": [],
       "blockedReason": null
     }
   ]

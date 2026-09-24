@@ -3,6 +3,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
+// P0 blocks the current phase, P1 is a headline outcome of it, P2 is valuable
+// next, P3 is later or research. Every unfinished task carries one.
+export const priorities = ['P0', 'P1', 'P2', 'P3'];
+// 'strong' marks integrity, persistence, unsafe/FFI, credential and agent-policy
+// work that needs an independent strong-model review before it is done.
+export const reviews = ['strong', 'standard'];
 export function validateGraph(backlog) {
   const errors = [];
   if (backlog?.schemaVersion !== 1 || !Array.isArray(backlog.tasks)) return ['Invalid backlog schema'];
@@ -14,7 +20,9 @@ export function validateGraph(backlog) {
     if (!['todo', 'in_progress', 'blocked', 'done'].includes(task.status)) errors.push(`${task.id}: invalid status`);
     if (!task.title || !task.acceptance || !task.verification) errors.push(`${task.id}: missing contract`);
     if (!Array.isArray(task.dependsOn) || !Array.isArray(task.files) || !Array.isArray(task.evidence)) errors.push(`${task.id}: invalid arrays`);
-    if (!Array.isArray(task.acceptanceIds) || !task.acceptanceIds.length || task.acceptanceIds.some(id => !/^A(0[1-9]|1[0-2])$/.test(id))) errors.push(`${task.id}: invalid acceptance IDs`);
+    if (!Array.isArray(task.acceptanceIds) || !task.acceptanceIds.length || task.acceptanceIds.some(id => !/^A(0[1-9]|1[0-3])$/.test(id))) errors.push(`${task.id}: invalid acceptance IDs`);
+    if (task.status !== 'done' && !priorities.includes(task.priority)) errors.push(`${task.id}: unfinished task needs priority P0-P3`);
+    if (task.review !== undefined && !reviews.includes(task.review)) errors.push(`${task.id}: invalid review`);
     if (task.status === 'in_progress' && !task.owner) errors.push(`${task.id}: active task needs owner`);
     if (task.status === 'blocked' && !task.blockedReason) errors.push(`${task.id}: blocked task needs reason`);
     if (task.status === 'done' && !task.evidence?.length) errors.push(`${task.id}: done task needs evidence`);
@@ -42,7 +50,9 @@ export function validateGraph(backlog) {
 
 export function readyTasks(backlog) {
   const done = new Set(backlog.tasks.filter(t => t.status === 'done').map(t => t.id));
-  return backlog.tasks.filter(t => t.status === 'todo' && t.dependsOn.every(id => done.has(id)));
+  return backlog.tasks
+    .filter(t => t.status === 'todo' && t.dependsOn.every(id => done.has(id)))
+    .sort((a, b) => priorities.indexOf(a.priority) - priorities.indexOf(b.priority) || a.id.localeCompare(b.id));
 }
 
 export async function validateEvidence(backlog, base = root) {
@@ -71,7 +81,9 @@ async function main() {
     console.log(JSON.stringify(task, null, 2));
   } else if (command === 'list' || command === 'next') {
     const ready = new Set(readyTasks(backlog).map(t => t.id));
-    for (const task of command === 'next' ? readyTasks(backlog) : backlog.tasks) console.log(`${task.id} [${ready.has(task.id) ? 'ready' : task.status}] ${task.milestone} ${task.title}`);
+    // `next` shows active work first: an in_progress task often gates the ready list.
+    const active = command === 'next' ? backlog.tasks.filter(t => t.status === 'in_progress') : [];
+    for (const task of command === 'next' ? [...active, ...readyTasks(backlog)] : backlog.tasks) console.log(`${task.id} [${ready.has(task.id) ? 'ready' : task.status}] ${task.priority ?? '--'} ${task.milestone} ${task.title}${task.review === 'strong' ? ' (strong review)' : ''}`);
   } else throw new Error('Usage: node tools/tasks.mjs [next|list|show FP-XXX|check]');
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

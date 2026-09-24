@@ -19,6 +19,8 @@ Use a single repository while the product shares identity, lifecycle, and releas
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.
 
+Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md) and added to this table when their first behavior lands: `crates/fetchpath-session` (queue, persistence, history, settings, rules and policy moved out of the desktop host; FP-049) and `crates/fetchpath-protocol` (versioned wire types, `EngineClient`, the authenticated pipe; FP-050). The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
+
 ## Documentation
 
 | Area | Owns | Primary work |
@@ -28,7 +30,7 @@ Split crates only at useful compile/test/ownership boundaries; avoid a crate per
 | `docs/product` | User journeys and interaction contract | UX owner, lead review |
 | `docs/user` | End-user guide and CLI reference | Release owner |
 | `docs/tasks` | `backlog.json` (task state, dependencies, acceptance, evidence) and the handoff template | Lead while agents run |
-| `docs/development` | Workflow, per-task verification records, raw evidence in `docs/development/evidence`, implementation plans in `docs/development/plans`; indexed by [its README](../development/README.md) | Lead/integrator |
+| `docs/development` | Workflow, per-task verification records, all raw evidence in `docs/development/evidence` (none beside source), implementation plans in `docs/development/plans`; indexed by [its README](../development/README.md) | Lead/integrator |
 
 ## Tooling and tests
 

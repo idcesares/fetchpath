@@ -14,7 +14,7 @@ This is a product-support boundary, not a claim that Tauri cannot execute on old
 
 ## Compared candidates
 
-The spike compared exactly two credible candidates: Tauri 2 and WinUI 3. Both implemented the same add-download, queue, pause/resume, advanced-options and close-to-tray journey. Both built and ran on the reference machine. The raw runs and environment are in [framework-spike.json](evidence/ui/framework-spike.json).
+The spike compared exactly two credible candidates: Tauri 2 and WinUI 3. Both implemented the same add-download, queue, pause/resume, advanced-options and close-to-tray journey. Both built and ran on the reference machine. The raw runs and environment are in [framework-spike.json](../development/evidence/ui/framework-spike.json).
 
 | Boundary | Tauri 2 | WinUI 3 |
 |---|---|---|

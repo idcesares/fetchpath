@@ -1,6 +1,6 @@
 # Building Fetchpath with agents
 
-Revision 0.3 · Lead: user-selected Astra High; bounded foundation tasks delegated to Terra Medium
+Revision 0.4 · 24 September 2026 · Lead: the user-selected strongest model in Codex or Claude Code; bounded tasks delegated per the tier table below
 
 ## Responsibility and model routing
 
@@ -21,6 +21,18 @@ Do not infer competence from model labels or price. Calibrate on a small set of 
 The running downloader uses deterministic policies and measured feedback. No LLM call belongs in the byte-transfer path. An optional future assistant UI would be a separate product decision.
 
 UX and engine work may proceed alongside each other once the job/event contract is defined. The lead protects coherence between them: one queue, consistent states, and progressive disclosure of advanced controls. Browser integration and media adapters need separate bounded investigations before UI promises imply unsupported behavior.
+
+## Model tiers per tool
+
+The backlog's `modelTier` names a role; the model behind it depends on the tool in use. Record which model actually did the work in the task record.
+
+| `modelTier` | Role | Codex | Claude Code |
+|---|---|---|---|
+| `astra-high` | Lead: contracts, persistence, security, integration | Astra High | Opus |
+| `terra-medium` | Bounded implementation against frozen interfaces | Terra Medium | Sonnet |
+| (mechanical) | Docs, fixtures, formatting | smaller fast model | Haiku |
+
+`review: "strong"` in a task means an independent reviewer on the lead tier, not the implementer, derives failure cases from the contract before the task is done.
 
 ## Work loop
 

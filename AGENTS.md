@@ -2,7 +2,7 @@
 
 ## Start small
 
-Read PROJECT.md, run `node tools/tasks.mjs next`, then read the selected task with `node tools/tasks.mjs show FP-XXX`. Load only its referenced contracts, relevant source symbols, and applicable nested instructions. Do not read the entire roadmap for every small edit.
+Read PROJECT.md, run `node tools/tasks.mjs next` (active work first, then ready tasks by priority P0–P3), then read the selected task with `node tools/tasks.mjs show FP-XXX`. Load only its referenced contracts, relevant source symbols, and applicable nested instructions. Do not read the entire roadmap for every small edit.
 
 ## Codebase knowledge graph
 
@@ -14,7 +14,7 @@ If graph tools are unavailable or fail, report it once, use Serena symbolic tool
 
 ## Tasks and ownership
 
-`docs/tasks/backlog.json` is authoritative. Use task IDs in branches and handoffs. A ready task is a todo task whose dependencies are done. Before work, record in_progress, owner, and a narrow owned file area. Only one owner changes shared contracts, task state, root configs, lockfiles, and migrations at a time. The lead owns integration and backlog mutations while agents run.
+`docs/tasks/backlog.json` is authoritative. Use task IDs in branches and handoffs. A ready task is a todo task whose dependencies are done; take the highest priority ready task unless the user says otherwise. `modelTier` names a role (see docs/development/ORCHESTRATION.md for the model per tool); `review: "strong"` requires an independent strong-model review before done. Before work, record in_progress, owner, and a narrow owned file area. Only one owner changes shared contracts, task state, root configs, lockfiles, and migrations at a time. The lead owns integration and backlog mutations while agents run.
 
 Use isolated worktrees when a committed baseline exists; otherwise disjoint file ownership. Agents never commit or change files outside their packet unless the lead expands scope. Return exact changed files, checks actually run, results, and remaining limitations.
 
@@ -22,7 +22,7 @@ Mark done only with reachable evidence and passing acceptance; never mark a whol
 
 ## Model routing
 
-Lead: user-selected Astra High for design, planning, difficult debugging, and integration. Terra Medium is the initial bounded implementation candidate; smaller models may handle mechanical edits. Strong-model review is required for integrity/persistence/unsafe/FFI and credential boundaries. Evaluate cost per accepted change; no unmeasured savings claims. No model calls belong in the download data path.
+Lead: the user-selected strongest model (Astra High in Codex, Opus in Claude Code) for design, planning, difficult debugging, and integration. Terra Medium or Sonnet is the bounded implementation candidate; smaller models may handle mechanical edits. Strong-model review is required for integrity/persistence/unsafe/FFI and credential boundaries. Evaluate cost per accepted change; no unmeasured savings claims. No model calls belong in the download data path.
 
 ## Checks and invariants
 
