@@ -1246,6 +1246,31 @@
       "verification": "A scripted Windows Sandbox run installs the release build on a clean image, launches it, exercises a download and uninstalls, recording evidence in the repository.",
       "evidence": [],
       "blockedReason": null
+    },
+    {
+      "id": "FP-044",
+      "title": "Make the installed command line run on a clean Windows and say it is installed",
+      "milestone": "M6",
+      "dependsOn": [
+        "FP-037"
+      ],
+      "status": "in_progress",
+      "owner": "lead",
+      "modelTier": "astra-high",
+      "files": [
+        "apps/cli/build.rs",
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/index.html",
+        "tests/installer"
+      ],
+      "acceptanceIds": [
+        "A07"
+      ],
+      "acceptance": "fetchpath.exe imports no VCRUNTIME140.dll, so it runs on a Windows image without the Visual C++ redistributable; the installer states that the fetchpath command was installed; Settings shows the command and where it lives.",
+      "verification": "PE import check of the release CLI; fetchpath --help prints in Windows Sandbox from a new terminal after install.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }

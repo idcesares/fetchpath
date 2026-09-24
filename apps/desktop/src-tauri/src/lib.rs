@@ -2182,6 +2182,16 @@ fn use_media_tools_dir(
     media_tools_status(app, jobs)
 }
 
+/// Where the `fetchpath` command is, when the installer put it beside the app.
+#[tauri::command]
+fn cli_path() -> Option<String> {
+    let cli = std::env::current_exe()
+        .ok()?
+        .parent()?
+        .join("fetchpath.exe");
+    cli.is_file().then(|| cli.display().to_string())
+}
+
 #[tauri::command]
 fn browser_setup_status(app: AppHandle) -> browser_setup::BrowserSetupStatus {
     browser_setup::status(app.path().resource_dir().ok().as_deref())
@@ -2334,6 +2344,7 @@ pub fn run() {
             install_media_tools,
             use_media_tools_dir,
             browser_setup_status,
+            cli_path,
             reveal_extension_folder
         ])
         .setup(|app| {

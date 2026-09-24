@@ -42,6 +42,10 @@
   SendMessage 0xFFFF 0x001A 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
+; The finish page says the command line came with the app (FP-044). This file is
+; included before the bundler's pages, and the bundler leaves this text unset.
+!define MUI_FINISHPAGE_TEXT "Fetchpath is installed.$\r$\n$\r$\nThe fetchpath command is installed too. Open a new terminal and type fetchpath --help to get started.$\r$\n$\r$\nClick Finish to close Setup."
+
 !macro NSIS_HOOK_PREINSTALL
 !macroend
 

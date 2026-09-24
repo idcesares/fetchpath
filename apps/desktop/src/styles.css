@@ -232,7 +232,7 @@ dialog.dialog h2 { margin-bottom: 14px; }
 #media-tools-state, #browser-setup-state { font-weight: 680; }
 .setup-steps { margin: 10px 0 0; padding-left: 22px; color: var(--muted); font-size: .88rem; }
 .setup-steps li { margin: 4px 0; }
-.setup-steps .inline-path { display: block; margin-top: 4px; padding: 4px 8px; border-radius: 6px; background: var(--field); color: inherit; font: .8rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
+.setup-steps .inline-path, #cli-path { display: block; margin-top: 4px; padding: 4px 8px; border-radius: 6px; background: var(--field); color: inherit; font: .8rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; overflow-wrap: anywhere; }
 #browser-setup-state[data-ready="true"]::before { content: "\2713\00a0"; color: var(--accent); }
 #media-tools-state[data-ready="true"]::before { content: "\2713\00a0"; color: var(--accent); }
 #media-tools-state[data-ready="false"]::before { content: "\26a0\00a0"; color: var(--warning); }

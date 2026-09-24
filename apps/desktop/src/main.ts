@@ -318,7 +318,25 @@ settingsForm.addEventListener("submit", (event) => event.preventDefault());
 async function showSettings(): Promise<void> {
   clearError(settingsError);
   openDialog(settingsDialog, settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus()]);
+}
+
+const cliState = required<HTMLParagraphElement>("cli-state");
+const cliDetail = required<HTMLParagraphElement>("cli-detail");
+const cliPath = required<HTMLElement>("cli-path");
+
+async function refreshCliStatus(): Promise<void> {
+  const path = await invoke<string | null>("cli_path").catch(() => null);
+  cliPath.hidden = !path;
+  cliPath.textContent = path ?? "";
+  if (path) {
+    cliState.textContent = "The fetchpath command is installed.";
+    cliDetail.textContent =
+      "Open a new terminal and type fetchpath --help. Downloads started there run on their own and do not appear in this list.";
+  } else {
+    cliState.textContent = "The fetchpath command is not installed beside this copy of Fetchpath.";
+    cliDetail.textContent = "The Fetchpath installer adds it. A copy run from elsewhere, such as a development build, does not.";
+  }
 }
 
 /* Add download -------------------------------------------------------------
