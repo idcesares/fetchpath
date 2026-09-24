@@ -17,6 +17,8 @@ pub mod frame;
 pub mod ids;
 pub mod message;
 pub mod model;
+#[cfg(windows)]
+pub mod pipe;
 pub mod schema;
 
 /// The protocol's major version, carried by every message.

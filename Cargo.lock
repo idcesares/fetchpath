@@ -1323,10 +1323,15 @@ dependencies = [
 name = "fetchpath-protocol"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
+ "hmac",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
