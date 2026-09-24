@@ -18,7 +18,6 @@ pub const SECRET_BYTES: usize = 32;
 pub const NONCE_BYTES: usize = 32;
 const SERVER_LABEL: &[u8] = b"fetchpath-pipe-v1 server proof";
 const CLIENT_LABEL: &[u8] = b"fetchpath-pipe-v1 client proof";
-const PIPE_NAME_LABEL: &[u8] = b"fetchpath-pipe-v1 pipe name";
 /// Handshake transport name and version, independent of the protocol's.
 pub const TRANSPORT: &str = "fetchpath-pipe";
 pub const TRANSPORT_VERSION: u32 = 1;
@@ -123,15 +122,13 @@ impl EngineSecret {
         // Owner-only access, no inheritance, and a medium label that also
         // forbids reading up, so a sandboxed low-integrity process of the
         // same user cannot read it.
-        let security = super::ffi::SecurityDescriptor::from_sddl(&format!(
-            "D:P(A;;FA;;;{user_sid})S:(ML;;NRNWNX;;;ME)"
-        ))
-        .map_err(|error| {
-            auth_error(
-                "auth.engine_secret_unwritable",
-                format!("The engine secret's access list could not be built: {error}"),
-            )
-        })?;
+        let security = super::ffi::SecurityDescriptor::from_sddl(&private_file_sddl(user_sid))
+            .map_err(|error| {
+                auth_error(
+                    "auth.engine_secret_unwritable",
+                    format!("The engine secret's access list could not be built: {error}"),
+                )
+            })?;
         match super::ffi::create_new_file(path, &security) {
             Ok(handle) => {
                 use std::os::windows::io::FromRawHandle;
@@ -163,14 +160,6 @@ impl EngineSecret {
                 format!("The engine secret could not be created: {error}"),
             )),
         }
-    }
-
-    /// A stable name component only holders of the secret can compute.
-    pub fn pipe_name_token(&self) -> String {
-        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.0)
-            .expect("HMAC accepts a key of any length");
-        mac.update(PIPE_NAME_LABEL);
-        to_hex(&mac.finalize().into_bytes()[..16])
     }
 
     fn mac(
@@ -290,6 +279,13 @@ pub enum Handshake {
         client_proof: String,
     },
     Welcome,
+}
+
+/// Owner-only access, nothing inherited, and a medium label that also
+/// forbids reading up, so a sandboxed low-integrity process of the same user
+/// cannot read the file. Used for the secret and the endpoint.
+pub fn private_file_sddl(user_sid: &str) -> String {
+    format!("D:P(A;;FA;;;{user_sid})S:(ML;;NRNWNX;;;ME)")
 }
 
 /// The longest handshake frame either side accepts.

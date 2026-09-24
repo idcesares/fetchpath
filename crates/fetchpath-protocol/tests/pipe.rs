@@ -9,8 +9,8 @@ use fetchpath_protocol::message::{
 };
 use fetchpath_protocol::pipe::auth::{self, EngineSecret, Handshake, Nonce, SECRET_BYTES};
 use fetchpath_protocol::pipe::{
-    Limits, PipeClient, PipeEngineClient, PipeListener, PipeName, current_user_sid,
-    file_security_sddl,
+    ENGINE_PIPE_PREFIX, Limits, PipeClient, PipeEngineClient, PipeListener, PipeName,
+    current_user_sid, endpoint, file_security_sddl,
 };
 use fetchpath_protocol::{
     ClientId, EngineClient, JobId, ProtocolError, SCHEMA_VERSION, StreamItem, Timestamp,
@@ -805,16 +805,73 @@ fn a_subscription_outlives_the_idle_limit() {
 }
 
 #[test]
-fn the_pipe_name_is_known_only_to_holders_of_the_secret() {
-    let name = PipeName::for_install(&secret()).unwrap();
-    assert_eq!(name, PipeName::for_install(&secret()).unwrap());
-    let other = PipeName::for_install(&EngineSecret::from_bytes([0x17; SECRET_BYTES])).unwrap();
-    assert_ne!(name, other);
-    assert!(name.as_str().contains(&current_user_sid().unwrap()));
+fn each_engine_run_gets_an_unpredictable_name_published_privately() {
+    let first = PipeName::fresh().unwrap();
+    let second = PipeName::fresh().unwrap();
+    assert_ne!(
+        first, second,
+        "a name seen in one run must not return in the next"
+    );
+    assert!(first.as_str().starts_with(ENGINE_PIPE_PREFIX));
+    assert!(first.as_str().contains(&current_user_sid().unwrap()));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("data").join("engine-endpoint-v1");
+    assert_eq!(
+        endpoint::read(&path).unwrap_err().code.as_str(),
+        "contract.engine_unavailable"
+    );
+    let sid = current_user_sid().unwrap();
+    endpoint::publish(&path, &first, &sid).unwrap();
+    assert_eq!(endpoint::read(&path).unwrap(), first);
+    // A later run replaces the record, keeping its protection.
+    endpoint::publish(&path, &second, &sid).unwrap();
+    assert_eq!(endpoint::read(&path).unwrap(), second);
+    let sddl = file_security_sddl(&path).unwrap();
+    let dacl = sddl.split("D:").nth(1).unwrap().split("S:").next().unwrap();
+    assert!(
+        dacl.starts_with('P') && dacl.matches("(A;").count() == 1 && dacl.contains(&sid),
+        "{sddl}"
+    );
+    assert!(
+        sddl.split("S:")
+            .nth(1)
+            .is_some_and(|label| label.contains("NR") && label.contains(";ME)")),
+        "{sddl}"
+    );
+
+    // A damaged record is refused rather than followed.
+    std::fs::write(&path, r"\\.\pipe\somewhere-else").unwrap();
+    assert_eq!(
+        endpoint::read(&path).unwrap_err().code.as_str(),
+        "contract.engine_unavailable"
+    );
+
+    // A client that follows the record reaches the engine that wrote it.
+    let name = PipeName::fresh().unwrap();
+    let mut listener = PipeListener::bind(&name, secret(), fast_limits()).unwrap();
+    endpoint::publish(&path, &name, &sid).unwrap();
+    let serving = thread::spawn(move || {
+        listener
+            .accept(Some(Duration::from_secs(5)))
+            .unwrap()
+            .expect("a client")
+            .authenticate()
+            .map(|_| ())
+    });
+    PipeClient::connect(
+        &endpoint::read(&path).unwrap(),
+        &secret(),
+        fast_limits(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    serving.join().unwrap().unwrap();
 }
 
 const LOW_NAME: &str = "FETCHPATH_PIPE_TEST_LOW_NAME";
 const LOW_SECRET: &str = "FETCHPATH_PIPE_TEST_LOW_SECRET";
+const LOW_ENDPOINT: &str = "FETCHPATH_PIPE_TEST_LOW_ENDPOINT";
 
 #[test]
 fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
@@ -823,6 +880,8 @@ fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
     let sid = current_user_sid().unwrap();
     let _ = EngineSecret::load_or_create(&secret_path, &sid).unwrap();
     let engine = Engine::start(fast_limits(), Respond::Reply);
+    let endpoint_path = dir.path().join("engine-endpoint-v1");
+    endpoint::publish(&endpoint_path, &engine.name, &sid).unwrap();
 
     // A copy of this test binary marked low integrity runs at low integrity.
     let low = dir.path().join("low-integrity-child.exe");
@@ -841,6 +900,7 @@ fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
         .args(["low_integrity_child", "--exact", "--ignored", "--nocapture"])
         .env(LOW_NAME, engine.name.as_str())
         .env(LOW_SECRET, &secret_path)
+        .env(LOW_ENDPOINT, &endpoint_path)
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&output.stdout);
@@ -849,7 +909,7 @@ fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
         .find(|line| line.starts_with("low-report"))
         .unwrap_or_else(|| panic!("the low-integrity child did not report: {text}"));
     assert_eq!(
-        report, "low-report rw=denied ro=denied secret=denied",
+        report, "low-report rw=denied ro=denied secret=denied endpoint=denied",
         "a lower-integrity process reached the engine"
     );
     // Nothing it tried took a connection slot.
@@ -865,14 +925,22 @@ fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
 #[test]
 #[ignore = "helper process for a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret"]
 fn low_integrity_child() {
-    let (Some(name), Some(secret_path)) =
-        (std::env::var_os(LOW_NAME), std::env::var_os(LOW_SECRET))
-    else {
+    let (Some(name), Some(secret_path), Some(endpoint_path)) = (
+        std::env::var_os(LOW_NAME),
+        std::env::var_os(LOW_SECRET),
+        std::env::var_os(LOW_ENDPOINT),
+    ) else {
         return;
     };
-    let outcome = |result: std::io::Result<File>| if result.is_ok() { "opened" } else { "denied" };
+    // Only "access denied" counts as refused, so a wrong path cannot pass.
+    let outcome = |result: std::io::Result<File>| match result {
+        Ok(_) => "opened".to_owned(),
+        Err(error) if error.raw_os_error() == Some(5) => "denied".to_owned(),
+        Err(error) => format!("error-{error}"),
+    };
     let rw = outcome(OpenOptions::new().read(true).write(true).open(&name));
     let ro = outcome(OpenOptions::new().read(true).open(&name));
     let secret = outcome(File::open(&secret_path));
-    println!("low-report rw={rw} ro={ro} secret={secret}");
+    let endpoint = outcome(File::open(&endpoint_path));
+    println!("low-report rw={rw} ro={ro} secret={secret} endpoint={endpoint}");
 }

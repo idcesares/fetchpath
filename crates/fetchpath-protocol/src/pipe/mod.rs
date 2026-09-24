@@ -1,10 +1,12 @@
 //! Protocol v1 over a per-user Windows named pipe (FP-052).
 //!
 //! The pipe admits only the current user's SID, refuses remote clients, and
-//! is created as the first instance of its name, so a process that claimed
-//! the name earlier makes the engine refuse to start rather than sit behind
-//! an impostor. Objects without an explicit label are medium integrity with
-//! no-write-up, so a lower-integrity process cannot write to it.
+//! carries a medium no-read-up, no-write-up label, so a lower-integrity
+//! process can open it neither way. Its name is fresh for every engine run
+//! and published only in an [`endpoint`] file with the same protection, so
+//! it cannot be predicted and claimed first; the first instance is created
+//! with `FILE_FLAG_FIRST_PIPE_INSTANCE` so the engine would refuse to start
+//! rather than sit behind an impostor if it were.
 //!
 //! Both ends then prove knowledge of the per-install secret ([`auth`]). Only
 //! after that do protocol frames flow. Every read and write has a deadline,
@@ -13,6 +15,7 @@
 
 pub mod auth;
 mod client;
+pub mod endpoint;
 mod ffi;
 mod server;
 
@@ -28,21 +31,29 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+/// Every engine pipe name starts with this.
+pub const ENGINE_PIPE_PREFIX: &str = r"\\.\pipe\fetchpath-engine-v1-";
+
 /// A pipe name under `\\.\pipe\`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PipeName(String);
 
 impl PipeName {
-    /// The engine's pipe for this install and user. The SID keeps users on
-    /// one machine apart; the token is derived from the engine secret, so a
-    /// process that cannot read the secret (another user, or a lower
-    /// integrity level) cannot know the name in advance to claim it first.
-    pub fn for_install(secret: &EngineSecret) -> Result<Self, ProtocolError> {
+    /// A new name for one run of the engine: the user's SID, which keeps
+    /// users apart, and 128 random bits.
+    ///
+    /// Any local process can list the pipes that exist, so a name that
+    /// stayed the same across runs could be seen while the engine runs and
+    /// claimed while it is stopped. A fresh name each start, published only
+    /// through the [`endpoint`] file, cannot be predicted.
+    pub fn fresh() -> Result<Self, ProtocolError> {
         let sid = current_user_sid()?;
-        Ok(Self(format!(
-            r"\\.\pipe\fetchpath-engine-v1-{sid}-{}",
-            secret.pipe_name_token()
-        )))
+        let token = auth::Nonce::random()?.to_hex();
+        Ok(Self(format!(r"{ENGINE_PIPE_PREFIX}{sid}-{}", &token[..32])))
+    }
+
+    fn from_published(name: String) -> Self {
+        Self(name)
     }
 
     /// A pipe with a chosen final segment, for tests and diagnostics.

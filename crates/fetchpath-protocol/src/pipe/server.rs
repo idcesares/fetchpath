@@ -70,6 +70,10 @@ impl PipeListener {
     /// Waits for the next client, up to `timeout` (`None` waits for ever).
     /// `Ok(None)` on timeout. A client over the connection limit is
     /// disconnected at once and waiting continues.
+    ///
+    /// An `Err` is transient: clients that open and close the pipe quickly
+    /// can cause one. Log it and call `accept` again; only a failure to
+    /// recreate the pipe instance persists.
     pub fn accept(
         &mut self,
         timeout: Option<Duration>,
