@@ -1,0 +1,2490 @@
+{
+  "$defs": {
+    "Action": {
+      "description": "The next step a person or the queue takes. A client that meets `unknown`\n(a value from a newer engine) offers no action rather than guessing.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "retry",
+          "description": "Try again; the engine may already be doing so automatically.",
+          "type": "string"
+        },
+        {
+          "const": "correct_input",
+          "description": "Correct the submitted input.",
+          "type": "string"
+        },
+        {
+          "const": "edit_link",
+          "description": "Paste a refreshed link; private query values were not kept.",
+          "type": "string"
+        },
+        {
+          "const": "recapture",
+          "description": "Send the download from the browser again.",
+          "type": "string"
+        },
+        {
+          "const": "choose_new_path",
+          "description": "Pick another destination.",
+          "type": "string"
+        },
+        {
+          "const": "replace_existing",
+          "description": "Explicitly replace the existing file. Only a person may choose this.",
+          "type": "string"
+        },
+        {
+          "const": "check_checksum",
+          "description": "Check the expected SHA-256 that was supplied.",
+          "type": "string"
+        },
+        {
+          "const": "configure_media_tools",
+          "description": "Set up or repair the media helpers.",
+          "type": "string"
+        },
+        {
+          "const": "refresh_media_choices",
+          "description": "Inspect the media page again for a fresh set of choices.",
+          "type": "string"
+        },
+        {
+          "const": "create_replacement_job",
+          "description": "The selected format vanished; create a linked replacement job.",
+          "type": "string"
+        },
+        {
+          "const": "refresh_authorization",
+          "description": "Refresh the sign-in or other authorization.",
+          "type": "string"
+        },
+        {
+          "const": "free_space",
+          "description": "Free disk space.",
+          "type": "string"
+        },
+        {
+          "const": "change_policy",
+          "description": "Lower concurrency or change policy.",
+          "type": "string"
+        },
+        {
+          "const": "update_software",
+          "description": "Restart the engine or update Fetchpath so versions agree.",
+          "type": "string"
+        },
+        {
+          "const": "refresh_client",
+          "description": "Fetch a fresh snapshot and try again.",
+          "type": "string"
+        },
+        {
+          "const": "wait",
+          "description": "Wait; the engine will continue on its own.",
+          "type": "string"
+        }
+      ]
+    },
+    "AttemptId": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "ClientId": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "Command": {
+      "description": "The command set. Names are the contract's where it has one, plus the\nengine-level queries and controls from the platform design §4. Principals,\napprovals and rules arrive with FP-054 and FP-064; an engine that does not\nknow a command answers `contract.unknown_command`.",
+      "oneOf": [
+        {
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/JobRequest"
+            },
+            "type": {
+              "const": "CreateJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "request"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "Pause",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "Resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "retain_partial": {
+              "default": false,
+              "description": "Keep the partial file instead of removing staging bytes.",
+              "type": "boolean"
+            },
+            "type": {
+              "const": "Cancel",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "Retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "patch": {
+              "$ref": "#/$defs/PolicyPatch"
+            },
+            "type": {
+              "const": "UpdatePolicy",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id",
+            "patch"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "decision": {
+              "$ref": "#/$defs/DestinationDecision"
+            },
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "ResolveDestination",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id",
+            "decision"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "selection_id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "SelectMedia",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id",
+            "selection_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "source": {
+              "$ref": "#/$defs/JobInput"
+            },
+            "type": {
+              "const": "RefreshSource",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "RefreshMediaChoices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Removes a finished or failed job from the list. Its history entry and\nledger records follow the retention rules.",
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "RemoveJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "filter": {
+              "$ref": "#/$defs/JobFilter",
+              "default": "all"
+            },
+            "type": {
+              "const": "ListJobs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "GetJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "JobDetails",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "InspectMedia",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/$defs/SensitiveUrl"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "QueueStats",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "description": "Matched against display links and file names.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "History",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "GetSettings",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "settings": {
+              "$ref": "#/$defs/EngineSettings"
+            },
+            "type": {
+              "const": "UpdateSettings",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "settings"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
+          "properties": {
+            "after_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "SubscribeJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id",
+            "after_seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The same for every job, ordered by the engine-wide `cursor`.",
+          "properties": {
+            "after_cursor": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "SubscribeQueue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "after_cursor"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "EngineStatus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "EngineShutdown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommandEnvelope": {
+      "description": "Every command a client sends. The engine deduplicates by\n`(client_id, command_id)` and acknowledges only after the mutation commits,\nso a client that lost the reply resends the same envelope unchanged.",
+      "properties": {
+        "client_id": {
+          "$ref": "#/$defs/ClientId"
+        },
+        "command_id": {
+          "$ref": "#/$defs/CommandId"
+        },
+        "expected_revision": {
+          "description": "The job revision the client last saw. A mismatch returns\n`contract.revision_conflict` without changing anything.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "issued_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "payload": {
+          "$ref": "#/$defs/Command"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "client_id",
+        "command_id",
+        "issued_at",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "CommandId": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "CommandResult": {
+      "description": "A successful command's result. A repeated command returns its original\nresult even if the job has moved on since (contract §5).",
+      "oneOf": [
+        {
+          "description": "One job, after the command.",
+          "properties": {
+            "job": {
+              "$ref": "#/$defs/JobSnapshot"
+            },
+            "type": {
+              "const": "Job",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`Pause` and `Cancel`: whether the request was taken, per the contract's\ncommand/state matrix. `accepted` means intent is recorded; the\noutcome arrives later as a state event.",
+          "properties": {
+            "job": {
+              "$ref": "#/$defs/JobSnapshot"
+            },
+            "outcome": {
+              "$ref": "#/$defs/ControlOutcome"
+            },
+            "type": {
+              "const": "Control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "outcome",
+            "job"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "jobs": {
+              "items": {
+                "$ref": "#/$defs/JobSnapshot"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "Jobs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "jobs"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "details": {
+              "$ref": "#/$defs/JobDetails"
+            },
+            "type": {
+              "const": "Details",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "details"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "inspection": {
+              "$ref": "#/$defs/MediaInspection"
+            },
+            "type": {
+              "const": "MediaInspection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "inspection"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "stats": {
+              "$ref": "#/$defs/QueueStats"
+            },
+            "type": {
+              "const": "QueueStats",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "stats"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Settings",
+              "type": "string"
+            },
+            "view": {
+              "$ref": "#/$defs/SettingsView"
+            }
+          },
+          "required": [
+            "type",
+            "view"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "Removed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The subscription starts here: every retained event after `position`\nfollows, then new ones.",
+          "properties": {
+            "position": {
+              "$ref": "#/$defs/StreamPosition"
+            },
+            "type": {
+              "const": "Subscribed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "position"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The requested events were compacted. These snapshots are atomic with\nthe stream, which continues after `position`.",
+          "properties": {
+            "jobs": {
+              "items": {
+                "$ref": "#/$defs/JobSnapshot"
+              },
+              "type": "array"
+            },
+            "position": {
+              "$ref": "#/$defs/StreamPosition"
+            },
+            "type": {
+              "const": "SnapshotBoundary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "jobs",
+            "position"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "$ref": "#/$defs/EngineStatus"
+            },
+            "type": {
+              "const": "EngineStatus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The engine is stopping after finishing in-flight work safely.",
+          "properties": {
+            "type": {
+              "const": "ShuttingDown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "ConflictPolicy": {
+      "description": "What happens when the destination already exists.",
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Stop and wait for a decision. Nothing is overwritten.",
+          "type": "string"
+        },
+        {
+          "const": "replace_existing",
+          "description": "Replace the existing file. Requires explicit intent from a person.",
+          "type": "string"
+        }
+      ]
+    },
+    "ControlOutcome": {
+      "oneOf": [
+        {
+          "enum": [
+            "accepted",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "no_op",
+          "description": "Already in the requested state.",
+          "type": "string"
+        },
+        {
+          "const": "already_terminal",
+          "description": "The job already finished or was cancelled.",
+          "type": "string"
+        },
+        {
+          "const": "too_late",
+          "description": "Pause after the publication fence.",
+          "type": "string"
+        },
+        {
+          "const": "too_late_to_cancel",
+          "description": "Cancel after the publication fence.",
+          "type": "string"
+        },
+        {
+          "const": "cancel_in_progress",
+          "description": "A cancellation is already under way with its own cleanup policy.",
+          "type": "string"
+        }
+      ]
+    },
+    "Correlation": {
+      "properties": {
+        "attempt_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttemptId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "command_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "CredentialRef": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "DestinationDecision": {
+      "description": "The answer to a destination conflict.",
+      "oneOf": [
+        {
+          "properties": {
+            "decision": {
+              "const": "choose_new_path",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "decision": {
+              "const": "replace_existing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "decision": {
+              "const": "cancel",
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DestinationIntent": {
+      "properties": {
+        "conflict": {
+          "$ref": "#/$defs/ConflictPolicy",
+          "default": "ask"
+        },
+        "path": {
+          "description": "A full local path including the file name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "EngineSettings": {
+      "description": "Engine settings. The engine clamps every value into range and reports\nwhat it applied.",
+      "properties": {
+        "auto_retry": {
+          "type": "boolean"
+        },
+        "auto_retry_base_delay_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "auto_retry_max_attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "close_to_tray": {
+          "type": "boolean"
+        },
+        "confirm_remove_completed": {
+          "type": "boolean"
+        },
+        "default_destination_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_active_downloads": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_tools_dir": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onboarding_completed": {
+          "type": "boolean"
+        },
+        "power_mode": {
+          "type": "boolean"
+        },
+        "theme": {
+          "$ref": "#/$defs/Theme"
+        }
+      },
+      "required": [
+        "max_active_downloads",
+        "auto_retry",
+        "auto_retry_max_attempts",
+        "auto_retry_base_delay_seconds",
+        "close_to_tray",
+        "power_mode",
+        "confirm_remove_completed",
+        "theme",
+        "onboarding_completed"
+      ],
+      "type": "object"
+    },
+    "EngineStatus": {
+      "properties": {
+        "active_jobs": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connected_clients": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine_version": {
+          "description": "The Fetchpath build, such as `0.2.0`.",
+          "type": "string"
+        },
+        "queue_cursor": {
+          "description": "The latest queue-wide event cursor.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "started_at": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "engine_version",
+        "schema_version",
+        "started_at",
+        "connected_clients",
+        "active_jobs",
+        "queue_cursor"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}(\\.[a-z][a-z0-9_]{0,63})+$",
+      "type": "string"
+    },
+    "ErrorScope": {
+      "description": "What an error is about.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "connection",
+          "description": "One frame or connection; other connections are unaffected.",
+          "type": "string"
+        },
+        {
+          "const": "command",
+          "description": "One command; nothing was changed.",
+          "type": "string"
+        },
+        {
+          "const": "job",
+          "description": "One job's recorded failure.",
+          "type": "string"
+        },
+        {
+          "const": "engine",
+          "description": "The engine as a whole.",
+          "type": "string"
+        }
+      ]
+    },
+    "IntegrityOutcome": {
+      "description": "What a finished download's bytes are known to be (contract §3).",
+      "oneOf": [
+        {
+          "enum": [
+            "not_applicable",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "verified_expected",
+          "description": "Matches a trusted expected hash.",
+          "type": "string"
+        },
+        {
+          "const": "consistent_source",
+          "description": "Consistent with a strong source validator; the publisher was not\nindependently checked.",
+          "type": "string"
+        },
+        {
+          "const": "downloaded_observed",
+          "description": "A hash was recorded but there was nothing trusted to compare it with.",
+          "type": "string"
+        },
+        {
+          "const": "verification_failed",
+          "description": "Did not match the required hash; never published as a success.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobDetails": {
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/JobSnapshot"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "job",
+        "segments"
+      ],
+      "type": "object"
+    },
+    "JobEvent": {
+      "description": "A durable job event. `seq` rises by exactly one per job; `cursor` orders\nevents across all jobs. Delivery may repeat, so clients deduplicate by\n`(job_id, seq)`.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "job_created",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "job": {
+                  "$ref": "#/$defs/JobSnapshot"
+                }
+              },
+              "required": [
+                "job"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "state_changed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "previous": {
+                  "$ref": "#/$defs/JobState"
+                },
+                "state": {
+                  "$ref": "#/$defs/JobState"
+                },
+                "waiting_reason": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WaitingReason"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "previous",
+                "state"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "policy_changed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "not_before": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "source_changed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "source_display": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_display"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "media_choices_ready",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "inspection": {
+                  "$ref": "#/$defs/MediaInspection"
+                }
+              },
+              "required": [
+                "inspection"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "checkpoint_committed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "bytes_checkpointed": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "bytes_checkpointed"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "integrity_changed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "integrity": {
+                  "$ref": "#/$defs/IntegrityOutcome"
+                },
+                "observed_sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "integrity"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "waiting",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "reason": {
+                  "$ref": "#/$defs/WaitingReason"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "warning",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "message": {
+                  "type": "string"
+                },
+                "message_key": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message_key",
+                "message"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "error_recorded",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "error": {
+                  "$ref": "#/$defs/ProtocolError"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "publication_completed",
+              "type": "string"
+            },
+            "public_payload": {
+              "properties": {
+                "destination": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "observed_sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "public_payload"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "job_removed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An event kind this client does not know, from a newer engine. Its\n`seq` still counts, so the stream has no gap.",
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "correlation": {
+          "$ref": "#/$defs/Correlation",
+          "default": {
+            "attempt_id": null,
+            "command_id": null
+          }
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "job_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "job_id",
+        "seq",
+        "cursor",
+        "job_revision",
+        "occurred_at"
+      ],
+      "type": "object"
+    },
+    "JobFilter": {
+      "oneOf": [
+        {
+          "enum": [
+            "all",
+            "failed",
+            "finished"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Not yet completed or cancelled.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobId": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "JobInput": {
+      "description": "Where a job's bytes come from.",
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "url",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/$defs/SensitiveUrl"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A request already held by the engine, such as a browser capture. The\nsecret stays where it is stored.",
+          "properties": {
+            "credential_ref": {
+              "$ref": "#/$defs/CredentialRef"
+            },
+            "type": {
+              "const": "credential_ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "credential_ref"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "JobKind": {
+      "enum": [
+        "file",
+        "media",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "JobRequest": {
+      "description": "The immutable request a job is created from (contract §4). Changing any\nof it later creates a new job.",
+      "oneOf": [
+        {
+          "properties": {
+            "destination": {
+              "$ref": "#/$defs/DestinationIntent"
+            },
+            "expected_sha256": {
+              "description": "A SHA-256 as the person supplied it. Nothing that does not match\nit is published.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "input": {
+              "$ref": "#/$defs/JobInput"
+            },
+            "kind": {
+              "const": "file",
+              "type": "string"
+            },
+            "not_before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "input",
+            "destination"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "destination": {
+              "$ref": "#/$defs/DestinationIntent"
+            },
+            "input": {
+              "$ref": "#/$defs/JobInput"
+            },
+            "kind": {
+              "const": "media",
+              "type": "string"
+            },
+            "not_before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "quality_label": {
+              "type": "string"
+            },
+            "variant_id": {
+              "description": "The variant id from a media inspection.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "input",
+            "destination",
+            "variant_id",
+            "quality_label"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "JobSnapshot": {
+      "description": "One job as a client sees it. Every snapshot carries the revision and the\nlast durable event sequence it reflects, so a client can resume its event\nstream exactly after it.",
+      "properties": {
+        "attempt": {
+          "default": 0,
+          "description": "Automatic retries already spent.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cleanup_pending": {
+          "default": false,
+          "description": "Staging bytes are still waiting to be removed.",
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "destination": {
+          "description": "The local file path. Shown to the person's own clients; policy for\nother principals is the engine's (FP-054).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtocolError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_sha256": {
+          "description": "The SHA-256 the person supplied, lowercase hex.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "integrity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntegrityOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "job_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/JobKind"
+        },
+        "last_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "not_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Do not start before this instant."
+        },
+        "observed_sha256": {
+          "description": "The SHA-256 of the bytes received. Records what arrived; it is not\nevidence of what the publisher intended.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "progress": {
+          "$ref": "#/$defs/Progress"
+        },
+        "quality_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retry_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When an automatic retry is due."
+        },
+        "source_display": {
+          "description": "The link without user info, query or fragment.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/JobState"
+        },
+        "waiting_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WaitingReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "job_id",
+        "kind",
+        "state",
+        "job_revision",
+        "last_seq",
+        "source_display",
+        "progress",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "JobState": {
+      "description": "The contract's job states (§6). A scheduled job is `queued` with a\n`not_before`, not a separate state.",
+      "oneOf": [
+        {
+          "enum": [
+            "queued",
+            "probing",
+            "waiting_for_selection",
+            "ready",
+            "running",
+            "pausing",
+            "paused",
+            "waiting_for_source",
+            "verifying",
+            "publishing",
+            "completed",
+            "cancelling",
+            "cancelled",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A state this client does not know, from a newer engine.",
+          "type": "string"
+        }
+      ]
+    },
+    "MediaInspection": {
+      "description": "What a media page offers. `title` comes from the page and is untrusted\ntext.",
+      "properties": {
+        "duration_seconds": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "variants": {
+          "items": {
+            "$ref": "#/$defs/MediaVariant"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "variants"
+      ],
+      "type": "object"
+    },
+    "MediaVariant": {
+      "description": "One format a media page offers. Sizes are the helper's estimates until it\nresolves them.",
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "fps": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/MediaVariantKind"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "extension"
+      ],
+      "type": "object"
+    },
+    "MediaVariantKind": {
+      "enum": [
+        "video",
+        "audio",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "Phase": {
+      "enum": [
+        "probe",
+        "receive",
+        "verify",
+        "process",
+        "publish",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "PolicyPatch": {
+      "description": "Mutable policy. Absent fields are left as they are.",
+      "properties": {
+        "schedule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Schedule"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Progress": {
+      "description": "Progress facts (contract §7). An unknown total is `null`, never zero, and\nthere is no remaining time without both a total and a rate.",
+      "properties": {
+        "bytes_checkpointed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_received": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bytes_total": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bytes_verified": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eta_seconds": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rate_bytes_per_second": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "bytes_received"
+      ],
+      "type": "object"
+    },
+    "ProgressKind": {
+      "enum": [
+        "progress_sampled"
+      ],
+      "type": "string"
+    },
+    "ProgressSample": {
+      "description": "An ephemeral progress sample. It never consumes `seq` and may be dropped\nor coalesced for a slow client; the current aggregate is in every\nsnapshot.",
+      "properties": {
+        "correlation": {
+          "$ref": "#/$defs/Correlation",
+          "default": {
+            "attempt_id": null,
+            "command_id": null
+          }
+        },
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "job_revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/ProgressKind"
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "public_payload": {
+          "$ref": "#/$defs/Progress"
+        },
+        "sample_cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "job_id",
+        "sample_cursor",
+        "job_revision",
+        "occurred_at",
+        "kind",
+        "public_payload"
+      ],
+      "type": "object"
+    },
+    "ProtocolError": {
+      "description": "A protocol error. Diagnostics are redacted before they reach this type:\nno cookies, authorization headers, signed query strings or private paths.",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Action"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "current_revision": {
+          "description": "With `contract.revision_conflict`: the job's current revision.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Plain-language fallback text, already redacted.",
+          "type": "string"
+        },
+        "message_key": {
+          "description": "Stable key for localized text.",
+          "type": "string"
+        },
+        "retry_after_seconds": {
+          "description": "A bounded wait before retrying, when the error is retryable.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "scope": {
+          "$ref": "#/$defs/ErrorScope"
+        }
+      },
+      "required": [
+        "code",
+        "message_key",
+        "message",
+        "retryable",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "QueueStats": {
+      "description": "Queue figures counted from one reconciled moment.",
+      "properties": {
+        "active_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "combined_bytes_per_second": {
+          "description": "Sum of observed per-download rates, not a link-capacity measurement.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "completed_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_active_downloads": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "paused": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "running": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scheduled": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "running",
+        "queued",
+        "scheduled",
+        "paused",
+        "completed",
+        "failed",
+        "active_bytes",
+        "completed_bytes",
+        "combined_bytes_per_second",
+        "max_active_downloads"
+      ],
+      "type": "object"
+    },
+    "Reply": {
+      "description": "The answer to one command. `command_id` is absent only when the command\ncould not be read far enough to find it.",
+      "properties": {
+        "command_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result": {
+          "$ref": "#/$defs/ReplyResult"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "result"
+      ],
+      "type": "object"
+    },
+    "ReplyResult": {
+      "oneOf": [
+        {
+          "properties": {
+            "outcome": {
+              "const": "ok",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/CommandResult"
+            }
+          },
+          "required": [
+            "outcome",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "outcome": {
+              "const": "error",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/ProtocolError"
+            }
+          },
+          "required": [
+            "outcome",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Schedule": {
+      "oneOf": [
+        {
+          "description": "Start as soon as a slot is free.",
+          "properties": {
+            "type": {
+              "const": "now",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "not_before": {
+              "$ref": "#/$defs/Timestamp"
+            },
+            "type": {
+              "const": "at",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "not_before"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Segment": {
+      "description": "One byte range in flight: received into memory, not yet written.",
+      "properties": {
+        "end": {
+          "description": "Inclusive.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "received": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "received"
+      ],
+      "type": "object"
+    },
+    "SensitiveUrl": {
+      "description": "A link as given, possibly with secrets in it. Never displayed or logged as is.",
+      "maxLength": 8192,
+      "minLength": 1,
+      "type": "string"
+    },
+    "ServerMessage": {
+      "description": "Every frame from the engine to a client.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Reply",
+          "properties": {
+            "message": {
+              "const": "reply",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/JobEvent",
+          "properties": {
+            "message": {
+              "const": "event",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ProgressSample",
+          "properties": {
+            "message": {
+              "const": "progress",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SettingsView": {
+      "description": "Settings as stored plus the limits the engine enforces.",
+      "properties": {
+        "max_active_limit": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_retry_attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repaired": {
+          "description": "The stored file was unusable and defaults were substituted.",
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/EngineSettings"
+        }
+      },
+      "required": [
+        "settings",
+        "repaired",
+        "max_active_limit",
+        "max_retry_attempts"
+      ],
+      "type": "object"
+    },
+    "StreamPosition": {
+      "description": "Where an event stream resumes.",
+      "oneOf": [
+        {
+          "properties": {
+            "after_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "stream": {
+              "const": "job",
+              "type": "string"
+            }
+          },
+          "required": [
+            "stream",
+            "job_id",
+            "after_seq"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "after_cursor": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "stream": {
+              "const": "queue",
+              "type": "string"
+            }
+          },
+          "required": [
+            "stream",
+            "after_cursor"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Theme": {
+      "enum": [
+        "system",
+        "light",
+        "dark",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "Timestamp": {
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "type": "string"
+    },
+    "WaitingReason": {
+      "description": "Why a non-terminal job is waiting.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "source_expired",
+          "description": "A private link's query was not kept, so a refreshed link is needed.",
+          "type": "string"
+        },
+        {
+          "const": "browser_context_lost",
+          "description": "A browser capture's protected context is gone.",
+          "type": "string"
+        },
+        {
+          "const": "destination_conflict",
+          "description": "Something already exists at the destination.",
+          "type": "string"
+        },
+        {
+          "const": "media_selection",
+          "description": "A media format must be chosen.",
+          "type": "string"
+        },
+        {
+          "const": "media_tools_missing",
+          "description": "The media helpers are missing.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Every frame is one message: a CommandEnvelope from a client, or a ServerMessage from the engine.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/CommandEnvelope"
+    },
+    {
+      "$ref": "#/$defs/ServerMessage"
+    }
+  ],
+  "title": "Fetchpath protocol",
+  "x-fetchpath-schema-version": 1
+}

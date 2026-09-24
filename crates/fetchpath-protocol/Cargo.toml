@@ -1,0 +1,13 @@
+[package]
+name = "fetchpath-protocol"
+version = "0.1.0"
+description = "Fetchpath engine protocol v1: wire types, framing, JSON Schema and the EngineClient interface"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+schemars = "1.2.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1.18.1", features = ["v4"] }

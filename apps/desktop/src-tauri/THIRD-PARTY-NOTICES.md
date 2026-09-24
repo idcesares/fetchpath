@@ -7,7 +7,7 @@ This file ships beside `Fetchpath.exe` so the notices travel with the binary.
 Fetchpath's own source is licensed **MIT OR Apache-2.0** (`[workspace.package] license`
 in the repository root `Cargo.toml`).
 
-The table below is generated from `Cargo.lock`, so it lists the 566 third-party
+The table below is generated from `Cargo.lock`, so it lists the 568 third-party
 packages that are actually part of a build rather than a hand-maintained list.
 The **Source of the license value** column says, for every row, whether the
 value was read from the crate's own manifest or recorded by a maintainer.
@@ -405,6 +405,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | schemars | 0.9.0 | MIT | Read from the crate manifest in the local registry |
 | schemars | 1.2.2 | MIT | Read from the crate manifest in the local registry |
 | schemars_derive | 0.8.22 | MIT | Read from the crate manifest in the local registry |
+| schemars_derive | 1.2.2 | MIT | Read from the crate manifest in the local registry |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | scrypt | 0.12.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | sec1 | 0.8.1 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
@@ -415,6 +416,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| serde_derive_internals | 0.30.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
