@@ -11,7 +11,7 @@ Use a single repository while the product shares identity, lifecycle, and releas
 | `crates/fetchpath-storage` | Staging files, checkpoints, transactional metadata, publication |
 | `crates/fetchpath-metalink` | Metalink 4 parsing and trusted piece hashes for verified multi-source repair |
 | `crates/fetchpath-cache` | Bounded content-addressed store keyed by trusted digests, quota, eviction, provenance; no networking |
-| `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, and the `EngineClient` interface; no queue logic or transport |
+| `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, the `EngineClient` interface, and on Windows the authenticated per-user named pipe with its engine secret and pipe-backed client; no queue logic |
 | `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration and the browser capture inbox; no UI or transport types. The desktop calls it in-process until the engine lands |
 | `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors |
 | `adapters/lan` | Device identity, pairing, authenticated peer sessions, upload budget; depends on the cache only, and core reaches it through `PeerSource` |
@@ -21,7 +21,7 @@ Use a single repository while the product shares identity, lifecycle, and releas
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.
 
-Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): the authenticated pipe transport (FP-052) and the in-process `EngineClient` over the session (FP-051). Rules and policy join `crates/fetchpath-session` with FP-054 and FP-064. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
+Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): the in-process `EngineClient` over the session (FP-051). Rules and policy join `crates/fetchpath-session` with FP-054 and FP-064. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
 
 ## Documentation
 

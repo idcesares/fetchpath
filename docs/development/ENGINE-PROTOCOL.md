@@ -94,3 +94,72 @@ The forward-compatibility test also caught a real gap during development:
 serde's fallback for unknown enum values rejected an unknown event kind that
 carried a payload. `JobEvent` now decodes the kind first and falls back to
 `Unknown` itself.
+
+## FP-052: the authenticated per-user named pipe
+
+Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Code:
+`crates/fetchpath-protocol/src/pipe` (Windows only). Plan:
+[2026-09-24-fp-052-pipe-transport](plans/2026-09-24-fp-052-pipe-transport.md).
+
+| Part | What it does |
+|---|---|
+| Name | `\\.\pipe\fetchpath-engine-v1-<user SID>`, so users on one machine never share a name |
+| Access | Protected DACL `D:P(A;;GA;;;<SID>)`: this user only, nothing inherited. Remote clients refused. No explicit label, so the default medium no-write-up label keeps lower-integrity processes from writing |
+| Claim | The engine creates the first instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`; if any process already holds the name it refuses to start (`contract.engine_already_running`) instead of running behind an impostor |
+| Secret | 32 random bytes in a file the engine creates once, with `D:P(A;;FA;;;<SID>)S:(ML;;NRNWNX;;;ME)`: owner-only and unreadable by lower-integrity processes. Wiped from memory on drop; never printed. Where the engine keeps it is FP-053's choice |
+| Handshake | `hello` (client nonce) → `challenge` (server nonce and server proof) → `proof` (client proof) → `welcome`. Proofs are HMAC-SHA256 under the secret over both nonces, with a different label per direction. The client checks the engine's proof before sending its own, so a squatter on the name learns nothing. Constant-time comparison. Handshake frames are transport, not protocol schema |
+| Deadlines | Overlapped I/O throughout. Handshake 5 s in total; a started frame must finish in 10 s; idle connections close after 10 minutes (configurable, off for subscriptions); a write that cannot finish in 10 s closes the connection |
+| Limits | Frame size (≤ 4 MiB), 32 unanswered commands, 64 connections authenticated or not (further clients are disconnected at once). Every limit is per connection; the engine keeps serving others |
+| Client | `PipeClient` (one connection) and `PipeEngineClient`, the pipe `EngineClient`: commands share a connection that is reopened once on loss, resending the same envelope (the ledger makes that safe, FP-051); each subscription has its own connection |
+| Refusals | An oversize, empty or unreadable frame is answered with its code and then closes that connection; an unknown command is answered and the connection continues |
+
+The per-install secret defends against other users and lower-integrity
+processes. A program already running as the same user at the same integrity
+can read the secret and connect as the user; that is out of scope, as the
+platform design says.
+
+### Commands and results
+
+- `cargo test -p fetchpath-protocol --test pipe`: 16 passed, 1 ignored (the
+  helper process for the killed-client test), eight consecutive runs clean.
+- `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`: clean.
+- `Cargo.lock` gained no package: `hmac` 0.13, `sha2` 0.11 and `getrandom`
+  0.3 were already locked. Notices unchanged at 568.
+
+| Verification item | Test |
+|---|---|
+| Wrong secret | `a_client_with_the_wrong_secret_learns_it_is_not_talking_to_its_engine`, `the_engine_refuses_a_wrong_proof_and_a_replayed_one` |
+| Missing secret file | `the_secret_file_is_created_once_private_and_checked_on_load` (also damaged files and the file's access list and label) |
+| Replayed handshake | `the_engine_refuses_a_wrong_proof_and_a_replayed_one` |
+| Oversize and truncated frames | `an_oversize_frame_is_refused_and_closes_only_that_connection`, `a_truncated_frame_ends_that_connection_and_the_engine_carries_on` |
+| Flood of connections | `a_flood_of_connections_is_capped_and_the_engine_recovers` |
+| Client killed mid-frame | `a_client_killed_mid_frame_ends_only_its_own_connection` (a real child process, killed) |
+| Other limits | `a_silent_connection_is_closed_at_the_handshake_deadline`, `an_idle_connection_is_closed_after_the_idle_limit`, `too_many_unanswered_commands_close_that_connection` |
+| Access and claim | `only_this_user_may_open_the_pipe`, `a_second_engine_cannot_claim_the_pipe_name` |
+| Client behavior | `an_authenticated_client_sends_commands_and_follows_events`, `a_lost_connection_is_reopened_and_the_same_command_resent`, `a_client_reports_a_missing_engine_plainly`, `accepting_with_no_time_left_reports_nothing_rather_than_failing` |
+
+### Mutation checks
+
+| Temporary change | Failing test |
+|---|---|
+| Engine accepts any client proof | `the_engine_refuses_a_wrong_proof_and_a_replayed_one` |
+| Client trusts any engine proof | `a_client_with_the_wrong_secret_learns_it_is_not_talking_to_its_engine` |
+| Server nonce fixed | `the_engine_refuses_a_wrong_proof_and_a_replayed_one` |
+| First-instance flag dropped | `a_second_engine_cannot_claim_the_pipe_name` |
+| Everyone allowed on the pipe | `only_this_user_may_open_the_pipe` |
+| Connection cap removed | `a_flood_of_connections_is_capped_and_the_engine_recovers` |
+| Pending-command limit removed | `too_many_unanswered_commands_close_that_connection` |
+| Secret file's integrity label dropped | `the_secret_file_is_created_once_private_and_checked_on_load` |
+| Zero-timeout fix reverted | `accepting_with_no_time_left_reports_nothing_rather_than_failing` |
+
+### Found during development
+
+- `GetOverlappedResultEx` with a zero timeout reports `ERROR_IO_INCOMPLETE`,
+  not `WAIT_TIMEOUT`. Accepting with an expired deadline failed the whole
+  listener, in about half of the flood test runs; it is now treated as a
+  timeout, with its own test.
+- A cancelled read can complete just before the cancellation reaches it; its
+  bytes are now returned instead of dropped, so a quiet period on a
+  subscription never loses part of a frame.
+- A frame refused for its size or shape is now answered before the
+  connection closes; the first version closed without saying why.
