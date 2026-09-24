@@ -413,3 +413,106 @@ fn a_transport_failure_restored_after_a_restart_is_retried_automatically() {
     assert_eq!(row(14).state, "failed", "attempts already exhausted before the restart");
     assert_eq!(row(14).attempt, 3);
 }
+
+#[test]
+fn the_rate_is_smoothed_ignores_short_intervals_and_withdraws_when_stalled() {
+    let mut rate = RateEstimate::default();
+    rate.observe(0, 0);
+    assert_eq!(rate.bytes_per_second(), None, "a first sample is only a baseline");
+    rate.observe(1_000, 200);
+    assert_eq!(rate.bytes_per_second(), None, "under 400 ms is ignored");
+    rate.observe(1_000, 1_000);
+    assert_eq!(rate.bytes_per_second(), Some(1_000));
+    rate.observe(3_000, 2_000);
+    assert_eq!(rate.bytes_per_second(), Some(1_300), "0.3 × 2000 + 0.7 × 1000");
+    rate.observe(3_000, 3_000);
+    assert_eq!(rate.bytes_per_second(), Some(909), "no progress decays, truncated");
+    rate.observe(3_000, 8_000);
+    assert_eq!(rate.bytes_per_second(), None, "5 s without progress withdraws the rate");
+    rate.observe(500, 9_000);
+    assert_eq!(rate.bytes_per_second(), None, "a lower offset restarts the estimate");
+    rate.observe(1_000, 10_000);
+    assert_eq!(rate.bytes_per_second(), Some(500));
+    rate.clear();
+    assert_eq!(rate.bytes_per_second(), None);
+}
+
+#[test]
+fn a_rate_below_one_byte_per_second_is_not_shown() {
+    let mut rate = RateEstimate::default();
+    rate.observe(0, 0);
+    rate.observe(1, 4_000); // 0.25 B/s
+    assert_eq!(rate.bytes_per_second(), None);
+}
+
+#[test]
+fn remaining_time_needs_a_total_and_a_rate_and_rounds_up() {
+    let mut rate = RateEstimate::default();
+    assert_eq!(rate.eta_seconds(0, Some(10_000)), None, "no rate yet");
+    rate.observe(0, 0);
+    rate.observe(1_000, 1_000);
+    assert_eq!(rate.eta_seconds(1_000, None), None, "no total");
+    assert_eq!(rate.eta_seconds(1_000, Some(1_000)), None, "nothing remaining");
+    assert_eq!(rate.eta_seconds(2_000, Some(1_000)), None, "received beyond total");
+    assert_eq!(rate.eta_seconds(1_000, Some(2_001)), Some(2), "1001 bytes at 1000 B/s");
+}
+
+#[test]
+fn shown_links_never_carry_queries_fragments_or_user_info() {
+    let table = [
+        ("https://example.test/a.zip", "https://example.test/a.zip"),
+        ("https://example.test/a.zip?token=s", "https://example.test/a.zip?…"),
+        ("https://example.test/a.zip#part", "https://example.test/a.zip?…"),
+        ("https://user:pw@example.test/a.zip", "https://…@example.test/a.zip?…"),
+        ("https://user@example.test/a.zip?x=1", "https://…@example.test/a.zip?…"),
+        ("example.test/a.zip", "example.test/a.zip"),
+    ];
+    for (url, shown) in table {
+        assert_eq!(display_url(url), shown, "{url}");
+    }
+    assert_eq!(restartable_url("https://example.test/a.zip").as_deref(), Some("https://example.test/a.zip"));
+    assert_eq!(restartable_url("https://example.test/a.zip?token=s"), None);
+    assert_eq!(restartable_url("https://example.test/a.zip#part"), None);
+}
+
+fn keys(value: &Value) -> Vec<String> {
+    let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn the_interface_reads_these_exact_field_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut view = QueueRecord::new("https://example.test/a.bin".into(), dir.path().join("a.bin"), None).view;
+    assert_eq!(
+        keys(&serde_json::to_value(&view).unwrap()),
+        [
+            "action", "attempt", "bytesReceived", "cleanupPending", "createdAtMs", "destination",
+            "error", "finishedAtMs", "jobId", "kind", "notBeforeMs", "observedSha256",
+            "qualityLabel", "retryable", "source", "state", "totalBytes",
+        ],
+        "optional fields are omitted while empty"
+    );
+    view.bytes_per_second = Some(1);
+    view.eta_seconds = Some(1);
+    view.expected_sha256 = Some("0".repeat(64));
+    let with_optional = keys(&serde_json::to_value(&view).unwrap());
+    for key in ["bytesPerSecond", "etaSeconds", "expectedSha256"] {
+        assert!(with_optional.contains(&key.to_string()), "{key}");
+    }
+
+    assert_eq!(
+        keys(&serde_json::to_value(QueueStats::default()).unwrap()),
+        [
+            "activeBytes", "combinedBytesPerSecond", "completed", "completedBytes", "failed",
+            "maxActiveDownloads", "paused", "queued", "running", "scheduled",
+        ]
+    );
+    let segment = SegmentView { start: 0, end: 9, received: 5 };
+    assert_eq!(keys(&serde_json::to_value(&segment).unwrap()), ["end", "received", "start"]);
+    let details = JobDetails { job: view.clone(), segments: vec![segment] };
+    assert_eq!(keys(&serde_json::to_value(&details).unwrap()), ["job", "segments"]);
+    let cancel = CancelResponse { outcome: "accepted", job: view };
+    assert_eq!(keys(&serde_json::to_value(&cancel).unwrap()), ["job", "outcome"]);
+}
