@@ -103,9 +103,10 @@ Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Code:
 
 | Part | What it does |
 |---|---|
-| Name | `\\.\pipe\fetchpath-engine-v1-<user SID>-<token>`. The SID keeps users apart; the token is derived from the engine secret, so a process that cannot read the secret (another user, or a lower integrity level) cannot know the name in advance to claim it first |
+| Name | `\\.\pipe\fetchpath-engine-v1-<user SID>-<128 random bits>`, fresh for every engine run (`PipeName::fresh`). Any local process can list existing pipes, so a name that stayed the same could be seen while the engine runs and claimed while it is stopped; a fresh one cannot be predicted |
+| Endpoint | The engine publishes the name, after claiming the pipe, in an endpoint file with the same protection as the secret, replaced by one rename. Clients read it (`endpoint::read`); a stale record reports the engine as not running, a damaged one is refused. Because names differ per run, one engine per user is enforced by the engine's instance lock (FP-053), not by the pipe name |
 | Access | `D:P(A;;GA;;;<SID>)S:(ML;;NWNR;;;ME)`: this user only, nothing inherited, and an explicit medium label that stops lower-integrity processes from reading as well as writing (the default label stops only writes, and a read-only open would still hold a connection slot). Remote clients refused |
-| Claim | The engine creates the first instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`; if any process already holds the name it refuses to start (`contract.engine_already_running`) instead of running behind an impostor. The flag detects a claimant rather than preventing one; the secret-derived name is what keeps other users and lower-integrity processes from claiming it first |
+| Claim | The engine creates the first instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`; if any process already holds the name it refuses to start (`contract.engine_already_running`) instead of running behind an impostor. The flag detects a claimant rather than preventing one; the unpredictable per-run name is what keeps other users and lower-integrity processes from claiming it first |
 | Secret | 32 random bytes in a file the engine creates once, with `D:P(A;;FA;;;<SID>)S:(ML;;NRNWNX;;;ME)`: owner-only and unreadable by lower-integrity processes. Wiped from memory on drop; never printed. Where the engine keeps it is FP-053's choice |
 | Handshake | `hello` (client nonce) → `challenge` (server nonce and server proof) → `proof` (client proof) → `welcome`. Proofs are HMAC-SHA256 under the secret over both nonces, with a different label per direction. The client checks the engine's proof before sending its own, so a squatter on the name learns nothing. Constant-time comparison. Handshake frames are transport, not protocol schema |
 | Deadlines | Overlapped I/O throughout. Handshake 5 s in total, reads and writes included; a started frame must finish in 10 s; idle connections close after 10 minutes, and the engine turns that off per connection with `set_idle_timeout(None)` once a connection subscribes, since a subscriber only listens; a write that cannot finish in 10 s closes the connection |
@@ -118,12 +119,11 @@ processes. A program already running as the same user at the same integrity
 can read the secret and connect as the user; that is out of scope, as the
 platform design says.
 
-**Residual:** named pipes can be listed by any local user. Another user who
-saw the running engine's pipe name could create a pipe of that name while
-the engine is stopped, and the engine would then refuse to start. That is a
-denial of service, not an impersonation: clients check the engine's proof
-first. FP-053 decides the engine's response (for example, rotating the name
-through an endpoint file only this user can read).
+Named pipes can be listed by any local process, including lower-integrity
+ones of this user; the review showed such a process listing the running
+engine's name and creating a pipe of that name once the engine stopped.
+That is why the name is fresh each run: a name seen in one run is useless
+for the next.
 
 ### Commands and results
 
@@ -145,10 +145,10 @@ through an endpoint file only this user can read).
 | Other limits | `a_silent_connection_is_closed_at_the_handshake_deadline`, `an_idle_connection_is_closed_after_the_idle_limit`, `too_many_unanswered_commands_close_that_connection` |
 | Access and claim | `only_this_user_may_open_the_pipe`, `a_second_engine_cannot_claim_the_pipe_name` |
 | Client behavior | `an_authenticated_client_sends_commands_and_follows_events`, `a_lost_connection_is_reopened_and_the_same_command_resent`, `a_client_reports_a_missing_engine_plainly`, `accepting_with_no_time_left_reports_nothing_rather_than_failing` |
-| Lower integrity | `a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret` (a copy of the test binary marked low with `icacls` opens neither read-write nor read-only, and cannot read the secret) |
+| Lower integrity | `a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret` (a copy of the test binary marked low with `icacls` gets "access denied" opening the pipe read-write and read-only, and reading the secret and the endpoint) |
 | Listener robustness | `a_client_that_leaves_before_it_is_accepted_does_not_wedge_the_listener` |
 | Subscriptions | `a_subscription_outlives_the_idle_limit` |
-| Name | `the_pipe_name_is_known_only_to_holders_of_the_secret` |
+| Name and endpoint | `each_engine_run_gets_an_unpredictable_name_published_privately` (fresh names differ; the endpoint is owner-only with a no-read-up label, replaced in place, refused when damaged, and leads a client to the engine that wrote it) |
 
 ### Mutation checks
 
@@ -186,7 +186,21 @@ each with a test that fails when the fix is reverted:
 |---|---|---|
 | High: a client that opened and closed the pipe before `accept` left a dead instance, and every later accept failed | Any connect failure disconnects and replaces the instance, up to three times in a row | `a_client_that_leaves_before_it_is_accepted_does_not_wedge_the_listener` |
 | High: a low-integrity process could open the pipe read-only (the default label stops only writes) and fill the connection slots | Explicit `S:(ML;;NWNR;;;ME)` label on the pipe | `a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret` |
-| Medium: a low-integrity process could claim the predictable name first | Name token derived from the secret | `the_pipe_name_is_known_only_to_holders_of_the_secret` |
+| Medium: a low-integrity process could claim the predictable name first | A fresh random name per run, published in a private endpoint file (a first fix derived a stable name from the secret; the re-review showed a low-integrity process can list pipes, see that name and claim it later, so it was replaced) | `each_engine_run_gets_an_unpredictable_name_published_privately` |
 | Medium: subscriptions were closed by the idle limit while events flowed | Per-connection `set_idle_timeout` | `a_subscription_outlives_the_idle_limit` |
 | Low: a failed secret write tried to delete a file it still held without sharing; a concurrent start could read a half-written secret | Close before removing; wait out a sharing violation for up to 2 s | Reviewed; not reproduced by a test |
 | Low: handshake writes each had a fresh full timeout | Writes use the time left before the handshake deadline, on both sides | Reviewed |
+Re-review of the fixes, 24 September 2026: **approve with nits**. The
+listener, label, idle, secret-file and deadline fixes were verified by
+re-running the probes. The nits are addressed: `accept` documents that its
+errors are transient for the engine loop, the low-integrity test accepts
+only "access denied" (so a wrong path cannot pass), and the name finding is
+closed by per-run names rather than left as a residual. Remaining, recorded
+and accepted: a start whose concurrent secret creator failed and deleted the
+file reports `auth.engine_secret_missing` instead of retrying; restarting
+recovers.
+
+Mutation checks added: endpoint label dropped fails
+`each_engine_run_gets_an_unpredictable_name_published_privately` and
+`a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret`; a fixed
+name fails `each_engine_run_gets_an_unpredictable_name_published_privately`.

@@ -1524,7 +1524,7 @@
       "dependsOn": [
         "FP-050"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -1537,8 +1537,12 @@
         "A07"
       ],
       "acceptance": "A Windows named pipe whose access list admits only the current user SID, created first-instance so it cannot be pre-empted by a lower-integrity process; both sides prove knowledge of a per-install secret in the user data folder by challenge and response without sending it; per-connection limits on frame size, pending requests and idle time; a bad peer closes only its own connection.",
-      "verification": "Tests for wrong secret, missing secret file, replayed handshake, oversize and truncated frames, flood of connections, and a client killed mid-frame; unsafe/FFI code reviewed independently by a strong model.",
-      "evidence": [],
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: cargo test -p fetchpath-protocol --test pipe 20 passed (2 ignored helper processes), eight consecutive runs clean: wrong secret both ways, missing and damaged secret files, replayed and reflected handshakes, oversize, empty and truncated frames, a connection flood over the cap, a child process killed mid-frame, handshake, frame and idle deadlines, pending-command limit, a client leaving before accept, and a real low-integrity process denied the pipe (read and write), the secret and the endpoint. Pipe names are fresh per run and published privately. Fourteen security mutations each failed a named test. Independent strong-model review: changes required (two high, two medium, two low), all fixed; re-review approve with nits, nits addressed. Workspace tests, clippy -D warnings and fmt clean. See docs/development/ENGINE-PROTOCOL.md.",
+      "evidence": [
+        "crates/fetchpath-protocol/src/pipe/mod.rs",
+        "crates/fetchpath-protocol/tests/pipe.rs",
+        "docs/development/ENGINE-PROTOCOL.md"
+      ],
       "blockedReason": null
     },
     {

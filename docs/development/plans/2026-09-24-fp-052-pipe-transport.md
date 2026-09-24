@@ -6,7 +6,7 @@
 
 ## Decisions
 
-- **Name:** `\\.\pipe\fetchpath-engine-v1-<SID>`.
+- **Name:** `\\.\pipe\fetchpath-engine-v1-<SID>-<random>`, fresh per engine run and published in a private endpoint file. (First planned as the SID alone; the review showed a predictable name can be claimed first, including by a lower-integrity process that lists pipes.)
 - **Security:** protected DACL for the user's SID only; `PIPE_REJECT_REMOTE_CLIENTS`; `FILE_FLAG_FIRST_PIPE_INSTANCE` on the first instance, so an earlier claimant makes the engine refuse to start. The default medium no-write-up label covers lower-integrity writers; the secret file adds an explicit no-read-up label, because by default a low-integrity process can read a medium file.
 - **Handshake:** client nonce, then server nonce and server proof, then client proof, then welcome; HMAC-SHA256 (`hmac` 0.13, `sha2` 0.11, already locked) with per-direction labels; nonces from `getrandom`. The client verifies the engine first. JSON handshake frames on the same framing, outside the protocol schema.
 - **I/O:** overlapped reads and writes with deadlines; a timeout cancels and then waits for the operation to settle, so buffers stay valid, and keeps bytes that arrived just before the cancellation. A timeout before a frame starts is a quiet period, not an error.
