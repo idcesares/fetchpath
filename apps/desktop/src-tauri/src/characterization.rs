@@ -279,3 +279,137 @@ fn finding_f1_a_queue_from_a_newer_schema_is_lost_after_two_saves() {
     let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
     assert!(!backup.contains("\"schemaVersion\": 2"), "second save has deleted it");
 }
+
+#[test]
+fn each_failure_maps_to_the_step_a_person_or_the_queue_takes_next() {
+    let table = [
+        ("integrity.checksum_mismatch: expected aa, received bb", "check_checksum"),
+        (UNREADABLE_CHECKSUM, "check_checksum"),
+        ("media.source_expired: the page link expired", "refresh_source"),
+        ("media.unknown_variant: 137+140", "refresh_source"),
+        ("media.helper_unavailable: yt-dlp not found", "configure_media_tools"),
+        ("storage.destination_conflict: exists", "choose_new_path"),
+        ("A file already exists at the destination.", "choose_new_path"),
+        ("input.invalid_url: not http", "edit_link"),
+        ("input.invalid_destination: reserved name", "edit_link"),
+        ("source.transfer_failed: HTTP status 404", "edit_link"),
+        ("source.transfer_failed: HTTP status 503", "retry"),
+        ("source.transfer_failed: [28] Timeout was reached", "retry"),
+        // A checksum problem outranks the HTTP status in the same message.
+        ("integrity.checksum_mismatch after HTTP status 404", "check_checksum"),
+    ];
+    for (error, action) in table {
+        assert_eq!(action_for_error(error), action, "{error}");
+    }
+}
+
+/// Finding F2: anything unrecognized, including an internal invariant
+/// failure, maps to "retry" and is therefore retried automatically. The job
+/// contract (§9) says an unrecognized error must not be assumed retryable.
+#[test]
+fn finding_f2_unrecognized_and_internal_errors_are_treated_as_retryable() {
+    assert_eq!(action_for_error(""), "retry");
+    assert_eq!(action_for_error("internal.unknown: something new"), "retry");
+    assert_eq!(action_for_error("internal.metadata_failure: journal"), "retry");
+}
+
+#[test]
+fn only_failed_rows_get_a_recovery_action() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut view = QueueRecord::new("https://example.test/a.bin".into(), dir.path().join("a.bin"), None).view;
+    for state in ["queued", "scheduled", "running", "paused", "cancelling", "completed", "cancelled", "needs_source"] {
+        view.state = state.into();
+        view.error = Some("source.transfer_failed: HTTP status 404".into());
+        assert_eq!(recovery_action(&view), (None, false), "{state}");
+    }
+    view.state = "failed".into();
+    view.error = None;
+    assert_eq!(recovery_action(&view), (Some("retry".into()), true));
+}
+
+fn failed_record(dir: &Path, name: &str, action: &str, attempt: u32) -> QueueRecord {
+    let mut record = QueueRecord::new(
+        format!("https://example.test/{name}"),
+        dir.join(name),
+        None,
+    );
+    record.view.state = "failed".into();
+    record.view.error = Some("source.transfer_failed: [7] Couldn't connect to server".into());
+    record.view.action = Some(action.into());
+    record.view.retryable = true;
+    record.attempt = attempt;
+    record.view.attempt = attempt;
+    record
+}
+
+#[test]
+fn only_plain_transport_failures_are_retried_automatically_and_on_a_backoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let jobs = DesktopJobs::in_memory(3);
+    let settings = Settings::default(); // auto retry on, 3 attempts, 15 s base
+    let mut state = QueueState {
+        records: vec![
+            failed_record(dir.path(), "transport.bin", "retry", 0),
+            failed_record(dir.path(), "second.bin", "retry", 1),
+            failed_record(dir.path(), "exhausted.bin", "retry", 3),
+            failed_record(dir.path(), "checksum.bin", "check_checksum", 0),
+            failed_record(dir.path(), "link.bin", "edit_link", 0),
+            failed_record(dir.path(), "conflict.bin", "choose_new_path", 0),
+            failed_record(dir.path(), "expired.bin", "refresh_source", 0),
+            failed_record(dir.path(), "tools.bin", "configure_media_tools", 0),
+            failed_record(dir.path(), "present.bin", "retry", 0),
+        ],
+        link_reviews: Vec::new(),
+    };
+    // A file already at the destination is never retried over.
+    fs::write(dir.path().join("present.bin"), b"x").unwrap();
+
+    let before = now_ms();
+    jobs.schedule_automatic_retries(&mut state, &settings);
+    let after = now_ms();
+
+    let first = &state.records[0];
+    assert_eq!(first.view.state, "scheduled");
+    assert_eq!(first.attempt, 1);
+    assert_eq!(first.view.attempt, 1);
+    assert_eq!(first.view.action, None);
+    assert!(!first.view.retryable);
+    assert_eq!(first.view.error.as_deref(), Some("Retrying automatically (attempt 1 of 3)."));
+    let due = first.retry_at_ms.expect("retry is due later");
+    assert!((before + 15_000..=after + 15_000).contains(&due), "first retry waits 15 s");
+    assert_eq!(first.not_before_ms, Some(due));
+    assert!(first.job.is_some(), "a fresh job is prepared");
+
+    let second = &state.records[1];
+    assert_eq!(second.view.state, "scheduled");
+    assert_eq!(second.attempt, 2);
+    let due = second.retry_at_ms.unwrap();
+    assert!((before + 30_000..=after + 30_000).contains(&due), "second retry waits 30 s");
+
+    for record in &state.records[2..] {
+        assert_eq!(record.view.state, "failed", "{}", record.display_url);
+        assert_eq!(record.retry_at_ms, None, "{}", record.display_url);
+    }
+}
+
+#[test]
+fn a_transport_failure_restored_after_a_restart_is_retried_automatically() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let mut value = fixture_value(dir.path());
+    // Only the two transport failures: no other row may start a transfer.
+    let keep = [id(2), id(14)];
+    value["records"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|record| keep.contains(&record["id"].as_str().unwrap().to_string()));
+    write_queue(&path, &value);
+
+    let jobs = DesktopJobs::load(path, 1).unwrap();
+    let rows = jobs.list().unwrap();
+    let row = |n: u8| rows.iter().find(|row| row.job_id == id(n)).unwrap();
+    assert_eq!(row(2).state, "scheduled");
+    assert_eq!(row(2).attempt, 1);
+    assert_eq!(row(14).state, "failed", "attempts already exhausted before the restart");
+    assert_eq!(row(14).attempt, 3);
+}
