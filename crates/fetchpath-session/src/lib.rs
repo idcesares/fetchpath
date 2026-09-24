@@ -244,6 +244,11 @@ pub struct JobSnapshot {
     pub expected_sha256: Option<String>,
     pub cleanup_pending: bool,
     pub error: Option<String>,
+    /// The stable code of a failure, such as `source.transfer_failed`. Set
+    /// only on failed rows; clients act on it and on `action`, never on the
+    /// message (finding F3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
     pub action: Option<String>,
     pub retryable: bool,
     pub created_at_ms: u64,
@@ -488,12 +493,11 @@ impl Session {
                 "A checksum describes one file. Add links with a checksum one at a time.".into(),
             );
         }
-        let mut state = self.inner.lock().expect("desktop jobs poisoned");
-        self.reconcile_locked(&mut state);
+        // Every link is checked before any is queued, so a batch that fails
+        // on one link queues none of them (finding F4).
         let mut destinations = HashSet::new();
-        let mut created_ids = Vec::with_capacity(drafts.len());
         let mut batch_directory: Option<PathBuf> = None;
-
+        let mut accepted = Vec::with_capacity(drafts.len());
         for draft in drafts {
             let url = validated_source(&draft.url)?;
             let destination = validated_destination(&draft.destination)?;
@@ -520,7 +524,14 @@ impl Session {
                 Some(text) => checked_checksum(text)?,
                 None => None,
             };
-            let record = QueueRecord::new_checked(url, destination, draft.not_before_ms, checksum);
+            accepted.push((url, destination, draft.not_before_ms, checksum));
+        }
+
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        let mut created_ids = Vec::with_capacity(accepted.len());
+        for (url, destination, not_before_ms, checksum) in accepted {
+            let record = QueueRecord::new_checked(url, destination, not_before_ms, checksum);
             created_ids.push(record.id.clone());
             state.records.push(record);
         }
@@ -987,6 +998,9 @@ impl Session {
             refresh_record(record);
             active += 1;
         }
+        for record in &mut state.records {
+            record.view.error_code = failure_code(&record.view);
+        }
     }
 
     /// Re-queues transport failures on a widening backoff.
@@ -1010,8 +1024,11 @@ impl Session {
                 continue;
             }
             // `recovery_action` returns "retry" only for failures with no
-            // specific user action attached, which is exactly the transport case.
-            if record.view.action.as_deref() != Some("retry") {
+            // specific user action attached. Of those, only recognized codes
+            // are retried by the queue itself (finding F2).
+            if record.view.action.as_deref() != Some("retry")
+                || !failure_code(&record.view).is_some_and(|code| retried_automatically(&code))
+            {
                 continue;
             }
             let Some(url) = record.live_url.clone() else {
@@ -1336,6 +1353,7 @@ impl QueueRecord {
                 expected_sha256,
                 cleanup_pending: false,
                 error: conflict.then(|| "A file already exists at this destination.".into()),
+                error_code: None,
                 action: conflict.then(|| "choose_new_path".into()),
                 retryable: conflict,
                 created_at_ms: now,
@@ -1407,6 +1425,7 @@ impl QueueRecord {
                 expected_sha256: None,
                 cleanup_pending: false,
                 error: conflict.then(|| "A file already exists at this destination.".into()),
+                error_code: None,
                 action: conflict.then(|| "choose_new_path".into()),
                 retryable: conflict,
                 created_at_ms: now,
@@ -1550,6 +1569,7 @@ impl QueueRecord {
         view.error = error;
         view.action = action;
         view.retryable = retryable;
+        view.error_code = failure_code(&view);
         Self {
             id: saved.id,
             live_url,
@@ -1704,27 +1724,86 @@ fn recovery_action(snapshot: &JobSnapshot) -> (Option<String>, bool) {
     (Some(action_for_error(error).into()), true)
 }
 
-/// The next step a failure calls for. Only `retry` is eligible for automatic
-/// retry, so anything that needs a person must map to something else.
+/// The next step a failure calls for, from its code (finding F3: never from
+/// words elsewhere in the message). Only `retry` can lead to an automatic
+/// retry, and only for the codes [`retried_automatically`] accepts.
 fn action_for_error(error: &str) -> &'static str {
-    // A checksum failure needs a person: the source or the checksum is wrong.
-    // It is deliberately not "retry", so automatic retry never repeats it.
-    if error.contains("checksum_mismatch") || error.contains("checksum_unreadable") {
-        "check_checksum"
-    } else if error.contains("source_expired") || error.contains("unknown_variant") {
-        "refresh_source"
-    } else if error.contains("helper_unavailable") {
-        "configure_media_tools"
-    } else if error.contains("destination_conflict") || error.contains("already exists") {
-        "choose_new_path"
-    } else if error.contains("invalid_url")
-        || error.contains("invalid_destination")
-        || refused_by_server(error)
-    {
-        "edit_link"
-    } else {
-        "retry"
+    action_for_code(&error_code(error), error)
+}
+
+fn action_for_code(code: &str, error: &str) -> &'static str {
+    match code {
+        // A checksum failure needs a person: the source or the checksum is
+        // wrong. It is deliberately not "retry", so it is never repeated.
+        "integrity.checksum_mismatch" | "integrity.checksum_unreadable" => "check_checksum",
+        "media.source_expired" | "media.unknown_variant" => "refresh_source",
+        "media.helper_unavailable" => "configure_media_tools",
+        "storage.destination_conflict" | "media.destination_conflict" => "choose_new_path",
+        "media.invalid_source" => "edit_link",
+        "source.transfer_failed" if refused_by_server(error) => "edit_link",
+        code if code.starts_with("input.") => "edit_link",
+        // Anything else, recognized or not, offers a person a retry; whether
+        // the queue retries it by itself is decided by the code alone.
+        _ => "retry",
     }
+}
+
+/// The stable code at the start of an error message: the leading token when
+/// it has the shape of one, such as `input.invalid_url` from the core, or a
+/// bare name from the media adapter, read as `media.<name>`. A message with
+/// no code is `internal.unknown`.
+fn error_code(error: &str) -> String {
+    let token = error
+        .trim_start()
+        .split(|character: char| character == ':' || character.is_whitespace())
+        .next()
+        .unwrap_or_default();
+    let word = |part: &str| {
+        !part.is_empty()
+            && part.starts_with(|c: char| c.is_ascii_lowercase())
+            && part
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    };
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() >= 2 && parts.iter().all(|part| word(part)) {
+        token.to_owned()
+    } else if parts.len() == 1 && word(token) && token.contains('_') {
+        format!("media.{token}")
+    } else {
+        "internal.unknown".to_owned()
+    }
+}
+
+/// The code of a failed download, for snapshots. A message the session wrote
+/// itself has no code in its text, so the code follows from the action it
+/// attached.
+fn failure_code(view: &JobSnapshot) -> Option<String> {
+    if view.state != "failed" {
+        return None;
+    }
+    let code = error_code(view.error.as_deref().unwrap_or_default());
+    if code != "internal.unknown" {
+        return Some(code);
+    }
+    Some(
+        match view.action.as_deref() {
+            Some("choose_new_path") => "storage.destination_conflict",
+            Some("check_checksum") => "integrity.checksum_unreadable",
+            Some("configure_media_tools") => "media.helper_unavailable",
+            Some("refresh_source") => "media.source_expired",
+            _ => "internal.unknown",
+        }
+        .to_owned(),
+    )
+}
+
+/// Whether the queue may retry a failure whose action is `retry` by itself
+/// (finding F2). A recognized code may be; `internal.*`, which includes a
+/// message with no code at all, waits for a person, as the job contract (§9)
+/// requires.
+fn retried_automatically(code: &str) -> bool {
+    !code.starts_with("internal.")
 }
 
 /// True for an HTTP client error that repeating will not change, such as 404

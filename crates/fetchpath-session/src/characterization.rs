@@ -442,10 +442,23 @@ fn each_failure_maps_to_the_step_a_person_or_the_queue_takes_next() {
             "configure_media_tools",
         ),
         ("storage.destination_conflict: exists", "choose_new_path"),
+        // The media adapter's own spelling: a bare name, read as media.<name>.
         (
-            "A file already exists at the destination.",
+            "source_expired: This media session expired.",
+            "refresh_source",
+        ),
+        (
+            "helper_unavailable: Media tools are unavailable.",
+            "configure_media_tools",
+        ),
+        (
+            "destination_conflict: A file already exists at this destination.",
             "choose_new_path",
         ),
+        // Finding F3, fixed (FP-051): words elsewhere in a message no longer
+        // choose the action. A message without a code offers a retry; the
+        // session attaches its own action where it writes such a message.
+        ("A file already exists at the destination.", "retry"),
         ("input.invalid_url: not http", "edit_link"),
         ("input.invalid_destination: reserved name", "edit_link"),
         ("source.transfer_failed: HTTP status 404", "edit_link"),
@@ -462,16 +475,118 @@ fn each_failure_maps_to_the_step_a_person_or_the_queue_takes_next() {
     }
 }
 
-/// Finding F2: anything unrecognized, including an internal invariant
-/// failure, maps to "retry" and is therefore retried automatically. The job
-/// contract (§9) says an unrecognized error must not be assumed retryable.
+/// Finding F2, fixed (FP-051): an unrecognized or internal failure still
+/// offers a person a retry, but the queue never retries it by itself, as the
+/// job contract (§9) requires.
 #[test]
-fn finding_f2_unrecognized_and_internal_errors_are_treated_as_retryable() {
-    assert_eq!(action_for_error(""), "retry");
-    assert_eq!(action_for_error("internal.unknown: something new"), "retry");
+fn unrecognized_and_internal_errors_offer_a_retry_but_are_never_retried_automatically() {
+    for error in [
+        "",
+        "internal.unknown: something new",
+        "internal.metadata_failure: journal",
+        "Something went wrong.",
+    ] {
+        assert_eq!(action_for_error(error), "retry", "{error:?}");
+        assert!(
+            !retried_automatically(&error_code(error)),
+            "{error:?} must not be retried by the queue"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let jobs = Session::in_memory(3);
+    let mut unknown = failed_record(dir.path(), "unknown.bin", "retry", 0);
+    unknown.view.error = Some("internal.metadata_failure: journal".into());
+    let mut uncoded = failed_record(dir.path(), "uncoded.bin", "retry", 0);
+    uncoded.view.error = Some("Something went wrong.".into());
+    let mut state = QueueState {
+        records: vec![
+            unknown,
+            uncoded,
+            failed_record(dir.path(), "transport.bin", "retry", 0),
+        ],
+        link_reviews: Vec::new(),
+    };
+    jobs.schedule_automatic_retries(&mut state, &Settings::default());
+    assert_eq!(state.records[0].view.state, "failed");
+    assert_eq!(state.records[1].view.state, "failed");
     assert_eq!(
-        action_for_error("internal.metadata_failure: journal"),
-        "retry"
+        state.records[2].view.state, "scheduled",
+        "transport failures still are"
+    );
+}
+
+#[test]
+fn a_failure_code_is_read_from_the_start_of_its_message_only() {
+    let table = [
+        ("input.invalid_url: only http", "input.invalid_url"),
+        (
+            "source.transfer_failed: HTTP status 404",
+            "source.transfer_failed",
+        ),
+        ("storage.failed at C:\\x: denied", "storage.failed"),
+        (
+            "integrity.checksum_mismatch after HTTP status 404",
+            "integrity.checksum_mismatch",
+        ),
+        (
+            "helper_crash: The media helper stopped.",
+            "media.helper_crash",
+        ),
+        ("  source_expired: expired", "media.source_expired"),
+        // A code later in the message is not this failure's code.
+        ("Something failed: input.invalid_url", "internal.unknown"),
+        ("cancelled", "internal.unknown"),
+        ("Could not start this download (x).", "internal.unknown"),
+        ("", "internal.unknown"),
+    ];
+    for (error, code) in table {
+        assert_eq!(error_code(error), code, "{error:?}");
+    }
+    // Only failed rows carry a code; the session's own messages take theirs
+    // from the action it attached.
+    let dir = tempfile::tempdir().unwrap();
+    let mut view = QueueRecord::new(
+        "https://example.test/a.bin".into(),
+        dir.path().join("a.bin"),
+        None,
+    )
+    .view;
+    view.state = "queued".into();
+    view.error = Some("source.transfer_failed: x".into());
+    assert_eq!(failure_code(&view), None);
+    view.state = "failed".into();
+    assert_eq!(
+        failure_code(&view).as_deref(),
+        Some("source.transfer_failed")
+    );
+    view.error = Some("A file already exists at this destination.".into());
+    view.action = Some("choose_new_path".into());
+    assert_eq!(
+        failure_code(&view).as_deref(),
+        Some("storage.destination_conflict")
+    );
+}
+
+#[test]
+fn a_batch_that_fails_on_one_link_queues_none_of_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let jobs = Session::in_memory(1);
+    let draft = |url: &str, name: &str| JobDraft {
+        url: url.into(),
+        destination: dir.path().join(name).display().to_string(),
+        not_before_ms: None,
+        checksum: None,
+    };
+    let error = jobs
+        .enqueue(vec![
+            draft("http://127.0.0.1:9/first.bin", "first.bin"),
+            draft("ftp://example.test/second.bin", "second.bin"),
+        ])
+        .unwrap_err();
+    assert!(error.contains("HTTP"), "{error}");
+    assert!(
+        jobs.list().unwrap().is_empty(),
+        "the valid first link was queued anyway"
     );
 }
 
