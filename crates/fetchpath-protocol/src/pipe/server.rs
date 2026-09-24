@@ -32,14 +32,17 @@ impl PipeListener {
     ) -> Result<Self, ProtocolError> {
         let sid = super::current_user_sid()?;
         // Protected DACL: generic all for this user's SID and nobody else.
-        let security = ffi::SecurityDescriptor::from_sddl(&format!("D:P(A;;GA;;;{sid})")).map_err(
-            |error| {
-                connection_error(
-                    "internal.pipe_security",
-                    format!("The pipe's access list could not be built: {error}"),
-                )
-            },
-        )?;
+        // The explicit medium label forbids lower-integrity processes both
+        // writing and reading: the default label only stops writes, and a
+        // read-only open would still hold a connection slot.
+        let security =
+            ffi::SecurityDescriptor::from_sddl(&format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)"))
+                .map_err(|error| {
+                    connection_error(
+                        "internal.pipe_security",
+                        format!("The pipe's access list could not be built: {error}"),
+                    )
+                })?;
         let wide = name.wide();
         let first = ffi::create_pipe_instance(&wide, &security, true, BUFFER_BYTES).map_err(|error| {
             if error.raw_os_error() == Some(5) {
@@ -72,25 +75,37 @@ impl PipeListener {
         timeout: Option<Duration>,
     ) -> Result<Option<PendingConnection>, ProtocolError> {
         let deadline = timeout.map(|value| Instant::now() + value);
+        let mut failures = 0;
         loop {
             let left = deadline.map(|at| at.saturating_duration_since(Instant::now()));
-            let connected = ffi::connect(&self.next, left).map_err(|error| {
-                connection_error(
-                    "internal.pipe_unavailable",
-                    format!("Waiting for a client failed: {error}"),
-                )
-            })?;
+            let connected = match ffi::connect(&self.next, left) {
+                Ok(connected) => connected,
+                // Fresh instances failing too is not a departed client.
+                Err(error) if failures >= 3 => {
+                    return Err(connection_error(
+                        "internal.pipe_unavailable",
+                        format!("Waiting for a client failed: {error}"),
+                    ));
+                }
+                Err(_) => {
+                    failures += 1;
+                    // A client that opened and closed the instance before it
+                    // was waited on leaves it unusable (ERROR_NO_DATA). Put a
+                    // fresh instance in its place so one departing client
+                    // cannot wedge the listener, then keep waiting.
+                    ffi::disconnect(&self.next);
+                    self.next = self.fresh_instance()?;
+                    if deadline.is_some_and(|at| Instant::now() >= at) {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+            };
             if !connected {
                 return Ok(None);
             }
             // Keep an instance listening before handing this one off.
-            let fresh = ffi::create_pipe_instance(&self.name, &self.security, false, BUFFER_BYTES)
-                .map_err(|error| {
-                    connection_error(
-                        "internal.pipe_unavailable",
-                        format!("The engine's pipe could not be reopened: {error}"),
-                    )
-                })?;
+            let fresh = self.fresh_instance()?;
             let instance = std::mem::replace(&mut self.next, fresh);
             let guard = LiveGuard::claim(&self.live, self.limits.max_connections);
             let Some(guard) = guard else {
@@ -104,6 +119,17 @@ impl PipeListener {
                 _live: guard,
             }));
         }
+    }
+
+    fn fresh_instance(&self) -> Result<ffi::PipeInstance, ProtocolError> {
+        ffi::create_pipe_instance(&self.name, &self.security, false, BUFFER_BYTES).map_err(
+            |error| {
+                connection_error(
+                    "internal.pipe_unavailable",
+                    format!("The engine's pipe could not be reopened: {error}"),
+                )
+            },
+        )
     }
 
     /// The pipe's owner, access list and integrity label as SDDL.
@@ -173,8 +199,10 @@ impl PendingConnection {
             server_nonce: server_nonce.to_hex(),
             server_proof: auth::to_hex(&self.secret.server_proof(&client_nonce, &server_nonce)),
         };
-        self.stream
-            .write_frame(&challenge, self.limits.handshake_timeout)?;
+        self.stream.write_frame(
+            &challenge,
+            deadline.saturating_duration_since(Instant::now()),
+        )?;
         let proof: Handshake = self.stream.read_handshake(deadline)?;
         let Handshake::Proof { client_proof } = proof else {
             return Err(self.stream.fail(handshake_failed("expected proof")));
@@ -188,8 +216,10 @@ impl PendingConnection {
                 "the client does not hold the engine secret",
             )));
         }
-        self.stream
-            .write_frame(&Handshake::Welcome, self.limits.handshake_timeout)?;
+        self.stream.write_frame(
+            &Handshake::Welcome,
+            deadline.saturating_duration_since(Instant::now()),
+        )?;
         Ok(ServerConnection {
             sender: ConnectionSender {
                 stream: Arc::clone(&self.stream),
@@ -198,6 +228,7 @@ impl PendingConnection {
             },
             stream: self.stream,
             limits: self.limits,
+            idle_timeout: std::sync::Mutex::new(self.limits.idle_timeout),
             _live: self._live,
         })
     }
@@ -210,10 +241,21 @@ pub struct ServerConnection {
     stream: Arc<Stream>,
     sender: ConnectionSender,
     limits: Limits,
+    idle_timeout: std::sync::Mutex<Option<Duration>>,
     _live: LiveGuard,
 }
 
 impl ServerConnection {
+    /// Changes how long this connection may stay silent. The engine turns it
+    /// off for a connection that subscribed to events, because a subscriber
+    /// only listens after its subscribe command.
+    pub fn set_idle_timeout(&self, timeout: Option<Duration>) {
+        *self
+            .idle_timeout
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = timeout;
+    }
+
     pub fn sender(&self) -> ConnectionSender {
         self.sender.clone()
     }
@@ -228,7 +270,10 @@ impl ServerConnection {
         loop {
             let frame = self.stream.read_frame(
                 self.limits.max_frame_bytes,
-                self.limits.idle_timeout,
+                *self
+                    .idle_timeout
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
                 self.limits.frame_timeout,
                 None,
             );

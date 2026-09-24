@@ -33,11 +33,16 @@ use std::time::{Duration, Instant};
 pub struct PipeName(String);
 
 impl PipeName {
-    /// The engine's pipe for the user running this process. The SID in the
-    /// name keeps users on one machine apart.
-    pub fn for_current_user() -> Result<Self, ProtocolError> {
+    /// The engine's pipe for this install and user. The SID keeps users on
+    /// one machine apart; the token is derived from the engine secret, so a
+    /// process that cannot read the secret (another user, or a lower
+    /// integrity level) cannot know the name in advance to claim it first.
+    pub fn for_install(secret: &EngineSecret) -> Result<Self, ProtocolError> {
         let sid = current_user_sid()?;
-        Ok(Self(format!(r"\\.\pipe\fetchpath-engine-v1-{sid}")))
+        Ok(Self(format!(
+            r"\\.\pipe\fetchpath-engine-v1-{sid}-{}",
+            secret.pipe_name_token()
+        )))
     }
 
     /// A pipe with a chosen final segment, for tests and diagnostics.

@@ -46,7 +46,7 @@ impl PipeClient {
                 version: auth::TRANSPORT_VERSION,
                 client_nonce: client_nonce.to_hex(),
             },
-            limits.handshake_timeout,
+            deadline.saturating_duration_since(Instant::now()),
         )?;
         let Handshake::Challenge {
             server_nonce,
@@ -72,7 +72,7 @@ impl PipeClient {
             &Handshake::Proof {
                 client_proof: auth::to_hex(&secret.client_proof(&client_nonce, &server_nonce)),
             },
-            limits.handshake_timeout,
+            deadline.saturating_duration_since(Instant::now()),
         )?;
         match stream.read_handshake(deadline)? {
             Handshake::Welcome => Ok(Self { stream, limits }),

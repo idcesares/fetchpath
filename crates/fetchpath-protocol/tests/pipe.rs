@@ -153,6 +153,8 @@ fn serve(
                 }
                 let result = match &envelope.payload {
                     Command::SubscribeQueue { after_cursor } => {
+                        // A subscriber only listens from here on.
+                        connection.set_idle_timeout(None);
                         sender
                             .send(&ServerMessage::Reply(Reply::ok(
                                 envelope.command_id.clone(),
@@ -728,4 +730,149 @@ fn killed_client_child() {
     println!("child-ready");
     std::io::stdout().flush().unwrap();
     thread::sleep(Duration::from_secs(60));
+}
+
+#[test]
+fn a_client_that_leaves_before_it_is_accepted_does_not_wedge_the_listener() {
+    let name = unique_name();
+    let mut listener = PipeListener::bind(&name, secret(), fast_limits()).unwrap();
+    // Opens the listening instance and closes it before accept waits on it.
+    drop(raw_open(&name));
+    let arriving = {
+        let name = name.clone();
+        thread::spawn(move || {
+            let mut file = raw_open(&name);
+            raw_authenticate(&mut file);
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pending = loop {
+        if let Some(pending) = listener.accept(Some(Duration::from_millis(200))).unwrap() {
+            break pending;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the listener never accepted again"
+        );
+    };
+    // The departed client may be the one accepted first; keep going until a
+    // live one authenticates.
+    let mut outcome = pending.authenticate();
+    while outcome.is_err() {
+        let next = listener
+            .accept(Some(Duration::from_secs(5)))
+            .unwrap()
+            .expect("a client");
+        outcome = next.authenticate();
+    }
+    arriving.join().unwrap();
+}
+
+#[test]
+fn a_subscription_outlives_the_idle_limit() {
+    let limits = Limits {
+        idle_timeout: Some(Duration::from_millis(300)),
+        ..fast_limits()
+    };
+    let engine = Engine::start(limits, Respond::Reply);
+    let client = PipeEngineClient::new(engine.name.clone(), secret(), limits);
+    let mut subscription = client
+        .subscribe(&envelope(Command::SubscribeQueue { after_cursor: 100 }))
+        .unwrap();
+    for _ in 0..2 {
+        assert!(
+            subscription
+                .events
+                .next_item(Duration::from_secs(5))
+                .unwrap()
+                .is_some()
+        );
+    }
+    thread::sleep(Duration::from_millis(900));
+    assert!(
+        subscription
+            .events
+            .next_item(Duration::from_millis(100))
+            .unwrap()
+            .is_none()
+    );
+    while let Ok(seen) = engine.seen.try_recv() {
+        assert!(
+            !matches!(seen, Seen::Ended(_)),
+            "the subscription was closed: {seen:?}"
+        );
+    }
+}
+
+#[test]
+fn the_pipe_name_is_known_only_to_holders_of_the_secret() {
+    let name = PipeName::for_install(&secret()).unwrap();
+    assert_eq!(name, PipeName::for_install(&secret()).unwrap());
+    let other = PipeName::for_install(&EngineSecret::from_bytes([0x17; SECRET_BYTES])).unwrap();
+    assert_ne!(name, other);
+    assert!(name.as_str().contains(&current_user_sid().unwrap()));
+}
+
+const LOW_NAME: &str = "FETCHPATH_PIPE_TEST_LOW_NAME";
+const LOW_SECRET: &str = "FETCHPATH_PIPE_TEST_LOW_SECRET";
+
+#[test]
+fn a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret_path = dir.path().join("engine-secret-v1.bin");
+    let sid = current_user_sid().unwrap();
+    let _ = EngineSecret::load_or_create(&secret_path, &sid).unwrap();
+    let engine = Engine::start(fast_limits(), Respond::Reply);
+
+    // A copy of this test binary marked low integrity runs at low integrity.
+    let low = dir.path().join("low-integrity-child.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &low).unwrap();
+    let marked = std::process::Command::new("icacls")
+        .arg(&low)
+        .args(["/setintegritylevel", "low"])
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(
+        marked.success(),
+        "icacls could not mark the copy low integrity"
+    );
+    let output = std::process::Command::new(&low)
+        .args(["low_integrity_child", "--exact", "--ignored", "--nocapture"])
+        .env(LOW_NAME, engine.name.as_str())
+        .env(LOW_SECRET, &secret_path)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    let report = text
+        .lines()
+        .find(|line| line.starts_with("low-report"))
+        .unwrap_or_else(|| panic!("the low-integrity child did not report: {text}"));
+    assert_eq!(
+        report, "low-report rw=denied ro=denied secret=denied",
+        "a lower-integrity process reached the engine"
+    );
+    // Nothing it tried took a connection slot.
+    assert!(
+        engine
+            .seen
+            .recv_timeout(Duration::from_millis(300))
+            .is_err()
+    );
+}
+
+/// Run only by the test above, as a low-integrity process.
+#[test]
+#[ignore = "helper process for a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret"]
+fn low_integrity_child() {
+    let (Some(name), Some(secret_path)) =
+        (std::env::var_os(LOW_NAME), std::env::var_os(LOW_SECRET))
+    else {
+        return;
+    };
+    let outcome = |result: std::io::Result<File>| if result.is_ok() { "opened" } else { "denied" };
+    let rw = outcome(OpenOptions::new().read(true).write(true).open(&name));
+    let ro = outcome(OpenOptions::new().read(true).open(&name));
+    let secret = outcome(File::open(&secret_path));
+    println!("low-report rw={rw} ro={ro} secret={secret}");
 }

@@ -18,6 +18,7 @@ pub const SECRET_BYTES: usize = 32;
 pub const NONCE_BYTES: usize = 32;
 const SERVER_LABEL: &[u8] = b"fetchpath-pipe-v1 server proof";
 const CLIENT_LABEL: &[u8] = b"fetchpath-pipe-v1 client proof";
+const PIPE_NAME_LABEL: &[u8] = b"fetchpath-pipe-v1 pipe name";
 /// Handshake transport name and version, independent of the protocol's.
 pub const TRANSPORT: &str = "fetchpath-pipe";
 pub const TRANSPORT_VERSION: u32 = 1;
@@ -82,6 +83,26 @@ impl EngineSecret {
         Ok(Self(bytes))
     }
 
+    /// Loads a secret another process may still be writing. It holds the
+    /// file without sharing until it is complete, so a sharing violation
+    /// means "wait", for up to two seconds.
+    #[cfg(windows)]
+    fn load_when_released(path: &Path) -> Result<Self, ProtocolError> {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match std::fs::File::open(path) {
+                Err(error)
+                    if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                _ => return Self::load(path),
+            }
+        }
+    }
+
     /// The engine's side: reads the secret, or creates it readable only by
     /// this user and not by lower-integrity processes.
     #[cfg(windows)]
@@ -118,24 +139,38 @@ impl EngineSecret {
                 std::mem::forget(handle);
                 // SAFETY: ownership of the handle moves into the File.
                 let mut file = unsafe { std::fs::File::from_raw_handle(raw) };
-                file.write_all(&secret.0)
-                    .and_then(|()| file.sync_all())
-                    .map_err(|error| {
-                        let _ = std::fs::remove_file(path);
-                        auth_error(
-                            "auth.engine_secret_unwritable",
-                            format!("The engine secret could not be written: {error}"),
-                        )
-                    })?;
+                let written = file.write_all(&secret.0).and_then(|()| file.sync_all());
+                // Closed before any removal: the file was opened without
+                // sharing, so deleting it while open would fail and leave a
+                // damaged secret behind.
+                drop(file);
+                written.map_err(|error| {
+                    let _ = std::fs::remove_file(path);
+                    auth_error(
+                        "auth.engine_secret_unwritable",
+                        format!("The engine secret could not be written: {error}"),
+                    )
+                })?;
                 Ok(secret)
             }
-            // Another engine start created it first; use that one.
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Self::load(path),
+            // Another engine start created it first; use that one once its
+            // creator has finished writing and closed it.
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                Self::load_when_released(path)
+            }
             Err(error) => Err(auth_error(
                 "auth.engine_secret_unwritable",
                 format!("The engine secret could not be created: {error}"),
             )),
         }
+    }
+
+    /// A stable name component only holders of the secret can compute.
+    pub fn pipe_name_token(&self) -> String {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.0)
+            .expect("HMAC accepts a key of any length");
+        mac.update(PIPE_NAME_LABEL);
+        to_hex(&mac.finalize().into_bytes()[..16])
     }
 
     fn mac(

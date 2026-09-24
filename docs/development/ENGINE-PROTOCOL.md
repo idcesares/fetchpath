@@ -103,12 +103,12 @@ Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Code:
 
 | Part | What it does |
 |---|---|
-| Name | `\\.\pipe\fetchpath-engine-v1-<user SID>`, so users on one machine never share a name |
-| Access | Protected DACL `D:P(A;;GA;;;<SID>)`: this user only, nothing inherited. Remote clients refused. No explicit label, so the default medium no-write-up label keeps lower-integrity processes from writing |
-| Claim | The engine creates the first instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`; if any process already holds the name it refuses to start (`contract.engine_already_running`) instead of running behind an impostor |
+| Name | `\\.\pipe\fetchpath-engine-v1-<user SID>-<token>`. The SID keeps users apart; the token is derived from the engine secret, so a process that cannot read the secret (another user, or a lower integrity level) cannot know the name in advance to claim it first |
+| Access | `D:P(A;;GA;;;<SID>)S:(ML;;NWNR;;;ME)`: this user only, nothing inherited, and an explicit medium label that stops lower-integrity processes from reading as well as writing (the default label stops only writes, and a read-only open would still hold a connection slot). Remote clients refused |
+| Claim | The engine creates the first instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`; if any process already holds the name it refuses to start (`contract.engine_already_running`) instead of running behind an impostor. The flag detects a claimant rather than preventing one; the secret-derived name is what keeps other users and lower-integrity processes from claiming it first |
 | Secret | 32 random bytes in a file the engine creates once, with `D:P(A;;FA;;;<SID>)S:(ML;;NRNWNX;;;ME)`: owner-only and unreadable by lower-integrity processes. Wiped from memory on drop; never printed. Where the engine keeps it is FP-053's choice |
 | Handshake | `hello` (client nonce) → `challenge` (server nonce and server proof) → `proof` (client proof) → `welcome`. Proofs are HMAC-SHA256 under the secret over both nonces, with a different label per direction. The client checks the engine's proof before sending its own, so a squatter on the name learns nothing. Constant-time comparison. Handshake frames are transport, not protocol schema |
-| Deadlines | Overlapped I/O throughout. Handshake 5 s in total; a started frame must finish in 10 s; idle connections close after 10 minutes (configurable, off for subscriptions); a write that cannot finish in 10 s closes the connection |
+| Deadlines | Overlapped I/O throughout. Handshake 5 s in total, reads and writes included; a started frame must finish in 10 s; idle connections close after 10 minutes, and the engine turns that off per connection with `set_idle_timeout(None)` once a connection subscribes, since a subscriber only listens; a write that cannot finish in 10 s closes the connection |
 | Limits | Frame size (≤ 4 MiB), 32 unanswered commands, 64 connections authenticated or not (further clients are disconnected at once). Every limit is per connection; the engine keeps serving others |
 | Client | `PipeClient` (one connection) and `PipeEngineClient`, the pipe `EngineClient`: commands share a connection that is reopened once on loss, resending the same envelope (the ledger makes that safe, FP-051); each subscription has its own connection |
 | Refusals | An oversize, empty or unreadable frame is answered with its code and then closes that connection; an unknown command is answered and the connection continues |
@@ -118,10 +118,18 @@ processes. A program already running as the same user at the same integrity
 can read the secret and connect as the user; that is out of scope, as the
 platform design says.
 
+**Residual:** named pipes can be listed by any local user. Another user who
+saw the running engine's pipe name could create a pipe of that name while
+the engine is stopped, and the engine would then refuse to start. That is a
+denial of service, not an impersonation: clients check the engine's proof
+first. FP-053 decides the engine's response (for example, rotating the name
+through an endpoint file only this user can read).
+
 ### Commands and results
 
-- `cargo test -p fetchpath-protocol --test pipe`: 16 passed, 1 ignored (the
-  helper process for the killed-client test), eight consecutive runs clean.
+- `cargo test -p fetchpath-protocol --test pipe`: 20 passed, 2 ignored (the
+  helper processes for the killed-client and low-integrity tests), eight
+  consecutive runs clean after the review fixes.
 - `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`: clean.
 - `Cargo.lock` gained no package: `hmac` 0.13, `sha2` 0.11 and `getrandom`
   0.3 were already locked. Notices unchanged at 568.
@@ -137,6 +145,10 @@ platform design says.
 | Other limits | `a_silent_connection_is_closed_at_the_handshake_deadline`, `an_idle_connection_is_closed_after_the_idle_limit`, `too_many_unanswered_commands_close_that_connection` |
 | Access and claim | `only_this_user_may_open_the_pipe`, `a_second_engine_cannot_claim_the_pipe_name` |
 | Client behavior | `an_authenticated_client_sends_commands_and_follows_events`, `a_lost_connection_is_reopened_and_the_same_command_resent`, `a_client_reports_a_missing_engine_plainly`, `accepting_with_no_time_left_reports_nothing_rather_than_failing` |
+| Lower integrity | `a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret` (a copy of the test binary marked low with `icacls` opens neither read-write nor read-only, and cannot read the secret) |
+| Listener robustness | `a_client_that_leaves_before_it_is_accepted_does_not_wedge_the_listener` |
+| Subscriptions | `a_subscription_outlives_the_idle_limit` |
+| Name | `the_pipe_name_is_known_only_to_holders_of_the_secret` |
 
 ### Mutation checks
 
@@ -163,3 +175,18 @@ platform design says.
   subscription never loses part of a frame.
 - A frame refused for its size or shape is now answered before the
   connection closes; the first version closed without saying why.
+### Independent review
+
+Strong-model review, 24 September 2026: **changes required**. It found the
+FFI buffer and OVERLAPPED lifetimes, handle ownership and the handshake
+cryptography sound, and confirmed these defects by experiment. All are fixed,
+each with a test that fails when the fix is reverted:
+
+| Finding | Fix | Test |
+|---|---|---|
+| High: a client that opened and closed the pipe before `accept` left a dead instance, and every later accept failed | Any connect failure disconnects and replaces the instance, up to three times in a row | `a_client_that_leaves_before_it_is_accepted_does_not_wedge_the_listener` |
+| High: a low-integrity process could open the pipe read-only (the default label stops only writes) and fill the connection slots | Explicit `S:(ML;;NWNR;;;ME)` label on the pipe | `a_lower_integrity_process_cannot_open_the_pipe_or_read_the_secret` |
+| Medium: a low-integrity process could claim the predictable name first | Name token derived from the secret | `the_pipe_name_is_known_only_to_holders_of_the_secret` |
+| Medium: subscriptions were closed by the idle limit while events flowed | Per-connection `set_idle_timeout` | `a_subscription_outlives_the_idle_limit` |
+| Low: a failed secret write tried to delete a file it still held without sharing; a concurrent start could read a half-written secret | Close before removing; wait out a sharing violation for up to 2 s | Reviewed; not reproduced by a test |
+| Low: handshake writes each had a fresh full timeout | Writes use the time left before the handshake deadline, on both sides | Reviewed |
