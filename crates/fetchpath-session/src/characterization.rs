@@ -408,7 +408,7 @@ fn finding_f1_a_queue_from_a_newer_schema_is_lost_after_two_saves() {
     value["schemaVersion"] = Value::from(QUEUE_SCHEMA_VERSION + 1);
     write_queue(&path, &value);
 
-    let jobs = DesktopJobs::load(path.clone(), 1).unwrap();
+    let jobs = Session::load(path.clone(), 1).unwrap();
     assert!(jobs.list().unwrap().is_empty(), "newer queue is not shown");
     let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
     assert!(
@@ -517,7 +517,7 @@ fn failed_record(dir: &Path, name: &str, action: &str, attempt: u32) -> QueueRec
 #[test]
 fn only_plain_transport_failures_are_retried_automatically_and_on_a_backoff() {
     let dir = tempfile::tempdir().unwrap();
-    let jobs = DesktopJobs::in_memory(3);
+    let jobs = Session::in_memory(3);
     let settings = Settings::default(); // auto retry on, 3 attempts, 15 s base
     let mut state = QueueState {
         records: vec![
@@ -586,7 +586,7 @@ fn a_transport_failure_restored_after_a_restart_is_retried_automatically() {
         .retain(|record| keep.contains(&record["id"].as_str().unwrap().to_string()));
     write_queue(&path, &value);
 
-    let jobs = DesktopJobs::load(path, 1).unwrap();
+    let jobs = Session::load(path, 1).unwrap();
     let rows = jobs.list().unwrap();
     let row = |n: u8| rows.iter().find(|row| row.job_id == id(n)).unwrap();
     assert_eq!(row(2).state, "scheduled");

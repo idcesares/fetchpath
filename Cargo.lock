@@ -1261,6 +1261,7 @@ version = "0.1.0"
 dependencies = [
  "fetchpath-core",
  "fetchpath-media",
+ "fetchpath-session",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1268,9 +1269,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
- "url",
- "uuid",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1319,6 +1317,21 @@ name = "fetchpath-metalink"
 version = "0.1.0"
 dependencies = [
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "fetchpath-session"
+version = "0.1.0"
+dependencies = [
+ "fetchpath-core",
+ "fetchpath-media",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
