@@ -179,3 +179,103 @@ fn a_private_link_is_never_restored_as_a_live_source() {
     assert_eq!(public.live_url.as_deref(), Some("https://example.test/files/scheduled.bin"));
     assert_eq!(public.not_before_ms, Some(FAR));
 }
+
+fn write_queue(path: &Path, value: &Value) {
+    fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+}
+
+fn fixture_value(dir: &Path) -> Value {
+    serde_json::from_str(&queue_fixture(dir)).unwrap()
+}
+
+#[test]
+fn saving_replaces_the_file_through_a_backup_and_leaves_no_temporary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let state = QueueState::default();
+    save_persisted(&path, &state).unwrap();
+    assert!(!path.with_extension("json.bak").exists(), "first save has nothing to back up");
+    save_persisted(&path, &state).unwrap();
+    assert!(path.exists());
+    assert!(path.with_extension("json.bak").exists(), "second save keeps the previous file");
+    assert!(!path.with_extension("json.new").exists());
+}
+
+#[test]
+fn a_corrupt_queue_file_falls_back_to_its_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    fs::write(&path, b"{\"schemaVersion\":1,\"records\":[").unwrap();
+    fs::write(path.with_extension("json.bak"), queue_fixture(dir.path())).unwrap();
+    let loaded = load_persisted(&path).unwrap().expect("backup loads");
+    assert_eq!(loaded.records.len(), 14);
+}
+
+#[test]
+fn a_corrupt_queue_and_backup_start_an_empty_queue_without_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    fs::write(&path, b"not json").unwrap();
+    fs::write(path.with_extension("json.bak"), b"also not json").unwrap();
+    assert!(load_persisted(&path).unwrap().is_none());
+}
+
+#[test]
+fn unknown_fields_from_a_newer_build_are_ignored_and_known_ones_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let mut value = fixture_value(dir.path());
+    value["futureQueueField"] = Value::from(true);
+    value["records"][0]["futureRecordField"] = Value::from("x");
+    value["records"][0]["view"]["futureViewField"] = Value::from(7);
+    write_queue(&path, &value);
+    let loaded = load_persisted(&path).unwrap().expect("loads");
+    assert_eq!(loaded.records.len(), 14);
+    assert_eq!(loaded.records[0].view.state, "completed");
+}
+
+#[test]
+fn fields_added_after_the_first_queue_format_default_when_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let mut value = fixture_value(dir.path());
+    let record = value["records"][11].as_object_mut().unwrap(); // record 12, media
+    for key in ["credentialRef", "mediaVariantId", "mediaQuality"] {
+        record.remove(key);
+    }
+    let view = record["view"].as_object_mut().unwrap();
+    for key in ["totalBytes", "attempt", "kind", "qualityLabel"] {
+        view.remove(key);
+    }
+    write_queue(&path, &value);
+    let loaded = load_persisted(&path).unwrap().expect("loads");
+    let record = &loaded.records[11];
+    assert_eq!(record.id, id(12));
+    assert_eq!(record.credential_ref, None);
+    assert_eq!(record.media_variant_id, None);
+    assert_eq!(record.view.total_bytes, None);
+    assert_eq!(record.view.attempt, 0);
+    assert_eq!(record.view.kind, "file", "a record without a kind reads as a file");
+    assert_eq!(record.view.quality_label, None);
+}
+
+/// Finding F1: a queue written by a newer schema version is treated as no
+/// queue at all. The first save moves it to the backup and the second save
+/// deletes it, so opening an older build after a newer one loses the queue.
+#[test]
+fn finding_f1_a_queue_from_a_newer_schema_is_lost_after_two_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let mut value = fixture_value(dir.path());
+    value["schemaVersion"] = Value::from(QUEUE_SCHEMA_VERSION + 1);
+    write_queue(&path, &value);
+
+    let jobs = DesktopJobs::load(path.clone(), 1).unwrap();
+    assert!(jobs.list().unwrap().is_empty(), "newer queue is not shown");
+    let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
+    assert!(backup.contains("\"schemaVersion\": 2"), "first save keeps it as the backup");
+
+    jobs.list().unwrap();
+    let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
+    assert!(!backup.contains("\"schemaVersion\": 2"), "second save has deleted it");
+}
