@@ -50,8 +50,9 @@ cannot change it silently. Each fix is its own task and updates its test on
 purpose.
 
 - **F1: a newer queue is lost.** A queue written by a newer schema version is treated as no queue; the first save moves it to the backup and the second deletes it. Once an engine and clients from different builds coexist, opening an older build loses the queue. Fix: FP-070.
-- **F2: unknown errors are retried.** Unrecognized and `internal.*` errors map to `retry` and are retried automatically, contrary to [the job contract](../architecture/JOB-CONTRACT.md) §9. Fix: FP-051.
-- **F3: actions come from message text.** Failure actions are derived by reading error message text; the contract says clients act on the error's code and `action`. Fix: FP-051, with the protocol's error codes from FP-050.
+- **F2: unknown errors are retried.** Unrecognized and `internal.*` errors map to `retry` and are retried automatically, contrary to [the job contract](../architecture/JOB-CONTRACT.md) §9. Fixed in FP-051.
+- **F3: actions come from message text.** Failure actions are derived by reading error message text; the contract says clients act on the error's code and `action`. Fixed in FP-051.
+- **F4: a failed batch was half queued** (found while planning FP-051). A batch that failed validation on one link had already queued the links before it. Fixed in FP-051: every link is checked first.
 
 ## FP-049: the queue moves into `fetchpath-session`
 
@@ -136,3 +137,64 @@ unchanged. The DPAPI code, entropy and flags are byte-identical. The session
 has no Tauri or UI dependency, nothing secret is newly exposed, and the test
 sets match (71 names). Its nits: a duplicated workspace member (fixed) and two
 omissions in the list above (added).
+## FP-051: command ledger, revisions and event sequencing
+
+Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
+[2026-09-24-fp-051-ledger-and-events](plans/2026-09-24-fp-051-ledger-and-events.md).
+
+The session now carries out protocol v1 commands through `Engine` and the
+in-process `EngineClient` (`fetchpath_session::engine`). The desktop still
+calls the session directly and behaves as before; its walkthrough, re-run on
+this tree, produced the same transcript as FP-049's.
+
+| Part | What it does |
+|---|---|
+| Ledger | Mutating commands are looked up by `(client_id, command_id)` before anything else; a resend returns the stored result, a reused id with another request is `contract.idempotency_conflict`. Unseen commands older than 10 minutes or more than 2 minutes in the future are refused; entries are kept 12 minutes |
+| Commit | One ledgered command at a time. Saves are held back while it runs; then its events are derived, its result built, its ledger entry added, and everything written. Only then is it acknowledged |
+| Files | `engine-v1.json` holds the ledger and retained events, each tagged with its commit generation; `queue-v1.json` names the generation and cursor it committed. The engine file is written first, the queue file second, and a load discards what the queue did not commit. A 0.1.0 queue reads and writes back unchanged |
+| Revisions | Each durable event advances the job's `job_revision`; `expected_revision` mismatches return `contract.revision_conflict` with the current revision, changing nothing |
+| Events | Derived at every commit from what changed since the job's last report: `job_created`, `state_changed`, `error_recorded`, `publication_completed`, `policy_changed`, `job_removed`. Per-job `seq`, engine-wide `cursor`, correlated to the command that caused them. The last 512 are kept |
+| Streams | `SubscribeJob` and `SubscribeQueue` replay what was missed, or answer with an atomic snapshot boundary when it was compacted, with the subscriber registered under the same lock. A subscriber more than 1,024 events behind is closed with `resource.subscriber_lagging`; progress is coalesced to the latest sample per job |
+| Errors | F2 and F3 fixed: actions come from the failure's code; `internal.*` and uncoded failures are never retried automatically and are `retryable: false` on the wire |
+
+### Found during the work
+
+- Keeping the ledger and events inside `queue-v1.json` made every save
+  rewrite them, including every progress poll: 358 KB after 241 commands,
+  and a test that took 28.7 s for 240 commands. The engine file and
+  generation scheme replaced it; the same test takes 2.2 s, and saves with no
+  new events cost what they did in 0.1.0.
+- F4, above.
+
+### Commands and results
+
+- `cargo test -p fetchpath-session --test engine`: 10 passed (duplicate and
+  conflicting commands, stale and future commands, a revision race between
+  two clients, replay after reconnect, compaction to a snapshot boundary, a
+  stalled subscriber under load with real downloads, a failed commit, a crash
+  before commit with the engine file written, errors as codes).
+- `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo fmt --all --check`, `node --test` (39): clean.
+- The FP-048 characterization tests pass; F2 and F3's were changed on purpose.
+- Desktop walkthrough (FP-049's driver) on this tree: transcript identical.
+
+### Mutation checks
+
+| Temporary change | Failing tests |
+|---|---|
+| Ledger lookup disabled | resend, conflict, recorded-command, failed-commit and crash tests |
+| Saves not held back during a command | failed-commit, reconnect and stalled-subscriber tests |
+| Revision check removed | `two_clients_racing_on_one_revision_cannot_both_win` |
+| Uncommitted engine data kept on load | `a_crash_before_commit_loses_the_command_so_the_resend_creates_one_job` |
+| Queue file written before the engine file | crash-before-commit and failed-commit tests |
+| Subscriber queue unbounded | `a_subscriber_that_never_reads_cannot_hold_up_the_queue` |
+
+### Limitations
+
+- The HTTP status of a transport failure is still read from the fixed
+  `HTTP status NNN` detail the transport writes; the core does not report it
+  structurally yet.
+- `SelectMedia`, `RefreshMediaChoices`, replacing an existing file and
+  keeping a partial file on cancel answer `contract.unsupported`.
+- A command whose change starts a transfer before its commit fails leaves
+  that transfer running in memory; its record and ledger entry are written
+  together by the next successful save, so a resend still answers once.
