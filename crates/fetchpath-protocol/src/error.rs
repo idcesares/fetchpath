@@ -144,6 +144,8 @@ pub enum Action {
     ConfigureMediaTools,
     /// Inspect the media page again for a fresh set of choices.
     RefreshMediaChoices,
+    /// The source's session expired; refresh the source and inspect it again.
+    RefreshSource,
     /// The selected format vanished; create a linked replacement job.
     CreateReplacementJob,
     /// Refresh the sign-in or other authorization.

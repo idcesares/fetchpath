@@ -1,0 +1,681 @@
+//! Protocol commands on the session (FP-051), through the in-process
+//! `EngineClient`: the job contract's adversarial cases for the ledger,
+//! revisions and event streams.
+
+use fetchpath_protocol::command::{
+    Command, CommandEnvelope, ConflictPolicy, DestinationIntent, JobFilter, JobInput, JobRequest,
+    PolicyPatch, Schedule,
+};
+use fetchpath_protocol::message::{CommandResult, ControlOutcome, EventPayload, StreamPosition};
+use fetchpath_protocol::model::JobState;
+use fetchpath_protocol::{
+    ClientId, EngineClient, JobId, ProtocolError, SensitiveUrl, StreamItem, Timestamp,
+};
+use fetchpath_session::Session;
+use fetchpath_session::engine::{Engine, InProcessClient};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+fn open(path: &Path) -> InProcessClient {
+    let session = Arc::new(Session::load_with_browser(path.to_path_buf(), 3, None).unwrap());
+    InProcessClient::manual(Engine::new(session))
+}
+
+fn client() -> ClientId {
+    ClientId::random()
+}
+
+fn create(url: &str, destination: PathBuf) -> Command {
+    Command::CreateJob {
+        request: JobRequest::File {
+            input: JobInput::Url {
+                url: SensitiveUrl::try_from(url.to_owned()).unwrap(),
+            },
+            destination: DestinationIntent {
+                path: destination.display().to_string(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: None,
+            expected_sha256: None,
+        },
+    }
+}
+
+/// A job that is queued but will not start for an hour, so tests can act on
+/// it without a server.
+fn scheduled(dir: &Path, name: &str) -> Command {
+    let mut command = create("http://127.0.0.1:9/file.bin", dir.join(name));
+    if let Command::CreateJob {
+        request: JobRequest::File { not_before, .. },
+    } = &mut command
+    {
+        *not_before = Some(Timestamp::from_unix_ms(
+            Timestamp::now().unix_ms() + 3_600_000,
+        ));
+    }
+    command
+}
+
+fn job_of(result: &CommandResult) -> fetchpath_protocol::JobSnapshot {
+    match result {
+        CommandResult::Job { job } | CommandResult::Control { job, .. } => job.clone(),
+        other => panic!("not a job result: {other:?}"),
+    }
+}
+
+fn jobs(client: &InProcessClient) -> Vec<fetchpath_protocol::JobSnapshot> {
+    match client
+        .send(
+            &ClientId::random(),
+            Command::ListJobs {
+                filter: JobFilter::All,
+            },
+        )
+        .unwrap()
+    {
+        CommandResult::Jobs { jobs } => jobs,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn code(error: &ProtocolError) -> &str {
+    error.code.as_str()
+}
+
+#[test]
+fn a_resent_command_returns_its_first_result_and_creates_nothing_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let envelope = CommandEnvelope::new(client(), scheduled(dir.path(), "a.bin"));
+
+    let engine = open(&path);
+    let first = engine.execute(&envelope).unwrap();
+    let again = engine.execute(&envelope).unwrap();
+    assert_eq!(first, again);
+    assert_eq!(jobs(&engine).len(), 1);
+    drop(engine);
+
+    // The reply was lost and the engine restarted: the ledger was committed
+    // with the job, so the resend still finds it.
+    let reopened = open(&path);
+    assert_eq!(reopened.execute(&envelope).unwrap(), first);
+    assert_eq!(jobs(&reopened).len(), 1);
+}
+
+#[test]
+fn a_reused_command_id_with_a_different_request_is_refused_without_a_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let envelope = CommandEnvelope::new(client(), scheduled(dir.path(), "a.bin"));
+    engine.execute(&envelope).unwrap();
+    let mut different = envelope.clone();
+    different.payload = scheduled(dir.path(), "b.bin");
+    let refused = engine.execute(&different).unwrap_err();
+    assert_eq!(code(&refused), "contract.idempotency_conflict");
+    assert_eq!(jobs(&engine).len(), 1);
+    // The same command id in another client's namespace is a new command.
+    let mut elsewhere = different.clone();
+    elsewhere.client_id = client();
+    engine.execute(&elsewhere).unwrap();
+    assert_eq!(jobs(&engine).len(), 2);
+}
+
+#[test]
+fn stale_and_future_commands_are_refused_but_a_recorded_one_is_still_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let now = Timestamp::now().unix_ms();
+
+    let mut stale = CommandEnvelope::new(client(), scheduled(dir.path(), "old.bin"));
+    stale.issued_at = Timestamp::from_unix_ms(now - 11 * 60 * 1_000);
+    assert_eq!(
+        code(&engine.execute(&stale).unwrap_err()),
+        "contract.command_expired"
+    );
+
+    let mut future = CommandEnvelope::new(client(), scheduled(dir.path(), "new.bin"));
+    future.issued_at = Timestamp::from_unix_ms(now + 3 * 60 * 1_000);
+    assert_eq!(
+        code(&engine.execute(&future).unwrap_err()),
+        "contract.clock_skew"
+    );
+    assert!(
+        jobs(&engine).is_empty(),
+        "neither command may change anything"
+    );
+
+    // Lookup comes before the time check (contract §5): a command already
+    // recorded is answered even when resent later than it could be sent anew.
+    let mut recorded = CommandEnvelope::new(client(), scheduled(dir.path(), "kept.bin"));
+    recorded.issued_at = Timestamp::from_unix_ms(now - 9 * 60 * 1_000);
+    let first = engine.execute(&recorded).unwrap();
+    assert_eq!(engine.execute(&recorded).unwrap(), first);
+}
+
+#[test]
+fn two_clients_racing_on_one_revision_cannot_both_win() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let job = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                scheduled(dir.path(), "a.bin"),
+            ))
+            .unwrap(),
+    );
+    let seen = job.job_revision;
+
+    // Both clients saw the same revision. The first change wins.
+    let later = Timestamp::from_unix_ms(Timestamp::now().unix_ms() + 7_200_000);
+    let first = CommandEnvelope::new(
+        client(),
+        Command::UpdatePolicy {
+            job_id: job.job_id.clone(),
+            patch: PolicyPatch {
+                schedule: Some(Schedule::At { not_before: later }),
+            },
+        },
+    )
+    .expecting_revision(seen);
+    let changed = job_of(&engine.execute(&first).unwrap());
+    assert!(changed.job_revision > seen);
+    assert_eq!(changed.not_before, Some(later));
+
+    let second = CommandEnvelope::new(
+        client(),
+        Command::Pause {
+            job_id: job.job_id.clone(),
+        },
+    )
+    .expecting_revision(seen);
+    let conflict = engine.execute(&second).unwrap_err();
+    assert_eq!(code(&conflict), "contract.revision_conflict");
+    assert_eq!(conflict.current_revision, Some(changed.job_revision));
+    let now = jobs(&engine)
+        .into_iter()
+        .find(|j| j.job_id == job.job_id)
+        .unwrap();
+    assert_eq!(
+        now.state,
+        JobState::Queued,
+        "the losing change was not applied"
+    );
+
+    // With the current revision it goes through.
+    let retried = CommandEnvelope::new(
+        client(),
+        Command::Pause {
+            job_id: job.job_id.clone(),
+        },
+    )
+    .expecting_revision(changed.job_revision);
+    match engine.execute(&retried).unwrap() {
+        CommandResult::Control { outcome, job } => {
+            assert_eq!(outcome, ControlOutcome::Accepted);
+            assert_eq!(job.state, JobState::Paused);
+        }
+        other => panic!("{other:?}"),
+    }
+    // Pausing again is the matrix's no-op, not an error.
+    let again = CommandEnvelope::new(client(), Command::Pause { job_id: job.job_id });
+    assert!(matches!(
+        engine.execute(&again).unwrap(),
+        CommandResult::Control {
+            outcome: ControlOutcome::NoOp,
+            ..
+        }
+    ));
+}
+
+fn drain(
+    stream: &mut Box<dyn fetchpath_protocol::EventStream>,
+) -> Vec<fetchpath_protocol::JobEvent> {
+    let mut events = Vec::new();
+    while let Some(item) = stream.next_item(Duration::from_millis(50)).unwrap() {
+        if let StreamItem::Event(event) = item {
+            events.push(event);
+        }
+    }
+    events
+}
+
+#[test]
+fn a_reconnecting_subscriber_replays_exactly_what_it_missed() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let command = CommandEnvelope::new(client(), scheduled(dir.path(), "a.bin"));
+    let job = job_of(&engine.execute(&command).unwrap());
+
+    let mut first = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: 0 },
+        ))
+        .unwrap();
+    assert!(matches!(first.start, CommandResult::Subscribed { .. }));
+    let replayed = drain(&mut first.events);
+    assert_eq!(replayed.len(), 1);
+    assert!(matches!(
+        replayed[0].payload,
+        EventPayload::JobCreated { .. }
+    ));
+    assert_eq!(replayed[0].seq, 1);
+    assert_eq!(
+        replayed[0].correlation.command_id.as_ref(),
+        Some(&command.command_id),
+        "the creating command is named on its event"
+    );
+    let seen = replayed[0].cursor;
+    drop(first);
+
+    // While disconnected the job is paused and then removed.
+    engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            Command::Pause {
+                job_id: job.job_id.clone(),
+            },
+        ))
+        .unwrap();
+    engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            Command::RemoveJob {
+                job_id: job.job_id.clone(),
+            },
+        ))
+        .unwrap();
+
+    let mut second = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: seen },
+        ))
+        .unwrap();
+    let missed = drain(&mut second.events);
+    let kinds: Vec<(u64, u64)> = missed
+        .iter()
+        .map(|event| (event.cursor, event.seq))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![(seen + 1, 2), (seen + 2, 3)],
+        "no gap and no repeat"
+    );
+    assert!(matches!(
+        missed[0].payload,
+        EventPayload::StateChanged {
+            previous: JobState::Queued,
+            state: JobState::Paused,
+            ..
+        }
+    ));
+    assert!(matches!(missed[1].payload, EventPayload::JobRemoved));
+
+    // The job's own stream agrees.
+    let mut per_job = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeJob {
+                job_id: job.job_id.clone(),
+                after_seq: 1,
+            },
+        ))
+        .unwrap();
+    let seqs: Vec<u64> = drain(&mut per_job.events)
+        .iter()
+        .map(|event| event.seq)
+        .collect();
+    assert_eq!(seqs, vec![2, 3]);
+}
+
+const COMPACTION_ROUNDS: usize = 300;
+
+#[test]
+fn a_subscriber_asking_for_compacted_events_gets_an_atomic_snapshot_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    // More than the 512 retained events: create and remove jobs.
+    let keep = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                scheduled(dir.path(), "keep.bin"),
+            ))
+            .unwrap(),
+    );
+    for index in 0..COMPACTION_ROUNDS {
+        let job = job_of(
+            &engine
+                .execute(&CommandEnvelope::new(
+                    client(),
+                    scheduled(dir.path(), &format!("{index}.bin")),
+                ))
+                .unwrap(),
+        );
+        engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                Command::RemoveJob { job_id: job.job_id },
+            ))
+            .unwrap();
+    }
+    let subscription = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: 0 },
+        ))
+        .unwrap();
+    let CommandResult::SnapshotBoundary { jobs, position } = subscription.start else {
+        panic!("expected a snapshot boundary, got {:?}", subscription.start);
+    };
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].job_id, keep.job_id);
+    let StreamPosition::Queue { after_cursor } = position else {
+        panic!("{position:?}");
+    };
+    assert_eq!(
+        after_cursor,
+        1 + 2 * COMPACTION_ROUNDS as u64,
+        "positioned after the last event"
+    );
+
+    // Events committed after the boundary arrive on the stream.
+    let mut events = subscription.events;
+    engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            Command::Pause {
+                job_id: keep.job_id.clone(),
+            },
+        ))
+        .unwrap();
+    let next = drain(&mut events);
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].cursor, 2 + 2 * COMPACTION_ROUNDS as u64);
+
+    // A job asked for from before its retained events likewise.
+    let per_job = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeJob {
+                job_id: keep.job_id.clone(),
+                after_seq: 0,
+            },
+        ))
+        .unwrap();
+    assert!(matches!(
+        per_job.start,
+        CommandResult::SnapshotBoundary { .. }
+    ));
+}
+
+/// Serves every connection the same body, slowly enough to be sampled.
+fn serve(body: Vec<u8>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let body = body.clone();
+            thread::spawn(move || {
+                let mut request = [0_u8; 2048];
+                let _ = stream.read(&mut request);
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                if stream.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
+                for chunk in body.chunks(32 * 1024) {
+                    if stream.write_all(chunk).is_err() {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+            });
+        }
+    });
+    url
+}
+
+#[test]
+fn a_subscriber_that_never_reads_cannot_hold_up_the_queue() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let session = Arc::new(Session::load_with_browser(path, 8, None).unwrap());
+    let engine = InProcessClient::new(Engine::new(session));
+    // Subscribed, then never read from again.
+    let mut stalled = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: 0 },
+        ))
+        .unwrap();
+
+    let url = serve(vec![7_u8; 2 * 1024 * 1024]);
+    let started = Instant::now();
+    let real: Vec<JobId> = (0..4)
+        .map(|index| {
+            job_of(
+                &engine
+                    .execute(&CommandEnvelope::new(
+                        client(),
+                        create(
+                            &format!("{url}/{index}.bin"),
+                            dir.path().join(format!("real-{index}.bin")),
+                        ),
+                    ))
+                    .unwrap(),
+            )
+            .job_id
+        })
+        .collect();
+    // Enough durable events to overflow the stalled subscriber.
+    for index in 0..600 {
+        let job = job_of(
+            &engine
+                .execute(&CommandEnvelope::new(
+                    client(),
+                    scheduled(dir.path(), &format!("s{index}.bin")),
+                ))
+                .unwrap(),
+        );
+        engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                Command::RemoveJob { job_id: job.job_id },
+            ))
+            .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let states: Vec<JobState> = jobs(&engine)
+            .into_iter()
+            .filter(|job| real.contains(&job.job_id))
+            .map(|job| job.state)
+            .collect();
+        if states.iter().all(|state| *state == JobState::Completed) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "downloads did not finish: {states:?}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(started.elapsed() < Duration::from_secs(60));
+
+    // The stalled subscriber was closed rather than allowed to grow, and is
+    // told to resubscribe.
+    let mut outcome = None;
+    for _ in 0..2_000 {
+        match stalled.events.next_item(Duration::from_millis(10)) {
+            Ok(Some(_)) => continue,
+            Ok(None) => break,
+            Err(error) => {
+                outcome = Some(error);
+                break;
+            }
+        }
+    }
+    let error = outcome.expect("the stalled subscriber must be closed");
+    assert_eq!(code(&error), "resource.subscriber_lagging");
+
+    // A live subscriber meanwhile receives coalesced progress, at most one
+    // pending sample per job.
+    let mut live = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue {
+                after_cursor: u64::MAX,
+            },
+        ))
+        .unwrap();
+    assert!(matches!(live.start, CommandResult::SnapshotBoundary { .. }));
+    let _ = live.events.next_item(Duration::from_millis(10));
+}
+
+#[test]
+fn a_failed_commit_leaves_nothing_behind_and_the_resend_applies_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let engine = open(&path);
+    // The save's temporary file cannot be created while a folder sits where
+    // it goes.
+    let blocker = path.with_extension("json.new");
+    std::fs::create_dir(&blocker).unwrap();
+    let envelope = CommandEnvelope::new(client(), scheduled(dir.path(), "a.bin"));
+    let failure = engine.execute(&envelope).unwrap_err();
+    assert_eq!(code(&failure), "internal.persistence_failed");
+    assert!(failure.retryable, "resending the same envelope is safe");
+    // A restart now would find nothing: nothing reached the disk.
+    assert!(!path.exists());
+
+    std::fs::remove_dir(&blocker).unwrap();
+    // The change and its ledger entry were kept in memory together, so the
+    // resend answers with the same job rather than creating a second one.
+    let resent = engine.execute(&envelope).unwrap();
+    assert_eq!(job_of(&resent).job_id, job_of(&resent).job_id);
+    assert_eq!(jobs(&engine).len(), 1);
+    drop(engine);
+    let reopened = open(&path);
+    assert_eq!(jobs(&reopened).len(), 1);
+    assert_eq!(reopened.execute(&envelope).unwrap(), resent);
+}
+
+#[test]
+fn a_crash_before_commit_loses_the_command_so_the_resend_creates_one_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let envelope = CommandEnvelope::new(client(), scheduled(dir.path(), "a.bin"));
+    {
+        let engine = open(&path);
+        let blocker = path.with_extension("json.new");
+        std::fs::create_dir(&blocker).unwrap();
+        assert!(engine.execute(&envelope).is_err());
+        // The process dies here, before any save succeeds.
+        std::mem::forget(engine);
+        std::fs::remove_dir(&blocker).unwrap();
+    }
+    // The engine file was written with the lost command's entry and event;
+    // the queue file, the commit point, was not.
+    assert!(path.with_file_name("engine-v1.json").exists());
+    let restarted = open(&path);
+    assert!(jobs(&restarted).is_empty());
+    let mut stream = restarted
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: 0 },
+        ))
+        .unwrap();
+    assert!(
+        drain(&mut stream.events).is_empty(),
+        "an uncommitted event survived"
+    );
+    restarted.execute(&envelope).unwrap();
+    restarted.execute(&envelope).unwrap();
+    assert_eq!(jobs(&restarted).len(), 1);
+    let events = drain(&mut stream.events);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        (events[0].cursor, events[0].seq),
+        (1, 1),
+        "numbering restarts where the commit left it"
+    );
+}
+
+#[test]
+fn a_failure_reaches_clients_as_a_code_and_action_and_unknown_ones_are_not_retryable() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    // Nothing listens on port 9: a transport failure the queue may retry.
+    let job = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create("http://127.0.0.1:9/gone.bin", dir.path().join("gone.bin")),
+            ))
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let failed = loop {
+        engine.engine().tick();
+        let current = jobs(&engine)
+            .into_iter()
+            .find(|j| j.job_id == job.job_id)
+            .unwrap();
+        if current.state == JobState::Failed
+            || current.state == JobState::Queued && current.attempt > 0
+        {
+            break current;
+        }
+        assert!(Instant::now() < deadline, "{current:?}");
+        thread::sleep(Duration::from_millis(50));
+    };
+    if failed.state == JobState::Failed {
+        let error = failed.error.expect("a failed job carries its error");
+        assert_eq!(error.code.as_str(), "source.transfer_failed");
+        assert!(error.retryable);
+        assert_eq!(error.action, Some(fetchpath_protocol::Action::Retry));
+    } else {
+        // Already rescheduled by automatic retry, which only transport
+        // failures get.
+        assert!(failed.not_before.is_some());
+    }
+
+    // Refused state changes and unknown jobs are coded, not described.
+    let unknown = CommandEnvelope::new(
+        client(),
+        Command::Resume {
+            job_id: JobId::random(),
+        },
+    );
+    assert_eq!(
+        code(&engine.execute(&unknown).unwrap_err()),
+        "contract.unknown_job"
+    );
+    let other = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                scheduled(dir.path(), "b.bin"),
+            ))
+            .unwrap(),
+    );
+    let refused = engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            Command::Resume {
+                job_id: other.job_id,
+            },
+        ))
+        .unwrap_err();
+    assert_eq!(code(&refused), "contract.invalid_transition");
+}

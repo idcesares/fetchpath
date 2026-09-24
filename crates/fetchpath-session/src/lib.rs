@@ -5,9 +5,13 @@
 //! transport types; the desktop calls it in-process.
 
 pub mod browser_inbox;
+mod durable;
+pub mod engine;
 pub mod settings;
+mod wire;
 
 use browser_inbox::BridgeStore;
+use durable::{Durable, DurableEngine, RecordDurable, RemovedJob, Reported};
 use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext, normalize_sha256};
 use fetchpath_media::{MediaInspection, MediaJob, MediaJobState, MediaTools};
 use serde::{Deserialize, Serialize};
@@ -39,6 +43,9 @@ pub struct Session {
     browser_store: Option<BridgeStore>,
     browser_download_dir: Option<PathBuf>,
     media_tools: Mutex<Option<MediaTools>>,
+    /// The ledger, the event log and the subscribers (FP-051). Locked after
+    /// `inner`, never before it.
+    durable: Mutex<Durable>,
 }
 
 #[derive(Default)]
@@ -191,6 +198,8 @@ struct QueueRecord {
     attempt: u32,
     /// When an automatic retry is due, for the row to show and reconcile to act on.
     retry_at_ms: Option<u64>,
+    /// Revision, event sequence and last durable report (FP-051).
+    durable: RecordDurable,
     view: JobSnapshot,
 }
 
@@ -314,6 +323,17 @@ pub struct CancelResponse {
 struct PersistedQueue {
     schema_version: u32,
     records: Vec<PersistedRecord>,
+    /// The engine file generation and event cursor this queue committed
+    /// (FP-051). Absent from a 0.1.0 file, which therefore reads and writes
+    /// back unchanged.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    engine_generation: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    engine_cursor: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize, Deserialize)]
@@ -332,6 +352,8 @@ struct PersistedRecord {
     media_variant_id: Option<String>,
     #[serde(default)]
     media_quality: Option<String>,
+    #[serde(flatten, default)]
+    durable: RecordDurable,
     view: JobSnapshot,
 }
 
@@ -347,6 +369,11 @@ impl Session {
         browser_download_dir: Option<PathBuf>,
     ) -> io::Result<Self> {
         let persisted = load_persisted(&state_path)?;
+        let (generation, cursor) = persisted.as_ref().map_or((0, 0), |queue| {
+            (queue.engine_generation, queue.engine_cursor)
+        });
+        let engine_path = state_path.with_file_name(ENGINE_FILE);
+        let (engine, discarded) = load_engine(&engine_path).committed(generation, cursor);
         let now = now_ms();
         let browser_store = state_path
             .parent()
@@ -389,6 +416,12 @@ impl Session {
             browser_store,
             browser_download_dir,
             media_tools: Mutex::new(media_tools),
+            durable: Mutex::new(Durable {
+                engine,
+                // Rewrite the engine file once without what never committed.
+                engine_changed: discarded,
+                ..Durable::default()
+            }),
         })
     }
 
@@ -408,6 +441,7 @@ impl Session {
             browser_store: None,
             browser_download_dir: None,
             media_tools: Mutex::new(None),
+            durable: Mutex::new(Durable::default()),
         }
     }
 
@@ -472,7 +506,7 @@ impl Session {
         // poll, so raising the limit visibly starts the next waiting download.
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         self.reconcile_locked(&mut state);
-        let _ = self.save_locked(&state);
+        let _ = self.save_locked(&mut state);
         Ok(next)
     }
 
@@ -536,7 +570,7 @@ impl Session {
             state.records.push(record);
         }
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(state
             .records
             .iter()
@@ -590,7 +624,7 @@ impl Session {
         self.reconcile_locked(&mut state);
         state.records.push(record);
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(find_record(&state, &id)?.view.clone())
     }
 
@@ -598,7 +632,7 @@ impl Session {
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         let processed = self.ingest_browser_locked(&mut state)?;
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         let snapshots = state
             .records
             .iter()
@@ -656,7 +690,7 @@ impl Session {
             "already_terminal"
         };
         refresh_record(record);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(CancelResponse {
             outcome,
             job: find_record(&state, job_id)?.view.clone(),
@@ -673,7 +707,26 @@ impl Session {
         record.view.not_before_ms = None;
         record.view.state = "queued".into();
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
+        Ok(find_record(&state, job_id)?.view.clone())
+    }
+
+    /// Moves a queued or scheduled download to a new start time.
+    pub fn reschedule(&self, job_id: &str, not_before_ms: u64) -> Result<JobSnapshot, String> {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record_mut(&mut state, job_id)?;
+        if record.view.state != "scheduled" && record.view.state != "queued" {
+            return Err("Only queued or scheduled downloads can be rescheduled.".into());
+        }
+        record.not_before_ms = Some(not_before_ms);
+        record.view.not_before_ms = Some(not_before_ms);
+        record.view.state = if not_before_ms > now_ms() {
+            "scheduled".into()
+        } else {
+            "queued".into()
+        };
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)?;
         Ok(find_record(&state, job_id)?.view.clone())
     }
 
@@ -761,7 +814,7 @@ impl Session {
             record.view.finished_at_ms = None;
         }
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(find_record(&state, job_id)?.view.clone())
     }
 
@@ -793,7 +846,7 @@ impl Session {
                     record.view.retryable = false;
                     sample_rate(record);
                     let view = record.view.clone();
-                    self.save_locked(&state)?;
+                    self.save_locked(&mut state)?;
                     return Ok(view);
                 }
                 "running" => record.job.clone(),
@@ -829,7 +882,7 @@ impl Session {
             sample_rate(record);
         }
         let view = record.view.clone();
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(view)
     }
 
@@ -861,7 +914,7 @@ impl Session {
         record.view.retryable = false;
         record.retry_at_ms = None;
         self.reconcile_locked(&mut state);
-        self.save_locked(&state)?;
+        self.save_locked(&mut state)?;
         Ok(find_record(&state, job_id)?.view.clone())
     }
 
@@ -873,6 +926,17 @@ impl Session {
             .position(|record| record.id == job_id)
             .ok_or_else(|| "This download is no longer available.".to_string())?;
         let record = state.records.remove(index);
+        if record.durable.reported.is_some() {
+            self.durable
+                .lock()
+                .expect("engine state poisoned")
+                .removed
+                .push(RemovedJob {
+                    job_id: record.id.clone(),
+                    job_revision: record.durable.job_revision,
+                    last_seq: record.durable.last_seq,
+                });
+        }
         if let Some(credential_ref) = record.credential_ref.as_deref()
             && let Some(store) = self.browser_store.as_ref()
         {
@@ -882,7 +946,7 @@ impl Session {
             job.cancel();
             job.join();
         }
-        self.save_locked(&state)
+        self.save_locked(&mut state)
     }
 
     pub fn cancel_all_and_join(&self) {
@@ -948,7 +1012,7 @@ impl Session {
                 record.view.finished_at_ms = None;
             }
         }
-        let _ = self.save_locked(&state);
+        let _ = self.save_locked(&mut state);
     }
 
     fn reconcile_locked(&self, state: &mut QueueState) {
@@ -1109,16 +1173,59 @@ impl Session {
         stats
     }
 
-    fn save_locked(&self, state: &QueueState) -> Result<(), String> {
-        let Some(path) = self.state_path.as_ref() else {
+    /// Commits the queue: derives the durable events of every change since
+    /// the last commit and writes records, events and ledger in one save.
+    /// While a ledgered command runs it only marks the state dirty, and the
+    /// command's own commit writes everything (see [`engine`]).
+    fn save_locked(&self, state: &mut QueueState) -> Result<(), String> {
+        let mut durable = self.durable.lock().expect("engine state poisoned");
+        if durable.defer {
+            durable.dirty = true;
             return Ok(());
-        };
-        save_persisted(path, state).map_err(|error| {
-            format!(
-                "Could not save download history at {}: {error}",
-                path.display()
+        }
+        durable.derive_events(&mut state.records, now_ms());
+        durable.prune_ledger(now_ms());
+        self.write_locked(state, &mut durable)
+    }
+
+    /// Writes the queue and engine state, then hands the committed events to
+    /// subscribers. Events are never shown before they are on disk.
+    ///
+    /// Ordering: the engine file (ledger and events, tagged with the new
+    /// generation) is written first and the queue file, which names that
+    /// generation, second. The queue file's rename is the commit point: until
+    /// it happens, a load discards the new generation's entries.
+    fn write_locked(&self, state: &QueueState, durable: &mut Durable) -> Result<(), String> {
+        if let Some(path) = self.state_path.as_ref() {
+            if durable.engine_changed {
+                let mut engine = durable.engine.clone();
+                engine.schema_version = QUEUE_SCHEMA_VERSION;
+                engine.generation = durable.pending_generation();
+                let engine_path = path.with_file_name(ENGINE_FILE);
+                write_json_atomically(&engine_path, &engine).map_err(|error| {
+                    format!(
+                        "Could not save the engine journal at {}: {error}",
+                        engine_path.display()
+                    )
+                })?;
+                durable.engine.generation = engine.generation;
+                durable.engine_changed = false;
+            }
+            write_queue(
+                path,
+                state,
+                durable.engine.generation,
+                durable.engine.cursor,
             )
-        })
+            .map_err(|error| {
+                format!(
+                    "Could not save download history at {}: {error}",
+                    path.display()
+                )
+            })?;
+        }
+        durable.broadcast();
+        Ok(())
     }
 
     fn ingest_browser_locked(
@@ -1339,6 +1446,7 @@ impl QueueRecord {
             rate: RateEstimate::default(),
             attempt: 0,
             retry_at_ms: None,
+            durable: RecordDurable::default(),
             view: JobSnapshot {
                 job_id: id,
                 source: display,
@@ -1411,6 +1519,7 @@ impl QueueRecord {
             rate: RateEstimate::default(),
             attempt: 0,
             retry_at_ms: None,
+            durable: RecordDurable::default(),
             view: JobSnapshot {
                 job_id: id,
                 source: display,
@@ -1570,6 +1679,15 @@ impl QueueRecord {
         view.action = action;
         view.retryable = retryable;
         view.error_code = failure_code(&view);
+        let mut durable = saved.durable;
+        if durable.reported.is_none() {
+            // A record from before FP-051 has no events; it starts from what
+            // it is now rather than reporting itself as newly created.
+            durable.reported = Some(Reported {
+                state: view.state.clone(),
+                not_before_ms: saved.not_before_ms,
+            });
+        }
         Self {
             id: saved.id,
             live_url,
@@ -1587,6 +1705,7 @@ impl QueueRecord {
             rate: RateEstimate::default(),
             attempt: view.attempt,
             retry_at_ms: None,
+            durable,
             view,
         }
     }
@@ -2023,7 +2142,48 @@ fn restartable_url(url: &str) -> Option<String> {
     (!url.contains(['?', '#'])).then(|| url.to_owned())
 }
 
+#[cfg(test)]
 fn save_persisted(path: &Path, state: &QueueState) -> io::Result<()> {
+    write_queue(path, state, 0, 0)
+}
+
+/// The ledger and event log's file, beside the queue.
+const ENGINE_FILE: &str = "engine-v1.json";
+
+/// Reads the engine file. A missing or unreadable one starts empty: it only
+/// holds replayable history and the recent command ledger, never a job.
+fn load_engine(path: &Path) -> DurableEngine {
+    File::open(path)
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, DurableEngine>(io::BufReader::new(file)).ok())
+        .filter(|engine| engine.schema_version == QUEUE_SCHEMA_VERSION)
+        .unwrap_or_default()
+}
+
+/// Writes JSON through a synced temporary file and a rename.
+fn write_json_atomically(path: &Path, value: &impl Serialize) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.new");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)?;
+    serde_json::to_writer(io::BufWriter::new(&mut file), value)?;
+    file.flush()?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temporary, path)
+}
+
+fn write_queue(
+    path: &Path,
+    state: &QueueState,
+    engine_generation: u64,
+    engine_cursor: u64,
+) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -2043,9 +2203,12 @@ fn save_persisted(path: &Path, state: &QueueState) -> io::Result<()> {
                 finished_at_ms: record.finished_at_ms,
                 media_variant_id: record.media_variant_id.clone(),
                 media_quality: record.media_quality.clone(),
+                durable: record.durable.clone(),
                 view: record.view.clone(),
             })
             .collect(),
+        engine_generation,
+        engine_cursor,
     };
     let temporary = path.with_extension("json.new");
     let backup = path.with_extension("json.bak");
@@ -2431,6 +2594,7 @@ mod tests {
             finished_at_ms: None,
             media_variant_id: None,
             media_quality: None,
+            durable: RecordDurable::default(),
             view,
         };
         let restored = QueueRecord::restore(saved, now_ms(), None, None);

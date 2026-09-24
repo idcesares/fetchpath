@@ -55,6 +55,11 @@
           "type": "string"
         },
         {
+          "const": "refresh_source",
+          "description": "The source's session expired; refresh the source and inspect it again.",
+          "type": "string"
+        },
+        {
           "const": "create_replacement_job",
           "description": "The selected format vanished; create a linked replacement job.",
           "type": "string"
