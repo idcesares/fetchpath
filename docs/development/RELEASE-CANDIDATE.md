@@ -10,7 +10,12 @@ close it.
 
 ## Verdict
 
-**Not yet, and close.** On 22 September four gates were open. On 23 September
+**Ready to publish, on the user's word (24 September 2026).** Every gate below
+is closed and the candidate checks were re-run on the final tree; see
+[the 24 September re-run](#re-run-on-24-september-2026). Publication is a
+GitHub release, made only when the user says so.
+
+The record of 23 September follows. **Then: not yet, and close.** On 22 September four gates were open. On 23 September
 three were closed and the product was made usable without a developer:
 
 | Gate | State on 23 September 2026 |
@@ -18,7 +23,7 @@ three were closed and the product was made usable without a developer:
 | Supported public-source corpus (A11) | **Closed by decision.** 0.1.0 names no supported site; video and audio are documented as best-effort, depending on yt-dlp. |
 | Media helper checksums (A11) | **Closed.** yt-dlp 2026.08.19 and ffmpeg 9.0.2 are pinned against their publishers' checksum files, and the real guided install passes end to end after a defect in it was fixed. |
 | ARM64 (A12) | **Closed by statement.** README, user guide and changelog say 0.1.0 is x64 only. |
-| Clean-machine packaging (A12) | **Open.** Needs one lifecycle run on a freshly imaged Windows 11 x64 PC. |
+| Clean-machine packaging (A12) | **Closed on 23 September** by a scripted Windows Sandbox run (FP-043), which the user accepted as the clean machine. |
 
 FP-020's independent review of `adapters/lan` is done: the cryptography and
 FFI are sound, and two defects it found (unpairing did not revoke a running
@@ -72,6 +77,52 @@ pwsh tests/compatibility/windows/packaging-lifecycle.ps1  passed
 The benchmark and protocol matrix were not re-run; nothing in the transfer path
 changed.
 
+## Re-run on 24 September 2026
+
+FP-042 to FP-046 landed after the 23 September checks, and FP-045 touched the
+transfer path (segment progress in `fetchpath-http`), so everything was re-run,
+including the benchmark and protocol matrix.
+
+- **FP-043, clean machine.** A fresh Windows Sandbox with no
+  `VCRUNTIME140.dll`: silent per-user install; `fetchpath --help`,
+  `--version` and a download from a terminal Explorer started; the same file
+  downloaded to Complete in the app with a matching SHA-256; silent uninstall
+  removed the program, its PATH entry and the three browser-host registrations
+  and kept the downloads. [evidence](evidence/windows/sandbox-lifecycle.json)
+  The run found one defect: a user PATH ending in `;`, the default on a fresh
+  image, lost that separator after install and uninstall. Fixed in
+  `apps/desktop/src-tauri/tools/user-path.ps1` with a round-trip test; the
+  Sandbox was not re-run after the fix, by the user's decision.
+- **FP-044, CLI on a clean Windows.** No VC++ import (checked by
+  `tests/installer/runtime-imports.test.mjs`), and `--help` ran in the Sandbox.
+- **FP-042 and FP-045, checked by hand by the user on 24 September:** the
+  toolbar popup shows the connection and sends the page, a media page becomes
+  a video download, a sent link starts Fetchpath when it is closed, and the
+  details window shows speed, a moving graph and live segments on a real
+  segmented download, leaving the queue unchanged when closed.
+- **Dialog layout.** The generic `dialog.dialog` width rule outranked the Add
+  download, Details and Settings widths, so every dialog rendered at the small
+  default. Fixed; Settings now lays its groups in two columns with one scroll
+  region, and the default window is 1040 px wide. At that size none of the
+  three dialogs scrolls.
+
+```
+cargo test --workspace --locked                        239 passed, 0 failed, 6 ignored
+cargo clippy --workspace --all-targets -- -D warnings  clean
+cargo fmt --check                                      clean
+node --test                                            37 passed, 0 failed
+node tools/tasks.mjs check                             46 tasks valid
+node tools/licenses/generate.mjs --check               current
+node tools/media-tools/pin.mjs --check                 both pins match their publishers
+node tools/bench/benchmark.mjs --repetitions 7         14 of 14 outputs match; budget held
+node tools/bench/protocol-matrix.mjs                   http/1.1 and h2 verified by hash
+```
+
+Benchmark, excluding the first pair: curl 57.3 ms (sd 8.3), Fetchpath
+77.2 ms (sd 14.1). Fetchpath is still slower on loopback and no speed claim is
+made. The machine was under memory pressure, which likely explains the higher
+absolute times. [evidence](evidence/release/fp018-rerun-2026-09-24.json)
+
 ## Known limitations of 0.1.0
 
 These are things a user would notice. Each is stated in the README, the user
@@ -99,13 +150,15 @@ guide or the changelog.
 10. **The CLI names a file from its link only**, so a link with no file name is
     saved as `download`.
 
-## Recommended path to publication
+## Path to publication
 
-1. Merge this branch to `main`.
-2. Run `tests/compatibility/windows/packaging-lifecycle.ps1` on a freshly
-   imaged Windows 11 x64 PC.
-3. Build the release with `corepack pnpm --dir apps/desktop release`, publish
-   the installer with its SHA-256 next to it, and mark FP-018 done.
+When the user says so:
+
+1. Create the GitHub repository and push `main`.
+2. Build with `corepack pnpm --dir apps/desktop release`.
+3. Tag `v0.1.0` and create a GitHub release from the 0.1.0 section of
+   `CHANGELOG.md`, attaching `Fetchpath_0.1.0_x64-setup.exe` and
+   `SHA256SUMS.txt`.
 
 Store listings for the extension and code signing are worthwhile next steps,
 not blockers.

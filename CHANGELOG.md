@@ -15,7 +15,12 @@ The first public release of Fetchpath, for Windows 11 on x64.
   nothing.
 - Video and audio downloads with quality selection, using `yt-dlp` and
   `ffmpeg`, which Fetchpath sets up from pinned, checksum-verified releases.
-- Browser capture from Chrome and Edge through the included extension.
+- Add download tells a file from a video on its own; a switch overrides it.
+- A details window per download with its speed over time, which parts of the
+  file have arrived and, for a segmented transfer, each range in flight.
+- Browser capture from Chrome and Edge through the included extension, with a
+  toolbar button that shows the connection and sends the current page; a sent
+  link starts Fetchpath if it is closed.
 - Settings for concurrency, default folder, automatic retry of connection
   problems, window behaviour and appearance, plus an optional Power mode.
 - Full keyboard operation and screen reader support.
@@ -23,13 +28,14 @@ The first public release of Fetchpath, for Windows 11 on x64.
 ### Command line
 
 - `fetchpath download` with folder destinations, progress, `--sha256`,
-  `--json` and documented exit codes, installed and added to your PATH.
+  `--json` and documented exit codes, installed and added to your PATH. It
+  needs no Visual C++ redistributable.
 
 ### Installer
 
 - Per-user install with no administrator rights; upgrades keep your list.
 - Uninstall asks before removing your list and settings, and never removes
-  downloaded files.
+  downloaded files. Your PATH is restored exactly as it was.
 
 ### Known limitations
 

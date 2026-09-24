@@ -31,7 +31,9 @@ function Get-NextPath([string]$current, [string]$dir, [string]$action) {
   if ($action -eq 'Add') {
     if ($found.Count) { return $null }
     if (-not $current) { return $dir }
-    if ($current.EndsWith(';')) { return "$current$dir" }
+    # "a;" -> "a;dir;": the trailing separator stays last, so removing the
+    # folder later gives back exactly "a;".
+    if ($current.EndsWith(';')) { return "$current$dir;" }
     return "$current;$dir"
   }
   if (-not $found.Count) { return $null }

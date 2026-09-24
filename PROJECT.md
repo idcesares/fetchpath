@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 23 September 2026. Phase: M6 — first public release candidate, with M8 distribution work started. Engine, packaging and multi-source repair are done; the release-polish tasks that closed the gap against the UX contract are done. A deliverability review on 23 September found the product unusable without a developer in several places, and FP-035 to FP-039 closed them: a queue-first desktop layout, browser capture registered by the installer, a user-grade CLI installed on PATH, pinned media helpers, and end-user documentation. FP-018 is the remaining release gate. Both halves of FP-020, the bounded content cache and paired LAN mode, are implemented and tested; FP-020 remains in progress until the independent strong-model review of `adapters/lan` is done.
+Updated 24 September 2026. Phase: M6 complete — Fetchpath 0.1.0 is ready to publish as a GitHub release when the user says so (FP-018 done; see [the release candidate record](docs/development/RELEASE-CANDIDATE.md)). M8 distribution and sharing work continues after it. Engine, packaging, multi-source repair, release polish, clean-machine validation (Windows Sandbox, FP-043), the browser toolbar (FP-042), the clean-Windows CLI (FP-044) and the details window (FP-045) are done.
 
 ## Confirmed purpose
 
@@ -37,7 +37,7 @@ Progress is now reported from engine-confirmed values end to end: the total a so
 
 Run `node tools/tasks.mjs next`. FP-020 is done: the independent review of `adapters/lan` on 23 September 2026 found the cryptography and DPAPI FFI sound and fixed two defects (unpairing did not revoke a running server; a race in identity creation); see [cache and paired LAN](docs/development/CACHE-AND-LAN.md). mDNS discovery and the desktop settings surface for the cache quota and the LAN flag were deferred to their own tasks by decision on 22 September 2026; the cache and LAN controls exist in the CLI. The cache is safe to share between processes; cache pins remain per process, and a running server reloads the paired-device list every two seconds.
 
-FP-018, the first public release candidate, is the remaining release gate. Decided on 23 September 2026: 0.1.0 names no supported media site (media is best-effort), and 0.1.0 is x64 only. The helper checksums are pinned. FP-020's review of `adapters/lan` is done and its two findings are fixed. What remains is one packaging-lifecycle run on a freshly imaged Windows 11 x64 PC. See [the release candidate record](docs/development/RELEASE-CANDIDATE.md).
+FP-018 is done: the candidate checks were re-run on the final tree on 24 September 2026 and the decision is ready to publish. Publication is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`), made only on the user's word; no remote exists yet. Decided 23 September 2026: 0.1.0 names no supported media site, is x64 only, and a Windows Sandbox run is the clean-machine check.
 
 ## Remaining choices
 

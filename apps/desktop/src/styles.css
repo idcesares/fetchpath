@@ -101,7 +101,7 @@ button.compact { min-height: 32px; padding: 4px 11px; font-size: .84rem; }
 .empty-state p { margin: 0 0 12px; color: var(--muted); }
 
 /* Add download dialog */
-.add-dialog { width: min(720px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+dialog.dialog.add-dialog { width: min(860px, calc(100vw - 32px)); overflow-y: auto; }
 .add-dialog .section-heading { align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .composer > label:first-of-type { margin-top: 10px; }
 /* The actions stay reachable however long the batch preview grows. */
@@ -202,9 +202,12 @@ h2:focus-visible { outline-offset: 6px; }
 .submit-messages > p { margin: 0; }
 .notice { color: var(--muted); }
 
+/* Dialogs use most of the window rather than a small box: one scroll region at
+   most, never a scrolling panel nested inside a scrolling dialog. */
 dialog.dialog {
-  width: min(520px, calc(100vw - 48px));
-  padding: 22px;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 22px 24px;
   color: inherit;
 }
 dialog.dialog { background: var(--surface-raised); box-shadow: 0 24px 80px #000000a0; }
@@ -218,7 +221,7 @@ dialog.dialog h2 { margin-bottom: 14px; }
 /* Download details -------------------------------------------------------- */
 .job { cursor: default; }
 .job:not([data-state="cancelling"]):hover { border-color: var(--line-soft); }
-.details-dialog { width: min(720px, calc(100vw - 48px)); max-height: min(90vh, 920px); overflow-y: auto; }
+dialog.details-dialog { width: min(900px, calc(100vw - 32px)); overflow-y: auto; }
 .details-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .details-header > div { min-width: 0; }
 dialog.dialog .details-header h2 { margin-bottom: 0; overflow-wrap: anywhere; }
@@ -228,7 +231,7 @@ dialog.dialog .details-header h2 { margin-bottom: 0; overflow-wrap: anywhere; }
 .details-section { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
 .details-section h3 { margin-bottom: 10px; color: var(--accent); font-size: .72rem; font-weight: 780; letter-spacing: .14em; text-transform: uppercase; }
 .details-section .hint { margin: 8px 0 0; }
-.speed-graph { display: block; width: 100%; height: 140px; }
+.speed-graph { display: block; width: 100%; height: 170px; }
 .graph-grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 4 6; vector-effect: non-scaling-stroke; }
 .graph-area { fill: var(--accent); fill-opacity: .16; }
 .graph-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
@@ -255,9 +258,12 @@ dialog.dialog .details-header h2 { margin-bottom: 0; overflow-wrap: anywhere; }
 .details-info code { font: .8rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
 /* Settings ---------------------------------------------------------------- */
-.settings-dialog { width: min(640px, calc(100vw - 48px)); max-height: min(88vh, 880px); }
-.settings-form { max-height: min(62vh, 620px); overflow-y: auto; padding-right: 6px; }
-.settings-group { margin: 0 0 18px; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
+dialog.settings-dialog { width: min(980px, calc(100vw - 32px)); }
+/* The heading and the Close row stay put; only the groups scroll, and on a
+   normal window they sit in two columns so most of Settings fits at once. */
+dialog.settings-dialog[open] { display: flex; flex-direction: column; }
+.settings-form { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; columns: 2 400px; column-gap: 18px; }
+.settings-group { break-inside: avoid; min-width: 0; margin: 0 0 18px; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
 .settings-group legend { padding: 0 6px; color: var(--accent); font-size: .72rem; font-weight: 780; letter-spacing: .14em; text-transform: uppercase; }
 .settings-group > label:first-of-type { margin-top: 4px; }
 .settings-group .quiet { margin-top: 10px; }

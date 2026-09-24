@@ -526,9 +526,13 @@
         "FP-036",
         "FP-037",
         "FP-038",
-        "FP-039"
+        "FP-039",
+        "FP-042",
+        "FP-043",
+        "FP-044",
+        "FP-045"
       ],
-      "status": "blocked",
+      "status": "done",
       "owner": "release_candidate",
       "modelTier": "astra-high",
       "files": [
@@ -549,13 +553,15 @@
         "A12"
       ],
       "acceptance": "Independent acceptance matrix, compatibility corpus, benchmark uncertainty, known limitations and documented release decision.",
-      "verification": "The acceptance matrix, the benchmark uncertainty record and the known-limitations list are complete and are recorded in docs/development/RELEASE-CANDIDATE.md. Seven paired benchmark runs with their spread and 95% intervals show Fetchpath slower than the curl HTTP/1.1 baseline on loopback (55.9 ms mean against 35.5 ms excluding the first pair, sd 16.3 against 2.1), which is recorded rather than omitted; no acceleration claim is made anywhere, so A09 has nothing to substantiate. All 14 benchmark outputs matched the fixture hash and the adaptive path stayed inside its configured budget in every run. The protocol matrix verifies http/1.1 and h2 by hash and records http3_unavailable rather than a false attempt. A02, A03, A05, A07 and A08 are met; A04 and A06 are partial, lacking OS-level power-loss tests and a real HTTP/3 endpoint respectively; A10 is not in scope for 0.1.0. The documented release decision is DO NOT PUBLISH YET, with the four open gates and their next actions recorded in the blocked reason and the document.",
+      "verification": "The acceptance matrix, the benchmark uncertainty record and the known-limitations list are complete and are recorded in docs/development/RELEASE-CANDIDATE.md. Seven paired benchmark runs with their spread and 95% intervals show Fetchpath slower than the curl HTTP/1.1 baseline on loopback (55.9 ms mean against 35.5 ms excluding the first pair, sd 16.3 against 2.1), which is recorded rather than omitted; no acceleration claim is made anywhere, so A09 has nothing to substantiate. All 14 benchmark outputs matched the fixture hash and the adaptive path stayed inside its configured budget in every run. The protocol matrix verifies http/1.1 and h2 by hash and records http3_unavailable rather than a false attempt. A02, A03, A05, A07 and A08 are met; A04 and A06 are partial, lacking OS-level power-loss tests and a real HTTP/3 endpoint respectively; A10 is not in scope for 0.1.0. The documented release decision is DO NOT PUBLISH YET, with the four open gates and their next actions recorded in the blocked reason and the document. Re-run on 24 September 2026 on the final tree after FP-042..FP-046: all checks pass, benchmark (7 pairs, 14/14 hashes, budget held; still slower than curl) and protocol matrix re-run. Release decision: READY TO PUBLISH as a GitHub release on the user’s word.",
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md",
         "docs/development/evidence/release/fp018-benchmark-uncertainty.json",
+        "docs/development/evidence/release/fp018-rerun-2026-09-24.json",
+        "docs/development/evidence/windows/sandbox-lifecycle.json",
         "docs/development/RELEASE-READINESS.md"
       ],
-      "blockedReason": "Updated 23 September 2026. Closed: the site corpus by decision (no named sites; media best-effort), the helper checksums (pinned, real guided install passes), ARM64 by an explicit x64-only statement, and FP-020 review of adapters/lan (done, two defects fixed). Open: one packaging-lifecycle run on a freshly imaged Windows 11 x64 PC. Next action: that run, then merge to main and publish the installer with its SHA-256."
+      "blockedReason": null
     },
     {
       "id": "FP-019",
@@ -1202,7 +1208,7 @@
       "dependsOn": [
         "FP-036"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "browser_ux",
       "modelTier": "astra-high",
       "files": [
@@ -1217,8 +1223,10 @@
         "A08"
       ],
       "acceptance": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
-      "verification": "Implemented and unit-tested (five extension tests, two desktop tests): toolbar popup with connection probe, send page, recent sends and opt-in automatic capture with hand-back; page and video menus; host launches or wakes Fetchpath; captured media pages open Add download. Not yet exercised in a real Chromium, which is what remains before done.",
-      "evidence": [],
+      "verification": "Implemented and unit-tested (five extension tests, two desktop tests): toolbar popup with connection probe, send page, recent sends and opt-in automatic capture with hand-back; page and video menus; host launches or wakes Fetchpath; captured media pages open Add download. Not yet exercised in a real Chromium, which is what remains before done. Verified by the user in a real Chromium on 24 September 2026: popup connection status and send page, media page to video download, sent link starting a closed Fetchpath.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
       "blockedReason": null
     },
     {
@@ -1228,19 +1236,24 @@
       "dependsOn": [
         "FP-017"
       ],
-      "status": "todo",
-      "owner": "sandbox",
+      "status": "done",
+      "owner": "lead",
       "modelTier": "astra-high",
       "files": [
         "tests/compatibility/windows",
-        "docs/development"
+        "docs/development",
+        "docs/development/evidence/windows"
       ],
       "acceptanceIds": [
         "A12"
       ],
       "acceptance": "A scripted Windows Sandbox run installs the release build on a clean image, launches it, exercises a download and uninstalls, recording evidence in the repository.",
-      "verification": "A scripted Windows Sandbox run installs the release build on a clean image, launches it, exercises a download and uninstalls, recording evidence in the repository.",
-      "evidence": [],
+      "verification": "One scripted run on 23 September 2026 (host 10.0.26200) passed in a fresh Windows Sandbox with no VCRUNTIME140.dll: silent per-user install, fetchpath --help/--version and a 262144-byte CLI download from an Explorer-started terminal, the same fixture downloaded to Complete in the desktop app with a matching SHA-256, silent uninstall removing program files, PATH entry and all three browser-host registrations while keeping downloads. It found one defect: a user PATH ending in \";\" lost that separator after install+uninstall; fixed in apps/desktop/src-tauri/tools/user-path.ps1 with a round-trip test in tests/installer/user-path.test.mjs. The scripted re-run after the fix was dropped by user decision (23 September 2026); further Sandbox checks are manual by the user and not a release requirement.",
+      "evidence": [
+        "docs/development/evidence/windows/sandbox-lifecycle.json",
+        "tests/compatibility/windows/sandbox-lifecycle.ps1",
+        "tests/compatibility/windows/sandbox-inner.ps1"
+      ],
       "blockedReason": null
     },
     {
@@ -1250,7 +1263,7 @@
       "dependsOn": [
         "FP-037"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "modelTier": "astra-high",
       "files": [
@@ -1264,8 +1277,11 @@
         "A07"
       ],
       "acceptance": "fetchpath.exe imports no VCRUNTIME140.dll, so it runs on a Windows image without the Visual C++ redistributable; the installer states that the fetchpath command was installed; Settings shows the command and where it lives.",
-      "verification": "PE import check of the release CLI; fetchpath --help prints in Windows Sandbox from a new terminal after install.",
-      "evidence": [],
+      "verification": "tests/installer/runtime-imports.test.mjs checks the release executables import no VCRUNTIME140.dll; in the FP-043 Sandbox run (no VC++ redistributable present) fetchpath --help exited 0 and printed usage from a new terminal after install, and fetchpath --version printed 0.1.0.",
+      "evidence": [
+        "docs/development/evidence/windows/sandbox-lifecycle.json",
+        "tests/installer/runtime-imports.test.mjs"
+      ],
       "blockedReason": null
     },
     {
@@ -1276,7 +1292,7 @@
         "FP-015",
         "FP-026"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "modelTier": "astra-high",
       "files": [
@@ -1291,8 +1307,10 @@
         "A01"
       ],
       "acceptance": "Opening a download shows a window with its current speed, a speed-over-time graph, and for a segmented transfer each in-flight range with its bounds and bytes received, all from engine-reported values; closing it leaves the queue unchanged. Observation adds no allocation or lock to the per-write path beyond an atomic add.",
-      "verification": "Engine unit test that segment progress is reported and cleared; desktop build; a real segmented download observed in the window.",
-      "evidence": [],
+      "verification": "Engine unit test for segment progress; desktop build; verified by the user on 24 September 2026 on a real segmented download: speed, moving graph and live segments, queue unchanged on close.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
       "blockedReason": null
     },
     {

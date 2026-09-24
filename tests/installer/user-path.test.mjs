@@ -23,7 +23,8 @@ const longPath = Array.from({ length: 100 }, (_, i) => `%USERPROFILE%\\tools\\fo
 test('adding keeps every existing character, even past 1024', { skip: process.platform !== 'win32' }, () => {
   assert.ok(longPath.length > 3000);
   assert.equal(dryRun('Add', longPath), `${longPath};${dir}`);
-  assert.equal(dryRun('Add', 'C:\\a;'), `C:\\a;${dir}`);
+  // A fresh Windows user PATH ends in a separator; that style is kept.
+  assert.equal(dryRun('Add', 'C:\\a;'), `C:\\a;${dir};`);
   assert.equal(dryRun('Add', ''), dir);
 });
 
@@ -35,6 +36,14 @@ test('removing restores the value that was there before adding', { skip: process
   assert.equal(dryRun('Remove', `${longPath};${dir}`), longPath);
   assert.equal(dryRun('Remove', `C:\\a;${dir};C:\\b`), 'C:\\a;C:\\b');
   assert.equal(dryRun('Remove', dir), '');
+});
+
+// Found by the FP-043 Sandbox run: the default user PATH there is
+// "...\WindowsApps;", and install then uninstall dropped its final ";".
+test('add then remove is byte-identical when PATH ends in a separator', { skip: process.platform !== 'win32' }, () => {
+  for (const before of ['C:\\a;', `${longPath};`, 'C:\\a']) {
+    assert.equal(dryRun('Remove', dryRun('Add', before)), before);
+  }
 });
 
 test('removing leaves a PATH without the folder untouched', { skip: process.platform !== 'win32' }, () => {
