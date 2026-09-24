@@ -373,7 +373,7 @@ impl Session {
             (queue.engine_generation, queue.engine_cursor)
         });
         let engine_path = state_path.with_file_name(ENGINE_FILE);
-        let (engine, discarded) = load_engine(&engine_path).committed(generation, cursor);
+        let (engine, discarded, seen) = load_engine(&engine_path).committed(generation, cursor);
         let now = now_ms();
         let browser_store = state_path
             .parent()
@@ -388,7 +388,7 @@ impl Session {
             stored.clamp();
         }
         let media_tools = discover_media_tools(stored.media_tools_dir.as_deref());
-        let records = persisted
+        let records: Vec<QueueRecord> = persisted
             .map(|queue| {
                 queue
                     .records
@@ -404,6 +404,10 @@ impl Session {
                     .collect()
             })
             .unwrap_or_default();
+        let mut records = records;
+        for record in &mut records {
+            seen.advance(record);
+        }
         Ok(Self {
             inner: Mutex::new(QueueState {
                 records,
@@ -420,6 +424,7 @@ impl Session {
                 engine,
                 // Rewrite the engine file once without what never committed.
                 engine_changed: discarded,
+                committed: generation,
                 ..Durable::default()
             }),
         })
@@ -1223,7 +1228,12 @@ impl Session {
                     path.display()
                 )
             })?;
+        } else if durable.engine_changed {
+            // Nothing to write to: everything in memory counts as committed.
+            durable.engine.generation = durable.pending_generation();
+            durable.engine_changed = false;
         }
+        durable.committed = durable.engine.generation;
         durable.broadcast();
         Ok(())
     }

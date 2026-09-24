@@ -150,11 +150,11 @@ this tree, produced the same transcript as FP-049's.
 | Part | What it does |
 |---|---|
 | Ledger | Mutating commands are looked up by `(client_id, command_id)` before anything else; a resend returns the stored result, a reused id with another request is `contract.idempotency_conflict`. Unseen commands older than 10 minutes or more than 2 minutes in the future are refused; entries are kept 12 minutes |
-| Commit | One ledgered command at a time. Saves are held back while it runs; then its events are derived, its result built, its ledger entry added, and everything written. Only then is it acknowledged |
-| Files | `engine-v1.json` holds the ledger and retained events, each tagged with its commit generation; `queue-v1.json` names the generation and cursor it committed. The engine file is written first, the queue file second, and a load discards what the queue did not commit. A 0.1.0 queue reads and writes back unchanged |
+| Commit | One ledgered command at a time. Saves are held back while it runs (a guard lifts that even if the change panics); then its events are derived, its result built, its ledger entry added, and everything written. Only then is it acknowledged; a resend whose entry is not yet on disk is written first, and refused while the disk still fails |
+| Files | `engine-v1.json` holds the ledger and retained events, each tagged with its commit generation; `queue-v1.json` names the generation and cursor it committed. The engine file is written first, the queue file second, and a load discards what the queue did not commit. Numbers never go backwards: when the engine file saw more than the queue committed (a crash between the writes, or a damaged queue file restored from its backup), cursors and sequences resume one past the highest used, so a resubscribing client gets a snapshot boundary. A 0.1.0 queue reads and writes back unchanged |
 | Revisions | Each durable event advances the job's `job_revision`; `expected_revision` mismatches return `contract.revision_conflict` with the current revision, changing nothing |
 | Events | Derived at every commit from what changed since the job's last report: `job_created`, `state_changed`, `error_recorded`, `publication_completed`, `policy_changed`, `job_removed`. Per-job `seq`, engine-wide `cursor`, correlated to the command that caused them. The last 512 are kept |
-| Streams | `SubscribeJob` and `SubscribeQueue` replay what was missed, or answer with an atomic snapshot boundary when it was compacted, with the subscriber registered under the same lock. A subscriber more than 1,024 events behind is closed with `resource.subscriber_lagging`; progress is coalesced to the latest sample per job |
+| Streams | `SubscribeJob` and `SubscribeQueue` replay what was missed, counting only events on disk, or answer with an atomic snapshot boundary when it was compacted, with the subscriber registered under the same lock. A subscriber more than 1,024 events behind is closed with `resource.subscriber_lagging`; progress is coalesced to the latest sample per job |
 | Errors | F2 and F3 fixed: actions come from the failure's code; `internal.*` and uncoded failures are never retried automatically and are `retryable: false` on the wire |
 
 ### Found during the work
@@ -198,3 +198,28 @@ this tree, produced the same transcript as FP-049's.
 - A command whose change starts a transfer before its commit fails leaves
   that transfer running in memory; its record and ledger entry are written
   together by the next successful save, so a resend still answers once.
+- While the desktop still calls the session directly (until FP-055), its
+  changes made during a ledgered command are saved with that command's
+  commit rather than at once, and the revision check does not see them
+  until then.
+- If `engine-v1.json` itself is damaged, the engine starts with an empty
+  ledger and event log; a resend of a command from the last 12 minutes could
+  then apply again. The file is only ever replaced by an atomic rename.
+
+### Independent review
+
+Strong-model review, 24 September 2026: **changes required**. Confirmed
+sound: lock order (queue, then engine state, everywhere), the two-file
+commit ordering at every crash point, broadcast only after a successful
+write, sequence numbering, replay and boundary edges, subscriber bounds, the
+ledger rules, and F2 to F4. Findings and fixes:
+
+| Finding | Fix | Test |
+|---|---|---|
+| Medium: a resend was answered from memory while its entry's write had failed | A resend whose entry is newer than the committed generation is written first, or refused | `a_failed_commit_leaves_nothing_behind_and_the_resend_applies_once` |
+| Medium-low: restoring the queue from its backup reused cursors and sequences subscribers had seen | Numbers resume one past the highest the engine file used | `a_queue_restored_from_its_backup_never_reuses_numbers_a_subscriber_saw`, `durable::tests::loading_an_older_queue_skips_past_every_number_already_used` |
+| Low: a panic during a command left saves deferred for good | Drop guard | Reviewed |
+| Low: a new subscriber could be shown events not yet written | Replay and positions count committed events only | `durable::tests::only_written_events_count_as_committed` |
+| Low: a job removed during a command's commit returned early without writing | The change is written before the error returns | Reviewed |
+| Nit: ledger retention one tick short | `<=` | Reviewed |
+| Nit: revision check not atomic with desktop changes | Documented above | — |

@@ -118,6 +118,18 @@ fn millis(timestamp: Timestamp) -> Result<u64, ProtocolError> {
         .map_err(|_| input("A schedule before 1970 cannot be used.".into()))
 }
 
+/// Clears the save deferral if a command's change unwinds, so a panic cannot
+/// leave every later save silently skipped.
+struct DeferGuard<'a>(&'a Session);
+
+impl Drop for DeferGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut durable) = self.0.durable.lock() {
+            durable.defer = false;
+        }
+    }
+}
+
 /// What a change did, turned into a result once its events are derived.
 enum Outcome {
     Job(String),
@@ -188,16 +200,23 @@ impl Engine {
             if let Some(entry) = durable.engine.ledger.iter().find(|entry| {
                 entry.client_id == envelope.client_id && entry.command_id == envelope.command_id
             }) {
-                return if entry.fingerprint == fingerprint {
-                    Ok(entry.result.clone())
-                } else {
-                    Err(error(
+                if entry.fingerprint != fingerprint {
+                    return Err(error(
                         "contract.idempotency_conflict",
                         ErrorScope::Command,
                         "This command id was already used for a different request.",
                     )
-                    .with_action(Action::RefreshClient))
-                };
+                    .with_action(Action::RefreshClient));
+                }
+                let result = entry.result.clone();
+                // An entry whose first write failed is answered only once it
+                // is on disk: nothing is acknowledged before it commits.
+                if entry.generation > durable.committed {
+                    self.session
+                        .write_locked(&state, &mut durable)
+                        .map_err(persistence)?;
+                }
+                return Ok(result);
             }
             let age = now_ms() as i64 - envelope.issued_at.unix_ms();
             if age > MAX_COMMAND_AGE_MS {
@@ -236,6 +255,8 @@ impl Engine {
             }
             durable.defer = true;
         }
+        // Saves resume even if the change panics.
+        let deferring = DeferGuard(&self.session);
 
         // Step 2: the change.
         let applied = self.apply(&envelope.payload);
@@ -244,6 +265,7 @@ impl Engine {
         let mut state = self.session.inner.lock().expect("desktop jobs poisoned");
         let mut durable = self.session.durable.lock().expect("engine state poisoned");
         durable.defer = false;
+        std::mem::forget(deferring);
         let outcome = match applied {
             Ok(outcome) => outcome,
             Err(failure) => {
@@ -262,34 +284,41 @@ impl Engine {
         });
         durable.derive_events(&mut state.records, now_ms());
         durable.correlation = None;
+        let snapshot_of = |id: &str| {
+            state
+                .records
+                .iter()
+                .find(|record| record.id == id)
+                .map(wire::snapshot)
+                .ok_or_else(unknown_job)
+        };
         let result = match &outcome {
-            Outcome::Job(id) => CommandResult::Job {
-                job: state
-                    .records
-                    .iter()
-                    .find(|record| &record.id == id)
-                    .map(wire::snapshot)
-                    .ok_or_else(unknown_job)?,
-            },
-            Outcome::Control(control, id) => CommandResult::Control {
+            Outcome::Job(id) => snapshot_of(id).map(|job| CommandResult::Job { job }),
+            Outcome::Control(control, id) => snapshot_of(id).map(|job| CommandResult::Control {
                 outcome: *control,
-                job: state
-                    .records
-                    .iter()
-                    .find(|record| &record.id == id)
-                    .map(wire::snapshot)
-                    .ok_or_else(unknown_job)?,
-            },
-            Outcome::Removed(id) => CommandResult::Removed {
-                job_id: JobId::try_from(id.as_str()).map_err(|_| unknown_job())?,
-            },
-            Outcome::Settings => CommandResult::Settings {
+                job,
+            }),
+            Outcome::Removed(id) => JobId::try_from(id.as_str())
+                .map(|job_id| CommandResult::Removed { job_id })
+                .map_err(|_| unknown_job()),
+            Outcome::Settings => Ok(CommandResult::Settings {
                 view: wire::settings_view(
                     &self.session.settings(),
                     self.session.settings_repaired(),
                 ),
-            },
-            Outcome::ShuttingDown => CommandResult::ShuttingDown,
+            }),
+            Outcome::ShuttingDown => Ok(CommandResult::ShuttingDown),
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(failure) => {
+                // The job vanished between the change and its commit (the
+                // desktop removed it). The change and its events still reach
+                // the disk; the command is not recorded.
+                durable.dirty = false;
+                let _ = self.session.write_locked(&state, &mut durable);
+                return Err(failure);
+            }
         };
         durable.record(LedgerEntry {
             client_id: envelope.client_id.clone(),
@@ -656,10 +685,17 @@ impl Engine {
         let mut durable = self.session.durable.lock().expect("engine state poisoned");
         let (subscriber, start, replay) = match &envelope.payload {
             Command::SubscribeJob { job_id, after_seq } => {
+                // Only what is on disk is replayed or counted; anything
+                // derived but not yet written arrives live once it is.
                 let retained: Vec<&JobEvent> = durable
-                    .events()
+                    .committed_events()
                     .filter(|event| &event.job_id == job_id && event.seq > *after_seq)
                     .collect();
+                let first_pending = durable
+                    .uncommitted_events()
+                    .filter(|event| &event.job_id == job_id)
+                    .map(|event| event.seq)
+                    .min();
                 let contiguous = retained
                     .first()
                     .is_some_and(|event| event.seq == after_seq + 1);
@@ -667,9 +703,12 @@ impl Engine {
                     .records
                     .iter()
                     .find(|record| record.id == job_id.as_str());
-                let last = record
-                    .map(|record| record.durable.last_seq)
-                    .or_else(|| retained.last().map(|event| event.seq));
+                let last = match first_pending {
+                    Some(seq) => Some(seq - 1),
+                    None => record
+                        .map(|record| record.durable.last_seq)
+                        .or_else(|| retained.last().map(|event| event.seq)),
+                };
                 let Some(last) = last else {
                     return Err(unknown_job());
                 };
@@ -695,9 +734,13 @@ impl Engine {
                 }
             }
             Command::SubscribeQueue { after_cursor } => {
-                let last = durable.engine.cursor;
+                let last = durable
+                    .uncommitted_events()
+                    .map(|event| event.cursor - 1)
+                    .min()
+                    .unwrap_or(durable.engine.cursor);
                 let retained: Vec<JobEvent> = durable
-                    .events()
+                    .committed_events()
                     .filter(|event| event.cursor > *after_cursor)
                     .cloned()
                     .collect();

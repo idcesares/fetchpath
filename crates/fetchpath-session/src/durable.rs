@@ -15,7 +15,7 @@ use crate::{QueueRecord, wire};
 use fetchpath_protocol::message::{Correlation, EventPayload, JobEvent};
 use fetchpath_protocol::{ClientId, CommandId, CommandResult, JobId, SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 /// Durable events kept for replay. Older ones are compacted away and a
@@ -49,14 +49,64 @@ pub(crate) struct DurableEngine {
 impl DurableEngine {
     /// Keeps only what the queue file committed: entries and events of a
     /// later generation belong to a change whose queue write never happened.
-    pub fn committed(mut self, generation: u64, cursor: u64) -> (Self, bool) {
+    ///
+    /// Numbers never go backwards, though. The queue may be older than the
+    /// engine file, after a crash between the two writes or when a damaged
+    /// queue file fell back to its backup, and subscribers may already have
+    /// seen the newer cursors and sequences. Whenever the engine file saw
+    /// more than the queue committed, numbering resumes one past the highest
+    /// number seen, and the gap sends a resubscribing client to a snapshot
+    /// boundary instead of letting a reused number hide a change.
+    pub fn committed(mut self, generation: u64, cursor: u64) -> (Self, bool, Seen) {
+        let mut seen = Seen {
+            cursor: self.cursor.max(
+                self.events
+                    .iter()
+                    .map(|stored| stored.event.cursor)
+                    .max()
+                    .unwrap_or(0),
+            ),
+            jobs: HashMap::new(),
+        };
+        for stored in &self.events {
+            let entry = seen
+                .jobs
+                .entry(stored.event.job_id.as_str().to_owned())
+                .or_insert((0, 0));
+            entry.0 = entry.0.max(stored.event.seq);
+            entry.1 = entry.1.max(stored.event.job_revision);
+        }
         let before = (self.events.len(), self.ledger.len());
         self.events.retain(|stored| stored.generation <= generation);
         self.ledger.retain(|entry| entry.generation <= generation);
         let discarded = before != (self.events.len(), self.ledger.len());
         self.generation = generation;
-        self.cursor = cursor;
-        (self, discarded)
+        self.cursor = if seen.cursor > cursor {
+            seen.cursor + 1
+        } else {
+            cursor
+        };
+        (self, discarded, seen)
+    }
+}
+
+/// The highest numbers the engine file had handed out: the queue cursor, and
+/// each job's sequence and revision.
+pub(crate) struct Seen {
+    pub cursor: u64,
+    pub jobs: HashMap<String, (u64, u64)>,
+}
+
+impl Seen {
+    /// Moves a restored record past any sequence or revision the engine file
+    /// saw for it, leaving a gap so its old numbers are never reused.
+    pub fn advance(&self, record: &mut QueueRecord) {
+        if let Some(&(seq, revision)) = self.jobs.get(&record.id)
+            && seq > record.durable.last_seq
+        {
+            record.durable.last_seq = seq + 1;
+            record.durable.job_revision = record.durable.job_revision.max(revision) + 1;
+        }
     }
 }
 
@@ -135,6 +185,9 @@ pub(crate) struct Durable {
     pub subscribers: Vec<Arc<Subscriber>>,
     /// Entries or events were added since the engine file was last written.
     pub engine_changed: bool,
+    /// The generation the queue file last committed. Ledger entries and
+    /// events above it are not durable yet.
+    pub committed: u64,
     /// Committed in memory but not yet written; handed to subscribers only
     /// once a write succeeds.
     pub unbroadcast: Vec<JobEvent>,
@@ -180,9 +233,24 @@ impl Durable {
         self.engine_changed = true;
     }
 
-    /// The retained events, oldest first.
-    pub fn events(&self) -> impl Iterator<Item = &JobEvent> {
-        self.engine.events.iter().map(|stored| &stored.event)
+    /// The retained events that are on disk, oldest first.
+    pub fn committed_events(&self) -> impl Iterator<Item = &JobEvent> {
+        let committed = self.committed;
+        self.engine
+            .events
+            .iter()
+            .filter(move |stored| stored.generation <= committed)
+            .map(|stored| &stored.event)
+    }
+
+    /// Events derived but not yet on disk, oldest first.
+    pub fn uncommitted_events(&self) -> impl Iterator<Item = &JobEvent> {
+        let committed = self.committed;
+        self.engine
+            .events
+            .iter()
+            .filter(move |stored| stored.generation > committed)
+            .map(|stored| &stored.event)
     }
 
     /// Compares every record with its last durable report and records one
@@ -282,7 +350,7 @@ impl Durable {
         let now = now_ms as i64;
         self.engine
             .ledger
-            .retain(|entry| now - (entry.received_at_ms as i64) < LEDGER_RETENTION_MS);
+            .retain(|entry| now - (entry.received_at_ms as i64) <= LEDGER_RETENTION_MS);
     }
 
     /// Hands committed events to subscribers after a successful write.
@@ -298,5 +366,91 @@ impl Durable {
                 subscriber.offer_event(event);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fetchpath_protocol::Timestamp;
+
+    fn event(cursor: u64, seq: u64) -> JobEvent {
+        JobEvent {
+            schema_version: SCHEMA_VERSION,
+            job_id: JobId::try_from("018f9c2a-525c-7b9a-986c-b0707def18bb").unwrap(),
+            seq,
+            cursor,
+            job_revision: seq,
+            occurred_at: Timestamp::from_unix_ms(0),
+            payload: EventPayload::JobRemoved,
+            correlation: Correlation::default(),
+        }
+    }
+
+    #[test]
+    fn only_written_events_count_as_committed() {
+        let mut durable = Durable::default();
+        durable.engine.generation = 1;
+        durable.committed = 1;
+        durable.engine.events.push_back(StoredEvent {
+            generation: 1,
+            event: event(1, 1),
+        });
+        durable.push(event(2, 2));
+        let committed: Vec<u64> = durable
+            .committed_events()
+            .map(|event| event.cursor)
+            .collect();
+        let pending: Vec<u64> = durable
+            .uncommitted_events()
+            .map(|event| event.cursor)
+            .collect();
+        assert_eq!(
+            committed,
+            vec![1],
+            "an event not yet written must not be replayed"
+        );
+        assert_eq!(pending, vec![2]);
+        durable.committed = 2;
+        assert_eq!(durable.committed_events().count(), 2);
+    }
+
+    #[test]
+    fn loading_an_older_queue_skips_past_every_number_already_used() {
+        let mut engine = DurableEngine {
+            generation: 3,
+            cursor: 9,
+            ..DurableEngine::default()
+        };
+        engine.events.push_back(StoredEvent {
+            generation: 2,
+            event: event(8, 4),
+        });
+        engine.events.push_back(StoredEvent {
+            generation: 3,
+            event: event(9, 5),
+        });
+        // The queue committed generation 2, cursor 8.
+        let (kept, discarded, seen) = engine.committed(2, 8);
+        assert!(discarded);
+        assert_eq!(kept.events.len(), 1);
+        assert_eq!(
+            kept.cursor, 10,
+            "one past the highest cursor used, leaving a gap"
+        );
+        assert_eq!(seen.jobs["018f9c2a-525c-7b9a-986c-b0707def18bb"], (5, 5));
+        // A queue that committed everything resumes exactly where it was.
+        let mut current = DurableEngine {
+            generation: 3,
+            cursor: 9,
+            ..DurableEngine::default()
+        };
+        current.events.push_back(StoredEvent {
+            generation: 3,
+            event: event(9, 5),
+        });
+        let (kept, discarded, _) = current.committed(3, 9);
+        assert!(!discarded);
+        assert_eq!(kept.cursor, 9);
     }
 }

@@ -557,12 +557,19 @@ fn a_failed_commit_leaves_nothing_behind_and_the_resend_applies_once() {
     assert!(failure.retryable, "resending the same envelope is safe");
     // A restart now would find nothing: nothing reached the disk.
     assert!(!path.exists());
+    // While the disk still fails, a resend is not acknowledged either: its
+    // entry is in memory but not durable (contract §5).
+    let still = engine.execute(&envelope).unwrap_err();
+    assert_eq!(code(&still), "internal.persistence_failed");
+    assert!(!path.exists());
 
     std::fs::remove_dir(&blocker).unwrap();
     // The change and its ledger entry were kept in memory together, so the
-    // resend answers with the same job rather than creating a second one.
+    // resend commits them and answers with that job, not a second one.
     let resent = engine.execute(&envelope).unwrap();
-    assert_eq!(job_of(&resent).job_id, job_of(&resent).job_id);
+    assert!(path.exists(), "acknowledged only once on disk");
+    let once_more = engine.execute(&envelope).unwrap();
+    assert_eq!(job_of(&once_more).job_id, job_of(&resent).job_id);
     assert_eq!(jobs(&engine).len(), 1);
     drop(engine);
     let reopened = open(&path);
@@ -604,10 +611,13 @@ fn a_crash_before_commit_loses_the_command_so_the_resend_creates_one_job() {
     assert_eq!(jobs(&restarted).len(), 1);
     let events = drain(&mut stream.events);
     assert_eq!(events.len(), 1);
-    assert_eq!(
-        (events[0].cursor, events[0].seq),
-        (1, 1),
-        "numbering restarts where the commit left it"
+    assert_eq!(events[0].seq, 1, "a new job's first event");
+    // The lost write had already used cursor 1. Nobody saw it, but that cannot
+    // be known, so numbering resumes past it rather than reusing it.
+    assert!(
+        events[0].cursor > 1,
+        "cursor {} was reused",
+        events[0].cursor
     );
 }
 
@@ -678,4 +688,68 @@ fn a_failure_reaches_clients_as_a_code_and_action_and_unknown_ones_are_not_retry
         ))
         .unwrap_err();
     assert_eq!(code(&refused), "contract.invalid_transition");
+}
+
+#[test]
+fn a_queue_restored_from_its_backup_never_reuses_numbers_a_subscriber_saw() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let seen = {
+        let engine = open(&path);
+        let mut stream = engine
+            .subscribe(&CommandEnvelope::new(
+                client(),
+                Command::SubscribeQueue { after_cursor: 0 },
+            ))
+            .unwrap()
+            .events;
+        engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                scheduled(dir.path(), "a.bin"),
+            ))
+            .unwrap();
+        engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                scheduled(dir.path(), "b.bin"),
+            ))
+            .unwrap();
+        drain(&mut stream)
+            .iter()
+            .map(|event| event.cursor)
+            .max()
+            .unwrap()
+    };
+    // The main queue file is damaged; loading falls back to the backup,
+    // which predates job b.
+    std::fs::write(&path, "{ torn").unwrap();
+    let engine = open(&path);
+    assert_eq!(jobs(&engine).len(), 1, "the backup holds job a only");
+    let created = engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            scheduled(dir.path(), "c.bin"),
+        ))
+        .unwrap();
+    let c = job_of(&created);
+
+    // Resubscribing from what it saw, the client must not be told it is up
+    // to date: job b is gone and c is new.
+    let resumed = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: seen },
+        ))
+        .unwrap();
+    match resumed.start {
+        CommandResult::SnapshotBoundary { jobs, position } => {
+            assert!(jobs.iter().any(|job| job.job_id == c.job_id));
+            let StreamPosition::Queue { after_cursor } = position else {
+                panic!("{position:?}");
+            };
+            assert!(after_cursor > seen, "a cursor was reused");
+        }
+        other => panic!("expected a snapshot boundary, got {other:?}"),
+    }
 }
