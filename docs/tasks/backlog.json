@@ -1422,9 +1422,9 @@
       "acceptance": "Tests exercise the current desktop queue through its Rust functions without a window: persisted queue load and save including a 0.1.0 file, recovery actions and retry classification, pause and resume, batch and schedule handling, destination validation and redaction, rate estimates and settings repair. They pass on the unchanged code and name what they pin.",
       "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: 21 characterization tests pass on unchanged production code; cargo test -p fetchpath-desktop --locked 70 passed 0 failed 1 ignored (pre-existing) against 49; clippy -D warnings and fmt clean. Five mutations (checksum classified as retry, pause not restored, backup fallback removed, rate interval changed, a wire field renamed) each made a named test fail. Findings F1 (newer-schema queue lost), F2 (unknown errors auto-retried) and F3 (actions parsed from message text) are pinned, not fixed; see docs/development/ENGINE-SESSION.md.",
       "evidence": [
-        "apps/desktop/src-tauri/src/characterization.rs",
-        "apps/desktop/src-tauri/tests/fixtures/queue-0.1.0.json",
-        "apps/desktop/src-tauri/tests/fixtures/settings-0.1.0.json",
+        "crates/fetchpath-session/src/characterization.rs",
+        "crates/fetchpath-session/tests/fixtures/queue-0.1.0.json",
+        "crates/fetchpath-session/tests/fixtures/settings-0.1.0.json",
         "docs/development/ENGINE-SESSION.md"
       ],
       "blockedReason": null
@@ -1436,8 +1436,8 @@
       "dependsOn": [
         "FP-048"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
       "review": "strong",
@@ -1632,7 +1632,8 @@
       "review": "standard",
       "files": [
         "apps/desktop/src-tauri/src/browser_bridge.rs",
-        "apps/desktop/src-tauri/src/bin"
+        "apps/desktop/src-tauri/src/bin",
+        "crates/fetchpath-session/src/browser_inbox.rs"
       ],
       "acceptanceIds": [
         "A07",

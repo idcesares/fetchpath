@@ -11,15 +11,16 @@ Use a single repository while the product shares identity, lifecycle, and releas
 | `crates/fetchpath-storage` | Staging files, checkpoints, transactional metadata, publication |
 | `crates/fetchpath-metalink` | Metalink 4 parsing and trusted piece hashes for verified multi-source repair |
 | `crates/fetchpath-cache` | Bounded content-addressed store keyed by trusted digests, quota, eviction, provenance; no networking |
+| `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration and the browser capture inbox; no UI or transport types. The desktop calls it in-process until the engine lands |
 | `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors |
 | `adapters/lan` | Device identity, pairing, authenticated peer sessions, upload budget; depends on the cache only, and core reaches it through `PeerSource` |
 | `apps/cli` | The `fetchpath` command line over the same core |
-| `apps/desktop` | Tauri 2 Windows client, installer hooks, pinned media-tool manifest, third-party notices |
+| `apps/desktop` | Tauri 2 Windows client: commands over the session, tray and single instance, the browser native-messaging host, media-tool setup, installer hooks, pinned media-tool manifest, third-party notices |
 | `extensions/browser` | Browser capture and native control bridge; no payload transport |
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.
 
-Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md) and added to this table when their first behavior lands: `crates/fetchpath-session` (queue, persistence, history, settings, rules and policy moved out of the desktop host; FP-049) and `crates/fetchpath-protocol` (versioned wire types, `EngineClient`, the authenticated pipe; FP-050). The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
+Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md) and added to this table when its first behavior lands: `crates/fetchpath-protocol` (versioned wire types, `EngineClient`, the authenticated pipe; FP-050). Rules and policy join `crates/fetchpath-session` with FP-054 and FP-064. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
 
 ## Documentation
 

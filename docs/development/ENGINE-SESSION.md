@@ -10,7 +10,7 @@ leave these tests passing unchanged.
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
 [2026-09-24-fp-048-desktop-queue-characterization](plans/2026-09-24-fp-048-desktop-queue-characterization.md).
 
-Twenty-one tests in `apps/desktop/src-tauri/src/characterization.rs` pin, on
+Twenty-one tests, now in `crates/fetchpath-session/src/characterization.rs` (moved by FP-049), pin, on
 unchanged production code:
 
 | Area | What is pinned |
@@ -52,3 +52,49 @@ purpose.
 - **F1: a newer queue is lost.** A queue written by a newer schema version is treated as no queue; the first save moves it to the backup and the second deletes it. Once an engine and clients from different builds coexist, opening an older build loses the queue. Fix: FP-070.
 - **F2: unknown errors are retried.** Unrecognized and `internal.*` errors map to `retry` and are retried automatically, contrary to [the job contract](../architecture/JOB-CONTRACT.md) §9. Fix: FP-051.
 - **F3: actions come from message text.** Failure actions are derived by reading error message text; the contract says clients act on the error's code and `action`. Fix: FP-051, with the protocol's error codes from FP-050.
+
+## FP-049: the queue moves into `fetchpath-session`
+
+Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
+[2026-09-24-fp-049-session-crate](plans/2026-09-24-fp-049-session-crate.md).
+
+`crates/fetchpath-session` now holds the queue model, its persistence,
+scheduling, automatic retry, rate estimates, history, settings, media
+orchestration and the browser capture inbox. It has no Tauri or UI types. The
+desktop keeps the Tauri commands, tray, single-instance guard, native
+messaging host, media-tool setup and browser setup, and calls the session
+in-process through `Session` (formerly `DesktopJobs`).
+
+| Moved | From | To |
+|---|---|---|
+| Queue, persistence, scheduler, retry, rates, media jobs, and their tests | `apps/desktop/src-tauri/src/lib.rs` (lines 21–1995 and its test module) | `crates/fetchpath-session/src/lib.rs` |
+| Settings | `apps/desktop/src-tauri/src/settings.rs` | `crates/fetchpath-session/src/settings.rs` (unchanged; re-exported as `fetchpath_desktop_lib::settings`) |
+| Browser inbox store, validation, DPAPI | `apps/desktop/src-tauri/src/browser_bridge.rs` | `crates/fetchpath-session/src/browser_inbox.rs` (the host loop stays in `browser_bridge.rs` and re-exports the inbox types) |
+| Characterization tests and fixtures | `apps/desktop/src-tauri/src/characterization.rs`, `tests/fixtures` | `crates/fetchpath-session/src/characterization.rs`, `tests/fixtures` |
+
+Changes to the moved code, all checked by diffing it against the original:
+`pub` on the types and methods the desktop calls and on the draft and
+snapshot fields; two accessors (`settings_repaired`, `take_link_reviews`)
+replacing the desktop's direct field reads; the type rename; the test
+imports' module path; and one test fixture path made relative to the new
+crate. No logic, message text, file name, serialized field or data folder
+changed. The characterization tests differ from FP-048 only in the type
+name. The desktop dropped its direct `uuid`, `url` and `windows-sys`
+dependencies. `Cargo.lock` gained no third-party package.
+
+### Commands and results
+
+- Test names before and after, listed with `-- --list`: the same 71 (70 run, 1 ignored).
+- `cargo test --workspace --locked`: all passed; `fetchpath-session` 58, `fetchpath-desktop` 12 and 1 ignored (70 and 1 before).
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`: clean.
+- `cargo fmt --all --check`: clean.
+- `node --test`: 39 passed, including the repository-structure check.
+- `node tools/tasks.mjs check`: pass.
+
+### Not yet done
+
+- The desktop walkthrough (add, pause, resume, restart recovery, history)
+  before and after. A running Fetchpath held `fetchpath-desktop.exe` during
+  this work, so the app binary was not rebuilt or launched.
+- The independent strong-model review of persistence ordering the task
+  requires.
