@@ -13,6 +13,7 @@ and limitations behind it.
 ## Next phase: engine platform
 
 - [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; tasks FP-048 to FP-069 in the backlog.
+- [Engine session](ENGINE-SESSION.md) — FP-048 characterization of the desktop queue, then FP-049.
 
 ## Release
 

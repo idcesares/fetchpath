@@ -127,21 +127,119 @@ fn every_saved_state_comes_back_after_a_restart_as_it_did_in_0_1_0() {
     // context is gone, as after the secret expired or was removed.
     let store = BridgeStore::new(dir.path().to_path_buf());
     let table = [
-        Restored { record: 1, state: "completed", action: None, retryable: false, error: None, has_job: false },
-        Restored { record: 2, state: "failed", action: Some("retry"), retryable: true, error: Some("source.transfer_failed: [7] Couldn't connect to server"), has_job: false },
-        Restored { record: 3, state: "failed", action: Some("choose_new_path"), retryable: true, error: Some("storage.destination_conflict: a file already exists at the destination"), has_job: false },
-        Restored { record: 4, state: "needs_source", action: Some("edit_link"), retryable: true, error: Some(PRIVATE_LINK), has_job: false },
-        Restored { record: 5, state: "paused", action: None, retryable: false, error: None, has_job: false },
-        Restored { record: 6, state: "needs_source", action: Some("edit_link"), retryable: true, error: Some(PRIVATE_LINK), has_job: false },
-        Restored { record: 7, state: "scheduled", action: None, retryable: false, error: Some(RECOVERED), has_job: true },
+        Restored {
+            record: 1,
+            state: "completed",
+            action: None,
+            retryable: false,
+            error: None,
+            has_job: false,
+        },
+        Restored {
+            record: 2,
+            state: "failed",
+            action: Some("retry"),
+            retryable: true,
+            error: Some("source.transfer_failed: [7] Couldn't connect to server"),
+            has_job: false,
+        },
+        Restored {
+            record: 3,
+            state: "failed",
+            action: Some("choose_new_path"),
+            retryable: true,
+            error: Some("storage.destination_conflict: a file already exists at the destination"),
+            has_job: false,
+        },
+        Restored {
+            record: 4,
+            state: "needs_source",
+            action: Some("edit_link"),
+            retryable: true,
+            error: Some(PRIVATE_LINK),
+            has_job: false,
+        },
+        Restored {
+            record: 5,
+            state: "paused",
+            action: None,
+            retryable: false,
+            error: None,
+            has_job: false,
+        },
+        Restored {
+            record: 6,
+            state: "needs_source",
+            action: Some("edit_link"),
+            retryable: true,
+            error: Some(PRIVATE_LINK),
+            has_job: false,
+        },
+        Restored {
+            record: 7,
+            state: "scheduled",
+            action: None,
+            retryable: false,
+            error: Some(RECOVERED),
+            has_job: true,
+        },
         // Running when Fetchpath stopped, schedule already past: queued again.
-        Restored { record: 8, state: "queued", action: None, retryable: false, error: Some(RECOVERED), has_job: true },
-        Restored { record: 9, state: "needs_source", action: Some("recapture"), retryable: true, error: Some(RECAPTURE), has_job: false },
-        Restored { record: 10, state: "failed", action: Some("check_checksum"), retryable: true, error: Some(UNREADABLE_CHECKSUM), has_job: false },
-        Restored { record: 11, state: "scheduled", action: None, retryable: false, error: Some(RECOVERED), has_job: true },
-        Restored { record: 12, state: "completed", action: None, retryable: false, error: None, has_job: false },
-        Restored { record: 13, state: "failed", action: Some("configure_media_tools"), retryable: true, error: Some(NO_MEDIA_TOOLS), has_job: false },
-        Restored { record: 14, state: "failed", action: Some("retry"), retryable: true, error: Some("source.transfer_failed: [7] Couldn't connect to server"), has_job: false },
+        Restored {
+            record: 8,
+            state: "queued",
+            action: None,
+            retryable: false,
+            error: Some(RECOVERED),
+            has_job: true,
+        },
+        Restored {
+            record: 9,
+            state: "needs_source",
+            action: Some("recapture"),
+            retryable: true,
+            error: Some(RECAPTURE),
+            has_job: false,
+        },
+        Restored {
+            record: 10,
+            state: "failed",
+            action: Some("check_checksum"),
+            retryable: true,
+            error: Some(UNREADABLE_CHECKSUM),
+            has_job: false,
+        },
+        Restored {
+            record: 11,
+            state: "scheduled",
+            action: None,
+            retryable: false,
+            error: Some(RECOVERED),
+            has_job: true,
+        },
+        Restored {
+            record: 12,
+            state: "completed",
+            action: None,
+            retryable: false,
+            error: None,
+            has_job: false,
+        },
+        Restored {
+            record: 13,
+            state: "failed",
+            action: Some("configure_media_tools"),
+            retryable: true,
+            error: Some(NO_MEDIA_TOOLS),
+            has_job: false,
+        },
+        Restored {
+            record: 14,
+            state: "failed",
+            action: Some("retry"),
+            retryable: true,
+            error: Some("source.transfer_failed: [7] Couldn't connect to server"),
+            has_job: false,
+        },
     ];
 
     let queue = fixture_queue(dir.path());
@@ -152,18 +250,45 @@ fn every_saved_state_comes_back_after_a_restart_as_it_did_in_0_1_0() {
         let restored = QueueRecord::restore(saved, NOW, Some(&store), None);
         let row = format!("record {}", expected.record);
         assert_eq!(restored.view.state, expected.state, "{row}: state");
-        assert_eq!(restored.view.action.as_deref(), expected.action, "{row}: action");
-        assert_eq!(restored.view.retryable, expected.retryable, "{row}: retryable");
-        assert_eq!(restored.view.error.as_deref(), expected.error, "{row}: error");
+        assert_eq!(
+            restored.view.action.as_deref(),
+            expected.action,
+            "{row}: action"
+        );
+        assert_eq!(
+            restored.view.retryable, expected.retryable,
+            "{row}: retryable"
+        );
+        assert_eq!(
+            restored.view.error.as_deref(),
+            expected.error,
+            "{row}: error"
+        );
         assert_eq!(restored.job.is_some(), expected.has_job, "{row}: job");
         // Everything else about the row is carried over untouched.
-        assert_eq!(restored.view.bytes_received, saved_view.bytes_received, "{row}: bytes");
-        assert_eq!(restored.view.total_bytes, saved_view.total_bytes, "{row}: total");
-        assert_eq!(restored.view.expected_sha256, saved_view.expected_sha256, "{row}: checksum");
+        assert_eq!(
+            restored.view.bytes_received, saved_view.bytes_received,
+            "{row}: bytes"
+        );
+        assert_eq!(
+            restored.view.total_bytes, saved_view.total_bytes,
+            "{row}: total"
+        );
+        assert_eq!(
+            restored.view.expected_sha256, saved_view.expected_sha256,
+            "{row}: checksum"
+        );
         assert_eq!(restored.view.kind, saved_view.kind, "{row}: kind");
         assert_eq!(restored.attempt, saved_view.attempt, "{row}: attempt");
-        assert_eq!(restored.rate.bytes_per_second(), None, "{row}: no rate after restart");
-        assert_eq!(restored.retry_at_ms, None, "{row}: no retry pending after restart");
+        assert_eq!(
+            restored.rate.bytes_per_second(),
+            None,
+            "{row}: no rate after restart"
+        );
+        assert_eq!(
+            restored.retry_at_ms, None,
+            "{row}: no retry pending after restart"
+        );
     }
 }
 
@@ -171,12 +296,16 @@ fn every_saved_state_comes_back_after_a_restart_as_it_did_in_0_1_0() {
 fn a_private_link_is_never_restored_as_a_live_source() {
     let dir = tempfile::tempdir().unwrap();
     for record in [4, 6] {
-        let restored = QueueRecord::restore(fixture_record(dir.path(), &id(record)), NOW, None, None);
+        let restored =
+            QueueRecord::restore(fixture_record(dir.path(), &id(record)), NOW, None, None);
         assert_eq!(restored.live_url, None, "record {record}");
         assert_eq!(restored.restart_url, None, "record {record}");
     }
     let public = QueueRecord::restore(fixture_record(dir.path(), &id(7)), NOW, None, None);
-    assert_eq!(public.live_url.as_deref(), Some("https://example.test/files/scheduled.bin"));
+    assert_eq!(
+        public.live_url.as_deref(),
+        Some("https://example.test/files/scheduled.bin")
+    );
     assert_eq!(public.not_before_ms, Some(FAR));
 }
 
@@ -194,10 +323,16 @@ fn saving_replaces_the_file_through_a_backup_and_leaves_no_temporary() {
     let path = dir.path().join("queue.json");
     let state = QueueState::default();
     save_persisted(&path, &state).unwrap();
-    assert!(!path.with_extension("json.bak").exists(), "first save has nothing to back up");
+    assert!(
+        !path.with_extension("json.bak").exists(),
+        "first save has nothing to back up"
+    );
     save_persisted(&path, &state).unwrap();
     assert!(path.exists());
-    assert!(path.with_extension("json.bak").exists(), "second save keeps the previous file");
+    assert!(
+        path.with_extension("json.bak").exists(),
+        "second save keeps the previous file"
+    );
     assert!(!path.with_extension("json.new").exists());
 }
 
@@ -255,7 +390,10 @@ fn fields_added_after_the_first_queue_format_default_when_missing() {
     assert_eq!(record.media_variant_id, None);
     assert_eq!(record.view.total_bytes, None);
     assert_eq!(record.view.attempt, 0);
-    assert_eq!(record.view.kind, "file", "a record without a kind reads as a file");
+    assert_eq!(
+        record.view.kind, "file",
+        "a record without a kind reads as a file"
+    );
     assert_eq!(record.view.quality_label, None);
 }
 
@@ -273,30 +411,51 @@ fn finding_f1_a_queue_from_a_newer_schema_is_lost_after_two_saves() {
     let jobs = DesktopJobs::load(path.clone(), 1).unwrap();
     assert!(jobs.list().unwrap().is_empty(), "newer queue is not shown");
     let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
-    assert!(backup.contains("\"schemaVersion\": 2"), "first save keeps it as the backup");
+    assert!(
+        backup.contains("\"schemaVersion\": 2"),
+        "first save keeps it as the backup"
+    );
 
     jobs.list().unwrap();
     let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
-    assert!(!backup.contains("\"schemaVersion\": 2"), "second save has deleted it");
+    assert!(
+        !backup.contains("\"schemaVersion\": 2"),
+        "second save has deleted it"
+    );
 }
 
 #[test]
 fn each_failure_maps_to_the_step_a_person_or_the_queue_takes_next() {
     let table = [
-        ("integrity.checksum_mismatch: expected aa, received bb", "check_checksum"),
+        (
+            "integrity.checksum_mismatch: expected aa, received bb",
+            "check_checksum",
+        ),
         (UNREADABLE_CHECKSUM, "check_checksum"),
-        ("media.source_expired: the page link expired", "refresh_source"),
+        (
+            "media.source_expired: the page link expired",
+            "refresh_source",
+        ),
         ("media.unknown_variant: 137+140", "refresh_source"),
-        ("media.helper_unavailable: yt-dlp not found", "configure_media_tools"),
+        (
+            "media.helper_unavailable: yt-dlp not found",
+            "configure_media_tools",
+        ),
         ("storage.destination_conflict: exists", "choose_new_path"),
-        ("A file already exists at the destination.", "choose_new_path"),
+        (
+            "A file already exists at the destination.",
+            "choose_new_path",
+        ),
         ("input.invalid_url: not http", "edit_link"),
         ("input.invalid_destination: reserved name", "edit_link"),
         ("source.transfer_failed: HTTP status 404", "edit_link"),
         ("source.transfer_failed: HTTP status 503", "retry"),
         ("source.transfer_failed: [28] Timeout was reached", "retry"),
         // A checksum problem outranks the HTTP status in the same message.
-        ("integrity.checksum_mismatch after HTTP status 404", "check_checksum"),
+        (
+            "integrity.checksum_mismatch after HTTP status 404",
+            "check_checksum",
+        ),
     ];
     for (error, action) in table {
         assert_eq!(action_for_error(error), action, "{error}");
@@ -310,14 +469,31 @@ fn each_failure_maps_to_the_step_a_person_or_the_queue_takes_next() {
 fn finding_f2_unrecognized_and_internal_errors_are_treated_as_retryable() {
     assert_eq!(action_for_error(""), "retry");
     assert_eq!(action_for_error("internal.unknown: something new"), "retry");
-    assert_eq!(action_for_error("internal.metadata_failure: journal"), "retry");
+    assert_eq!(
+        action_for_error("internal.metadata_failure: journal"),
+        "retry"
+    );
 }
 
 #[test]
 fn only_failed_rows_get_a_recovery_action() {
     let dir = tempfile::tempdir().unwrap();
-    let mut view = QueueRecord::new("https://example.test/a.bin".into(), dir.path().join("a.bin"), None).view;
-    for state in ["queued", "scheduled", "running", "paused", "cancelling", "completed", "cancelled", "needs_source"] {
+    let mut view = QueueRecord::new(
+        "https://example.test/a.bin".into(),
+        dir.path().join("a.bin"),
+        None,
+    )
+    .view;
+    for state in [
+        "queued",
+        "scheduled",
+        "running",
+        "paused",
+        "cancelling",
+        "completed",
+        "cancelled",
+        "needs_source",
+    ] {
         view.state = state.into();
         view.error = Some("source.transfer_failed: HTTP status 404".into());
         assert_eq!(recovery_action(&view), (None, false), "{state}");
@@ -328,11 +504,7 @@ fn only_failed_rows_get_a_recovery_action() {
 }
 
 fn failed_record(dir: &Path, name: &str, action: &str, attempt: u32) -> QueueRecord {
-    let mut record = QueueRecord::new(
-        format!("https://example.test/{name}"),
-        dir.join(name),
-        None,
-    );
+    let mut record = QueueRecord::new(format!("https://example.test/{name}"), dir.join(name), None);
     record.view.state = "failed".into();
     record.view.error = Some("source.transfer_failed: [7] Couldn't connect to server".into());
     record.view.action = Some(action.into());
@@ -374,9 +546,15 @@ fn only_plain_transport_failures_are_retried_automatically_and_on_a_backoff() {
     assert_eq!(first.view.attempt, 1);
     assert_eq!(first.view.action, None);
     assert!(!first.view.retryable);
-    assert_eq!(first.view.error.as_deref(), Some("Retrying automatically (attempt 1 of 3)."));
+    assert_eq!(
+        first.view.error.as_deref(),
+        Some("Retrying automatically (attempt 1 of 3).")
+    );
     let due = first.retry_at_ms.expect("retry is due later");
-    assert!((before + 15_000..=after + 15_000).contains(&due), "first retry waits 15 s");
+    assert!(
+        (before + 15_000..=after + 15_000).contains(&due),
+        "first retry waits 15 s"
+    );
     assert_eq!(first.not_before_ms, Some(due));
     assert!(first.job.is_some(), "a fresh job is prepared");
 
@@ -384,7 +562,10 @@ fn only_plain_transport_failures_are_retried_automatically_and_on_a_backoff() {
     assert_eq!(second.view.state, "scheduled");
     assert_eq!(second.attempt, 2);
     let due = second.retry_at_ms.unwrap();
-    assert!((before + 30_000..=after + 30_000).contains(&due), "second retry waits 30 s");
+    assert!(
+        (before + 30_000..=after + 30_000).contains(&due),
+        "second retry waits 30 s"
+    );
 
     for record in &state.records[2..] {
         assert_eq!(record.view.state, "failed", "{}", record.display_url);
@@ -410,7 +591,11 @@ fn a_transport_failure_restored_after_a_restart_is_retried_automatically() {
     let row = |n: u8| rows.iter().find(|row| row.job_id == id(n)).unwrap();
     assert_eq!(row(2).state, "scheduled");
     assert_eq!(row(2).attempt, 1);
-    assert_eq!(row(14).state, "failed", "attempts already exhausted before the restart");
+    assert_eq!(
+        row(14).state,
+        "failed",
+        "attempts already exhausted before the restart"
+    );
     assert_eq!(row(14).attempt, 3);
 }
 
@@ -418,19 +603,39 @@ fn a_transport_failure_restored_after_a_restart_is_retried_automatically() {
 fn the_rate_is_smoothed_ignores_short_intervals_and_withdraws_when_stalled() {
     let mut rate = RateEstimate::default();
     rate.observe(0, 0);
-    assert_eq!(rate.bytes_per_second(), None, "a first sample is only a baseline");
+    assert_eq!(
+        rate.bytes_per_second(),
+        None,
+        "a first sample is only a baseline"
+    );
     rate.observe(1_000, 200);
     assert_eq!(rate.bytes_per_second(), None, "under 400 ms is ignored");
     rate.observe(1_000, 1_000);
     assert_eq!(rate.bytes_per_second(), Some(1_000));
     rate.observe(3_000, 2_000);
-    assert_eq!(rate.bytes_per_second(), Some(1_300), "0.3 × 2000 + 0.7 × 1000");
+    assert_eq!(
+        rate.bytes_per_second(),
+        Some(1_300),
+        "0.3 × 2000 + 0.7 × 1000"
+    );
     rate.observe(3_000, 3_000);
-    assert_eq!(rate.bytes_per_second(), Some(909), "no progress decays, truncated");
+    assert_eq!(
+        rate.bytes_per_second(),
+        Some(909),
+        "no progress decays, truncated"
+    );
     rate.observe(3_000, 8_000);
-    assert_eq!(rate.bytes_per_second(), None, "5 s without progress withdraws the rate");
+    assert_eq!(
+        rate.bytes_per_second(),
+        None,
+        "5 s without progress withdraws the rate"
+    );
     rate.observe(500, 9_000);
-    assert_eq!(rate.bytes_per_second(), None, "a lower offset restarts the estimate");
+    assert_eq!(
+        rate.bytes_per_second(),
+        None,
+        "a lower offset restarts the estimate"
+    );
     rate.observe(1_000, 10_000);
     assert_eq!(rate.bytes_per_second(), Some(500));
     rate.clear();
@@ -452,25 +657,52 @@ fn remaining_time_needs_a_total_and_a_rate_and_rounds_up() {
     rate.observe(0, 0);
     rate.observe(1_000, 1_000);
     assert_eq!(rate.eta_seconds(1_000, None), None, "no total");
-    assert_eq!(rate.eta_seconds(1_000, Some(1_000)), None, "nothing remaining");
-    assert_eq!(rate.eta_seconds(2_000, Some(1_000)), None, "received beyond total");
-    assert_eq!(rate.eta_seconds(1_000, Some(2_001)), Some(2), "1001 bytes at 1000 B/s");
+    assert_eq!(
+        rate.eta_seconds(1_000, Some(1_000)),
+        None,
+        "nothing remaining"
+    );
+    assert_eq!(
+        rate.eta_seconds(2_000, Some(1_000)),
+        None,
+        "received beyond total"
+    );
+    assert_eq!(
+        rate.eta_seconds(1_000, Some(2_001)),
+        Some(2),
+        "1001 bytes at 1000 B/s"
+    );
 }
 
 #[test]
 fn shown_links_never_carry_queries_fragments_or_user_info() {
     let table = [
         ("https://example.test/a.zip", "https://example.test/a.zip"),
-        ("https://example.test/a.zip?token=s", "https://example.test/a.zip?…"),
-        ("https://example.test/a.zip#part", "https://example.test/a.zip?…"),
-        ("https://user:pw@example.test/a.zip", "https://…@example.test/a.zip?…"),
-        ("https://user@example.test/a.zip?x=1", "https://…@example.test/a.zip?…"),
+        (
+            "https://example.test/a.zip?token=s",
+            "https://example.test/a.zip?…",
+        ),
+        (
+            "https://example.test/a.zip#part",
+            "https://example.test/a.zip?…",
+        ),
+        (
+            "https://user:pw@example.test/a.zip",
+            "https://…@example.test/a.zip?…",
+        ),
+        (
+            "https://user@example.test/a.zip?x=1",
+            "https://…@example.test/a.zip?…",
+        ),
         ("example.test/a.zip", "example.test/a.zip"),
     ];
     for (url, shown) in table {
         assert_eq!(display_url(url), shown, "{url}");
     }
-    assert_eq!(restartable_url("https://example.test/a.zip").as_deref(), Some("https://example.test/a.zip"));
+    assert_eq!(
+        restartable_url("https://example.test/a.zip").as_deref(),
+        Some("https://example.test/a.zip")
+    );
     assert_eq!(restartable_url("https://example.test/a.zip?token=s"), None);
     assert_eq!(restartable_url("https://example.test/a.zip#part"), None);
 }
@@ -484,13 +716,32 @@ fn keys(value: &Value) -> Vec<String> {
 #[test]
 fn the_interface_reads_these_exact_field_names() {
     let dir = tempfile::tempdir().unwrap();
-    let mut view = QueueRecord::new("https://example.test/a.bin".into(), dir.path().join("a.bin"), None).view;
+    let mut view = QueueRecord::new(
+        "https://example.test/a.bin".into(),
+        dir.path().join("a.bin"),
+        None,
+    )
+    .view;
     assert_eq!(
         keys(&serde_json::to_value(&view).unwrap()),
         [
-            "action", "attempt", "bytesReceived", "cleanupPending", "createdAtMs", "destination",
-            "error", "finishedAtMs", "jobId", "kind", "notBeforeMs", "observedSha256",
-            "qualityLabel", "retryable", "source", "state", "totalBytes",
+            "action",
+            "attempt",
+            "bytesReceived",
+            "cleanupPending",
+            "createdAtMs",
+            "destination",
+            "error",
+            "finishedAtMs",
+            "jobId",
+            "kind",
+            "notBeforeMs",
+            "observedSha256",
+            "qualityLabel",
+            "retryable",
+            "source",
+            "state",
+            "totalBytes",
         ],
         "optional fields are omitted while empty"
     );
@@ -505,14 +756,41 @@ fn the_interface_reads_these_exact_field_names() {
     assert_eq!(
         keys(&serde_json::to_value(QueueStats::default()).unwrap()),
         [
-            "activeBytes", "combinedBytesPerSecond", "completed", "completedBytes", "failed",
-            "maxActiveDownloads", "paused", "queued", "running", "scheduled",
+            "activeBytes",
+            "combinedBytesPerSecond",
+            "completed",
+            "completedBytes",
+            "failed",
+            "maxActiveDownloads",
+            "paused",
+            "queued",
+            "running",
+            "scheduled",
         ]
     );
-    let segment = SegmentView { start: 0, end: 9, received: 5 };
-    assert_eq!(keys(&serde_json::to_value(&segment).unwrap()), ["end", "received", "start"]);
-    let details = JobDetails { job: view.clone(), segments: vec![segment] };
-    assert_eq!(keys(&serde_json::to_value(&details).unwrap()), ["job", "segments"]);
-    let cancel = CancelResponse { outcome: "accepted", job: view };
-    assert_eq!(keys(&serde_json::to_value(&cancel).unwrap()), ["job", "outcome"]);
+    let segment = SegmentView {
+        start: 0,
+        end: 9,
+        received: 5,
+    };
+    assert_eq!(
+        keys(&serde_json::to_value(&segment).unwrap()),
+        ["end", "received", "start"]
+    );
+    let details = JobDetails {
+        job: view.clone(),
+        segments: vec![segment],
+    };
+    assert_eq!(
+        keys(&serde_json::to_value(&details).unwrap()),
+        ["job", "segments"]
+    );
+    let cancel = CancelResponse {
+        outcome: "accepted",
+        job: view,
+    };
+    assert_eq!(
+        keys(&serde_json::to_value(&cancel).unwrap()),
+        ["job", "outcome"]
+    );
 }

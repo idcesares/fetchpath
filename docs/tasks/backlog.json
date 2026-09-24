@@ -1402,7 +1402,7 @@
       "dependsOn": [
         "FP-047"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "terra-medium",
@@ -1420,8 +1420,13 @@
         "A04"
       ],
       "acceptance": "Tests exercise the current desktop queue through its Rust functions without a window: persisted queue load and save including a 0.1.0 file, recovery actions and retry classification, pause and resume, batch and schedule handling, destination validation and redaction, rate estimates and settings repair. They pass on the unchanged code and name what they pin.",
-      "verification": "cargo test -p fetchpath-desktop --locked passes; removing a pinned behavior (for example, retrying a checksum mismatch) makes a named test fail.",
-      "evidence": [],
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: 21 characterization tests pass on unchanged production code; cargo test -p fetchpath-desktop --locked 70 passed 0 failed 1 ignored (pre-existing) against 49; clippy -D warnings and fmt clean. Five mutations (checksum classified as retry, pause not restored, backup fallback removed, rate interval changed, a wire field renamed) each made a named test fail. Findings F1 (newer-schema queue lost), F2 (unknown errors auto-retried) and F3 (actions parsed from message text) are pinned, not fixed; see docs/development/ENGINE-SESSION.md.",
+      "evidence": [
+        "apps/desktop/src-tauri/src/characterization.rs",
+        "apps/desktop/src-tauri/tests/fixtures/queue-0.1.0.json",
+        "apps/desktop/src-tauri/tests/fixtures/settings-0.1.0.json",
+        "docs/development/ENGINE-SESSION.md"
+      ],
       "blockedReason": null
     },
     {
@@ -1502,7 +1507,7 @@
         "A04",
         "A07"
       ],
-      "acceptance": "The session implements protocol commands through an in-process EngineClient: a durable ledger dedupes by (client_id, command_id) and acknowledges only after the mutation commits; expected_revision conflicts return the current revision without mutation; durable events carry per-job seq with SubscribeJob and SubscribeQueue replay-or-snapshot boundaries; progress samples are coalesced per subscriber so a slow client cannot stall transfers.",
+      "acceptance": "The session implements protocol commands through an in-process EngineClient: a durable ledger dedupes by (client_id, command_id) and acknowledges only after the mutation commits; expected_revision conflicts return the current revision without mutation; durable events carry per-job seq with SubscribeJob and SubscribeQueue replay-or-snapshot boundaries; progress samples are coalesced per subscriber so a slow client cannot stall transfers. Unrecognized and internal errors are not retryable and are never retried automatically (finding F2), and clients act on the engine's error code and action rather than message text (finding F3).",
       "verification": "Adversarial tests: duplicate and conflicting commands, revision races between two clients, event gaps and replay after reconnect, a stalled subscriber under load, crash between mutation and acknowledgement; independent strong-model review.",
       "evidence": [],
       "blockedReason": null
@@ -1990,6 +1995,30 @@
       ],
       "acceptance": "The FP-018 acceptance matrix is re-run on the new architecture with added rows for the engine, terminal and agents, including a clean-machine lifecycle, upgrade from a 0.1.0 install with a persisted queue, and uninstall with the engine running; the record states ready or not ready with remaining limitations. Publishing stays the user decision.",
       "verification": "Recorded matrix with commands, results and limitations in docs/development; node tools/tasks.mjs check and node --test pass.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-070",
+      "title": "Keep a queue written by a newer Fetchpath instead of discarding it",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-049"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A12"
+      ],
+      "acceptance": "Loading a queue whose schema is newer than this build leaves the file and its backup untouched, starts read-only with a plain explanation, and never writes over it; finding F1's characterization test is updated deliberately to the new behavior.",
+      "verification": "A test writes a newer-schema queue, opens and saves repeatedly, and finds the original bytes intact; strong-model review.",
       "evidence": [],
       "blockedReason": null
     }
