@@ -211,6 +211,14 @@ fn every_command() -> Vec<Command> {
             job_id: job_id(),
             decision: DestinationDecision::ChooseNewPath {
                 path: "C:\\Downloads\\a (2).bin".into(),
+                expected_sha256: None,
+            },
+        },
+        Command::ResolveDestination {
+            job_id: job_id(),
+            decision: DestinationDecision::ChooseNewPath {
+                path: "C:\\Downloads\\a (3).bin".into(),
+                expected_sha256: Some("ab".repeat(32)),
             },
         },
         Command::ResolveDestination {

@@ -61,8 +61,8 @@ impl EngineHome {
         self.dir.join("engine-endpoint-v1")
     }
 
-    /// The single-owner lock, shared with the desktop while it still owns
-    /// the queue itself.
+    /// The single-owner lock. Only the engine opens it; clients never do
+    /// (FP-055).
     pub fn lock_path(&self) -> PathBuf {
         self.dir.join("instance.lock")
     }

@@ -24,9 +24,9 @@ tauri-build = { version = "2", features = [] }
 fetchpath-core = { path = "../../../crates/fetchpath-core" }
 fetchpath-media = { path = "../../../adapters/media" }
 fetchpath-protocol = { path = "../../../crates/fetchpath-protocol" }
-# The browser host (a separate program) uses its inbox types only; the app
-# itself holds no session (FP-055).
-fetchpath-session = { path = "../../../crates/fetchpath-session" }
+# The browser host needs the inbox only. The desktop never links the session
+# crate, so it cannot build a queue of its own (FP-055).
+fetchpath-browser-inbox = { path = "../../../crates/fetchpath-browser-inbox" }
 tauri = { version = "2.11.6", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.6.0"
 serde = { version = "1", features = ["derive"] }

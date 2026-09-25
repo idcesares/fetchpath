@@ -47,6 +47,25 @@ fn engine_connection(connection: State<'_, Arc<Connection>>) -> serde_json::Valu
         .clone()
 }
 
+/// The person asked to start the engine after it was stopped on purpose
+/// or would not start: the window may start it again, and does within a
+/// second.
+#[tauri::command]
+fn start_engine(engine: Engine<'_>) {
+    engine.allow_start();
+}
+
+/// Runs a command's body on a blocking thread: it may wait on the pipe, or
+/// up to ten seconds for an engine to start, and must not hold up Tauri's
+/// async runtime meanwhile.
+async fn off_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Fetchpath could not finish that: {error}"))?
+}
+
 /// The interface shows errors as text.
 fn text(error: ProtocolError) -> String {
     error.message
@@ -88,133 +107,174 @@ fn snapshot(engine: &EngineLink, id: &str) -> Result<JobSnapshot, String> {
         .map_err(text)?)
 }
 
-#[tauri::command(async)]
-fn start_batch(
+#[tauri::command]
+async fn start_batch(
     drafts: Vec<view::JobDraft>,
     engine: Engine<'_>,
 ) -> Result<Vec<view::JobView>, String> {
-    let requests = drafts
-        .iter()
-        .map(view::JobDraft::request)
-        .collect::<Result<Vec<_>, _>>()?;
-    match engine
-        .send(Command::CreateJobs { requests })
-        .map_err(text)?
-    {
-        CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
-        other => Err(unexpected(&other)),
-    }
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let requests = drafts
+            .iter()
+            .map(view::JobDraft::request)
+            .collect::<Result<Vec<_>, _>>()?;
+        match engine
+            .send(Command::CreateJobs { requests })
+            .map_err(text)?
+        {
+            CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn inspect_media(url: String, engine: Engine<'_>) -> Result<view::Inspection, String> {
-    match engine
-        .send(Command::InspectMedia {
-            url: view::link(&url)?,
-        })
-        .map_err(text)?
-    {
-        CommandResult::MediaInspection { inspection } => Ok(view::Inspection::from(&inspection)),
-        other => Err(unexpected(&other)),
-    }
+#[tauri::command]
+async fn inspect_media(url: String, engine: Engine<'_>) -> Result<view::Inspection, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        match engine
+            .send(Command::InspectMedia {
+                url: view::link(&url)?,
+            })
+            .map_err(text)?
+        {
+            CommandResult::MediaInspection { inspection } => {
+                Ok(view::Inspection::from(&inspection))
+            }
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn start_media_download(
+#[tauri::command]
+async fn start_media_download(
     draft: view::MediaDraft,
     engine: Engine<'_>,
 ) -> Result<view::JobView, String> {
-    send_job(
-        &engine,
-        Command::CreateJob {
-            request: draft.request()?,
-        },
-    )
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::CreateJob {
+                request: draft.request()?,
+            },
+        )
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn list_downloads(engine: Engine<'_>) -> Result<Vec<view::JobView>, String> {
-    match engine
-        .send(Command::ListJobs {
-            filter: JobFilter::All,
-        })
-        .map_err(text)?
-    {
-        CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
-        other => Err(unexpected(&other)),
-    }
+#[tauri::command]
+async fn list_downloads(engine: Engine<'_>) -> Result<Vec<view::JobView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        match engine
+            .send(Command::ListJobs {
+                filter: JobFilter::All,
+            })
+            .map_err(text)?
+        {
+            CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
 }
 
 /// Media pages sent from the browser, taken once each by the interface.
-#[tauri::command(async)]
-fn take_link_reviews(engine: Engine<'_>) -> Result<Vec<String>, String> {
-    match engine.send(Command::TakeLinkReviews).map_err(text)? {
-        CommandResult::LinkReviews { urls } => Ok(urls.into_iter().map(String::from).collect()),
-        other => Err(unexpected(&other)),
-    }
-}
-
-#[tauri::command(async)]
-fn download_details(job_id: String, engine: Engine<'_>) -> Result<view::JobDetails, String> {
-    match engine
-        .send(Command::JobDetails {
-            job_id: self::job_id(&job_id)?,
-        })
-        .map_err(text)?
-    {
-        CommandResult::Details { details } => Ok(view::JobDetails::from(&details)),
-        other => Err(unexpected(&other)),
-    }
-}
-
-#[tauri::command(async)]
-fn cancel_download(job_id: String, engine: Engine<'_>) -> Result<view::CancelResponse, String> {
-    match engine
-        .send(Command::Cancel {
-            job_id: self::job_id(&job_id)?,
-            retain_partial: false,
-        })
-        .map_err(text)?
-    {
-        CommandResult::Control { outcome, job } => Ok(view::CancelResponse {
-            outcome: match outcome {
-                ControlOutcome::Accepted => "accepted",
-                ControlOutcome::TooLateToCancel | ControlOutcome::TooLate => "too_late",
-                ControlOutcome::AlreadyTerminal => "already_terminal",
-                _ => "no_op",
-            },
-            job: view::job(&job, Timestamp::now()),
-        }),
-        other => Err(unexpected(&other)),
-    }
-}
-
-#[tauri::command(async)]
-fn start_now(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
-    send_job(
-        &engine,
-        Command::Start {
-            job_id: self::job_id(&job_id)?,
+#[tauri::command]
+async fn take_link_reviews(engine: Engine<'_>) -> Result<Vec<String>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(
+        move || match engine.send(Command::TakeLinkReviews).map_err(text)? {
+            CommandResult::LinkReviews { urls } => Ok(urls.into_iter().map(String::from).collect()),
+            other => Err(unexpected(&other)),
         },
     )
+    .await
+}
+
+#[tauri::command]
+async fn download_details(job_id: String, engine: Engine<'_>) -> Result<view::JobDetails, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        match engine
+            .send(Command::JobDetails {
+                job_id: self::job_id(&job_id)?,
+            })
+            .map_err(text)?
+        {
+            CommandResult::Details { details } => Ok(view::JobDetails::from(&details)),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cancel_download(
+    job_id: String,
+    engine: Engine<'_>,
+) -> Result<view::CancelResponse, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        match engine
+            .send(Command::Cancel {
+                job_id: self::job_id(&job_id)?,
+                retain_partial: false,
+            })
+            .map_err(text)?
+        {
+            CommandResult::Control { outcome, job } => Ok(view::CancelResponse {
+                outcome: match outcome {
+                    ControlOutcome::Accepted => "accepted",
+                    ControlOutcome::TooLateToCancel | ControlOutcome::TooLate => "too_late",
+                    ControlOutcome::AlreadyTerminal => "already_terminal",
+                    _ => "no_op",
+                },
+                job: view::job(&job, Timestamp::now()),
+            }),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_now(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::Start {
+                job_id: self::job_id(&job_id)?,
+            },
+        )
+    })
+    .await
 }
 
 /// Retry, a new destination, a refreshed link or a corrected checksum. A new
 /// link travels with its destination and checksum in one step; a new
 /// destination alone is a destination decision.
-#[tauri::command(async)]
-fn retry_download(
+#[tauri::command]
+async fn retry_download(
     job_id: String,
     url: Option<String>,
     destination: Option<String>,
     checksum: Option<String>,
     engine: Engine<'_>,
 ) -> Result<view::JobView, String> {
-    let current = snapshot(&engine, &job_id)?;
-    send_job(
-        &engine,
-        retry_command(&current, url, destination, checksum)?,
-    )
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let current = snapshot(&engine, &job_id)?;
+        send_job(
+            &engine,
+            retry_command(&current, url, destination, checksum)?,
+        )
+    })
+    .await
 }
 
 /// The command for a retry from the interface, sending only what changed.
@@ -240,15 +300,12 @@ fn retry_command(
             destination,
             expected_sha256: checksum,
         },
-        (None, Some(_)) if checksum.is_some() => {
-            return Err(
-                "Change the destination and the checksum one at a time, or paste the link again to change both."
-                    .into(),
-            );
-        }
         (None, Some(path)) => Command::ResolveDestination {
             job_id,
-            decision: DestinationDecision::ChooseNewPath { path },
+            decision: DestinationDecision::ChooseNewPath {
+                path,
+                expected_sha256: checksum,
+            },
         },
         (None, None) => Command::Retry {
             job_id,
@@ -257,32 +314,44 @@ fn retry_command(
     })
 }
 
-#[tauri::command(async)]
-fn pause_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
-    send_job(
-        &engine,
-        Command::Pause {
-            job_id: self::job_id(&job_id)?,
-        },
-    )
+#[tauri::command]
+async fn pause_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::Pause {
+                job_id: self::job_id(&job_id)?,
+            },
+        )
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn resume_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
-    send_job(
-        &engine,
-        Command::Resume {
-            job_id: self::job_id(&job_id)?,
-        },
-    )
+#[tauri::command]
+async fn resume_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::Resume {
+                job_id: self::job_id(&job_id)?,
+            },
+        )
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn queue_stats(engine: Engine<'_>) -> Result<view::QueueStats, String> {
-    match engine.send(Command::QueueStats).map_err(text)? {
-        CommandResult::QueueStats { stats } => Ok(view::QueueStats::from(&stats)),
-        other => Err(unexpected(&other)),
-    }
+#[tauri::command]
+async fn queue_stats(engine: Engine<'_>) -> Result<view::QueueStats, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(
+        move || match engine.send(Command::QueueStats).map_err(text)? {
+            CommandResult::QueueStats { stats } => Ok(view::QueueStats::from(&stats)),
+            other => Err(unexpected(&other)),
+        },
+    )
+    .await
 }
 
 fn system_download_dir(app: &AppHandle) -> Option<String> {
@@ -304,25 +373,30 @@ fn settings_of(app: &AppHandle, result: CommandResult) -> Result<view::SettingsV
     }
 }
 
-#[tauri::command(async)]
-fn get_settings(app: AppHandle, engine: Engine<'_>) -> Result<view::SettingsView, String> {
-    settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)
+#[tauri::command]
+async fn get_settings(app: AppHandle, engine: Engine<'_>) -> Result<view::SettingsView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)).await
 }
 
-#[tauri::command(async)]
-fn update_settings(
+#[tauri::command]
+async fn update_settings(
     next: view::Settings,
     app: AppHandle,
     engine: Engine<'_>,
 ) -> Result<view::SettingsView, String> {
-    settings_of(
-        &app,
-        engine
-            .send(Command::UpdateSettings {
-                settings: next.to_engine(),
-            })
-            .map_err(text)?,
-    )
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        settings_of(
+            &app,
+            engine
+                .send(Command::UpdateSettings {
+                    settings: next.to_engine(),
+                })
+                .map_err(text)?,
+        )
+    })
+    .await
 }
 
 /// Changes settings starting from what the engine holds now.
@@ -346,94 +420,118 @@ fn change_settings(
 
 /// The folder new downloads are saved in: the user's choice, else Windows'
 /// own Downloads folder.
-#[tauri::command(async)]
-fn default_destination_dir(app: AppHandle, engine: Engine<'_>) -> Result<Option<String>, String> {
-    let view = settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)?;
-    Ok(view
-        .settings
-        .default_destination_dir
-        .or(view.system_download_dir))
+#[tauri::command]
+async fn default_destination_dir(
+    app: AppHandle,
+    engine: Engine<'_>,
+) -> Result<Option<String>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let view = settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)?;
+        Ok(view
+            .settings
+            .default_destination_dir
+            .or(view.system_download_dir))
+    })
+    .await
 }
 
 /// Opens Explorer with the finished file selected.
 ///
 /// Only ever points at a destination the engine recorded for this job, so a
 /// renderer message cannot turn this into a way to launch an arbitrary path.
-#[tauri::command(async)]
-fn reveal_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
-    let snapshot = snapshot(&engine, &job_id)?;
-    let destination = snapshot
-        .destination
-        .ok_or_else(|| "This download has no saved file yet.".to_string())?;
-    let path = PathBuf::from(&destination);
-    if !path.exists() {
-        return Err(format!("{destination} is no longer on disk."));
-    }
-    // Explorer parses its own command line rather than using the standard
-    // argv rules, and `/select,` with the path must arrive as one unquoted
-    // token followed by a quoted path. Passing it through `arg` lets Rust
-    // quote the whole `/select,C:\Some Folder\file` string, which Explorer
-    // then fails to split and answers by opening Documents instead. `raw_arg`
-    // writes the command line exactly.
-    //
-    // A quote inside the path would escape the quoting below, so it is refused.
-    // The queue already rejects one, which makes this a second fence rather
-    // than the only one.
-    if destination.contains('"') {
-        return Err("That destination cannot be shown in File Explorer.".into());
-    }
-    std::os::windows::process::CommandExt::raw_arg(
-        &mut std::process::Command::new("explorer.exe"),
-        format!("/select,\"{}\"", path.display()),
-    )
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .spawn()
-    .map(|_| ())
-    .map_err(|error| format!("Could not open the folder: {error}"))
+#[tauri::command]
+async fn reveal_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let snapshot = snapshot(&engine, &job_id)?;
+        let destination = snapshot
+            .destination
+            .ok_or_else(|| "This download has no saved file yet.".to_string())?;
+        let path = PathBuf::from(&destination);
+        if !path.exists() {
+            return Err(format!("{destination} is no longer on disk."));
+        }
+        // Explorer parses its own command line rather than using the standard
+        // argv rules, and `/select,` with the path must arrive as one unquoted
+        // token followed by a quoted path. Passing it through `arg` lets Rust
+        // quote the whole `/select,C:\Some Folder\file` string, which Explorer
+        // then fails to split and answers by opening Documents instead. `raw_arg`
+        // writes the command line exactly.
+        //
+        // A quote inside the path would escape the quoting below, so it is refused.
+        // The queue already rejects one, which makes this a second fence rather
+        // than the only one.
+        if destination.contains('"') {
+            return Err("That destination cannot be shown in File Explorer.".into());
+        }
+        std::os::windows::process::CommandExt::raw_arg(
+            &mut std::process::Command::new("explorer.exe"),
+            format!("/select,\"{}\"", path.display()),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open the folder: {error}"))
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn media_tools_status(
+#[tauri::command]
+async fn media_tools_status(
     app: AppHandle,
     engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || tools_status(&app, &engine)).await
+}
+
+fn tools_status(app: &AppHandle, engine: &EngineLink) -> Result<media_setup::ToolsStatus, String> {
     let install_dir = media_tools_install_dir()?;
-    let view = settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)?;
+    let view = settings_of(app, engine.send(Command::GetSettings).map_err(text)?)?;
     Ok(media_setup::status(
         view.settings.media_tools_dir.as_deref(),
         &install_dir,
     ))
 }
 
-#[tauri::command(async)]
-fn install_media_tools(
+#[tauri::command]
+async fn install_media_tools(
     app: AppHandle,
     engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
-    let install_dir = media_tools_install_dir()?;
-    media_setup::install(&install_dir)?;
-    change_settings(&app, &engine, |settings| {
-        settings.media_tools_dir = Some(install_dir.display().to_string());
-    })?;
-    media_tools_status(app, engine)
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let install_dir = media_tools_install_dir()?;
+        media_setup::install(&install_dir)?;
+        change_settings(&app, &engine, |settings| {
+            settings.media_tools_dir = Some(install_dir.display().to_string());
+        })?;
+        tools_status(&app, &engine)
+    })
+    .await
 }
 
-#[tauri::command(async)]
-fn use_media_tools_dir(
+#[tauri::command]
+async fn use_media_tools_dir(
     directory: String,
     app: AppHandle,
     engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
-    if directory.len() > MAX_PATH_LENGTH {
-        return Err("That folder path is too long.".into());
-    }
-    let accepted = media_setup::use_directory(&PathBuf::from(&directory))?;
-    change_settings(&app, &engine, |settings| {
-        settings.media_tools_dir = Some(accepted);
-    })?;
-    media_tools_status(app, engine)
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        if directory.len() > MAX_PATH_LENGTH {
+            return Err("That folder path is too long.".into());
+        }
+        let accepted = media_setup::use_directory(&PathBuf::from(&directory))?;
+        change_settings(&app, &engine, |settings| {
+            settings.media_tools_dir = Some(accepted);
+        })?;
+        tools_status(&app, &engine)
+    })
+    .await
 }
 
 /// Where the `fetchpath` command is, when the installer put it beside the app.
@@ -466,22 +564,26 @@ fn media_tools_install_dir() -> Result<PathBuf, String> {
         })
 }
 
-#[tauri::command(async)]
-fn remove_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
-    match engine
-        .send(Command::RemoveJob {
-            job_id: self::job_id(&job_id)?,
-        })
-        .map_err(text)?
-    {
-        CommandResult::Removed { .. } => Ok(()),
-        other => Err(unexpected(&other)),
-    }
+#[tauri::command]
+async fn remove_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        match engine
+            .send(Command::RemoveJob {
+                job_id: self::job_id(&job_id)?,
+            })
+            .map_err(text)?
+        {
+            CommandResult::Removed { .. } => Ok(()),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
 }
 
 /// One Fetchpath window per Windows user account.
 ///
-/// The queue belongs to the engine, which holds `instance.lock` itself; this
+/// The queue belongs to the engine, which holds its own single-owner lock; this
 /// guard only keeps a second window (and a second tray icon) from opening.
 /// It is a deny-sharing handle on `desktop-window.lock` in the same folder:
 /// whoever opens it first keeps it for the life of the process.
@@ -517,8 +619,8 @@ mod single_instance {
         fn SetForegroundWindow(window: *mut core::ffi::c_void) -> i32;
     }
 
-    /// Not `instance.lock`: that one is the engine's, the queue's owner.
-    pub fn lock_path() -> Option<PathBuf> {
+    /// Not the engine's lock: the engine is the queue's owner.
+    pub fn window_lock_path() -> Option<PathBuf> {
         let home = fetchpath_protocol::launch::EngineHome::from_env().ok()?;
         Some(home.dir().join("desktop-window.lock"))
     }
@@ -574,7 +676,7 @@ mod single_instance {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Some(path) = single_instance::lock_path()
+    if let Some(path) = single_instance::window_lock_path()
         && !single_instance::claim(&path)
     {
         single_instance::activate_running_window("Fetchpath");
@@ -585,6 +687,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             engine_connection,
+            start_engine,
             start_batch,
             inspect_media,
             start_media_download,
@@ -627,8 +730,8 @@ pub fn run() {
                         return;
                     }
                     Signal::Connected => serde_json::json!({ "connected": true }),
-                    Signal::Disconnected(message) => {
-                        serde_json::json!({ "connected": false, "message": message })
+                    Signal::Disconnected { message, stopped } => {
+                        serde_json::json!({ "connected": false, "stopped": stopped, "message": message })
                     }
                 };
                 // Kept as well as sent: the page may not be listening yet.
@@ -766,7 +869,7 @@ mod tests {
         assert!(matches!(
             retry(None, Some(r"D:\b.zip"), Some(&sum)).unwrap(),
             Command::ResolveDestination {
-                decision: DestinationDecision::ChooseNewPath { path },
+                decision: DestinationDecision::ChooseNewPath { path, expected_sha256: None },
                 ..
             } if path == r"D:\b.zip"
         ));
@@ -788,13 +891,22 @@ mod tests {
         assert_eq!(url.expose(), "https://example.test/a.zip?sig=2");
         assert_eq!(destination.as_deref(), Some(r"D:\b.zip"));
         assert_eq!(expected_sha256.as_deref(), Some(""));
-        // Both without a link cannot be one step, so nothing is sent.
-        assert!(retry(None, Some(r"D:\b.zip"), Some(&"cd".repeat(32))).is_err());
+        // A new destination and a corrected checksum, without a new link.
+        assert!(matches!(
+            retry(None, Some(r"D:\b.zip"), Some(&"cd".repeat(32))).unwrap(),
+            Command::ResolveDestination {
+                decision: DestinationDecision::ChooseNewPath {
+                    path,
+                    expected_sha256: Some(new),
+                },
+                ..
+            } if path == r"D:\b.zip" && new == "cd".repeat(32)
+        ));
     }
 
     #[test]
     fn the_window_lock_is_not_the_engines() {
-        let path = single_instance::lock_path().unwrap();
+        let path = single_instance::window_lock_path().unwrap();
         assert_eq!(path.file_name().unwrap(), "desktop-window.lock");
     }
 

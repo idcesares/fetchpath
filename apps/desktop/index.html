@@ -91,7 +91,10 @@
         <dl id="stats-grid" class="stats-grid" aria-describedby="stats-note"></dl>
       </section>
 
-      <p id="engine-status" class="error engine-status" hidden></p>
+      <div id="engine-status" class="engine-status" hidden>
+        <p id="engine-status-text" class="error"></p>
+        <button id="engine-start" class="secondary" type="button" hidden>Start Fetchpath</button>
+      </div>
       <div class="queue-status-row">
         <p id="queue-summary" class="queue-summary">No downloads yet.</p>
         <div class="queue-bulk-actions">

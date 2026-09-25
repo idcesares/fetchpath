@@ -190,7 +190,8 @@ fn the_window_follows_the_engine_and_recovers_when_it_is_killed() {
     first.wait().unwrap();
     expect(
         &signals,
-        |signal| matches!(signal, Signal::Disconnected(_)),
+        // It died rather than stopping, so the window starts another.
+        |signal| matches!(signal, Signal::Disconnected { stopped: false, .. }),
         "the engine was lost",
     );
     expect(
@@ -221,4 +222,81 @@ fn the_window_follows_the_engine_and_recovers_when_it_is_killed() {
         assert!(Instant::now() < deadline, "the engine did not stop");
         thread::sleep(Duration::from_millis(100));
     }
+}
+
+#[test]
+fn an_engine_stopped_on_purpose_is_not_started_again_until_the_person_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().join("data"));
+    let link = Arc::new(EngineLink::new(home.clone(), Some(engine_exe())));
+    let (tell, signals) = mpsc::channel();
+    let watcher = engine_link::watch(Arc::clone(&link), move |signal| {
+        let _ = tell.send(signal);
+    });
+    // The window starts the engine it opens with.
+    expect(&signals, |signal| *signal == Signal::Connected, "connected");
+
+    // As `fetchpath engine stop` or an installer would.
+    assert!(matches!(
+        link.send(Command::EngineShutdown).unwrap(),
+        CommandResult::ShuttingDown
+    ));
+    expect(
+        &signals,
+        |signal| matches!(signal, Signal::Disconnected { stopped: true, .. }),
+        "the engine was stopped on purpose",
+    );
+    // Nothing starts it again by itself, nor does a command from the page.
+    let until = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < until {
+        assert!(
+            launch::attach(&home, Limits::default()).is_err(),
+            "the window started a stopped engine again"
+        );
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert!(link.send(Command::QueueStats).is_err());
+
+    // The person presses Start.
+    link.allow_start();
+    expect(
+        &signals,
+        |signal| *signal == Signal::Connected,
+        "started again",
+    );
+
+    watcher.stop();
+    thread::sleep(Duration::from_millis(1_500));
+    let _ = link.send(Command::EngineShutdown);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while launch::attach(&home, Limits::default()).is_ok() {
+        assert!(Instant::now() < deadline, "the engine did not stop");
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn an_engine_that_will_not_start_is_not_retried_forever() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().join("data"));
+    // No program where the engine should be.
+    let link = Arc::new(EngineLink::new(
+        home,
+        Some(dir.path().join("missing").join("fetchpath.exe")),
+    ));
+    let (tell, signals) = mpsc::channel();
+    let watcher = engine_link::watch(link, move |signal| {
+        let _ = tell.send(signal);
+    });
+    expect(
+        &signals,
+        |signal| matches!(signal, Signal::Disconnected { stopped: false, .. }),
+        "the first failed start",
+    );
+    expect(
+        &signals,
+        |signal| matches!(signal, Signal::Disconnected { stopped: true, .. }),
+        "giving up after repeated failed starts",
+    );
+    watcher.stop();
 }

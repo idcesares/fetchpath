@@ -121,6 +121,8 @@ struct Host {
     /// Whether this engine uses the default data folder. Only then does it
     /// touch the person's sign-in start.
     default_home: bool,
+    /// The endpoint file this engine published.
+    endpoint: std::path::PathBuf,
 }
 
 impl Host {
@@ -129,6 +131,18 @@ impl Host {
     /// person change only when a person acts, which starts a client.
     fn has_own_work(&self) -> bool {
         self.engine.session().has_own_work()
+    }
+
+    /// Decides to stop, and says so to clients by removing the endpoint
+    /// file at once, while this engine still holds the lock, so no other
+    /// engine's endpoint can be removed. A client that loses its connection
+    /// and finds no endpoint knows the engine was stopped on purpose; one
+    /// that finds it left behind knows the engine died, and may start
+    /// another (FP-055).
+    fn begin_stop(&self) {
+        if !self.stop.swap(true, Ordering::SeqCst) {
+            let _ = std::fs::remove_file(&self.endpoint);
+        }
     }
 
     fn stopping(&self) -> bool {
@@ -205,6 +219,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
         connections: AtomicUsize::new(0),
         settings: Mutex::new(()),
         default_home: std::env::var_os("FETCHPATH_APP_DATA_DIR").is_none(),
+        endpoint: home.endpoint_path(),
     });
     if host.engine.session().settings().start_engine_at_sign_in {
         host.apply_sign_in(true);
@@ -238,10 +253,10 @@ fn serve(grace: Duration) -> Result<i32, String> {
         if host.connections.load(Ordering::SeqCst) > 0 || host.has_own_work() {
             idle_since = Instant::now();
         } else if idle_since.elapsed() >= grace {
-            host.stop.store(true, Ordering::SeqCst);
+            host.begin_stop();
         }
     }
-    host.stop.store(true, Ordering::SeqCst);
+    host.begin_stop();
 
     // Close the pipe first, so a client arriving now finds no engine and
     // starts the next one instead of stalling in a handshake here.
@@ -296,7 +311,7 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
     // Only the person's own clients may replace the engine.
     if connection.restart_requested() {
         if principal.is_user() {
-            host.stop.store(true, Ordering::SeqCst);
+            host.begin_stop();
         }
         return;
     }
@@ -379,7 +394,7 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                 }
                 drop(serialized);
                 if shutdown && succeeded {
-                    host.stop.store(true, Ordering::SeqCst);
+                    host.begin_stop();
                 }
                 if sender.send(&ServerMessage::Reply(reply)).is_err() {
                     return;

@@ -114,6 +114,10 @@ menu closes the window too, and downloads still finish. Fetchpath's
 background part stops by itself about a minute after the last download ends
 and every window is closed. To stop downloads, pause or cancel them first.
 
+If Fetchpath's background part was stopped on purpose, for example with
+`fetchpath engine stop`, the window says so and offers **Start Fetchpath**;
+downloads carry on from where they were once you start it.
+
 ## Several links at once
 
 Paste several links, one per line, into **Add download**. A preview lists

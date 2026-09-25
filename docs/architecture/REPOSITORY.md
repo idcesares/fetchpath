@@ -12,7 +12,8 @@ Use a single repository while the product shares identity, lifecycle, and releas
 | `crates/fetchpath-metalink` | Metalink 4 parsing and trusted piece hashes for verified multi-source repair |
 | `crates/fetchpath-cache` | Bounded content-addressed store keyed by trusted digests, quota, eviction, provenance; no networking |
 | `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, the `EngineClient` interface, and on Windows the authenticated per-user named pipe with its engine secret, the pipe-backed client, and launch-or-attach; no queue logic |
-| `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration, the browser capture inbox, and principals with agent policy and approvals (`policy`, contract D1); the protocol engine over it (command ledger, revisions, durable events, subscriptions) and the in-process `EngineClient`. No UI or transport types. The desktop calls it in-process until the engine host lands |
+| `crates/fetchpath-browser-inbox` | The browser capture inbox: captures the browser host accepted, their DPAPI-protected request context, and which job took each. Its own crate so the desktop's browser host can use it without linking the session (FP-055) |
+| `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration, ingestion from the browser capture inbox, and principals with agent policy and approvals (`policy`, contract D1); the protocol engine over it (command ledger, revisions, durable events, subscriptions) and the in-process `EngineClient`. No UI or transport types. Only the engine hosts it; the desktop does not depend on it |
 | `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors |
 | `adapters/lan` | Device identity, pairing, authenticated peer sessions, upload budget; depends on the cache only, and core reaches it through `PeerSource` |
 | `apps/cli` | The `fetchpath` command line over the same core, and `fetchpath engine`: the single-owner host of the session behind the authenticated pipe |
@@ -21,7 +22,7 @@ Use a single repository while the product shares identity, lifecycle, and releas
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.
 
-Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): smart rules join `crates/fetchpath-session` with FP-064. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Once FP-055 lands, `apps/desktop` is a client of the engine and no longer owns the queue.
+Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): smart rules join `crates/fetchpath-session` with FP-064. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Since FP-055, `apps/desktop` is a client of the engine and does not link the session crate.
 
 ## Documentation
 

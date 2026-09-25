@@ -91,20 +91,38 @@ test('package scripts run files that exist', () => {
 });
 
 // Two owners of one queue corrupt it (engine platform design §9). The engine
-// is the only owner; the desktop app is its client and must never build a
-// session of its own or take the engine's lock (FP-055). The browser host
-// shares the crate and may use the session's inbox types, nothing more.
+// is the only owner; the desktop app is its client (FP-055). That is made a
+// build fact: nothing the desktop links, directly or through its path
+// dependencies, is the session crate, so it cannot construct a queue. Its
+// sources also never reach the engine's lock file.
+function pathDependencies(manifestDir) {
+  const text = read(path.join(manifestDir, 'Cargo.toml'));
+  const found = [];
+  let section = '';
+  for (const line of text.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[([^\]]+)\]/);
+    if (header) { section = header[1]; continue; }
+    if (/dev-dependencies/.test(section) || !/dependencies/.test(section)) continue;
+    const dependency = line.match(/path\s*=\s*"([^"]+)"/);
+    if (dependency) found.push(path.posix.normalize(path.posix.join(manifestDir, dependency[1])));
+  }
+  return found;
+}
+
 test('the desktop app never owns the queue', () => {
+  const seen = new Set();
+  const pending = ['apps/desktop/src-tauri'];
+  while (pending.length) {
+    const dir = pending.pop();
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    pending.push(...pathDependencies(dir));
+  }
+  assert.ok(seen.has('crates/fetchpath-protocol'), 'the walk should reach the protocol crate');
+  assert.ok(!seen.has('crates/fetchpath-session'), 'the desktop links fetchpath-session, which can build a queue');
   const sources = files.filter((file) => file.startsWith('apps/desktop/src-tauri/src/') && file.endsWith('.rs'));
   assert.ok(sources.length > 0);
   for (const file of sources) {
-    const text = read(file);
-    for (const [pattern, what] of [
-      [/\bSession::|fetchpath_session::(Session\b|engine\b|\{[^}]*\bSession\b)/, 'a session'],
-      [/fetchpath_session::engine|\bEngine::new\b/, 'an engine'],
-      [/"instance\.lock"/, "the engine's lock"],
-    ]) {
-      assert.ok(!pattern.test(text), `${file} builds or claims ${what}`);
-    }
+    assert.ok(!/instance\.lock|\block_path\s*\(/.test(read(file)), `${file} reaches the engine's lock`);
   }
 });

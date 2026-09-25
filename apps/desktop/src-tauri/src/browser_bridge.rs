@@ -1,8 +1,8 @@
 //! The native messaging host the browser extension talks to. It validates
 //! a capture, stores it in the session's browser inbox and wakes the app.
 
-use fetchpath_session::browser_inbox::storage_reason;
-pub use fetchpath_session::browser_inbox::{
+use fetchpath_browser_inbox::storage_reason;
+pub use fetchpath_browser_inbox::{
     BridgeStore, BrowserCookie, CaptureRequest, InboxRecord, SCHEMA_VERSION, SecretEnvelope,
 };
 use serde::{Deserialize, Serialize};

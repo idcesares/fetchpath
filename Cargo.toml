@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/fetchpath-cache", "crates/fetchpath-core", "crates/fetchpath-http", "crates/fetchpath-metalink", "crates/fetchpath-protocol", "crates/fetchpath-session", "crates/fetchpath-storage", "adapters/lan", "adapters/media", "apps/cli", "apps/desktop/src-tauri"]
+members = ["crates/fetchpath-browser-inbox", "crates/fetchpath-cache", "crates/fetchpath-core", "crates/fetchpath-http", "crates/fetchpath-metalink", "crates/fetchpath-protocol", "crates/fetchpath-session", "crates/fetchpath-storage", "adapters/lan", "adapters/media", "apps/cli", "apps/desktop/src-tauri"]
 resolver = "3"
 
 [workspace.package]

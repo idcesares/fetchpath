@@ -637,7 +637,13 @@ impl Engine {
                     .map_err(transition),
             },
             Command::ResolveDestination { job_id, decision } => match decision {
-                DestinationDecision::ChooseNewPath { path } => {
+                DestinationDecision::ChooseNewPath {
+                    path,
+                    expected_sha256,
+                } => {
+                    if expected_sha256.is_some() && !principal.is_user() {
+                        return Err(policy::not_permitted(principal, command));
+                    }
                     // An agent's new path is held by its grants like a new job.
                     let hold = if principal.is_user() {
                         Vec::new()
@@ -650,7 +656,7 @@ impl Engine {
                             job_id.as_str(),
                             None,
                             Some(path.clone()),
-                            None,
+                            expected_sha256.clone(),
                             principal,
                             hold,
                         )

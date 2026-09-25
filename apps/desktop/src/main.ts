@@ -1299,17 +1299,34 @@ async function refreshQueue(): Promise<void> {
    their saved progress. */
 
 const engineStatus = required<HTMLElement>("engine-status");
+const engineStatusText = required<HTMLElement>("engine-status-text");
+const engineStart = required<HTMLButtonElement>("engine-start");
 let engineNoticeTimer = 0;
 
 interface EngineConnection {
   connected: boolean;
+  /** Stopped on purpose, or would not start: the window waits for the person. */
+  stopped?: boolean;
   message?: string;
 }
+
+const ENGINE_LOST =
+  "Fetchpath's engine stopped. Reconnecting… Downloads continue from their saved progress once it is back.";
+const ENGINE_STOPPED =
+  "Fetchpath's engine is stopped, so downloads are waiting. Start it to continue where they left off.";
 
 /** Reads the host's current view rather than trusting event order: two
  *  reports a moment apart may arrive in either order. */
 async function syncEngineState(): Promise<void> {
   showEngineState(await invoke<EngineConnection>("engine_connection"));
+}
+
+function revealEngineNotice(text: string, canStart: boolean): void {
+  engineStart.hidden = !canStart;
+  if (!engineStatus.hidden && engineStatusText.textContent === text) return;
+  engineStatusText.textContent = text;
+  engineStatus.hidden = false;
+  announceProblem(text);
 }
 
 function showEngineState(state: EngineConnection): void {
@@ -1323,18 +1340,32 @@ function showEngineState(state: EngineConnection): void {
     }
     return;
   }
+  // Stopped on purpose: said at once, since nothing will change by itself.
+  if (state.stopped) {
+    window.clearTimeout(engineNoticeTimer);
+    engineNoticeTimer = 0;
+    revealEngineNotice(ENGINE_STOPPED, true);
+    return;
+  }
   if (!engineStatus.hidden || engineNoticeTimer) return;
   // An engine that is back within a second is not worth an alarm.
   engineNoticeTimer = window.setTimeout(async () => {
     engineNoticeTimer = 0;
     const now = await invoke<EngineConnection>("engine_connection");
     if (now.connected || !engineStatus.hidden) return;
-    engineStatus.textContent =
-      "Fetchpath's engine stopped. Reconnecting… Downloads continue from their saved progress once it is back.";
-    engineStatus.hidden = false;
-    announceProblem(engineStatus.textContent);
+    revealEngineNotice(now.stopped ? ENGINE_STOPPED : ENGINE_LOST, Boolean(now.stopped));
   }, 1000);
 }
+
+engineStart.addEventListener("click", async () => {
+  engineStart.disabled = true;
+  try {
+    await invoke("start_engine");
+    revealEngineNotice("Starting Fetchpath's engine…", false);
+  } finally {
+    engineStart.disabled = false;
+  }
+});
 
 async function refreshStats(): Promise<void> {
   try {

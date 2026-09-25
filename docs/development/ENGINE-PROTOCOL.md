@@ -59,7 +59,7 @@ the session: the engine maps between session and wire types (FP-051, FP-053).
 - **Not in v1 yet**: rules (FP-064). Principals and approvals arrived
   with FP-054; FP-055 added `CreateJobs`, `TakeLinkReviews` (a command, not
   an event: a link review is not a job) and optional `expected_sha256` on
-  `Retry`/`RefreshSource` plus `destination` on `RefreshSource`
+  `Retry`, `RefreshSource` and `ChooseNewPath`, plus `destination` on `RefreshSource`
   ([contract D2](../architecture/JOB-CONTRACT.md#14-decision-record)). New
   commands and optional fields keep v1; an older engine answers
   `contract.unknown_command`.

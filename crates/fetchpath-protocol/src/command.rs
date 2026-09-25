@@ -302,7 +302,13 @@ pub enum ConflictPolicy {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum DestinationDecision {
-    ChooseNewPath { path: String },
+    ChooseNewPath {
+        path: String,
+        /// As for `Retry`: a corrected expected SHA-256 in the same step, an
+        /// empty string removing it. The person only (contract D2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_sha256: Option<String>,
+    },
     ReplaceExisting,
     Cancel,
 }

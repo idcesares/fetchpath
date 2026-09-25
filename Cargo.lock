@@ -1240,6 +1240,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fetchpath-browser-inbox"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "url",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "fetchpath-cache"
 version = "0.1.0"
 dependencies = [
@@ -1264,10 +1277,10 @@ dependencies = [
 name = "fetchpath-desktop"
 version = "0.1.0"
 dependencies = [
+ "fetchpath-browser-inbox",
  "fetchpath-core",
  "fetchpath-media",
  "fetchpath-protocol",
- "fetchpath-session",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1344,6 +1357,7 @@ dependencies = [
 name = "fetchpath-session"
 version = "0.1.0"
 dependencies = [
+ "fetchpath-browser-inbox",
  "fetchpath-core",
  "fetchpath-media",
  "fetchpath-protocol",

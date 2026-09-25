@@ -4,7 +4,7 @@
 //! Moved out of the desktop host unchanged (FP-049). It holds no UI or
 //! transport types; the desktop calls it in-process.
 
-pub mod browser_inbox;
+pub use fetchpath_browser_inbox as browser_inbox;
 mod durable;
 pub mod engine;
 pub mod policy;

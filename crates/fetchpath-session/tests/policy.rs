@@ -317,6 +317,13 @@ fn credentials_and_replacement_are_refused_outright_not_offered_for_approval() {
             job_id: own.job_id.clone(),
             expected_sha256: Some(String::new()),
         },
+        Command::ResolveDestination {
+            job_id: own.job_id.clone(),
+            decision: DestinationDecision::ChooseNewPath {
+                path: s.granted.join("moved.bin").display().to_string(),
+                expected_sha256: Some("ab".repeat(32)),
+            },
+        },
         Command::RefreshSource {
             job_id: own.job_id.clone(),
             destination: None,
@@ -507,6 +514,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
             job_id: waiting.job_id.clone(),
             decision: DestinationDecision::ChooseNewPath {
                 path: s.granted.join("moved.bin").display().to_string(),
+                expected_sha256: None,
             },
         },
     ] {

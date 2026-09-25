@@ -96,7 +96,7 @@ Lookup by `(client_id, command_id)` happens before time validation. A retained m
 | `Pause(job_id)` | Any state; outcome follows the command/state matrix | Before the publication fence, requests quiescence; otherwise returns the matrix's no-op or too-late result |
 | `Resume(job_id)` | `paused` | Revalidates required source identity, then schedules work |
 | `Cancel(job_id, retain_partial)` | Any state; outcome follows the command/state matrix | Before the publication fence, enters `cancelling`; otherwise returns the matrix's terminal no-op or too-late result |
-| `Retry(job_id, expected_sha256?)` | Retryable `failed` | Creates new attempts; never reuses an old `attempt_id`. A corrected expected identity (D2) advances `work_generation` |
+| `Retry(job_id, expected_sha256?)` | Retryable `failed` | Creates new attempts; never reuses an old `attempt_id`. May carry a corrected expected identity (D2) |
 | `UpdatePolicy(job_id, patch)` | Non-terminal job and matching revision | New revision; rejects immutable-field changes |
 | `ResolveDestination(job_id, decision)` | Waiting on conflict | `choose_new_path`, `replace_existing`, or `cancel`; replacement requires explicit user intent |
 | `SelectMedia(job_id, selection_id)` | `waiting_for_selection` and current inspection revision | Freezes the selected format/components and permits transfer |
@@ -364,13 +364,17 @@ Moving the desktop onto the engine needed three things its own queue did in
 process. Source: `crates/fetchpath-protocol/src/command.rs`.
 
 - **Correcting the expected identity is an identity replacement on the same
-  job**, which §2 already provides for: `Retry` and `RefreshSource` take an
-  optional `expected_sha256` (an empty value removes it) and advance
-  `work_generation`, revoking earlier work. `RefreshSource` may also carry a
-  new destination, so a new link, path and checksum change in one step.
-  Only a `user` principal may send either field; an agent keeps using
-  `ResolveDestination`, under its grants. A replacement job was rejected:
-  the client cannot build one for a link whose private query it never saw.
+  job.** `Retry`, `RefreshSource` and `ResolveDestination(choose_new_path)`
+  take an optional `expected_sha256` (an empty value removes it);
+  `RefreshSource` may also carry a new destination, so a new link, path and
+  checksum change in one step. Only a `user` principal may send these
+  fields; an agent keeps using `ResolveDestination` without a checksum, under
+  its grants. The session has no separate `work_generation` yet, and a retry
+  may resume staged bytes. That stays safe because the expected SHA-256 is
+  compared with the hash of the whole staged file at publication
+  (`fetchpath-core` `transfer::publish`), so a changed checksum can never
+  pass bytes it was not checked against. A replacement job was rejected: the
+  client cannot build one for a link whose private query it never saw.
 - **`CreateJobs(requests)`** creates file jobs all or none, as the queue's
   batch always did. `user` only.
 - **`TakeLinkReviews`** returns, once, media pages the person sent from the

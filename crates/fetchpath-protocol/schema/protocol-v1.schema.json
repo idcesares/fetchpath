@@ -1143,6 +1143,13 @@
               "const": "choose_new_path",
               "type": "string"
             },
+            "expected_sha256": {
+              "description": "As for `Retry`: a corrected expected SHA-256 in the same step, an\nempty string removing it. The person only (contract D2).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "path": {
               "type": "string"
             }
