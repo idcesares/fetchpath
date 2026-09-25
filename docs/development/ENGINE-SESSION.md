@@ -253,7 +253,7 @@ came first; the code follows it.
 
 ### Checks
 
-`crates/fetchpath-session/tests/policy.rs` (12 tests): grant inside and
+`crates/fetchpath-session/tests/policy.rs` (15 tests): grant inside and
 outside, a sibling folder sharing the grant's prefix, `..`, a junction out of
 a grant and a grant that is a junction, credentials in a link, a stored
 `credential_ref` and in media inspection, `replace_existing` on create and on
@@ -262,12 +262,26 @@ and a stale revision, person-only commands, the browser's single command,
 approval and denial, the agent retrying a denied job, a restart while
 waiting, a command id reused across principals, the hourly rate and the
 pending cap, and a size stop with the length stated and with it unknown,
-each finishing with the right bytes after approval. Pipe:
+each finishing with the right bytes after approval; a withdrawn request retried
+by its agent (outside a grant and past the rate) and an approved job given a
+new link. Pipe:
 `a_connection_declares_its_principal_in_the_handshake_and_a_bad_one_is_refused`.
-`cargo test --workspace`: 343 passed, 8 ignored; clippy and fmt clean.
+End to end: `apps/cli/tests/engine.rs`
+`an_agent_over_the_pipe_is_held_to_its_policy_and_cannot_restart_the_engine`.
+Mutation checks: honouring a non-user restart, and forgetting a withdrawn
+request's reasons, each fail a test.
+
+### Independent review
+
+A strong-model review of `9d557d0` found an agent could withdraw a waiting
+job and retry it past the person (blocker), keep an approval after changing
+the link, and have a decision racing publication misreport the result; also
+that shutdown skipped size-stopped jobs and `EngineStatus` counted everyone's
+jobs. All fixed with tests.
 
 ### Limitations
 
+- An agent retrying its own approved job outside its grants asks again.
 - The size limit is checked when the engine samples progress, so a download
   can pass it by one sampling interval, and one that publishes inside that
   interval completes (contract D1).

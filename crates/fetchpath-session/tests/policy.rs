@@ -763,3 +763,129 @@ fn a_stated_size_over_the_limit_stops_the_download_until_the_person_approves_it(
 fn an_unknown_size_that_grows_past_the_limit_stops_until_the_person_approves_it() {
     size_stop_then_approval(false);
 }
+
+#[test]
+fn a_withdrawn_request_retried_by_its_agent_waits_for_the_person_again() {
+    let s = setup(granting);
+    let asked = job(send(
+        &s.agent,
+        file("http://127.0.0.1:9/a.bin", &s.outside.join("a.bin")),
+    )
+    .unwrap());
+    assert_eq!(asked.state, JobState::AwaitingApproval);
+    let withdrawn = job(send(
+        &s.agent,
+        Command::Cancel {
+            job_id: asked.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap());
+    assert_eq!(withdrawn.state, JobState::Cancelled);
+
+    let retried = job(send(
+        &s.agent,
+        Command::Retry {
+            job_id: asked.job_id.clone(),
+        },
+    )
+    .unwrap());
+    assert_eq!(retried.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&retried), [ApprovalReason::OutsideGrantedFolders]);
+
+    // The same through a new link.
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: asked.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    let refreshed = job(send(
+        &s.agent,
+        Command::RefreshSource {
+            job_id: asked.job_id.clone(),
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/b.bin"),
+            },
+        },
+    )
+    .unwrap());
+    assert_eq!(refreshed.state, JobState::AwaitingApproval);
+    assert!(
+        refreshed.source_display.ends_with("/b.bin"),
+        "{refreshed:?}"
+    );
+}
+
+#[test]
+fn an_approved_job_given_a_new_link_by_its_agent_is_checked_again() {
+    let s = setup(granting);
+    let asked = job(send(
+        &s.agent,
+        file("http://127.0.0.1:9/a.bin", &s.outside.join("a.bin")),
+    )
+    .unwrap());
+    send(
+        &s.user,
+        Command::ApproveJob {
+            job_id: asked.job_id.clone(),
+        },
+    )
+    .unwrap();
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: asked.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    wait_for(&s.engine, &s.agent, &asked.job_id, |job| {
+        matches!(job.state, JobState::Cancelled | JobState::Failed)
+    });
+    let redirected = job(send(
+        &s.agent,
+        Command::RefreshSource {
+            job_id: asked.job_id,
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/other.bin"),
+            },
+        },
+    )
+    .unwrap());
+    assert_eq!(redirected.state, JobState::AwaitingApproval);
+    assert_eq!(
+        reasons(&redirected),
+        [ApprovalReason::OutsideGrantedFolders]
+    );
+}
+
+#[test]
+fn a_request_withdrawn_past_the_rate_cannot_be_retried_around_it() {
+    let s = setup(|granted| AgentPolicy {
+        max_new_jobs_per_hour: 1,
+        ..granting(granted)
+    });
+    job(send(&s.agent, later(&s.granted.join("a.bin"))).unwrap());
+    let over = job(send(&s.agent, later(&s.granted.join("b.bin"))).unwrap());
+    assert_eq!(reasons(&over), [ApprovalReason::RateLimit]);
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: over.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    let retried = job(send(
+        &s.agent,
+        Command::Retry {
+            job_id: over.job_id,
+        },
+    )
+    .unwrap());
+    assert_eq!(retried.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&retried), [ApprovalReason::RateLimit]);
+}

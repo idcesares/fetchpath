@@ -407,6 +407,39 @@ impl Engine {
         })
     }
 
+    /// Why an agent's changed job must wait, from its destination and the
+    /// agent's current grants. Refused when too many already wait.
+    fn agent_hold(
+        &self,
+        principal: &Principal,
+        destination: &std::path::Path,
+    ) -> Result<Vec<fetchpath_protocol::principal::ApprovalReason>, ProtocolError> {
+        let Principal::Agent(agent) = principal else {
+            return Ok(Vec::new());
+        };
+        let reasons =
+            policy::creation_reasons(destination, &self.session.agent_policy(agent), false);
+        if !reasons.is_empty()
+            && self.session.pending_approvals(principal) >= policy::MAX_PENDING_APPROVALS
+        {
+            return Err(policy::too_many_pending());
+        }
+        Ok(reasons)
+    }
+
+    /// The hold for an agent's retry of an existing job, re-checked against
+    /// its current grants.
+    fn retry_hold(
+        &self,
+        principal: &Principal,
+        job_id: &JobId,
+    ) -> Result<Vec<fetchpath_protocol::principal::ApprovalReason>, ProtocolError> {
+        match self.session.destination_of(job_id.as_str()) {
+            Some(destination) if !principal.is_user() => self.agent_hold(principal, &destination),
+            _ => Ok(Vec::new()),
+        }
+    }
+
     /// Counts a job an agent created against its hourly rate.
     fn created(&self, principal: &Principal) {
         if let Principal::Agent(agent) = principal {
@@ -525,10 +558,13 @@ impl Engine {
                 }
                 self.cancel(job_id.as_str())
             }
-            Command::Retry { job_id } => session
-                .retry_as(job_id.as_str(), None, None, None, principal, Vec::new())
-                .map(|job| Outcome::Job(job.job_id))
-                .map_err(transition),
+            Command::Retry { job_id } => {
+                let hold = self.retry_hold(principal, job_id)?;
+                session
+                    .retry_as(job_id.as_str(), None, None, None, principal, hold)
+                    .map(|job| Outcome::Job(job.job_id))
+                    .map_err(transition)
+            }
             Command::UpdatePolicy { job_id, patch } => match &patch.schedule {
                 None => Ok(Outcome::Job(job_id.as_str().to_owned())),
                 Some(Schedule::Now) => session
@@ -543,12 +579,11 @@ impl Engine {
             Command::ResolveDestination { job_id, decision } => match decision {
                 DestinationDecision::ChooseNewPath { path } => {
                     // An agent's new path is held by its grants like a new job.
-                    let hold = match principal {
-                        Principal::Agent(agent) => {
-                            let target = crate::validated_destination(path).map_err(input)?;
-                            policy::creation_reasons(&target, &session.agent_policy(agent), false)
-                        }
-                        _ => Vec::new(),
+                    let hold = if principal.is_user() {
+                        Vec::new()
+                    } else {
+                        let target = crate::validated_destination(path).map_err(input)?;
+                        self.agent_hold(principal, &target)?
                     };
                     session
                         .retry_as(
@@ -578,6 +613,7 @@ impl Engine {
                 let JobInput::Url { url } = source else {
                     return Err(unsupported("Refreshing from a stored request"));
                 };
+                let hold = self.retry_hold(principal, job_id)?;
                 session
                     .retry_as(
                         job_id.as_str(),
@@ -585,7 +621,7 @@ impl Engine {
                         None,
                         None,
                         principal,
-                        Vec::new(),
+                        hold,
                     )
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(input)
@@ -792,7 +828,8 @@ impl Engine {
                 policies: self.session.agent_policies(),
             }),
             Command::EngineStatus => {
-                let jobs = self.snapshots()?;
+                // An agent's count covers its own jobs only.
+                let jobs: Vec<_> = self.snapshots()?.into_iter().filter(visible).collect();
                 let durable = self.session.durable.lock().expect("engine state poisoned");
                 Ok(CommandResult::EngineStatus {
                     status: EngineStatus {

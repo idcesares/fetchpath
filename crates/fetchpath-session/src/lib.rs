@@ -224,13 +224,17 @@ struct QueueRecord {
 }
 
 /// A job an agent asked for outside its policy (contract D1). While it is
-/// pending nothing about the job starts; a denial ends it cancelled.
+/// pending nothing about the job starts; a denial ends it cancelled. A
+/// request the agent withdrew keeps its reasons, so retrying it asks the
+/// person again instead of slipping past them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Approval {
     reasons: Vec<ApprovalReason>,
     #[serde(default, skip_serializing_if = "is_false")]
     denied: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    withdrawn: bool,
 }
 
 impl QueueRecord {
@@ -248,6 +252,7 @@ impl QueueRecord {
         self.approval = Some(Approval {
             reasons,
             denied: false,
+            withdrawn: false,
         });
         self.view.state = "awaiting_approval".into();
         self.view.error = None;
@@ -262,7 +267,7 @@ impl QueueRecord {
     fn awaiting_approval(&self) -> bool {
         self.approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied)
+            .is_some_and(|approval| !approval.denied && !approval.withdrawn)
     }
 }
 
@@ -800,7 +805,9 @@ impl Session {
         // longer has anything to decide.
         let awaiting = record.awaiting_approval();
         if awaiting {
-            record.approval = None;
+            if let Some(approval) = record.approval.as_mut() {
+                approval.withdrawn = true;
+            }
             if record.job.is_none() {
                 record.view.state = "cancelled".into();
                 record.finished_at_ms = Some(now_ms());
@@ -894,11 +901,24 @@ impl Session {
         if record.awaiting_approval() {
             return Err("This download is waiting for the person to approve it.".into());
         }
-        if record.approval.is_some() {
-            if !by.is_user() {
+        let mut hold = hold;
+        if let Some(approval) = record.approval.take() {
+            if approval.denied && !by.is_user() {
+                record.approval = Some(approval);
                 return Err("The person declined this download.".into());
             }
-            record.approval = None;
+            // An agent retrying what it withdrew asks the person again.
+            if approval.withdrawn && !by.is_user() {
+                for reason in approval.reasons {
+                    if !hold.contains(&reason) {
+                        hold.push(reason);
+                    }
+                }
+            }
+        }
+        if url.is_some() && !by.is_user() {
+            // A size approval was for the link the person saw.
+            record.size_approved = false;
         }
         if !matches!(
             record.view.state.as_str(),
@@ -915,6 +935,7 @@ impl Session {
         if let Some(url) = url {
             let url = validated_source(&url)?;
             record.display_url = display_url(&url);
+            record.view.source = record.display_url.clone();
             record.restart_url = restartable_url(&url);
             record.live_url = Some(url);
             record.live_context = RequestContext::default();
@@ -1125,16 +1146,21 @@ impl Session {
             record.job.take()
         };
         // Joining waits for a network read to unwind; never under the lock.
-        if let Some(job) = stopped {
-            job.cancel();
-            job.join();
-        }
+        let finished = self.join_stopped(stopped);
 
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         let media_tools = self.media_tools();
         let record = find_record_mut(&mut state, job_id)?;
         if !record.awaiting_approval() {
             return Err("This download is not waiting for approval.".into());
+        }
+        if let Some(job) = finished {
+            // The size stop came after publication: the download finished.
+            record.job = Some(job);
+            refresh_record(record);
+            let view = record.view.clone();
+            self.save_locked(&mut state)?;
+            return Ok(view);
         }
         let reasons = record
             .approval
@@ -1215,16 +1241,32 @@ impl Session {
     /// Refuses a job that waits for approval. It ends cancelled, and its
     /// agent is told the person declined it.
     pub fn deny(&self, job_id: &str) -> Result<JobSnapshot, String> {
-        let (view, stopped) = {
+        let stopped = {
             let mut state = self.inner.lock().expect("desktop jobs poisoned");
             let record = find_record_mut(&mut state, job_id)?;
             if !record.awaiting_approval() {
                 return Err("This download is not waiting for approval.".into());
             }
+            record.job.take()
+        };
+        let finished = self.join_stopped(stopped);
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record_mut(&mut state, job_id)?;
+        if !record.awaiting_approval() {
+            return Err("This download is not waiting for approval.".into());
+        }
+        if let Some(job) = finished {
+            // Too late to decline: the size stop came after publication.
+            record.job = Some(job);
+            refresh_record(record);
+            let view = record.view.clone();
+            self.save_locked(&mut state)?;
+            return Ok(view);
+        }
+        {
             if let Some(approval) = record.approval.as_mut() {
                 approval.denied = true;
             }
-            let stopped = record.job.take();
             let now = now_ms();
             record.view.state = "cancelled".into();
             record.view.error = Some("The person declined this download.".into());
@@ -1233,15 +1275,27 @@ impl Session {
             record.finished_at_ms = Some(now);
             record.view.finished_at_ms = Some(now);
             sample_rate(record);
-            let view = record.view.clone();
-            self.save_locked(&mut state)?;
-            (view, stopped)
-        };
-        if let Some(job) = stopped {
-            job.cancel();
-            job.join();
         }
+        let view = record.view.clone();
+        self.save_locked(&mut state)?;
         Ok(view)
+    }
+
+    /// Cancels and joins a job taken from a record, returning it only when
+    /// it had already published, so the caller reports that completion.
+    fn join_stopped(&self, stopped: Option<JobHandle>) -> Option<JobHandle> {
+        let job = stopped?;
+        job.cancel();
+        job.join();
+        job.completed().then_some(job)
+    }
+
+    /// Where a job saves, for re-checking an agent's grants.
+    pub(crate) fn destination_of(&self, job_id: &str) -> Option<PathBuf> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        find_record(&state, job_id)
+            .ok()
+            .map(|record| record.destination.clone())
     }
 
     /// Stops a running agent download whose stated or received size passed
@@ -1342,7 +1396,11 @@ impl Session {
             state
                 .records
                 .iter()
-                .filter(|record| matches!(record.view.state.as_str(), "running" | "cancelling"))
+                .filter(|record| {
+                    matches!(record.view.state.as_str(), "running" | "cancelling")
+                        // A size stop may still be writing its checkpoint.
+                        || (record.awaiting_approval() && record.job.is_some())
+                })
                 .filter_map(|record| {
                     record
                         .job
@@ -1364,6 +1422,13 @@ impl Session {
             let Ok(record) = find_record_mut(&mut state, &id) else {
                 continue;
             };
+            if record.awaiting_approval() {
+                // Quiet now; approval prepares a fresh job from the checkpoint.
+                if !record.job.as_ref().is_some_and(JobHandle::completed) {
+                    record.job = None;
+                    continue;
+                }
+            }
             refresh_record(record);
             if record.view.state == "cancelled"
                 && let Some(url) = record.live_url.clone()

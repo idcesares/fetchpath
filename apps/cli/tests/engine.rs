@@ -438,3 +438,119 @@ fn once_stopping_the_engine_refuses_commands_and_a_new_client_gets_a_new_engine(
         .send(&ClientId::random(), Command::EngineShutdown)
         .unwrap();
 }
+
+/// Speaks the handshake by hand as `principal`, asking the engine to restart.
+fn restart_as(home: &EngineHome, principal: &str) {
+    use fetchpath_protocol::frame::{read_frame, write_frame};
+    use fetchpath_protocol::pipe::auth::{self, Handshake, Nonce};
+    let name = endpoint::read(&home.endpoint_path()).unwrap();
+    let secret = EngineSecret::load(&home.secret_path()).unwrap();
+    let mut pipe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(name.as_str())
+        .unwrap();
+    let read = |pipe: &mut std::fs::File| -> Handshake {
+        serde_json::from_slice(&read_frame(pipe).unwrap().expect("a frame")).unwrap()
+    };
+    let client_nonce = Nonce::random().unwrap();
+    write_frame(
+        &mut pipe,
+        &Handshake::Hello {
+            transport: auth::TRANSPORT.into(),
+            version: auth::TRANSPORT_VERSION,
+            client_nonce: client_nonce.to_hex(),
+            intent: Some("restart".into()),
+            principal: Some(principal.into()),
+        },
+    )
+    .unwrap();
+    let Handshake::Challenge { server_nonce, .. } = read(&mut pipe) else {
+        panic!("expected a challenge");
+    };
+    let server_nonce = Nonce::from_hex(&server_nonce).unwrap();
+    write_frame(
+        &mut pipe,
+        &Handshake::Proof {
+            client_proof: auth::to_hex(&secret.client_proof(&client_nonce, &server_nonce)),
+        },
+    )
+    .unwrap();
+    assert_eq!(read(&mut pipe), Handshake::Welcome);
+}
+
+#[test]
+fn an_agent_over_the_pipe_is_held_to_its_policy_and_cannot_restart_the_engine() {
+    use fetchpath_protocol::principal::{AgentName, AgentPolicy, Principal};
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().join("data"));
+    let granted = dir.path().join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    let mut running = engine(&home, 30_000);
+    let person = attached(&home);
+    person
+        .send(
+            &ClientId::random(),
+            Command::SetAgentPolicy {
+                agent: AgentName::try_from("helper").unwrap(),
+                policy: Some(AgentPolicy {
+                    folders: vec![granted.display().to_string()],
+                    ..AgentPolicy::default()
+                }),
+            },
+        )
+        .unwrap();
+    let later = Some(Timestamp::from_unix_ms(
+        Timestamp::now().unix_ms() + 3_600_000,
+    ));
+    person
+        .send(
+            &ClientId::random(),
+            create(
+                "http://127.0.0.1:9/persons.bin",
+                dir.path().join("persons.bin"),
+                later,
+            ),
+        )
+        .unwrap();
+
+    let agent = attached(&home).with_principal(Principal::try_from("agent:helper").unwrap());
+    let CommandResult::Job { job } = agent
+        .send(
+            &ClientId::random(),
+            create(
+                "http://127.0.0.1:9/a.bin",
+                dir.path().join("outside.bin"),
+                later,
+            ),
+        )
+        .unwrap()
+    else {
+        panic!("not a job");
+    };
+    assert_eq!(job.state, JobState::AwaitingApproval);
+    assert_eq!(jobs(&agent).len(), 1, "the agent sees only its own job");
+    assert_eq!(jobs(&person).len(), 2);
+    let refused = agent
+        .send(
+            &ClientId::random(),
+            Command::ApproveJob { job_id: job.job_id },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code.as_str(), "policy.not_permitted");
+
+    restart_as(&home, "agent:helper");
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        exited_within(&mut running, Duration::from_millis(500)),
+        None,
+        "an agent cannot restart the engine"
+    );
+    person
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+    assert_eq!(
+        exited_within(&mut running, Duration::from_secs(10)),
+        Some(0)
+    );
+}
