@@ -1591,7 +1591,7 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -1608,7 +1608,14 @@
       ],
       "acceptance": "Every connection declares a principal (user, browser, agent:<name>); the engine enforces each principal policy: browser submits captures only; agents create jobs only inside granted folders, within size and rate limits, never with credentials, cookies or replace_existing, never change settings, rules, LAN, cache or sharing, and see only their own jobs. Out-of-policy requests become awaiting_approval jobs that only a user principal can approve or deny; an unknown-size job crossing the limit pauses into awaiting_approval. The job contract gains the state and its matrix rows through a superseding decision entry before code.",
       "verification": "Policy-escape tests: traversal and symlinks out of a grant, size crossing, credential smuggling, an agent approving itself or reading other jobs, settings and sharing attempts; independent strong-model review of the credential and policy boundary.",
-      "evidence": [],
+      "evidence": [
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/ENGINE-SESSION.md",
+        "crates/fetchpath-session/src/policy.rs",
+        "crates/fetchpath-session/tests/policy.rs",
+        "crates/fetchpath-protocol/src/principal.rs",
+        "apps/cli/tests/engine.rs"
+      ],
       "blockedReason": null
     },
     {

@@ -279,7 +279,7 @@ the link, and have a decision racing publication misreport the result; also
 that shutdown skipped size-stopped jobs and `EngineStatus` counted everyone's
 jobs. All fixed with tests. The re-review found a refused retry dropped a
 withdrawn request's hold before failing; `retry_as` now settles the approval
-only after every check passes.
+only after every check passes, and a second re-review found no blockers.
 
 ### Limitations
 

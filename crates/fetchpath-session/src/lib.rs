@@ -921,7 +921,11 @@ impl Session {
         let destination = destination
             .map(|destination| validated_destination(&destination))
             .transpose()?;
-        let new_link = url.is_some();
+        if url.is_some() && !by.is_user() {
+            // A size approval was for the link the person saw. Dropped even
+            // if the retry fails later, which only tightens the limit.
+            record.size_approved = false;
+        }
         if !matches!(
             record.view.state.as_str(),
             "failed" | "cancelled" | "needs_source"
@@ -997,10 +1001,6 @@ impl Session {
         }
         // The retry went through: settle the approval.
         record.approval = None;
-        if new_link && !by.is_user() {
-            // A size approval was for the link the person saw.
-            record.size_approved = false;
-        }
         if !hold.is_empty() {
             record.hold(hold);
         }
