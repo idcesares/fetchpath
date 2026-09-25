@@ -901,25 +901,27 @@ impl Session {
         if record.awaiting_approval() {
             return Err("This download is waiting for the person to approve it.".into());
         }
+        // Nothing about the approval changes until every check below has
+        // passed, so a refused retry cannot shed a hold.
         let mut hold = hold;
-        if let Some(approval) = record.approval.take() {
+        if let Some(approval) = record.approval.as_ref() {
             if approval.denied && !by.is_user() {
-                record.approval = Some(approval);
                 return Err("The person declined this download.".into());
             }
             // An agent retrying what it withdrew asks the person again.
             if approval.withdrawn && !by.is_user() {
-                for reason in approval.reasons {
-                    if !hold.contains(&reason) {
-                        hold.push(reason);
+                for reason in &approval.reasons {
+                    if !hold.contains(reason) {
+                        hold.push(*reason);
                     }
                 }
             }
         }
-        if url.is_some() && !by.is_user() {
-            // A size approval was for the link the person saw.
-            record.size_approved = false;
-        }
+        let url = url.map(|url| validated_source(&url)).transpose()?;
+        let destination = destination
+            .map(|destination| validated_destination(&destination))
+            .transpose()?;
+        let new_link = url.is_some();
         if !matches!(
             record.view.state.as_str(),
             "failed" | "cancelled" | "needs_source"
@@ -933,7 +935,6 @@ impl Session {
             job.join();
         }
         if let Some(url) = url {
-            let url = validated_source(&url)?;
             record.display_url = display_url(&url);
             record.view.source = record.display_url.clone();
             record.restart_url = restartable_url(&url);
@@ -946,7 +947,7 @@ impl Session {
             }
         }
         if let Some(destination) = destination {
-            record.destination = validated_destination(&destination)?;
+            record.destination = destination;
         }
         // An empty field clears the checksum; anything else replaces it.
         if let Some(checksum) = checksum {
@@ -993,6 +994,12 @@ impl Session {
             record.view.retryable = false;
             record.view.not_before_ms = None;
             record.view.finished_at_ms = None;
+        }
+        // The retry went through: settle the approval.
+        record.approval = None;
+        if new_link && !by.is_user() {
+            // A size approval was for the link the person saw.
+            record.size_approved = false;
         }
         if !hold.is_empty() {
             record.hold(hold);

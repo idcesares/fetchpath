@@ -253,7 +253,7 @@ came first; the code follows it.
 
 ### Checks
 
-`crates/fetchpath-session/tests/policy.rs` (15 tests): grant inside and
+`crates/fetchpath-session/tests/policy.rs` (16 tests): grant inside and
 outside, a sibling folder sharing the grant's prefix, `..`, a junction out of
 a grant and a grant that is a junction, credentials in a link, a stored
 `credential_ref` and in media inspection, `replace_existing` on create and on
@@ -264,7 +264,7 @@ waiting, a command id reused across principals, the hourly rate and the
 pending cap, and a size stop with the length stated and with it unknown,
 each finishing with the right bytes after approval; a withdrawn request retried
 by its agent (outside a grant and past the rate) and an approved job given a
-new link. Pipe:
+new link, and a refused refresh that must not shed the hold. Pipe:
 `a_connection_declares_its_principal_in_the_handshake_and_a_bad_one_is_refused`.
 End to end: `apps/cli/tests/engine.rs`
 `an_agent_over_the_pipe_is_held_to_its_policy_and_cannot_restart_the_engine`.
@@ -277,7 +277,9 @@ A strong-model review of `9d557d0` found an agent could withdraw a waiting
 job and retry it past the person (blocker), keep an approval after changing
 the link, and have a decision racing publication misreport the result; also
 that shutdown skipped size-stopped jobs and `EngineStatus` counted everyone's
-jobs. All fixed with tests.
+jobs. All fixed with tests. The re-review found a refused retry dropped a
+withdrawn request's hold before failing; `retry_as` now settles the approval
+only after every check passes.
 
 ### Limitations
 

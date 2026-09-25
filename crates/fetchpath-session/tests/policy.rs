@@ -889,3 +889,42 @@ fn a_request_withdrawn_past_the_rate_cannot_be_retried_around_it() {
     assert_eq!(retried.state, JobState::AwaitingApproval);
     assert_eq!(reasons(&retried), [ApprovalReason::RateLimit]);
 }
+
+#[test]
+fn a_refused_retry_keeps_the_hold_it_would_have_shed() {
+    let s = setup(|granted| AgentPolicy {
+        max_new_jobs_per_hour: 1,
+        ..granting(granted)
+    });
+    job(send(&s.agent, later(&s.granted.join("a.bin"))).unwrap());
+    let over = job(send(&s.agent, later(&s.granted.join("b.bin"))).unwrap());
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: over.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    assert!(
+        send(
+            &s.agent,
+            Command::RefreshSource {
+                job_id: over.job_id.clone(),
+                source: JobInput::Url {
+                    url: url("ftp://nope"),
+                },
+            },
+        )
+        .is_err()
+    );
+    let retried = job(send(
+        &s.agent,
+        Command::Retry {
+            job_id: over.job_id,
+        },
+    )
+    .unwrap());
+    assert_eq!(retried.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&retried), [ApprovalReason::RateLimit]);
+}
