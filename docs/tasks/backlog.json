@@ -1702,8 +1702,8 @@
       "dependsOn": [
         "FP-053"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -1717,7 +1717,13 @@
       ],
       "acceptance": "add, ls, show, pause, resume, cancel, retry, rm, watch, inspect, batch, history, settings and engine status/stop work through the engine; job arguments accept a unique id prefix or queue index; --json prints protocol types; download keeps its arguments, streams, --quiet, --json and exit codes and now appears in the shared queue and history; lan, cache and fetch-verified are unchanged.",
       "verification": "CLI integration tests against a real engine over the pipe for every command, including exit codes 0/2/3/4/5/6/130 and --json shapes; the existing CLI tests pass unchanged.",
-      "evidence": [],
+      "evidence": [
+        "apps/cli/src/queue.rs",
+        "apps/cli/src/download.rs",
+        "apps/cli/tests/queue.rs",
+        "docs/user/CLI.md",
+        "docs/development/ENGINE-HOST.md"
+      ],
       "blockedReason": null
     },
     {

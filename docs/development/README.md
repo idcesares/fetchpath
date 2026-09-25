@@ -13,7 +13,7 @@ one your task names.
 - [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; tasks FP-048 to FP-070.
 - [Engine session](ENGINE-SESSION.md) — FP-048/049/051: the queue in `fetchpath-session`, its characterization and open findings.
 - [Engine protocol](ENGINE-PROTOCOL.md) — FP-050/052: protocol v1, `EngineClient`, the pipe.
-- [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit.
+- [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit; FP-058: the command line through the engine.
 
 ## Features
 

@@ -11,8 +11,9 @@ fetchpath-lan = { path = "../../adapters/lan" }
 fetchpath-protocol = { path = "../../crates/fetchpath-protocol" }
 fetchpath-session = { path = "../../crates/fetchpath-session" }
 ctrlc = "3.5.1"
+serde = "1"
 serde_json = "1.0.145"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_System_Time"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"

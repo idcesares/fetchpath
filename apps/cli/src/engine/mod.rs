@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 /// How long the engine stays with no client and nothing of its own to do.
 pub const IDLE_GRACE: Duration = Duration::from_secs(60);
 
-pub const USAGE: &str = "usage: fetchpath engine [status | stop]";
+pub const USAGE: &str = "usage: fetchpath engine [status [--json] | stop]";
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -36,7 +36,11 @@ pub fn run(args: &[String]) -> i32 {
             Some(ms) => host(Duration::from_millis(ms)),
             None => usage(),
         },
-        Some("status") => status(),
+        Some("status") => match &args[1..] {
+            [] => crate::queue::engine_status(false),
+            [flag] if flag == "--json" => crate::queue::engine_status(true),
+            _ => usage(),
+        },
         Some("stop") => stop(),
         Some(_) => usage(),
     }
@@ -49,29 +53,6 @@ fn usage() -> i32 {
 
 fn home() -> Result<EngineHome, ProtocolError> {
     EngineHome::from_env()
-}
-
-fn status() -> i32 {
-    let outcome = home()
-        .and_then(|home| launch::attach(&home, Limits::default()))
-        .and_then(|client| client.send(&ClientId::random(), Command::EngineStatus));
-    match outcome {
-        Ok(result) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&result).expect("serializable")
-            );
-            0
-        }
-        Err(error) if error.code.as_str() == "contract.engine_unavailable" => {
-            println!("The Fetchpath engine is not running.");
-            1
-        }
-        Err(error) => {
-            eprintln!("fetchpath: {}", error.message);
-            1
-        }
-    }
 }
 
 fn stop() -> i32 {

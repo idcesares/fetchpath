@@ -1,15 +1,22 @@
 //! `fetchpath download`: the one command most people will use.
 //!
-//! Output is for a person by default: progress on stderr while a terminal is
-//! attached, then one plain result line. `--json` prints the machine-readable
-//! record on stdout instead and suppresses progress. Exit codes are stable and
-//! documented in `docs/user/CLI.md`.
+//! It adds the download to the engine's shared queue and waits for it, so a
+//! scripted download appears in the queue and history like any other
+//! (FP-058). Output is for a person by default: progress on stderr while a
+//! terminal is attached, then one plain result line. `--json` prints the
+//! machine-readable record on stdout instead and suppresses progress. Exit
+//! codes are stable and documented in `docs/user/CLI.md`.
 
-use fetchpath_core::{FileJob, FileJobSnapshot, FileJobState};
+use crate::client::{self, Engine};
+use crate::wait::{self, OnInterrupt};
+use fetchpath_protocol::command::{
+    Command, ConflictPolicy, DestinationIntent, JobInput, JobRequest,
+};
+use fetchpath_protocol::message::CommandResult;
+use fetchpath_protocol::model::JobState;
+use fetchpath_protocol::{JobSnapshot, ProtocolError, SensitiveUrl};
 use serde_json::json;
-use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_CONFLICT: i32 = 3;
@@ -31,7 +38,10 @@ pub fn run(args: &[String]) -> i32 {
     let options = match parse(args) {
         Ok(options) => options,
         Err(message) => {
-            eprintln!("fetchpath: {message}\nRun `fetchpath --help` for usage.");
+            eprintln!(
+                "fetchpath: {message}
+Run `fetchpath --help` for usage."
+            );
             return EXIT_USAGE;
         }
     };
@@ -42,56 +52,49 @@ pub fn run(args: &[String]) -> i32 {
             return EXIT_USAGE;
         }
     };
+    if let Some(checksum) = &options.sha256
+        && !is_sha256(checksum)
+    {
+        eprintln!("fetchpath: --sha256 needs a SHA-256 checksum: 64 characters, 0-9 and a-f.");
+        return EXIT_USAGE;
+    }
+    let Ok(url) = SensitiveUrl::try_from(options.url.clone()) else {
+        return report_failure(
+            "input.invalid_url: the link is empty, too long or has control characters",
+            options.json,
+        );
+    };
 
-    let mut job = FileJob::create(options.url.clone(), destination);
-    if let Some(checksum) = &options.sha256 {
-        job = match job.with_expected_sha256(checksum) {
-            Ok(job) => job,
-            Err(_) => {
-                eprintln!(
-                    "fetchpath: --sha256 needs a SHA-256 checksum: 64 characters, 0-9 and a-f."
-                );
-                return EXIT_USAGE;
-            }
+    client::catch_interrupt();
+    let outcome = Engine::connect().and_then(|mut engine| {
+        let created = engine.send(Command::CreateJob {
+            request: JobRequest::File {
+                input: JobInput::Url { url },
+                destination: DestinationIntent {
+                    path: destination.display().to_string(),
+                    conflict: ConflictPolicy::Ask,
+                },
+                not_before: None,
+                expected_sha256: options.sha256.clone(),
+            },
+        })?;
+        let CommandResult::Job { job } = created else {
+            return Err(client::unexpected(&created));
         };
-    }
-    let cancel = job.clone();
-    // A second handler cannot be installed; failing to install one only means
-    // Ctrl-C ends the process without the orderly cancellation path.
-    let _ = ctrlc::set_handler(move || {
-        cancel.cancel();
+        let live = !options.json && !options.quiet;
+        wait::follow(&mut engine, job, live, OnInterrupt::Cancel).map(|waited| waited.job)
     });
-    if let Err(error) = job.start() {
-        return report_failure(error, options.json);
-    }
-
-    let show_progress = !options.json && !options.quiet && std::io::stderr().is_terminal();
-    let started = Instant::now();
-    if show_progress {
-        let mut last_line_len: usize = 0;
-        loop {
-            let snapshot = job.snapshot();
-            if is_terminal_state(snapshot.state) {
-                break;
-            }
-            let line = progress_line(&snapshot, started.elapsed());
-            let padding = last_line_len.saturating_sub(line.chars().count());
-            eprint!("\r{line}{}", " ".repeat(padding));
-            let _ = std::io::stderr().flush();
-            last_line_len = line.chars().count();
-            std::thread::sleep(Duration::from_millis(200));
-        }
-        eprint!("\r{}\r", " ".repeat(last_line_len));
-    }
-    job.join();
-    let done = job.snapshot();
+    let done = match outcome {
+        Ok(done) => done,
+        Err(error) => return report_error(&error, options.json),
+    };
 
     match done.state {
-        FileJobState::Completed => {
+        JobState::Completed => {
             report_success(&done, options.sha256.is_some(), options.json, options.quiet);
             0
         }
-        FileJobState::Cancelled => {
+        JobState::Cancelled => {
             if options.json {
                 println!(
                     "{}",
@@ -102,13 +105,29 @@ pub fn run(args: &[String]) -> i32 {
             }
             EXIT_CANCELLED
         }
-        _ => report_failure(
-            &done
-                .error
-                .unwrap_or_else(|| format!("job ended as {:?}", done.state)),
-            options.json,
-        ),
+        _ => match &done.error {
+            Some(error) => report_error(error, options.json),
+            None => report_failure(
+                &format!("internal.unknown: the download ended as {:?}", done.state),
+                options.json,
+            ),
+        },
     }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// A protocol error through the same wording and exit codes as before.
+fn report_error(error: &ProtocolError, as_json: bool) -> i32 {
+    let code = error.code.as_str();
+    let detail = error
+        .message
+        .strip_prefix(code)
+        .map(|rest| rest.trim_start_matches(':').trim_start())
+        .unwrap_or(&error.message);
+    report_failure(&format!("{code}: {detail}"), as_json)
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -162,9 +181,16 @@ fn resolve_destination(url: &str, destination: Option<&str>) -> Result<PathBuf, 
         Some(value) if value.ends_with(['/', '\\']) || Path::new(value).is_dir() => {
             PathBuf::from(value)
         }
-        Some(value) => return Ok(PathBuf::from(value)),
+        Some(value) => return absolute(Path::new(value)),
     };
-    Ok(folder.join(file_name_from_url(url)))
+    absolute(&folder.join(file_name_from_url(url)))
+}
+
+/// The engine runs in its own folder, so a relative path is made full here,
+/// against the folder the command was typed in.
+pub fn absolute(path: &Path) -> Result<PathBuf, String> {
+    std::path::absolute(path)
+        .map_err(|error| format!("{} is not a usable path: {error}", path.display()))
 }
 
 fn downloads_dir() -> Option<PathBuf> {
@@ -190,8 +216,13 @@ pub fn file_name_from_url(url: &str) -> String {
         .rsplit('/')
         .next()
         .unwrap_or("");
-    let decoded = percent_decode(segment);
-    let cleaned: String = decoded
+    safe_file_name(&percent_decode(segment)).unwrap_or_else(|| "download".into())
+}
+
+/// `text` made into a name Windows can create, or `None` when nothing
+/// usable is left.
+pub fn safe_file_name(text: &str) -> Option<String> {
+    let cleaned: String = text
         .chars()
         .map(|c| {
             if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
@@ -208,9 +239,9 @@ pub fn file_name_from_url(url: &str) -> String {
             && (stem.starts_with("COM") || stem.starts_with("LPT"))
             && stem.as_bytes()[3].is_ascii_digit());
     if cleaned.is_empty() || reserved {
-        return "download".into();
+        return None;
     }
-    cleaned.chars().take(200).collect()
+    Some(cleaned.chars().take(200).collect())
 }
 
 fn percent_decode(value: &str) -> String {
@@ -235,49 +266,10 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn is_terminal_state(state: FileJobState) -> bool {
-    matches!(
-        state,
-        FileJobState::Completed | FileJobState::Cancelled | FileJobState::Failed
-    )
-}
-
-fn progress_line(snapshot: &FileJobSnapshot, elapsed: Duration) -> String {
-    let received = snapshot.bytes_received;
-    let seconds = elapsed.as_secs_f64();
-    let rate = if seconds > 0.5 {
-        Some(received as f64 / seconds)
-    } else {
-        None
-    };
-    let rate_text = rate.map_or(String::new(), |r| format!("  {}/s", bytes(r as u64)));
-    match snapshot.total_bytes {
-        // Percent and remaining time only from a length the source stated.
-        Some(total) if total > 0 => {
-            let percent = (received as f64 / total as f64 * 100.0).min(100.0);
-            let eta = rate.filter(|r| *r > 0.0).map_or(String::new(), |r| {
-                format!(
-                    "  {} left",
-                    duration(((total - received.min(total)) as f64 / r) as u64)
-                )
-            });
-            format!(
-                "{percent:5.1}%  {} of {}{rate_text}{eta}",
-                bytes(received),
-                bytes(total)
-            )
-        }
-        _ => format!("{} received{rate_text}", bytes(received)),
-    }
-}
-
-fn report_success(done: &FileJobSnapshot, checked: bool, as_json: bool, quiet: bool) {
-    let destination = done
-        .destination
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_default();
+fn report_success(done: &JobSnapshot, checked: bool, as_json: bool, quiet: bool) {
+    let destination = done.destination.clone().unwrap_or_default();
     let sha256 = done.observed_sha256.clone().unwrap_or_default();
+    let received = done.progress.bytes_received;
     if as_json {
         println!(
             "{}",
@@ -285,13 +277,12 @@ fn report_success(done: &FileJobSnapshot, checked: bool, as_json: bool, quiet: b
                 "result": "downloaded_observed",
                 "job_id": done.job_id,
                 "destination": destination,
-                "bytes": done.bytes_received,
+                "bytes": received,
                 "observed_sha256": sha256,
                 "checksum_matched": checked,
-                "staging_cleanup_pending": done
-                    .staging_cleanup_pending
-                    .as_ref()
-                    .map(|path| path.display().to_string()),
+                // The engine removes staging bytes itself and reports only
+                // that it has not finished; the old path is not known here.
+                "staging_cleanup_pending": done.cleanup_pending.then_some("pending"),
             })
         );
         return;
@@ -300,7 +291,7 @@ fn report_success(done: &FileJobSnapshot, checked: bool, as_json: bool, quiet: b
     if quiet {
         return;
     }
-    eprintln!("Saved {} to {destination}", bytes(done.bytes_received));
+    eprintln!("Saved {} to {destination}", client::bytes(received));
     if checked {
         eprintln!("SHA-256 {sha256} matches the checksum you entered.");
     } else {
@@ -322,6 +313,11 @@ fn report_failure(error: &str, as_json: bool) -> i32 {
         "storage" => (
             EXIT_STORAGE,
             "Check the folder exists and you can write to it.",
+        ),
+        // The engine could not be reached or refused the request itself.
+        "contract" => (
+            client::EXIT_ENGINE,
+            "Check that Fetchpath is installed correctly; `fetchpath engine status` shows the engine.",
         ),
         "integrity" | "verification" => (
             EXIT_CHECKSUM,
@@ -357,34 +353,6 @@ fn refused_by_server(detail: &str) -> bool {
         .and_then(|rest| rest.get(..3))
         .and_then(|code| code.parse::<u16>().ok())
         .is_some_and(|code| (400..500).contains(&code) && code != 408 && code != 429)
-}
-
-fn bytes(value: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut size = value as f64;
-    let mut unit = 0;
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{value} B")
-    } else {
-        format!("{size:.1} {}", UNITS[unit])
-    }
-}
-
-fn duration(seconds: u64) -> String {
-    if seconds >= 3600 {
-        format!(
-            "{}:{:02}:{:02}",
-            seconds / 3600,
-            seconds / 60 % 60,
-            seconds % 60
-        )
-    } else {
-        format!("{}:{:02}", seconds / 60, seconds % 60)
-    }
 }
 
 #[cfg(test)]

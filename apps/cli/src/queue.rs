@@ -1,0 +1,982 @@
+//! The queue commands, each a thin call to the engine (FP-058).
+//!
+//! `--json` prints protocol types exactly as the engine sends them: one
+//! `CommandResult` per line (one per job for commands that take several),
+//! events and progress as `ServerMessage`s, and a failure as `{"error": …}`.
+
+use crate::client::{self, EXIT_ENGINE, Engine};
+use crate::download::{self, EXIT_CANCELLED, EXIT_USAGE};
+use crate::wait::{self, OnInterrupt};
+use crate::when;
+use fetchpath_protocol::command::{
+    Command, ConflictPolicy, DestinationIntent, JobFilter, JobInput, JobRequest,
+};
+use fetchpath_protocol::message::{CommandResult, ControlOutcome, EventPayload, ServerMessage};
+use fetchpath_protocol::model::{EngineSettings, MediaInspection, MediaVariantKind};
+use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, StreamItem, Timestamp};
+use std::collections::HashMap;
+use std::io::{BufRead, IsTerminal};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// Flags and positional words, parsed the same way for every command.
+struct Args {
+    words: Vec<String>,
+    json: bool,
+    quiet: bool,
+    all: bool,
+    active: bool,
+    failed: bool,
+    wait: bool,
+    to: Option<String>,
+    sha256: Option<String>,
+    quality: Option<String>,
+    at: Option<String>,
+    limit: Option<u32>,
+}
+
+/// Which flags a command accepts; anything else is refused.
+const VALUE_FLAGS: &[&str] = &["--to", "--sha256", "--quality", "--at", "--limit"];
+
+fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
+    let mut parsed = Args {
+        words: Vec::new(),
+        json: false,
+        quiet: false,
+        all: false,
+        active: false,
+        failed: false,
+        wait: false,
+        to: None,
+        sha256: None,
+        quality: None,
+        at: None,
+        limit: None,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_owned())),
+            _ => (arg.as_str(), None),
+        };
+        let flag = if flag == "-q" { "--quiet" } else { flag };
+        if !flag.starts_with('-') || flag == "-" {
+            parsed.words.push(arg.clone());
+            continue;
+        }
+        if !allowed.contains(&flag) {
+            return Err(format!("unknown option {flag}"));
+        }
+        if VALUE_FLAGS.contains(&flag) {
+            let value = match inline {
+                Some(value) => value,
+                None => iter
+                    .next()
+                    .ok_or_else(|| format!("{flag} needs a value after it"))?
+                    .clone(),
+            };
+            match flag {
+                "--to" => parsed.to = Some(value),
+                "--sha256" => parsed.sha256 = Some(value),
+                "--quality" => parsed.quality = Some(value),
+                "--at" => parsed.at = Some(value),
+                _ => {
+                    parsed.limit = Some(
+                        value
+                            .parse()
+                            .map_err(|_| "--limit needs a whole number".to_owned())?,
+                    )
+                }
+            }
+            continue;
+        }
+        match flag {
+            "--json" => parsed.json = true,
+            "--quiet" => parsed.quiet = true,
+            "--all" => parsed.all = true,
+            "--active" => parsed.active = true,
+            "--failed" => parsed.failed = true,
+            "--wait" => parsed.wait = true,
+            _ => unreachable!("every allowed flag is handled"),
+        }
+    }
+    Ok(parsed)
+}
+
+fn usage(message: &str) -> i32 {
+    eprintln!("fetchpath: {message}\nRun `fetchpath --help` for usage.");
+    EXIT_USAGE
+}
+
+/// Parses, connects and runs `body`, turning an error into its exit code.
+fn with_engine(
+    args: &[String],
+    allowed: &[&str],
+    body: impl FnOnce(&mut Engine, &Args) -> Result<i32, ProtocolError>,
+) -> i32 {
+    let parsed = match parse(args, allowed) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(&message),
+    };
+    match Engine::connect().and_then(|mut engine| body(&mut engine, &parsed)) {
+        Ok(code) => code,
+        Err(error) => client::fail(&error, parsed.json),
+    }
+}
+
+// ---------------------------------------------------------------- add
+
+pub fn add(args: &[String]) -> i32 {
+    let allowed = [
+        "--to",
+        "--sha256",
+        "--quality",
+        "--at",
+        "--wait",
+        "--json",
+        "--quiet",
+    ];
+    let parsed = match parse(args, &allowed) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(&message),
+    };
+    if parsed.words.is_empty() {
+        return usage("add needs at least one link");
+    }
+    let links: Vec<(String, Option<String>)> = parsed
+        .words
+        .iter()
+        .map(|link| (link.clone(), None))
+        .collect();
+    add_links(&parsed, &links)
+}
+
+/// `fetchpath batch FILE|-`: one link per line, optionally followed by a
+/// destination; blank lines and lines starting with `#` are skipped.
+pub fn batch(args: &[String]) -> i32 {
+    let allowed = ["--to", "--at", "--wait", "--json", "--quiet"];
+    let parsed = match parse(args, &allowed) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(&message),
+    };
+    let [source] = parsed.words.as_slice() else {
+        return usage("batch needs one file of links, or - to read them from standard input");
+    };
+    let text = if source == "-" {
+        let mut lines = Vec::new();
+        for line in std::io::stdin().lock().lines() {
+            match line {
+                Ok(line) => lines.push(line),
+                Err(error) => return usage(&format!("could not read standard input: {error}")),
+            }
+        }
+        lines.join("\n")
+    } else {
+        match std::fs::read_to_string(source) {
+            Ok(text) => text,
+            Err(error) => return usage(&format!("could not read {source}: {error}")),
+        }
+    };
+    let links: Vec<(String, Option<String>)> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| match line.split_once(char::is_whitespace) {
+            Some((link, destination)) => (link.to_owned(), Some(destination.trim().to_owned())),
+            None => (line.to_owned(), None),
+        })
+        .collect();
+    if links.is_empty() {
+        return usage("the batch has no links");
+    }
+    add_links(&parsed, &links)
+}
+
+fn add_links(parsed: &Args, links: &[(String, Option<String>)]) -> i32 {
+    if parsed.sha256.is_some() && links.len() > 1 {
+        return usage("a checksum describes one file; add links with --sha256 one at a time");
+    }
+    let not_before = match parsed
+        .at
+        .as_deref()
+        .map(|at| when::parse(at, Timestamp::now()))
+    {
+        None => None,
+        Some(Ok(at)) => Some(at),
+        Some(Err(message)) => return usage(&message),
+    };
+    if parsed.wait {
+        client::catch_interrupt();
+    }
+    let mut engine = match Engine::connect() {
+        Ok(engine) => engine,
+        Err(error) => return client::fail(&error, parsed.json),
+    };
+    let default_folder = match default_folder(&engine) {
+        Ok(folder) => folder,
+        Err(error) => return client::fail(&error, parsed.json),
+    };
+    let mut worst = 0;
+    let mut created = Vec::new();
+    for (link, own_destination) in links {
+        let target = own_destination.as_deref().or(parsed.to.as_deref());
+        match add_one(
+            &engine,
+            parsed,
+            link,
+            target,
+            default_folder.as_deref(),
+            not_before,
+        ) {
+            Ok(job) => {
+                if parsed.json {
+                    client::print_json(&CommandResult::Job { job: job.clone() });
+                } else if parsed.quiet {
+                    println!("{}", job.job_id);
+                } else {
+                    let when = job
+                        .not_before
+                        .map(|at| format!(", starting {}", when::local(at)))
+                        .unwrap_or_default();
+                    println!(
+                        "Added {}  {}{when}",
+                        client::short_id(&job),
+                        job.destination.as_deref().unwrap_or(&job.source_display)
+                    );
+                }
+                created.push(job);
+            }
+            Err(error) => {
+                if parsed.json {
+                    client::print_json(&serde_json::json!({ "error": error }));
+                } else {
+                    eprintln!("fetchpath: {link}: {}", error.message);
+                }
+                worst = first_failure(worst, client::exit_code(&error));
+            }
+        }
+    }
+    if !parsed.wait {
+        return worst;
+    }
+    let live = created.len() == 1 && !parsed.json && !parsed.quiet;
+    for job in created {
+        match wait::follow(&mut engine, job, live, OnInterrupt::Leave) {
+            Ok(waited) if waited.left => return EXIT_CANCELLED,
+            Ok(waited) => {
+                report_settled(&waited.job, parsed.json);
+                worst = first_failure(worst, client::job_exit_code(&waited.job));
+            }
+            Err(error) => return client::fail(&error, parsed.json),
+        }
+    }
+    worst
+}
+
+fn first_failure(current: i32, next: i32) -> i32 {
+    if current == 0 { next } else { current }
+}
+
+fn report_settled(job: &JobSnapshot, json: bool) {
+    if json {
+        client::print_json(&CommandResult::Job { job: job.clone() });
+        return;
+    }
+    let name = client::name(job);
+    match (job.state, &job.error) {
+        (fetchpath_protocol::model::JobState::Completed, _) => {
+            println!("{}", job.destination.as_deref().unwrap_or(&name))
+        }
+        (_, Some(error)) => eprintln!("fetchpath: {name}: {}", error.message),
+        (state, None) => eprintln!("fetchpath: {name} is {}", client::state_name(state)),
+    }
+}
+
+/// Where a job goes without `--to`: the engine's default folder when one is
+/// set, otherwise Downloads.
+fn default_folder(engine: &Engine) -> Result<Option<PathBuf>, ProtocolError> {
+    let view = match engine.send(Command::GetSettings)? {
+        CommandResult::Settings { view } => view,
+        other => return Err(client::unexpected(&other)),
+    };
+    Ok(view
+        .settings
+        .default_destination_dir
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Downloads"))
+        }))
+}
+
+fn add_one(
+    engine: &Engine,
+    parsed: &Args,
+    link: &str,
+    target: Option<&str>,
+    default_folder: Option<&Path>,
+    not_before: Option<Timestamp>,
+) -> Result<JobSnapshot, ProtocolError> {
+    let url = SensitiveUrl::try_from(link.to_owned())
+        .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
+    let (request, suggested) = match &parsed.quality {
+        None => (None, download::file_name_from_url(link)),
+        Some(quality) => {
+            let inspection = match engine.send(Command::InspectMedia { url: url.clone() })? {
+                CommandResult::MediaInspection { inspection } => inspection,
+                other => return Err(client::unexpected(&other)),
+            };
+            let variant = pick_variant(&inspection, quality)
+                .map_err(|message| client::input_error(&message))?;
+            let name = format!(
+                "{}.{}",
+                safe_title(&inspection.title, link),
+                variant.extension
+            );
+            (Some((variant.id.clone(), variant.label.clone())), name)
+        }
+    };
+    let destination = destination_path(target, default_folder, &suggested)
+        .map_err(|message| client::input_error(&message))?;
+    let destination = DestinationIntent {
+        path: destination.display().to_string(),
+        conflict: ConflictPolicy::Ask,
+    };
+    let input = JobInput::Url { url };
+    let request = match request {
+        None => JobRequest::File {
+            input,
+            destination,
+            not_before,
+            expected_sha256: parsed.sha256.clone(),
+        },
+        Some((variant_id, quality_label)) => {
+            if parsed.sha256.is_some() {
+                return Err(client::input_error(
+                    "A checksum cannot be checked for a video or audio download.",
+                ));
+            }
+            JobRequest::Media {
+                input,
+                destination,
+                not_before,
+                variant_id,
+                quality_label,
+            }
+        }
+    };
+    match engine.send(Command::CreateJob { request })? {
+        CommandResult::Job { job } => Ok(job),
+        other => Err(client::unexpected(&other)),
+    }
+}
+
+/// A folder (it exists, or ends in a slash) gets the suggested name; any
+/// other target is the file itself.
+fn destination_path(
+    target: Option<&str>,
+    default_folder: Option<&Path>,
+    suggested: &str,
+) -> Result<PathBuf, String> {
+    let folder = match target {
+        None => default_folder
+            .map(Path::to_path_buf)
+            .ok_or("could not find your Downloads folder; give one with --to")?,
+        Some(value) if value.ends_with(['/', '\\']) || Path::new(value).is_dir() => {
+            PathBuf::from(value)
+        }
+        Some(value) => return download::absolute(Path::new(value)),
+    };
+    download::absolute(&folder.join(suggested))
+}
+
+/// `best` is the tallest video, `audio` the first audio-only format;
+/// anything else must equal a format's label or id, ignoring case.
+fn pick_variant<'a>(
+    inspection: &'a MediaInspection,
+    quality: &str,
+) -> Result<&'a fetchpath_protocol::model::MediaVariant, String> {
+    let variants = &inspection.variants;
+    let found = match quality.to_ascii_lowercase().as_str() {
+        "best" => variants
+            .iter()
+            .filter(|variant| variant.kind == MediaVariantKind::Video)
+            .max_by_key(|variant| (variant.height.unwrap_or(0), variant.fps.unwrap_or(0))),
+        "audio" => variants
+            .iter()
+            .find(|variant| variant.kind == MediaVariantKind::Audio),
+        wanted => variants.iter().find(|variant| {
+            variant.label.to_ascii_lowercase() == wanted
+                || variant.id.to_ascii_lowercase() == wanted
+        }),
+    };
+    found.ok_or_else(|| {
+        let labels: Vec<&str> = variants
+            .iter()
+            .map(|variant| variant.label.as_str())
+            .collect();
+        format!(
+            "This page has no {quality:?} format. Choose best, audio, or one of: {}.",
+            labels.join(", ")
+        )
+    })
+}
+
+/// The page title, which is untrusted text, reduced to a safe file name.
+fn safe_title(title: &str, link: &str) -> String {
+    match download::safe_file_name(title) {
+        Some(name) => name,
+        None => download::file_name_from_url(link),
+    }
+}
+
+// ---------------------------------------------------------------- ls, history, show
+
+pub fn ls(args: &[String]) -> i32 {
+    with_engine(
+        args,
+        &["--all", "--active", "--failed", "--json"],
+        |engine, parsed| {
+            let jobs = engine.jobs(JobFilter::All)?;
+            let shown: Vec<&JobSnapshot> = jobs
+                .iter()
+                .filter(|job| {
+                    if parsed.failed {
+                        job.state == fetchpath_protocol::model::JobState::Failed
+                    } else if parsed.active {
+                        !job.state.is_terminal()
+                            && job.state != fetchpath_protocol::model::JobState::Failed
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            if parsed.json {
+                client::print_json(&CommandResult::Jobs {
+                    jobs: shown.into_iter().cloned().collect(),
+                });
+                return Ok(0);
+            }
+            if shown.is_empty() {
+                println!("No downloads.");
+                return Ok(0);
+            }
+            print_table(&jobs, &shown);
+            Ok(0)
+        },
+    )
+}
+
+pub fn history(args: &[String]) -> i32 {
+    with_engine(args, &["--limit", "--json"], |engine, parsed| {
+        let query = (!parsed.words.is_empty()).then(|| parsed.words.join(" "));
+        let jobs = match engine.send(Command::History {
+            query,
+            limit: parsed.limit,
+        })? {
+            CommandResult::Jobs { jobs } => jobs,
+            other => return Err(client::unexpected(&other)),
+        };
+        if parsed.json {
+            client::print_json(&CommandResult::Jobs { jobs });
+            return Ok(0);
+        }
+        if jobs.is_empty() {
+            println!("No finished downloads match.");
+            return Ok(0);
+        }
+        let all = engine.jobs(JobFilter::All)?;
+        print_table(&all, &jobs.iter().collect::<Vec<_>>());
+        Ok(0)
+    })
+}
+
+fn print_table(all: &[JobSnapshot], shown: &[&JobSnapshot]) {
+    println!(
+        "{:>4}  {:<8}  {:<14}  {:<22}  NAME",
+        "#", "ID", "STATE", "PROGRESS"
+    );
+    for job in shown {
+        let index = client::index_of(all, job).map_or(String::new(), |index| index.to_string());
+        let mut amount = client::amount(&job.progress);
+        if job.state == fetchpath_protocol::model::JobState::Running
+            && let Some(rate) = job.progress.rate_bytes_per_second
+        {
+            amount = format!("{amount}  {}/s", client::bytes(rate));
+        }
+        println!(
+            "{index:>4}  {:<8}  {:<14}  {amount:<22}  {}",
+            client::short_id(job),
+            client::state_label(job),
+            client::name(job)
+        );
+    }
+}
+
+pub fn show(args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        if parsed.words.is_empty() {
+            return Ok(usage(
+                "show needs a download: its number in `fetchpath ls`, or the start of its id",
+            ));
+        }
+        let jobs = engine.resolve(&parsed.words)?;
+        for job in jobs {
+            if parsed.json {
+                client::print_json(&CommandResult::Job { job });
+                continue;
+            }
+            print_job(&job);
+        }
+        Ok(0)
+    })
+}
+
+fn print_job(job: &JobSnapshot) {
+    let line = |key: &str, value: &str| println!("{key:<12} {value}");
+    line("Id", job.job_id.as_str());
+    line("State", client::state_label(job));
+    line("Link", &job.source_display);
+    if let Some(destination) = &job.destination {
+        line("Saved as", destination);
+    }
+    let amount = client::amount(&job.progress);
+    if !amount.is_empty() {
+        line("Progress", &amount);
+    }
+    if let Some(label) = &job.quality_label {
+        line("Quality", label);
+    }
+    line("Added", &when::local(job.created_at));
+    if let Some(at) = job.not_before {
+        line("Starts", &when::local(at));
+    }
+    if let Some(at) = job.finished_at {
+        line("Finished", &when::local(at));
+    }
+    if let Some(expected) = &job.expected_sha256 {
+        line("Expected", &format!("SHA-256 {expected}"));
+    }
+    if let Some(observed) = &job.observed_sha256 {
+        line(
+            "Received",
+            &format!("SHA-256 {observed} (computed on this computer)"),
+        );
+    }
+    if let Some(error) = &job.error {
+        line("Problem", &format!("{} ({})", error.message, error.code));
+    }
+    if let Some(at) = job.retry_at {
+        line(
+            "Retrying",
+            &format!("{} (attempt {})", when::local(at), job.attempt + 1),
+        );
+    }
+    println!();
+}
+
+// ---------------------------------------------------------------- controls
+
+#[derive(Clone, Copy)]
+pub enum Control {
+    Pause,
+    Resume,
+    Cancel,
+    Retry,
+    Remove,
+}
+
+pub fn control(action: Control, args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        if parsed.words.is_empty() {
+            return Ok(usage(
+                "name at least one download: its number in `fetchpath ls`, or the start of its id",
+            ));
+        }
+        let jobs = engine.resolve(&parsed.words)?;
+        let mut worst = 0;
+        for job in jobs {
+            let job_id = job.job_id.clone();
+            let command = match action {
+                Control::Pause => Command::Pause { job_id },
+                Control::Resume => Command::Resume { job_id },
+                Control::Cancel => Command::Cancel {
+                    job_id,
+                    retain_partial: false,
+                },
+                Control::Retry => Command::Retry { job_id },
+                Control::Remove => Command::RemoveJob { job_id },
+            };
+            match engine.send(command) {
+                Ok(result) => {
+                    if parsed.json {
+                        client::print_json(&result);
+                    } else {
+                        println!("{}", describe(action, &job, &result));
+                    }
+                }
+                Err(error) => {
+                    if parsed.json {
+                        client::print_json(&serde_json::json!({ "error": error }));
+                    } else {
+                        eprintln!(
+                            "fetchpath: {} {}: {}",
+                            client::short_id(&job),
+                            client::name(&job),
+                            error.message
+                        );
+                    }
+                    worst = first_failure(worst, client::exit_code(&error));
+                }
+            }
+        }
+        Ok(worst)
+    })
+}
+
+fn describe(action: Control, job: &JobSnapshot, result: &CommandResult) -> String {
+    let who = format!("{} {}", client::short_id(job), client::name(job));
+    let outcome = match result {
+        CommandResult::Control { outcome, .. } => Some(*outcome),
+        _ => None,
+    };
+    match (action, outcome) {
+        (_, Some(ControlOutcome::AlreadyTerminal)) => format!("{who} has already ended."),
+        (_, Some(ControlOutcome::NoOp)) => format!("{who}: nothing to do."),
+        (_, Some(ControlOutcome::TooLate)) => format!("{who} finished before it could pause."),
+        (_, Some(ControlOutcome::TooLateToCancel)) => {
+            format!("{who} was already being saved and was not cancelled.")
+        }
+        (_, Some(ControlOutcome::CancelInProgress)) => format!("{who} is already cancelling."),
+        (Control::Pause, _) => format!("Pausing {who}."),
+        (Control::Resume, _) => format!("Resumed {who}."),
+        (Control::Cancel, _) => format!("Cancelling {who}."),
+        (Control::Retry, _) => format!("Retrying {who}."),
+        (Control::Remove, _) => format!("Removed {who} from the list."),
+    }
+}
+
+// ---------------------------------------------------------------- watch
+
+pub fn watch(args: &[String]) -> i32 {
+    client::catch_interrupt();
+    with_engine(args, &["--json"], |engine, parsed| {
+        match parsed.words.as_slice() {
+            [] => watch_queue(engine, parsed.json),
+            [reference] => {
+                let job = engine.resolve(std::slice::from_ref(reference))?.remove(0);
+                if parsed.json {
+                    return watch_job_json(engine, job);
+                }
+                let waited = wait::follow(engine, job, true, OnInterrupt::Leave)?;
+                if waited.left {
+                    return Ok(EXIT_CANCELLED);
+                }
+                report_settled(&waited.job, false);
+                Ok(client::job_exit_code(&waited.job))
+            }
+            _ => Ok(usage("watch follows the whole queue, or one download")),
+        }
+    })
+}
+
+fn watch_job_json(engine: &Engine, job: JobSnapshot) -> Result<i32, ProtocolError> {
+    let subscription = engine.subscribe(Command::SubscribeJob {
+        job_id: job.job_id.clone(),
+        after_seq: job.last_seq,
+    })?;
+    client::print_json(&subscription.start);
+    let mut events = subscription.events;
+    let mut current = job;
+    loop {
+        if client::interrupted() {
+            return Ok(EXIT_CANCELLED);
+        }
+        if client::settled(&current) {
+            return Ok(client::job_exit_code(&current));
+        }
+        match events.next_item(Duration::from_millis(500))? {
+            Some(StreamItem::Event(event)) => {
+                client::print_json(&ServerMessage::Event(event));
+                current = engine.job(&current.job_id)?;
+            }
+            Some(StreamItem::Progress(sample)) => {
+                client::print_json(&ServerMessage::Progress(sample));
+            }
+            None => current = engine.job(&current.job_id)?,
+        }
+    }
+}
+
+/// Follows every job from now until Ctrl+C: one line per durable event, or
+/// with `--json` every event and progress sample.
+fn watch_queue(engine: &Engine, json: bool) -> Result<i32, ProtocolError> {
+    let cursor = match engine.send(Command::EngineStatus)? {
+        CommandResult::EngineStatus { status } => status.queue_cursor,
+        other => return Err(client::unexpected(&other)),
+    };
+    let subscription = engine.subscribe(Command::SubscribeQueue {
+        after_cursor: cursor,
+    })?;
+    if json {
+        client::print_json(&subscription.start);
+    } else if std::io::stderr().is_terminal() {
+        eprintln!("Following the queue. Press Ctrl+C to stop.");
+    }
+    let mut names: HashMap<JobId, String> = engine
+        .jobs(JobFilter::All)?
+        .into_iter()
+        .map(|job| (job.job_id.clone(), client::name(&job)))
+        .collect();
+    let mut events = subscription.events;
+    while !client::interrupted() {
+        match events.next_item(Duration::from_millis(500))? {
+            None => {}
+            Some(StreamItem::Progress(sample)) => {
+                if json {
+                    client::print_json(&ServerMessage::Progress(sample));
+                }
+            }
+            Some(StreamItem::Event(event)) => {
+                if json {
+                    client::print_json(&ServerMessage::Event(event));
+                    continue;
+                }
+                if let EventPayload::JobCreated { job } = &event.payload {
+                    names.insert(job.job_id.clone(), client::name(job));
+                }
+                let name = names.get(&event.job_id).cloned().unwrap_or_default();
+                if let Some(text) = event_text(&event.payload) {
+                    println!(
+                        "{}  {}  {text}  {name}",
+                        when::local(event.occurred_at),
+                        &event.job_id.as_str()[..8]
+                    );
+                }
+            }
+        }
+    }
+    Ok(EXIT_CANCELLED)
+}
+
+fn event_text(payload: &EventPayload) -> Option<String> {
+    Some(match payload {
+        EventPayload::JobCreated { .. } => "added".into(),
+        EventPayload::StateChanged { state, .. } => client::state_name(*state).into(),
+        EventPayload::PolicyChanged {
+            not_before: Some(at),
+        } => format!("scheduled for {}", when::local(*at)),
+        EventPayload::PolicyChanged { not_before: None } => "start now".into(),
+        EventPayload::SourceChanged { .. } => "new link".into(),
+        EventPayload::ErrorRecorded { error } => format!("problem: {}", error.message),
+        EventPayload::PublicationCompleted { .. } => "saved".into(),
+        EventPayload::JobRemoved => "removed".into(),
+        EventPayload::Warning { message, .. } => format!("warning: {message}"),
+        _ => return None,
+    })
+}
+
+// ---------------------------------------------------------------- inspect
+
+pub fn inspect(args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        let [link] = parsed.words.as_slice() else {
+            return Ok(usage("inspect needs one link to a video or audio page"));
+        };
+        let url = SensitiveUrl::try_from(link.clone()).map_err(|message| {
+            client::input_error(&format!("That link cannot be used: {message}."))
+        })?;
+        let result = engine.send(Command::InspectMedia { url })?;
+        if parsed.json {
+            client::print_json(&result);
+            return Ok(0);
+        }
+        let CommandResult::MediaInspection { inspection } = result else {
+            return Err(client::unexpected(&result));
+        };
+        println!(
+            "{}",
+            inspection
+                .title
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect::<String>()
+        );
+        if let Some(seconds) = inspection.duration_seconds {
+            println!("Length {}", client::duration(seconds as u64));
+        }
+        for variant in &inspection.variants {
+            let kind = match variant.kind {
+                MediaVariantKind::Video => "video",
+                MediaVariantKind::Audio => "audio",
+                MediaVariantKind::Unknown => "other",
+            };
+            println!("  {:<24} {kind:<6} .{}", variant.label, variant.extension);
+        }
+        println!("Add one with: fetchpath add LINK --quality LABEL (or best, audio)");
+        Ok(0)
+    })
+}
+
+// ---------------------------------------------------------------- settings
+
+pub fn settings(args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        let view = match engine.send(Command::GetSettings)? {
+            CommandResult::Settings { view } => view,
+            other => return Err(client::unexpected(&other)),
+        };
+        let current = settings_map(&view.settings);
+        match parsed.words.as_slice() {
+            [] => {
+                if parsed.json {
+                    client::print_json(&CommandResult::Settings { view });
+                } else {
+                    for (key, value) in &current {
+                        println!("{} = {}", key.replace('_', "-"), plain(value));
+                    }
+                }
+                Ok(0)
+            }
+            [key] => {
+                let key = setting_key(key, &current)?;
+                if parsed.json {
+                    client::print_json(&serde_json::json!({ key.clone(): current[&key] }));
+                } else {
+                    println!("{}", plain(&current[&key]));
+                }
+                Ok(0)
+            }
+            [key, value] => {
+                let key = setting_key(key, &current)?;
+                let mut next = current.clone();
+                next.insert(key.clone(), setting_value(&key, &current[&key], value)?);
+                let settings: EngineSettings =
+                    serde_json::from_value(serde_json::Value::Object(next)).map_err(|error| {
+                        client::input_error(&format!("{value:?} does not suit {key}: {error}"))
+                    })?;
+                let result = engine.send(Command::UpdateSettings { settings })?;
+                let CommandResult::Settings { view } = &result else {
+                    return Err(client::unexpected(&result));
+                };
+                if parsed.json {
+                    client::print_json(&result);
+                } else {
+                    // The engine clamps values into range; show what it kept.
+                    let applied = settings_map(&view.settings);
+                    println!("{} = {}", key.replace('_', "-"), plain(&applied[&key]));
+                }
+                Ok(0)
+            }
+            _ => Ok(usage("settings takes at most a name and a value")),
+        }
+    })
+}
+
+fn settings_map(settings: &EngineSettings) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = match serde_json::to_value(settings).expect("settings serialize") {
+        serde_json::Value::Object(map) => map,
+        _ => unreachable!("settings are an object"),
+    };
+    // Absent means off for this one; show it like the others.
+    map.entry("start_engine_at_sign_in")
+        .or_insert(serde_json::Value::Bool(false));
+    map
+}
+
+fn setting_key(
+    key: &str,
+    current: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String, ProtocolError> {
+    let key = key.replace('-', "_").to_ascii_lowercase();
+    if current.contains_key(&key) {
+        Ok(key)
+    } else {
+        let names: Vec<String> = current.keys().map(|key| key.replace('_', "-")).collect();
+        Err(client::input_error(&format!(
+            "There is no setting {key}. Settings: {}.",
+            names.join(", ")
+        )))
+    }
+}
+
+/// A typed value from what the person wrote, shaped like the current one.
+fn setting_value(
+    key: &str,
+    current: &serde_json::Value,
+    text: &str,
+) -> Result<serde_json::Value, ProtocolError> {
+    use serde_json::Value;
+    let wrong = |kind: &str| client::input_error(&format!("{key} needs {kind}."));
+    Ok(match current {
+        Value::Bool(_) => match text.to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" => Value::Bool(true),
+            "false" | "off" | "no" | "0" => Value::Bool(false),
+            _ => return Err(wrong("on or off")),
+        },
+        Value::Number(_) => Value::Number(
+            text.parse::<u64>()
+                .map_err(|_| wrong("a whole number"))?
+                .into(),
+        ),
+        // Optional folders: "none" clears them.
+        _ if key.ends_with("_dir") => {
+            if text.is_empty() || text.eq_ignore_ascii_case("none") {
+                Value::Null
+            } else {
+                Value::String(
+                    download::absolute(Path::new(text))
+                        .map_err(|message| client::input_error(&message))?
+                        .display()
+                        .to_string(),
+                )
+            }
+        }
+        _ => Value::String(text.to_ascii_lowercase()),
+    })
+}
+
+fn plain(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "none".into(),
+        serde_json::Value::Bool(true) => "on".into(),
+        serde_json::Value::Bool(false) => "off".into(),
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// `fetchpath engine status` for a person, or its protocol result.
+pub fn engine_status(json: bool) -> i32 {
+    let outcome = Engine::attach().and_then(|engine| engine.send(Command::EngineStatus));
+    match outcome {
+        Ok(result) if json => {
+            client::print_json(&result);
+            0
+        }
+        Ok(CommandResult::EngineStatus { status }) => {
+            println!(
+                "The Fetchpath engine {} is running, started {}.",
+                status.engine_version,
+                when::local(status.started_at)
+            );
+            // Its client count includes listeners that have gone but not
+            // yet been noticed, so it is left to --json.
+            println!(
+                "{} active download{}.",
+                status.active_jobs,
+                if status.active_jobs == 1 { "" } else { "s" },
+            );
+            0
+        }
+        Ok(other) => client::fail(&client::unexpected(&other), false),
+        Err(error) if error.code.as_str() == "contract.engine_unavailable" => {
+            if json {
+                client::print_json(&serde_json::json!({ "error": error }));
+            } else {
+                println!("The Fetchpath engine is not running.");
+            }
+            EXIT_ENGINE
+        }
+        Err(error) => client::fail(&error, json),
+    }
+}

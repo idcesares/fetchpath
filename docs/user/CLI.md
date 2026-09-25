@@ -5,9 +5,17 @@ installing so it's found.
 
 ```powershell
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
+fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
+fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history
+fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop
 fetchpath --version
 fetchpath --help
 ```
+
+Every command works on one shared queue, kept by the Fetchpath engine, a
+background process that starts by itself when a command needs it and stops
+about a minute after the last download finishes and the last command ends.
+Closing a terminal does not stop downloads.
 
 ## Downloading
 
@@ -34,6 +42,12 @@ fetchpath download https://example.com/tools/archive.zip D:\Installers\tools.zip
 - **Result:** the saved path goes to standard output, so it can be used in
   scripts. The summary and SHA-256 go to standard error.
 - **Ctrl+C** cancels. Nothing is saved.
+- **Shared queue:** the download appears in `fetchpath ls` and the history
+  like any other, and can be paused or cancelled from another terminal.
+- **Automatic retries:** if the queue retries a failure by itself (the
+  `auto-retry` setting, on by default), `download` waits for those tries and
+  says so on standard error. `fetchpath settings auto-retry off` makes the
+  first failure the last.
 
 Links must start with `http://` or `https://`.
 
@@ -68,18 +82,80 @@ cancellation prints `{"result":"cancelled",…}`.
 | Code | Meaning |
 | --- | --- |
 | 0 | Saved |
-| 2 | Bad input: a missing or invalid link, destination or option |
+| 1 | The Fetchpath engine could not be started or reached |
+| 2 | Bad input: a missing or invalid link, destination, option or download reference |
 | 3 | A file already exists at the destination |
 | 4 | Network or server problem |
 | 5 | The file didn't match `--sha256`; nothing was saved |
 | 6 | Couldn't write to the destination |
-| 130 | Cancelled with Ctrl+C |
+| 130 | Cancelled, or Ctrl+C while waiting |
 
-## Not in this version
+The queue commands below use the same codes.
 
-The command line downloads one file at a time and doesn't share the desktop
-app's queue. Use the desktop app for queues, schedules, pause and resume,
-video and audio, and links from your browser.
+## The queue
+
+```powershell
+# Add without waiting; prints the new download's short id
+fetchpath add https://example.com/a.zip https://example.com/b.zip --to D:\Installers\
+
+# Start at a time: 18:30 (the next time the clock shows it), 2026-10-01 08:00,
+# +30m, +2h or +1d
+fetchpath add https://example.com/big.iso --at 23:00
+
+# Video or audio: see the formats, then pick one (or best, or audio)
+fetchpath inspect https://video.example/watch/123
+fetchpath add https://video.example/watch/123 --quality 720p
+
+# One link per line, optionally followed by a destination; # starts a comment
+fetchpath batch links.txt --to D:\Downloads\
+Get-Content links.txt | fetchpath batch -
+```
+
+`--to` works like `download`'s destination; without it, downloads go to the
+default folder from `fetchpath settings default-destination-dir`, or to
+Downloads. `--wait` stays until the downloads end and exits with their code.
+
+```powershell
+fetchpath ls                 # every download, newest first; --active, --failed
+fetchpath show 2             # one download in full
+fetchpath pause 1 3          # several at once
+fetchpath resume 3f1c        # the start of its id works too
+fetchpath cancel 1
+fetchpath retry 2
+fetchpath rm 4               # remove a finished or failed download from the list
+fetchpath watch              # follow the queue until Ctrl+C
+fetchpath watch 1            # follow one download to its end
+fetchpath history invoice    # finished and failed downloads matching a word
+```
+
+A download is named by its number in `fetchpath ls` (up to four digits) or by
+the start of its id, which must match only one.
+
+### Settings
+
+`fetchpath settings` lists every setting, `fetchpath settings NAME` shows one
+and `fetchpath settings NAME VALUE` changes it. Switches take `on` or `off`,
+folders take a path or `none`. The engine keeps values in range and prints the
+value it applied. The desktop app shows the same settings.
+
+### The engine
+
+`fetchpath engine status` says whether it is running; `fetchpath engine stop`
+stops it after saving every download's progress, and the next command starts
+it again and carries on.
+
+In this version the desktop app still keeps its own copy of the queue, so the
+engine cannot start while the desktop app is open; close the app first.
+
+### For scripts
+
+Every queue command takes `--json` and prints the engine's own records, one
+JSON object per line: `ls` and `history` print `{"type":"Jobs","jobs":[…]}`,
+`show` and `add` print `{"type":"Job","job":{…}}` per download, `pause` and
+`cancel` print `{"type":"Control","outcome":"accepted",…}`, and `watch` prints
+each event and progress sample as the engine sends it. A failure prints
+`{"error":{"code":"…","message":"…",…}}`. Decide from `code`, never from
+`message`.
 
 ## Paired devices (advanced)
 

@@ -1,6 +1,10 @@
+mod client;
 mod download;
 mod engine;
 mod lan;
+mod queue;
+mod wait;
+mod when;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -10,6 +14,18 @@ Usage:
   fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
   fetchpath --version
   fetchpath --help
+
+The download queue, kept by the Fetchpath engine:
+  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
+  fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
+  fetchpath ls [--active | --failed]          fetchpath show JOB...
+  fetchpath pause | resume | cancel | retry | rm JOB...
+  fetchpath watch [JOB]                       fetchpath inspect LINK
+  fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
+  fetchpath engine status | stop
+
+JOB is a download's number in `fetchpath ls`, or the start of its id.
+Every queue command takes --json to print the engine's own records.
 
 
 Paired devices (advanced; off until you run `fetchpath lan enable`):
@@ -30,8 +46,9 @@ Options:
   -q, --quiet    Print only the saved path.
 
 Exit codes:
-  0 saved   2 bad input   3 file already exists   4 network or server
-  5 checksum did not match   6 could not write   130 cancelled
+  0 saved   1 engine unavailable   2 bad input   3 file already exists
+  4 network or server   5 checksum did not match   6 could not write
+  130 cancelled or interrupted
 
 The full guide is docs\\CLI.md in the Fetchpath install folder.";
 
@@ -51,8 +68,19 @@ fn main() {
             0
         }
         Some("download") => download::run(&args[1..]),
-        // Not in the help yet: until the desktop is an engine client
-        // (FP-055), no build given to people offers both owners of the queue.
+        Some("add") => queue::add(&args[1..]),
+        Some("batch") => queue::batch(&args[1..]),
+        Some("ls" | "list") => queue::ls(&args[1..]),
+        Some("show") => queue::show(&args[1..]),
+        Some("pause") => queue::control(queue::Control::Pause, &args[1..]),
+        Some("resume") => queue::control(queue::Control::Resume, &args[1..]),
+        Some("cancel") => queue::control(queue::Control::Cancel, &args[1..]),
+        Some("retry") => queue::control(queue::Control::Retry, &args[1..]),
+        Some("rm" | "remove") => queue::control(queue::Control::Remove, &args[1..]),
+        Some("watch") => queue::watch(&args[1..]),
+        Some("inspect") => queue::inspect(&args[1..]),
+        Some("history") => queue::history(&args[1..]),
+        Some("settings") => queue::settings(&args[1..]),
         Some("engine") => engine::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
