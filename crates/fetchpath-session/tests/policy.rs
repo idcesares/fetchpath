@@ -1,0 +1,765 @@
+//! Principals and agent policy (contract D1): what an agent may not do, how
+//! a request outside its policy waits for the person, and how the person's
+//! decision ends the wait. Each test tries to get something past the policy.
+
+use fetchpath_protocol::command::{
+    Command, CommandEnvelope, ConflictPolicy, DestinationDecision, DestinationIntent, JobFilter,
+    JobInput, JobRequest,
+};
+use fetchpath_protocol::message::CommandResult;
+use fetchpath_protocol::model::{EngineSettings, JobState, Theme};
+use fetchpath_protocol::principal::{AgentName, AgentPolicy, ApprovalReason, Principal};
+use fetchpath_protocol::{
+    Action, ClientId, CredentialRef, EngineClient, JobId, JobSnapshot, ProtocolError, SensitiveUrl,
+    Timestamp,
+};
+use fetchpath_session::Session;
+use fetchpath_session::engine::{Engine, InProcessClient};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+
+struct Setup {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    granted: PathBuf,
+    outside: PathBuf,
+    queue: PathBuf,
+    engine: Arc<Engine>,
+    user: InProcessClient,
+    agent: InProcessClient,
+}
+
+fn agent_name() -> AgentName {
+    AgentName::try_from("helper").unwrap()
+}
+
+fn helper() -> Principal {
+    Principal::Agent(agent_name())
+}
+
+fn open(queue: &Path) -> Arc<Engine> {
+    Engine::new(Arc::new(
+        Session::load_with_browser(queue.to_path_buf(), 3, None).unwrap(),
+    ))
+}
+
+fn clients(engine: &Arc<Engine>) -> (InProcessClient, InProcessClient) {
+    (
+        InProcessClient::manual(Arc::clone(engine)),
+        InProcessClient::manual(Arc::clone(engine)).with_principal(helper()),
+    )
+}
+
+/// A queue, a folder granted to the agent `helper`, and one that is not.
+fn setup(policy: impl FnOnce(&Path) -> AgentPolicy) -> Setup {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let granted = root.join("granted");
+    let outside = root.join("granted-not");
+    std::fs::create_dir_all(&granted).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let queue = root.join("queue-v1.json");
+    let engine = open(&queue);
+    let (user, agent) = clients(&engine);
+    send(
+        &user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(policy(&granted)),
+        },
+    )
+    .unwrap();
+    Setup {
+        _dir: dir,
+        root,
+        granted,
+        outside,
+        queue,
+        engine,
+        user,
+        agent,
+    }
+}
+
+fn granting(folder: &Path) -> AgentPolicy {
+    AgentPolicy {
+        folders: vec![folder.display().to_string()],
+        ..AgentPolicy::default()
+    }
+}
+
+fn send(client: &InProcessClient, command: Command) -> Result<CommandResult, ProtocolError> {
+    client.send(&ClientId::random(), command)
+}
+
+fn url(text: &str) -> SensitiveUrl {
+    SensitiveUrl::try_from(text.to_owned()).unwrap()
+}
+
+fn file(link: &str, destination: &Path) -> Command {
+    Command::CreateJob {
+        request: JobRequest::File {
+            input: JobInput::Url { url: url(link) },
+            destination: DestinationIntent {
+                path: destination.display().to_string(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: None,
+            expected_sha256: None,
+        },
+    }
+}
+
+/// A job that will not start for an hour, so nothing touches the network.
+fn later(destination: &Path) -> Command {
+    let mut command = file("http://127.0.0.1:9/file.bin", destination);
+    if let Command::CreateJob {
+        request: JobRequest::File { not_before, .. },
+    } = &mut command
+    {
+        *not_before = Some(Timestamp::from_unix_ms(
+            Timestamp::now().unix_ms() + 3_600_000,
+        ));
+    }
+    command
+}
+
+fn job(result: CommandResult) -> JobSnapshot {
+    match result {
+        CommandResult::Job { job } | CommandResult::Control { job, .. } => job,
+        other => panic!("not a job: {other:?}"),
+    }
+}
+
+fn get(client: &InProcessClient, job_id: &JobId) -> JobSnapshot {
+    job(send(
+        client,
+        Command::GetJob {
+            job_id: job_id.clone(),
+        },
+    )
+    .unwrap())
+}
+
+fn list(client: &InProcessClient, filter: JobFilter) -> Vec<JobSnapshot> {
+    match send(client, Command::ListJobs { filter }).unwrap() {
+        CommandResult::Jobs { jobs } => jobs,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn code(result: Result<CommandResult, ProtocolError>) -> String {
+    result
+        .expect_err("expected a refusal")
+        .code
+        .as_str()
+        .to_owned()
+}
+
+fn reasons(job: &JobSnapshot) -> Vec<ApprovalReason> {
+    job.approval.clone().expect("awaiting approval").reasons
+}
+
+#[test]
+fn inside_its_grant_an_agent_job_queues_and_outside_it_waits_for_the_person() {
+    let s = setup(granting);
+    let inside = job(send(&s.agent, later(&s.granted.join("a.bin"))).unwrap());
+    assert_eq!(inside.state, JobState::Queued);
+    assert_eq!(inside.principal, helper());
+    assert_eq!(inside.approval, None);
+
+    let nested = job(send(&s.agent, later(&s.granted.join("deeper/still/b.bin"))).unwrap());
+    assert_eq!(
+        nested.state,
+        JobState::Queued,
+        "a missing subfolder is inside"
+    );
+
+    // A sibling whose name starts with the grant's is not inside it.
+    let outside = job(send(&s.agent, later(&s.outside.join("c.bin"))).unwrap());
+    assert_eq!(outside.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&outside), [ApprovalReason::OutsideGrantedFolders]);
+    let error = outside.error.expect("the agent can relay why");
+    assert_eq!(error.code.as_str(), "policy.awaiting_approval");
+    assert_eq!(error.action, Some(Action::AwaitApproval));
+
+    // The person's own jobs never wait, wherever they go.
+    let own = job(send(&s.user, later(&s.outside.join("d.bin"))).unwrap());
+    assert_eq!(own.state, JobState::Queued);
+    assert_eq!(own.principal, Principal::User);
+}
+
+#[test]
+fn an_agent_with_no_configured_access_asks_for_everything() {
+    let s = setup(granting);
+    let stranger = InProcessClient::manual(Arc::clone(&s.engine))
+        .with_principal(Principal::try_from("agent:stranger").unwrap());
+    let asked = job(send(&stranger, later(&s.granted.join("a.bin"))).unwrap());
+    assert_eq!(asked.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&asked), [ApprovalReason::OutsideGrantedFolders]);
+}
+
+#[test]
+fn traversal_and_links_cannot_carry_a_destination_out_of_a_grant() {
+    let s = setup(granting);
+    let traversal = PathBuf::from(format!("{}\\..\\granted-not\\a.bin", s.granted.display()));
+    assert_eq!(
+        code(send(&s.agent, later(&traversal))),
+        "input.invalid_request"
+    );
+
+    // A junction inside the grant that leads outside it.
+    let link = s.granted.join("escape");
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&s.outside)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let through = job(send(&s.agent, later(&link.join("a.bin"))).unwrap());
+    assert_eq!(through.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&through), [ApprovalReason::OutsideGrantedFolders]);
+
+    // A grant that is itself a junction counts where it leads.
+    let s2 = setup(|_| AgentPolicy::default());
+    let alias = s2.root.join("alias");
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&alias)
+        .arg(&s2.granted)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    send(
+        &s2.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&alias)),
+        },
+    )
+    .unwrap();
+    let real = job(send(&s2.agent, later(&s2.granted.join("a.bin"))).unwrap());
+    assert_eq!(real.state, JobState::Queued);
+}
+
+#[test]
+fn credentials_and_replacement_are_refused_outright_not_offered_for_approval() {
+    let s = setup(granting);
+    let target = s.granted.join("a.bin");
+    assert_eq!(
+        code(send(
+            &s.agent,
+            file("https://user:hunter2@example.test/a.bin", &target)
+        )),
+        "policy.credentials_not_allowed"
+    );
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::CreateJob {
+                request: JobRequest::File {
+                    input: JobInput::CredentialRef {
+                        credential_ref: CredentialRef::random(),
+                    },
+                    destination: DestinationIntent {
+                        path: target.display().to_string(),
+                        conflict: ConflictPolicy::Ask,
+                    },
+                    not_before: None,
+                    expected_sha256: None,
+                },
+            }
+        )),
+        "policy.credentials_not_allowed"
+    );
+    let mut replace = later(&target);
+    if let Command::CreateJob {
+        request: JobRequest::File { destination, .. },
+    } = &mut replace
+    {
+        destination.conflict = ConflictPolicy::ReplaceExisting;
+    }
+    assert_eq!(code(send(&s.agent, replace)), "policy.replace_not_allowed");
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::InspectMedia {
+                url: url("https://user:hunter2@video.example.test/watch"),
+            }
+        )),
+        "policy.credentials_not_allowed"
+    );
+    assert!(
+        list(&s.user, JobFilter::All).is_empty(),
+        "nothing was created"
+    );
+
+    let own = job(send(&s.agent, later(&target)).unwrap());
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::ResolveDestination {
+                job_id: own.job_id.clone(),
+                decision: DestinationDecision::ReplaceExisting,
+            }
+        )),
+        "policy.replace_not_allowed"
+    );
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::RefreshSource {
+                job_id: own.job_id,
+                source: JobInput::Url {
+                    url: url("https://token@example.test/a.bin"),
+                },
+            }
+        )),
+        "policy.credentials_not_allowed"
+    );
+}
+
+#[test]
+fn an_agent_sees_and_controls_only_the_jobs_it_created() {
+    let s = setup(granting);
+    let mine = job(send(&s.agent, later(&s.granted.join("mine.bin"))).unwrap());
+    let persons = job(send(&s.user, later(&s.outside.join("persons.bin"))).unwrap());
+    let other_agent = InProcessClient::manual(Arc::clone(&s.engine))
+        .with_principal(Principal::try_from("agent:other").unwrap());
+    let others = job(send(&other_agent, later(&s.granted.join("others.bin"))).unwrap());
+
+    let seen: Vec<JobId> = list(&s.agent, JobFilter::All)
+        .into_iter()
+        .map(|job| job.job_id)
+        .collect();
+    assert_eq!(seen, std::slice::from_ref(&mine.job_id));
+    assert_eq!(list(&s.user, JobFilter::All).len(), 3);
+
+    for hidden in [&persons.job_id, &others.job_id] {
+        let job_id = hidden.clone();
+        for command in [
+            Command::GetJob {
+                job_id: job_id.clone(),
+            },
+            Command::JobDetails {
+                job_id: job_id.clone(),
+            },
+            Command::Pause {
+                job_id: job_id.clone(),
+            },
+            Command::Cancel {
+                job_id: job_id.clone(),
+                retain_partial: false,
+            },
+            Command::RemoveJob {
+                job_id: job_id.clone(),
+            },
+            Command::Retry {
+                job_id: job_id.clone(),
+            },
+        ] {
+            assert_eq!(code(send(&s.agent, command)), "contract.unknown_job");
+        }
+        let subscribe = CommandEnvelope::new(
+            ClientId::random(),
+            Command::SubscribeJob {
+                job_id,
+                after_seq: 0,
+            },
+        );
+        assert_eq!(
+            s.agent.subscribe(&subscribe).unwrap_err().code.as_str(),
+            "contract.unknown_job"
+        );
+    }
+    // Revision checks come after ownership, so a stale revision on someone
+    // else's job reveals nothing either.
+    let probe = CommandEnvelope::new(
+        ClientId::random(),
+        Command::Pause {
+            job_id: persons.job_id.clone(),
+        },
+    )
+    .expecting_revision(999);
+    assert_eq!(
+        s.agent.execute(&probe).unwrap_err().code.as_str(),
+        "contract.unknown_job"
+    );
+    // The person's job is untouched.
+    assert_eq!(get(&s.user, &persons.job_id).state, JobState::Queued);
+
+    // Its own job it may control.
+    let paused = job(send(
+        &s.agent,
+        Command::Pause {
+            job_id: mine.job_id,
+        },
+    )
+    .unwrap());
+    assert_eq!(paused.state, JobState::Paused);
+}
+
+#[test]
+fn only_the_person_approves_denies_or_changes_access_and_settings() {
+    let s = setup(granting);
+    let waiting = job(send(&s.agent, later(&s.outside.join("a.bin"))).unwrap());
+    let queue_stream = CommandEnvelope::new(
+        ClientId::random(),
+        Command::SubscribeQueue { after_cursor: 0 },
+    );
+    assert_eq!(
+        s.agent.subscribe(&queue_stream).unwrap_err().code.as_str(),
+        "policy.not_permitted"
+    );
+    let settings = EngineSettings {
+        max_active_downloads: 8,
+        default_destination_dir: Some(s.outside.display().to_string()),
+        auto_retry: true,
+        auto_retry_max_attempts: 3,
+        auto_retry_base_delay_seconds: 10,
+        close_to_tray: true,
+        power_mode: true,
+        media_tools_dir: None,
+        confirm_remove_completed: false,
+        theme: Theme::Dark,
+        onboarding_completed: true,
+        start_engine_at_sign_in: Some(true),
+    };
+    for command in [
+        Command::ApproveJob {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::DenyJob {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&s.root)),
+        },
+        Command::GetAgentPolicies,
+        Command::UpdateSettings { settings },
+        Command::GetSettings,
+        Command::QueueStats,
+        Command::EngineShutdown,
+    ] {
+        let name = command.name();
+        assert_eq!(
+            code(send(&s.agent, command)),
+            "policy.not_permitted",
+            "{name}"
+        );
+    }
+    assert_eq!(
+        get(&s.agent, &waiting.job_id).state,
+        JobState::AwaitingApproval
+    );
+    // Nothing the agent can send starts a job that is waiting.
+    for command in [
+        Command::Start {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::Resume {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::Retry {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::ResolveDestination {
+            job_id: waiting.job_id.clone(),
+            decision: DestinationDecision::ChooseNewPath {
+                path: s.granted.join("moved.bin").display().to_string(),
+            },
+        },
+    ] {
+        let _ = send(&s.agent, command);
+        assert_eq!(
+            get(&s.agent, &waiting.job_id).state,
+            JobState::AwaitingApproval
+        );
+    }
+    let paused = send(
+        &s.agent,
+        Command::Pause {
+            job_id: waiting.job_id.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        job(paused).state,
+        JobState::AwaitingApproval,
+        "pause is a no-op"
+    );
+
+    // The browser host may add downloads and nothing else.
+    let browser = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(Principal::Browser);
+    let captured = job(send(&browser, later(&s.outside.join("captured.bin"))).unwrap());
+    assert_eq!(captured.principal, Principal::Browser);
+    assert_eq!(captured.state, JobState::Queued);
+    for command in [
+        Command::ListJobs {
+            filter: JobFilter::All,
+        },
+        Command::GetJob {
+            job_id: captured.job_id.clone(),
+        },
+        Command::Cancel {
+            job_id: captured.job_id,
+            retain_partial: false,
+        },
+        Command::EngineStatus,
+    ] {
+        assert_eq!(code(send(&browser, command)), "policy.not_permitted");
+    }
+}
+
+#[test]
+fn approval_queues_the_job_and_denial_ends_it_with_a_reason_the_agent_can_relay() {
+    let s = setup(granting);
+    let approve = job(send(&s.agent, later(&s.outside.join("a.bin"))).unwrap());
+    let deny = job(send(&s.agent, later(&s.outside.join("b.bin"))).unwrap());
+    assert_eq!(list(&s.user, JobFilter::AwaitingApproval).len(), 2);
+
+    let approved = job(send(
+        &s.user,
+        Command::ApproveJob {
+            job_id: approve.job_id.clone(),
+        },
+    )
+    .unwrap());
+    assert_eq!(approved.state, JobState::Queued);
+    assert_eq!(approved.approval, None);
+    assert_eq!(approved.error, None);
+
+    let denied = job(send(
+        &s.user,
+        Command::DenyJob {
+            job_id: deny.job_id.clone(),
+        },
+    )
+    .unwrap());
+    assert_eq!(denied.state, JobState::Cancelled);
+    assert_eq!(
+        denied.error.as_ref().map(|error| error.code.as_str()),
+        Some("policy.approval_denied")
+    );
+    assert_eq!(
+        get(&s.agent, &deny.job_id).error.unwrap().code.as_str(),
+        "policy.approval_denied"
+    );
+    // The agent cannot bring back what the person declined.
+    for command in [
+        Command::Retry {
+            job_id: deny.job_id.clone(),
+        },
+        Command::RefreshSource {
+            job_id: deny.job_id.clone(),
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/other.bin"),
+            },
+        },
+    ] {
+        assert!(send(&s.agent, command).is_err());
+        assert_eq!(get(&s.user, &deny.job_id).state, JobState::Cancelled);
+    }
+    // Deciding twice is refused; nothing is waiting any more.
+    assert_eq!(
+        code(send(
+            &s.user,
+            Command::ApproveJob {
+                job_id: deny.job_id
+            }
+        )),
+        "contract.invalid_transition"
+    );
+    assert!(list(&s.user, JobFilter::AwaitingApproval).is_empty());
+
+    // The agent may withdraw its own request.
+    let withdrawn = job(send(&s.agent, later(&s.outside.join("c.bin"))).unwrap());
+    let cancelled = job(send(
+        &s.agent,
+        Command::Cancel {
+            job_id: withdrawn.job_id,
+            retain_partial: false,
+        },
+    )
+    .unwrap());
+    assert_eq!(cancelled.state, JobState::Cancelled);
+}
+
+#[test]
+fn a_wait_for_approval_survives_an_engine_restart() {
+    let s = setup(granting);
+    let waiting = job(send(&s.agent, later(&s.outside.join("a.bin"))).unwrap());
+    let queue = s.queue.clone();
+    drop(s.user);
+    drop(s.agent);
+    drop(s.engine);
+
+    let engine = open(&queue);
+    let (user, agent) = clients(&engine);
+    engine.tick();
+    let restored = get(&agent, &waiting.job_id);
+    assert_eq!(restored.state, JobState::AwaitingApproval);
+    assert_eq!(restored.principal, helper());
+    assert_eq!(reasons(&restored), [ApprovalReason::OutsideGrantedFolders]);
+    // The grant survived too.
+    match send(&user, Command::GetAgentPolicies).unwrap() {
+        CommandResult::AgentPolicies { policies } => assert_eq!(policies.len(), 1),
+        other => panic!("{other:?}"),
+    }
+    let approved = job(send(
+        &user,
+        Command::ApproveJob {
+            job_id: waiting.job_id,
+        },
+    )
+    .unwrap());
+    assert_eq!(approved.state, JobState::Queued);
+}
+
+#[test]
+fn a_command_id_reused_by_another_principal_never_returns_the_first_result() {
+    let s = setup(granting);
+    let envelope = CommandEnvelope::new(ClientId::random(), later(&s.outside.join("a.bin")));
+    let first = s.user.execute(&envelope).unwrap();
+    assert_eq!(
+        s.agent.execute(&envelope).unwrap_err().code.as_str(),
+        "contract.idempotency_conflict"
+    );
+    // The person's own resend still gets its result.
+    assert_eq!(s.user.execute(&envelope).unwrap(), first);
+    assert!(list(&s.agent, JobFilter::All).is_empty());
+}
+
+#[test]
+fn an_agent_past_its_rate_waits_and_one_with_too_many_waiting_is_refused() {
+    let s = setup(|granted| AgentPolicy {
+        max_new_jobs_per_hour: 2,
+        ..granting(granted)
+    });
+    for name in ["a.bin", "b.bin"] {
+        let queued = job(send(&s.agent, later(&s.granted.join(name))).unwrap());
+        assert_eq!(queued.state, JobState::Queued);
+    }
+    let third = job(send(&s.agent, later(&s.granted.join("c.bin"))).unwrap());
+    assert_eq!(third.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&third), [ApprovalReason::RateLimit]);
+
+    for index in 1..20 {
+        let waiting = job(send(&s.agent, later(&s.granted.join(format!("{index}.bin")))).unwrap());
+        assert_eq!(waiting.state, JobState::AwaitingApproval);
+    }
+    assert_eq!(
+        code(send(&s.agent, later(&s.granted.join("one-too-many.bin")))),
+        "policy.too_many_pending"
+    );
+    assert_eq!(list(&s.agent, JobFilter::AwaitingApproval).len(), 20);
+}
+
+/// Serves `body` slowly, stating its length only when asked to.
+fn serve(body: Vec<u8>, state_length: bool) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file.bin", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let body = body.clone();
+            thread::spawn(move || {
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
+                let length = if state_length {
+                    format!("Content-Length: {}\r\n", body.len())
+                } else {
+                    String::new()
+                };
+                let head = format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n");
+                if stream.write_all(head.as_bytes()).is_err() {
+                    return;
+                }
+                for chunk in body.chunks(16 * 1024) {
+                    if stream.write_all(chunk).is_err() {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(15));
+                }
+            });
+        }
+    });
+    url
+}
+
+fn wait_for(
+    engine: &Arc<Engine>,
+    client: &InProcessClient,
+    job_id: &JobId,
+    done: impl Fn(&JobSnapshot) -> bool,
+) -> JobSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        engine.tick();
+        let job = get(client, job_id);
+        if done(&job) {
+            return job;
+        }
+        assert!(Instant::now() < deadline, "timed out at {job:?}");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn size_stop_then_approval(state_length: bool) {
+    let body: Vec<u8> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+    let link = serve(body.clone(), state_length);
+    let s = setup(|granted| AgentPolicy {
+        max_bytes: 64 * 1024,
+        ..granting(granted)
+    });
+    let destination = s.granted.join("big.bin");
+    let created = job(send(&s.agent, file(&link, &destination)).unwrap());
+    assert!(matches!(
+        created.state,
+        JobState::Queued | JobState::Running
+    ));
+
+    let stopped = wait_for(&s.engine, &s.agent, &created.job_id, |job| {
+        job.state != JobState::Queued && job.state != JobState::Running
+    });
+    assert_eq!(stopped.state, JobState::AwaitingApproval, "{stopped:?}");
+    assert_eq!(reasons(&stopped), [ApprovalReason::SizeLimit]);
+    assert!(!destination.exists(), "nothing is published while it waits");
+    thread::sleep(Duration::from_millis(300));
+    s.engine.tick();
+    assert_eq!(
+        get(&s.agent, &created.job_id).state,
+        JobState::AwaitingApproval,
+        "the stop holds"
+    );
+
+    let approved = job(send(
+        &s.user,
+        Command::ApproveJob {
+            job_id: created.job_id.clone(),
+        },
+    )
+    .unwrap());
+    assert_eq!(approved.approval, None);
+    let finished = wait_for(&s.engine, &s.agent, &created.job_id, |job| {
+        job.state.is_terminal() || job.state == JobState::Failed
+    });
+    assert_eq!(finished.state, JobState::Completed, "{finished:?}");
+    assert_eq!(std::fs::read(&destination).unwrap(), body);
+}
+
+#[test]
+fn a_stated_size_over_the_limit_stops_the_download_until_the_person_approves_it() {
+    size_stop_then_approval(true);
+}
+
+#[test]
+fn an_unknown_size_that_grows_past_the_limit_stops_until_the_person_approves_it() {
+    size_stop_then_approval(false);
+}

@@ -16,11 +16,12 @@
 //! applies it once; a crash after it returns the stored result on resend.
 
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
-use crate::{JobDraft, MediaDraft, Session, error_code, now_ms, wire};
+use crate::policy::{self, RateWindow};
+use crate::{JobDraft, MediaDraft, Origin, Session, error_code, now_ms, wire};
 use fetchpath_protocol::client::{EngineClient, EventStream, StreamItem, Subscription};
 use fetchpath_protocol::command::{
-    Command, CommandEnvelope, ConflictPolicy, DestinationDecision, JobFilter, JobInput, JobRequest,
-    Schedule,
+    Command, CommandEnvelope, ConflictPolicy, DestinationDecision, DestinationIntent, JobFilter,
+    JobInput, JobRequest, Schedule,
 };
 use fetchpath_protocol::error::{Action, ErrorCode, ErrorScope, ProtocolError};
 use fetchpath_protocol::message::{
@@ -30,6 +31,7 @@ use fetchpath_protocol::model::{
     self, EngineStatus, JobDetails, MediaInspection, MediaVariant, MediaVariantKind, QueueStats,
     Segment,
 };
+use fetchpath_protocol::principal::Principal;
 use fetchpath_protocol::{JobId, SCHEMA_VERSION, Timestamp};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -89,10 +91,16 @@ fn persistence(message: String) -> ProtocolError {
 }
 
 /// SHA-256 of what the command asks for, so a resend matches and a reused id
-/// with a different request does not.
-fn fingerprint(envelope: &CommandEnvelope) -> String {
-    let canonical = serde_json::to_vec(&(&envelope.payload, envelope.expected_revision))
-        .expect("a command always serializes");
+/// with a different request does not. Another principal's command never
+/// matches, so its stored result is never handed over (contract D1). The
+/// person's fingerprints are unchanged from before principals existed.
+fn fingerprint(envelope: &CommandEnvelope, principal: &Principal) -> String {
+    let canonical = if principal.is_user() {
+        serde_json::to_vec(&(&envelope.payload, envelope.expected_revision))
+    } else {
+        serde_json::to_vec(&(&envelope.payload, envelope.expected_revision, principal))
+    }
+    .expect("a command always serializes");
     format!("{:x}", Sha256::digest(canonical))
 }
 
@@ -136,6 +144,7 @@ enum Outcome {
     Control(ControlOutcome, String),
     Removed(String),
     Settings,
+    AgentPolicies,
     ShuttingDown,
 }
 
@@ -143,7 +152,7 @@ impl Outcome {
     fn jobs(&self) -> HashSet<String> {
         match self {
             Self::Job(id) | Self::Control(_, id) | Self::Removed(id) => HashSet::from([id.clone()]),
-            Self::Settings | Self::ShuttingDown => HashSet::new(),
+            Self::Settings | Self::AgentPolicies | Self::ShuttingDown => HashSet::new(),
         }
     }
 }
@@ -154,6 +163,8 @@ pub struct Engine {
     commands: Mutex<()>,
     started_at: Timestamp,
     sample_cursor: AtomicU64,
+    /// New jobs per agent in the last hour (contract D1).
+    rates: Mutex<RateWindow>,
 }
 
 impl Engine {
@@ -163,6 +174,7 @@ impl Engine {
             commands: Mutex::new(()),
             started_at: Timestamp::now(),
             sample_cursor: AtomicU64::new(0),
+            rates: Mutex::new(RateWindow::default()),
         })
     }
 
@@ -170,9 +182,19 @@ impl Engine {
         &self.session
     }
 
-    /// Runs one command. Queries answer from the current state; changes go
-    /// through the ledger and are acknowledged only after they commit.
+    /// Runs one command for the person.
     pub fn execute(&self, envelope: &CommandEnvelope) -> Result<CommandResult, ProtocolError> {
+        self.execute_as(&Principal::User, envelope)
+    }
+
+    /// Runs one command for `principal`, within what it may do (contract
+    /// D1). Queries answer from the current state; changes go through the
+    /// ledger and are acknowledged only after they commit.
+    pub fn execute_as(
+        &self,
+        principal: &Principal,
+        envelope: &CommandEnvelope,
+    ) -> Result<CommandResult, ProtocolError> {
         if envelope.schema_version != SCHEMA_VERSION {
             return Err(ProtocolError::unsupported_version(envelope.schema_version));
         }
@@ -184,14 +206,15 @@ impl Engine {
                 "a subscription is opened with subscribe, not execute",
             ));
         }
+        policy::authorize(principal, &envelope.payload)?;
         if !envelope.payload.is_mutating() {
-            return self.query(&envelope.payload);
+            return self.query(principal, &envelope.payload);
         }
         let _serial = self
             .commands
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let fingerprint = fingerprint(envelope);
+        let fingerprint = fingerprint(envelope, principal);
 
         // Step 1: identity, time, target and revision, then defer saves.
         {
@@ -239,6 +262,8 @@ impl Engine {
                     .records
                     .iter()
                     .find(|record| record.id == job_id.as_str())
+                    // Another principal's job answers as if it did not exist.
+                    .filter(|record| principal.is_user() || record.principal == *principal)
                     .ok_or_else(unknown_job)?;
                 if let Some(expected) = envelope.expected_revision
                     && expected != record.durable.job_revision
@@ -259,7 +284,7 @@ impl Engine {
         let deferring = DeferGuard(&self.session);
 
         // Step 2: the change.
-        let applied = self.apply(&envelope.payload);
+        let applied = self.apply(principal, &envelope.payload);
 
         // Step 3: one commit for the change, its events and its ledger entry.
         let mut state = self.session.inner.lock().expect("desktop jobs poisoned");
@@ -307,6 +332,9 @@ impl Engine {
                     self.session.settings_repaired(),
                 ),
             }),
+            Outcome::AgentPolicies => Ok(CommandResult::AgentPolicies {
+                policies: self.session.agent_policies(),
+            }),
             Outcome::ShuttingDown => Ok(CommandResult::ShuttingDown),
         };
         let result = match result {
@@ -345,7 +373,51 @@ impl Engine {
             .map(|record| record.view.state.clone())
     }
 
-    fn apply(&self, command: &Command) -> Result<Outcome, ProtocolError> {
+    /// Who a new job is for and whether it must wait for approval. Refuses
+    /// what an agent may never ask for, even with approval.
+    fn origin(
+        &self,
+        principal: &Principal,
+        source: &JobInput,
+        destination: &DestinationIntent,
+    ) -> Result<Origin, ProtocolError> {
+        let Principal::Agent(agent) = principal else {
+            return Ok(Origin {
+                principal: principal.clone(),
+                approval: Vec::new(),
+            });
+        };
+        policy::check_agent_input(source)?;
+        if destination.conflict != ConflictPolicy::Ask {
+            return Err(policy::replace_not_allowed());
+        }
+        if self.session.pending_approvals(principal) >= policy::MAX_PENDING_APPROVALS {
+            return Err(policy::too_many_pending());
+        }
+        let path = crate::validated_destination(&destination.path).map_err(input)?;
+        let access = self.session.agent_policy(agent);
+        let rate_exceeded = self
+            .rates
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .exceeded(agent, access.max_new_jobs_per_hour, now_ms());
+        Ok(Origin {
+            principal: principal.clone(),
+            approval: policy::creation_reasons(&path, &access, rate_exceeded),
+        })
+    }
+
+    /// Counts a job an agent created against its hourly rate.
+    fn created(&self, principal: &Principal) {
+        if let Principal::Agent(agent) = principal {
+            self.rates
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .record(agent, now_ms());
+        }
+    }
+
+    fn apply(&self, principal: &Principal, command: &Command) -> Result<Outcome, ProtocolError> {
         let session = &self.session;
         match command {
             Command::CreateJob { request } => match request {
@@ -355,6 +427,7 @@ impl Engine {
                     not_before,
                     expected_sha256,
                 } => {
+                    let origin = self.origin(principal, source, destination)?;
                     let JobInput::Url { url } = source else {
                         return Err(unsupported("Creating a job from a stored request"));
                     };
@@ -362,17 +435,21 @@ impl Engine {
                         return Err(unsupported("Replacing an existing file"));
                     }
                     let created = session
-                        .enqueue(vec![JobDraft {
-                            url: url.expose().to_owned(),
-                            destination: destination.path.clone(),
-                            not_before_ms: not_before.map(millis).transpose()?,
-                            checksum: expected_sha256.clone(),
-                        }])
+                        .enqueue_for(
+                            vec![JobDraft {
+                                url: url.expose().to_owned(),
+                                destination: destination.path.clone(),
+                                not_before_ms: not_before.map(millis).transpose()?,
+                                checksum: expected_sha256.clone(),
+                            }],
+                            &origin,
+                        )
                         .map_err(input)?;
                     let job = created
                         .into_iter()
                         .next()
                         .ok_or_else(|| input("The download was not queued.".into()))?;
+                    self.created(principal);
                     Ok(Outcome::Job(job.job_id))
                 }
                 JobRequest::Media {
@@ -382,6 +459,7 @@ impl Engine {
                     variant_id,
                     quality_label,
                 } => {
+                    let origin = self.origin(principal, source, destination)?;
                     let JobInput::Url { url } = source else {
                         return Err(unsupported("Creating a job from a stored request"));
                     };
@@ -389,14 +467,18 @@ impl Engine {
                         return Err(unsupported("Replacing an existing file"));
                     }
                     let job = session
-                        .enqueue_media(MediaDraft {
-                            url: url.expose().to_owned(),
-                            variant_id: variant_id.clone(),
-                            quality_label: quality_label.clone(),
-                            destination: destination.path.clone(),
-                            not_before_ms: not_before.map(millis).transpose()?,
-                        })
+                        .enqueue_media_for(
+                            MediaDraft {
+                                url: url.expose().to_owned(),
+                                variant_id: variant_id.clone(),
+                                quality_label: quality_label.clone(),
+                                destination: destination.path.clone(),
+                                not_before_ms: not_before.map(millis).transpose()?,
+                            },
+                            &origin,
+                        )
                         .map_err(input)?;
+                    self.created(principal);
                     Ok(Outcome::Job(job.job_id))
                 }
             },
@@ -412,7 +494,7 @@ impl Engine {
                         ControlOutcome::AlreadyTerminal,
                         id.to_owned(),
                     )),
-                    Some("paused" | "failed") => {
+                    Some("paused" | "failed" | "awaiting_approval") => {
                         Ok(Outcome::Control(ControlOutcome::NoOp, id.to_owned()))
                     }
                     Some("cancelling") => Ok(Outcome::Control(
@@ -444,7 +526,7 @@ impl Engine {
                 self.cancel(job_id.as_str())
             }
             Command::Retry { job_id } => session
-                .retry(job_id.as_str(), None, None, None)
+                .retry_as(job_id.as_str(), None, None, None, principal, Vec::new())
                 .map(|job| Outcome::Job(job.job_id))
                 .map_err(transition),
             Command::UpdatePolicy { job_id, patch } => match &patch.schedule {
@@ -459,10 +541,27 @@ impl Engine {
                     .map_err(transition),
             },
             Command::ResolveDestination { job_id, decision } => match decision {
-                DestinationDecision::ChooseNewPath { path } => session
-                    .retry(job_id.as_str(), None, Some(path.clone()), None)
-                    .map(|job| Outcome::Job(job.job_id))
-                    .map_err(input),
+                DestinationDecision::ChooseNewPath { path } => {
+                    // An agent's new path is held by its grants like a new job.
+                    let hold = match principal {
+                        Principal::Agent(agent) => {
+                            let target = crate::validated_destination(path).map_err(input)?;
+                            policy::creation_reasons(&target, &session.agent_policy(agent), false)
+                        }
+                        _ => Vec::new(),
+                    };
+                    session
+                        .retry_as(
+                            job_id.as_str(),
+                            None,
+                            Some(path.clone()),
+                            None,
+                            principal,
+                            hold,
+                        )
+                        .map(|job| Outcome::Job(job.job_id))
+                        .map_err(input)
+                }
                 DestinationDecision::Cancel => self.cancel(job_id.as_str()),
                 DestinationDecision::ReplaceExisting => {
                     Err(unsupported("Replacing an existing file"))
@@ -473,11 +572,21 @@ impl Engine {
             }
             Command::RefreshMediaChoices { .. } => Err(unsupported("Refreshing media choices")),
             Command::RefreshSource { job_id, source } => {
+                if !principal.is_user() {
+                    policy::check_agent_input(source)?;
+                }
                 let JobInput::Url { url } = source else {
                     return Err(unsupported("Refreshing from a stored request"));
                 };
                 session
-                    .retry(job_id.as_str(), Some(url.expose().to_owned()), None, None)
+                    .retry_as(
+                        job_id.as_str(),
+                        Some(url.expose().to_owned()),
+                        None,
+                        None,
+                        principal,
+                        Vec::new(),
+                    )
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(input)
             }
@@ -489,6 +598,20 @@ impl Engine {
                 let next = wire::session_settings(settings, &session.settings());
                 session.update_settings(next).map_err(input)?;
                 Ok(Outcome::Settings)
+            }
+            Command::ApproveJob { job_id } => session
+                .approve(job_id.as_str())
+                .map(|job| Outcome::Job(job.job_id))
+                .map_err(transition),
+            Command::DenyJob { job_id } => session
+                .deny(job_id.as_str())
+                .map(|job| Outcome::Job(job.job_id))
+                .map_err(transition),
+            Command::SetAgentPolicy { agent, policy } => {
+                session
+                    .set_agent_policy(agent.clone(), policy.clone())
+                    .map_err(input)?;
+                Ok(Outcome::AgentPolicies)
             }
             Command::EngineShutdown => {
                 session.cancel_all_and_join();
@@ -516,18 +639,26 @@ impl Engine {
         Ok(state.records.iter().rev().map(wire::snapshot).collect())
     }
 
-    fn query(&self, command: &Command) -> Result<CommandResult, ProtocolError> {
+    fn query(
+        &self,
+        principal: &Principal,
+        command: &Command,
+    ) -> Result<CommandResult, ProtocolError> {
         use fetchpath_protocol::model::JobState as S;
+        // An agent sees only the jobs it created (contract D1).
+        let visible = |job: &model::JobSnapshot| principal.is_user() || job.principal == *principal;
         match command {
             Command::ListJobs { filter } => {
                 let jobs = self
                     .snapshots()?
                     .into_iter()
+                    .filter(visible)
                     .filter(|job| match filter {
                         JobFilter::All => true,
                         JobFilter::Active => !job.state.is_terminal() && job.state != S::Failed,
                         JobFilter::Failed => job.state == S::Failed,
                         JobFilter::Finished => job.state.is_terminal(),
+                        JobFilter::AwaitingApproval => job.state == S::AwaitingApproval,
                     })
                     .collect();
                 Ok(CommandResult::Jobs { jobs })
@@ -535,10 +666,16 @@ impl Engine {
             Command::GetJob { job_id } => self
                 .snapshots()?
                 .into_iter()
+                .filter(visible)
                 .find(|job| &job.job_id == job_id)
                 .map(|job| CommandResult::Job { job })
                 .ok_or_else(unknown_job),
             Command::JobDetails { job_id } => {
+                if !principal.is_user()
+                    && self.session.principal_of(job_id.as_str()).as_ref() != Some(principal)
+                {
+                    return Err(unknown_job());
+                }
                 let details = self
                     .session
                     .details(job_id.as_str())
@@ -566,6 +703,9 @@ impl Engine {
                 })
             }
             Command::InspectMedia { url } => {
+                if !principal.is_user() && policy::has_userinfo(url.expose()) {
+                    return Err(policy::credentials_not_allowed());
+                }
                 let inspection = self
                     .session
                     .inspect_media(url.expose())
@@ -628,6 +768,7 @@ impl Engine {
                     .snapshots()?
                     .into_iter()
                     .filter(|job| job.state.is_terminal() || job.state == S::Failed)
+                    .filter(visible)
                     .filter(|job| {
                         needle.as_deref().is_none_or(|needle| {
                             job.source_display.to_lowercase().contains(needle)
@@ -646,6 +787,9 @@ impl Engine {
                     &self.session.settings(),
                     self.session.settings_repaired(),
                 ),
+            }),
+            Command::GetAgentPolicies => Ok(CommandResult::AgentPolicies {
+                policies: self.session.agent_policies(),
             }),
             Command::EngineStatus => {
                 let jobs = self.snapshots()?;
@@ -676,8 +820,25 @@ impl Engine {
     /// events were compacted, is computed and the subscriber registered under
     /// the queue lock, so no event can fall between them (contract §8).
     pub fn subscribe(&self, envelope: &CommandEnvelope) -> Result<Subscription, ProtocolError> {
+        self.subscribe_as(&Principal::User, envelope)
+    }
+
+    /// Opens an event stream for `principal`. An agent may follow only a
+    /// job it created; the queue-wide stream is the person's.
+    pub fn subscribe_as(
+        &self,
+        principal: &Principal,
+        envelope: &CommandEnvelope,
+    ) -> Result<Subscription, ProtocolError> {
         if envelope.schema_version != SCHEMA_VERSION {
             return Err(ProtocolError::unsupported_version(envelope.schema_version));
+        }
+        policy::authorize(principal, &envelope.payload)?;
+        if let Command::SubscribeJob { job_id, .. } = &envelope.payload
+            && !principal.is_user()
+            && self.session.principal_of(job_id.as_str()).as_ref() != Some(principal)
+        {
+            return Err(unknown_job());
         }
         // Commit anything pending so positions describe the current state.
         self.session.list().map_err(persistence)?;
@@ -956,6 +1117,7 @@ impl Drop for SubscriberStream {
 /// clients developed before the pipe (FP-052) carries them to the engine.
 pub struct InProcessClient {
     engine: Arc<Engine>,
+    principal: Principal,
     stop: Arc<AtomicBool>,
     ticker: Option<JoinHandle<()>>,
 }
@@ -977,6 +1139,7 @@ impl InProcessClient {
         };
         Self {
             engine,
+            principal: Principal::User,
             stop,
             ticker: Some(ticker),
         }
@@ -986,9 +1149,16 @@ impl InProcessClient {
     pub fn manual(engine: Arc<Engine>) -> Self {
         Self {
             engine,
+            principal: Principal::User,
             stop: Arc::new(AtomicBool::new(true)),
             ticker: None,
         }
+    }
+
+    /// Acts for `principal`, as a pipe connection that declared it would.
+    pub fn with_principal(mut self, principal: Principal) -> Self {
+        self.principal = principal;
+        self
     }
 
     pub fn engine(&self) -> &Arc<Engine> {
@@ -1007,10 +1177,10 @@ impl Drop for InProcessClient {
 
 impl EngineClient for InProcessClient {
     fn execute(&self, envelope: &CommandEnvelope) -> Result<CommandResult, ProtocolError> {
-        self.engine.execute(envelope)
+        self.engine.execute_as(&self.principal, envelope)
     }
 
     fn subscribe(&self, envelope: &CommandEnvelope) -> Result<Subscription, ProtocolError> {
-        self.engine.subscribe(envelope)
+        self.engine.subscribe_as(&self.principal, envelope)
     }
 }

@@ -6,6 +6,7 @@ use crate::command::CommandEnvelope;
 use crate::error::{ErrorCode, ErrorScope, ProtocolError};
 use crate::frame::decode_command;
 use crate::message::{Reply, ServerMessage};
+use crate::principal::Principal;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -190,6 +191,7 @@ impl PendingConnection {
             version,
             client_nonce,
             intent,
+            principal,
         } = hello
         else {
             return Err(self.stream.fail(handshake_failed("expected hello")));
@@ -197,6 +199,11 @@ impl PendingConnection {
         if transport != auth::TRANSPORT || version != auth::TRANSPORT_VERSION {
             return Err(self.stream.fail(handshake_failed("unsupported transport")));
         }
+        let principal = match principal {
+            None => Principal::User,
+            Some(text) => Principal::try_from(text)
+                .map_err(|_| self.stream.fail(handshake_failed("unknown principal")))?,
+        };
         let client_nonce = Nonce::from_hex(&client_nonce)
             .ok_or_else(|| self.stream.fail(handshake_failed("bad client nonce")))?;
         let server_nonce = Nonce::random()?;
@@ -235,6 +242,7 @@ impl PendingConnection {
             limits: self.limits,
             idle_timeout: std::sync::Mutex::new(self.limits.idle_timeout),
             restart_requested: intent.as_deref() == Some("restart"),
+            principal,
             _live: self._live,
         })
     }
@@ -249,10 +257,17 @@ pub struct ServerConnection {
     limits: Limits,
     idle_timeout: std::sync::Mutex<Option<Duration>>,
     restart_requested: bool,
+    principal: Principal,
     _live: LiveGuard,
 }
 
 impl ServerConnection {
+    /// Who the client declared it acts for. The engine enforces what that
+    /// principal may do.
+    pub fn principal(&self) -> &Principal {
+        &self.principal
+    }
+
     /// The client authenticated only to ask the engine to stop so a new one
     /// can start (see [`PipeClient::request_restart`](super::PipeClient::request_restart)).
     pub fn restart_requested(&self) -> bool {

@@ -16,6 +16,7 @@ use fetchpath_protocol::model::{
     MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress, QueueStats, Segment,
     SettingsView, Theme, WaitingReason,
 };
+use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
 use fetchpath_protocol::*;
 use serde::Serialize;
@@ -96,6 +97,14 @@ fn error() -> ProtocolError {
     error
 }
 
+fn agent_policy() -> AgentPolicy {
+    AgentPolicy {
+        folders: vec!["C:\\Users\\person\\Downloads\\agent".into()],
+        max_bytes: 104_857_600,
+        max_new_jobs_per_hour: 10,
+    }
+}
+
 fn snapshot() -> JobSnapshot {
     JobSnapshot {
         job_id: job_id(),
@@ -127,6 +136,10 @@ fn snapshot() -> JobSnapshot {
         not_before: Some(at("2026-09-20T13:00:00Z")),
         finished_at: Some(at("2026-09-20T12:05:00.125Z")),
         quality_label: Some("1080p".into()),
+        principal: Principal::Agent(AgentName::try_from("helper").unwrap()),
+        approval: Some(ApprovalRequest {
+            reasons: vec![ApprovalReason::SizeLimit, ApprovalReason::RateLimit],
+        }),
     }
 }
 
@@ -218,6 +231,17 @@ fn every_command() -> Vec<Command> {
         Command::UpdateSettings {
             settings: settings(),
         },
+        Command::ApproveJob { job_id: job_id() },
+        Command::DenyJob { job_id: job_id() },
+        Command::GetAgentPolicies,
+        Command::SetAgentPolicy {
+            agent: AgentName::try_from("claude-code").unwrap(),
+            policy: Some(agent_policy()),
+        },
+        Command::SetAgentPolicy {
+            agent: AgentName::try_from("claude-code").unwrap(),
+            policy: None,
+        },
         Command::SubscribeJob {
             job_id: job_id(),
             after_seq: 7,
@@ -248,6 +272,10 @@ fn every_command() -> Vec<Command> {
             | Command::History { .. }
             | Command::GetSettings
             | Command::UpdateSettings { .. }
+            | Command::ApproveJob { .. }
+            | Command::DenyJob { .. }
+            | Command::GetAgentPolicies
+            | Command::SetAgentPolicy { .. }
             | Command::SubscribeJob { .. }
             | Command::SubscribeQueue { .. }
             | Command::EngineStatus
@@ -323,6 +351,12 @@ fn every_result() -> Vec<CommandResult> {
                 queue_cursor: 120,
             },
         },
+        CommandResult::AgentPolicies {
+            policies: vec![AgentAccess {
+                agent: AgentName::try_from("claude-code").unwrap(),
+                policy: agent_policy(),
+            }],
+        },
         CommandResult::ShuttingDown,
     ];
     for result in &results {
@@ -338,6 +372,7 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Subscribed { .. }
             | CommandResult::SnapshotBoundary { .. }
             | CommandResult::EngineStatus { .. }
+            | CommandResult::AgentPolicies { .. }
             | CommandResult::ShuttingDown => {}
         }
     }
@@ -672,7 +707,7 @@ fn malformed_json_and_unknown_commands_are_refused_with_contract_codes() {
     }
 
     let mut unknown = command_json();
-    unknown["payload"] = json!({ "type": "ApproveJob", "job_id": job_id() });
+    unknown["payload"] = json!({ "type": "QuarantineJob", "job_id": job_id() });
     let rejected = decode_command(&serde_json::to_vec(&unknown).unwrap()).unwrap_err();
     assert_eq!(rejected.error.code, ErrorCode::UNKNOWN_COMMAND);
     assert!(rejected.command_id.is_some());
@@ -792,9 +827,9 @@ fn a_newer_engine_adds_fields_states_and_event_kinds_without_breaking_this_clien
     )))
     .unwrap();
     reply["future_field"] = json!({ "nested": true });
-    reply["result"]["value"]["job"]["state"] = json!("awaiting_approval");
-    reply["result"]["value"]["job"]["error"]["action"] = json!("approve_in_terminal");
-    reply["result"]["value"]["job"]["principal"] = json!("agent:helper");
+    reply["result"]["value"]["job"]["state"] = json!("quarantined");
+    reply["result"]["value"]["job"]["error"]["action"] = json!("scan_in_terminal");
+    reply["result"]["value"]["job"]["origin_device"] = json!("peer:laptop");
     let ServerMessage::Reply(reply) =
         decode_server_message(&serde_json::to_vec(&reply).unwrap()).unwrap()
     else {
@@ -808,8 +843,8 @@ fn a_newer_engine_adds_fields_states_and_event_kinds_without_breaking_this_clien
 
     let mut future_event =
         serde_json::to_value(ServerMessage::Event(event(EventPayload::JobRemoved))).unwrap();
-    future_event["kind"] = json!("approval_requested");
-    future_event["public_payload"] = json!({ "principal": "agent:helper", "reason": "size" });
+    future_event["kind"] = json!("quarantine_requested");
+    future_event["public_payload"] = json!({ "device": "peer:laptop", "reason": "scan" });
     let ServerMessage::Event(decoded) =
         decode_server_message(&serde_json::to_vec(&future_event).unwrap()).unwrap()
     else {
@@ -837,6 +872,7 @@ fn only_queries_skip_the_command_ledger() {
         "QueueStats",
         "History",
         "GetSettings",
+        "GetAgentPolicies",
         "SubscribeJob",
         "SubscribeQueue",
         "EngineStatus",

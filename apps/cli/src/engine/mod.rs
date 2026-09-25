@@ -288,8 +288,12 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
     let Ok(connection) = pending.authenticate() else {
         return;
     };
+    let principal = connection.principal().clone();
+    // Only the person's own clients may replace the engine.
     if connection.restart_requested() {
-        host.stop.store(true, Ordering::SeqCst);
+        if principal.is_user() {
+            host.stop.store(true, Ordering::SeqCst);
+        }
         return;
     }
     let sender = connection.sender();
@@ -303,7 +307,7 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
         }
         match &envelope.payload {
             Command::SubscribeJob { .. } | Command::SubscribeQueue { .. } => {
-                match host.engine.subscribe(&envelope) {
+                match host.engine.subscribe_as(&principal, &envelope) {
                     Ok(subscription) => {
                         if sender
                             .send(&ServerMessage::Reply(Reply::ok(
@@ -358,7 +362,7 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                 });
                 let before = host.engine.session().settings().start_engine_at_sign_in;
-                let reply = match host.engine.execute(&envelope) {
+                let reply = match host.engine.execute_as(&principal, &envelope) {
                     Ok(result) => Reply::ok(envelope.command_id.clone(), result),
                     Err(error) => Reply::error(Some(envelope.command_id.clone()), error),
                 };

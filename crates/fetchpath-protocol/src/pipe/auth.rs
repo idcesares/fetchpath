@@ -275,6 +275,10 @@ pub enum Handshake {
         /// an engine it cannot otherwise talk to.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         intent: Option<String>,
+        /// Who the connection acts for (contract D1): `browser` or
+        /// `agent:<name>`. Absent means `user`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        principal: Option<String>,
     },
     Challenge {
         server_nonce: String,

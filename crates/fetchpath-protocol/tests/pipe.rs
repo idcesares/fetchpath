@@ -12,6 +12,7 @@ use fetchpath_protocol::pipe::{
     ENGINE_PIPE_PREFIX, Limits, PipeClient, PipeEngineClient, PipeListener, PipeName,
     current_user_sid, endpoint, file_security_sddl,
 };
+use fetchpath_protocol::principal::Principal;
 use fetchpath_protocol::{
     ClientId, EngineClient, JobId, ProtocolError, SCHEMA_VERSION, StreamItem, Timestamp,
     decode_server_message,
@@ -46,7 +47,8 @@ fn fast_limits() -> Limits {
 
 #[derive(Debug)]
 enum Seen {
-    Authenticated,
+    /// With the principal the client declared.
+    Authenticated(String),
     AuthFailed(String),
     Command(CommandEnvelope),
     Ended(Option<String>),
@@ -106,7 +108,7 @@ impl Engine {
     fn next_outcome(&self) -> Seen {
         loop {
             match self.next() {
-                Seen::Authenticated => {}
+                Seen::Authenticated(_) => {}
                 other => return other,
             }
         }
@@ -135,7 +137,7 @@ fn serve(
             return;
         }
     };
-    let _ = tx.send(Seen::Authenticated);
+    let _ = tx.send(Seen::Authenticated(connection.principal().to_string()));
     let sender = connection.sender();
     loop {
         match connection.receive() {
@@ -256,6 +258,7 @@ fn raw_handshake(file: &mut File, client_nonce: &Nonce) -> (Nonce, Vec<u8>) {
             version: auth::TRANSPORT_VERSION,
             client_nonce: client_nonce.to_hex(),
             intent: None,
+            principal: None,
         },
     )
     .unwrap();
@@ -287,6 +290,39 @@ fn raw_authenticate(file: &mut File) {
     )
     .unwrap();
     assert_eq!(raw_read::<Handshake>(file), Handshake::Welcome);
+}
+
+#[test]
+fn a_connection_declares_its_principal_in_the_handshake_and_a_bad_one_is_refused() {
+    let engine = Engine::start(fast_limits(), Respond::Reply);
+    let agent = Principal::try_from("agent:claude-code").unwrap();
+    let client =
+        PipeEngineClient::new(engine.name.clone(), secret(), fast_limits()).with_principal(agent);
+    client.send(&client_id(), Command::EngineStatus).unwrap();
+    assert!(matches!(engine.next(), Seen::Authenticated(p) if p == "agent:claude-code"));
+    assert!(matches!(engine.next(), Seen::Command(_)));
+    // A client that declares nothing is the person.
+    let _person = connect(&engine).unwrap();
+    assert!(matches!(engine.next(), Seen::Authenticated(p) if p == "user"));
+
+    for declared in ["agent:Not Valid", "root", "agent:"] {
+        let mut file = raw_open(&engine.name);
+        write_frame(
+            &mut file,
+            &Handshake::Hello {
+                transport: auth::TRANSPORT.into(),
+                version: auth::TRANSPORT_VERSION,
+                client_nonce: Nonce::random().unwrap().to_hex(),
+                intent: None,
+                principal: Some(declared.into()),
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(engine.next_outcome(), Seen::AuthFailed(_)),
+            "{declared}"
+        );
+    }
 }
 
 fn envelope(command: Command) -> CommandEnvelope {

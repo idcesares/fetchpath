@@ -8,6 +8,7 @@ use crate::model::{
     EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, MediaInspection, Progress,
     QueueStats, SettingsView, WaitingReason,
 };
+use crate::principal::AgentAccess;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +113,10 @@ pub enum CommandResult {
     },
     EngineStatus {
         status: EngineStatus,
+    },
+    /// Every agent the person configured, sorted by name.
+    AgentPolicies {
+        policies: Vec<AgentAccess>,
     },
     /// The engine is stopping after finishing in-flight work safely.
     ShuttingDown,

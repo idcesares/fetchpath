@@ -6,6 +6,7 @@ use fetchpath_protocol::model::{
     self, EngineSettings, IntegrityOutcome, JobKind, JobState, Phase, Progress, SettingsView,
     Theme, WaitingReason,
 };
+use fetchpath_protocol::principal::{ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::{JobId, Timestamp};
 
 pub(crate) fn timestamp(ms: u64) -> Timestamp {
@@ -24,6 +25,7 @@ pub(crate) fn job_state(state: &str) -> JobState {
         "completed" => JobState::Completed,
         "failed" => JobState::Failed,
         "needs_source" => JobState::WaitingForSource,
+        "awaiting_approval" => JobState::AwaitingApproval,
         _ => JobState::Unknown,
     }
 }
@@ -118,14 +120,60 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
         expected_sha256: view.expected_sha256.clone(),
         observed_sha256: view.observed_sha256.clone(),
         cleanup_pending: view.cleanup_pending,
-        error: protocol_error(view),
+        error: approval_error(record).or_else(|| protocol_error(view)),
         attempt: view.attempt,
         retry_at: record.retry_at_ms.map(timestamp),
         created_at: timestamp(view.created_at_ms),
         not_before: view.not_before_ms.map(timestamp),
         finished_at: view.finished_at_ms.map(timestamp),
         quality_label: view.quality_label.clone(),
+        principal: record.principal.clone(),
+        approval: record.awaiting_approval().then(|| ApprovalRequest {
+            reasons: record
+                .approval
+                .as_ref()
+                .map(|a| a.reasons.clone())
+                .unwrap_or_default(),
+        }),
     }
+}
+
+/// What an agent relays about a job the person has to decide on, or has
+/// refused (contract D1).
+fn approval_error(record: &QueueRecord) -> Option<ProtocolError> {
+    let approval = record.approval.as_ref()?;
+    if approval.denied {
+        return (record.view.state == "cancelled").then(|| {
+            ProtocolError::new(
+                code("policy.approval_denied"),
+                ErrorScope::Job,
+                "The person declined this download.",
+            )
+        });
+    }
+    let why: Vec<&str> = approval
+        .reasons
+        .iter()
+        .map(|reason| match reason {
+            ApprovalReason::OutsideGrantedFolders => {
+                "it saves outside the folders this agent may use"
+            }
+            ApprovalReason::SizeLimit => "it is larger than this agent may download",
+            ApprovalReason::RateLimit => "this agent asked for too many downloads this hour",
+            ApprovalReason::Unknown => "it is outside this agent's access",
+        })
+        .collect();
+    Some(
+        ProtocolError::new(
+            code("policy.awaiting_approval"),
+            ErrorScope::Job,
+            format!(
+                "This download is waiting for the person to approve it, because {}.",
+                why.join(" and ")
+            ),
+        )
+        .with_action(Action::AwaitApproval),
+    )
 }
 
 pub(crate) fn progress(view: &View) -> Progress {

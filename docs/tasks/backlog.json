@@ -1591,8 +1591,8 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
       "review": "strong",

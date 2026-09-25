@@ -93,8 +93,104 @@
           "const": "wait",
           "description": "Wait; the engine will continue on its own.",
           "type": "string"
+        },
+        {
+          "const": "await_approval",
+          "description": "Wait for the person to approve or deny the job in Fetchpath. An\nagent relays this rather than retrying.",
+          "type": "string"
         }
       ]
+    },
+    "AgentAccess": {
+      "description": "One agent and its access.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentName"
+        },
+        "policy": {
+          "$ref": "#/$defs/AgentPolicy"
+        }
+      },
+      "required": [
+        "agent",
+        "policy"
+      ],
+      "type": "object"
+    },
+    "AgentName": {
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "type": "string"
+    },
+    "AgentPolicy": {
+      "description": "What the person allows one agent to do without asking.",
+      "properties": {
+        "folders": {
+          "default": [],
+          "description": "Folders the agent may save into, as full paths. A destination counts\nas inside one only after links and junctions are resolved.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_bytes": {
+          "description": "Largest download, in bytes, before it stops and waits for approval.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_new_jobs_per_hour": {
+          "description": "New downloads per hour before further ones wait for approval.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_bytes",
+        "max_new_jobs_per_hour"
+      ],
+      "type": "object"
+    },
+    "ApprovalReason": {
+      "description": "Why a job waits for the person.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "outside_granted_folders",
+          "description": "The destination is not inside a folder granted to the agent.",
+          "type": "string"
+        },
+        {
+          "const": "size_limit",
+          "description": "The download passed the agent's size limit and stopped.",
+          "type": "string"
+        },
+        {
+          "const": "rate_limit",
+          "description": "The agent asked for more new downloads per hour than it may.",
+          "type": "string"
+        }
+      ]
+    },
+    "ApprovalRequest": {
+      "description": "A job's wait for approval, as clients see it.",
+      "properties": {
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/ApprovalReason"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "reasons"
+      ],
+      "type": "object"
     },
     "AttemptId": {
       "format": "uuid",
@@ -107,7 +203,7 @@
       "type": "string"
     },
     "Command": {
-      "description": "The command set. Names are the contract's where it has one, plus the\nengine-level queries and controls from the platform design §4. Principals,\napprovals and rules arrive with FP-054 and FP-064; an engine that does not\nknow a command answers `contract.unknown_command`.",
+      "description": "The command set. Names are the contract's where it has one, plus the\nengine-level queries and controls from the platform design §4. Rules\narrive with FP-064; an engine that does not know a command answers\n`contract.unknown_command`. Which principal may send which command is the\nengine's decision (contract D1).",
       "oneOf": [
         {
           "properties": {
@@ -455,6 +551,80 @@
           "type": "object"
         },
         {
+          "description": "Lets a job that is `awaiting_approval` run. Approving a size stop\nlifts the limit for that job only.",
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "ApproveJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Refuses a job that is `awaiting_approval`; it ends `cancelled`.",
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "DenyJob",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "GetAgentPolicies",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Sets one agent's access, or removes it with `null`, so the agent is\nback to asking for everything.",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentName"
+            },
+            "policy": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentPolicy"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "const": "SetAgentPolicy",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
           "properties": {
             "after_seq": {
@@ -760,6 +930,26 @@
           "required": [
             "type",
             "status"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every agent the person configured, sorted by name.",
+          "properties": {
+            "policies": {
+              "items": {
+                "$ref": "#/$defs/AgentAccess"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "AgentPolicies",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "policies"
           ],
           "type": "object"
         },
@@ -1517,6 +1707,11 @@
           "const": "active",
           "description": "Not yet completed or cancelled.",
           "type": "string"
+        },
+        {
+          "const": "awaiting_approval",
+          "description": "Waiting for the person to approve or deny.",
+          "type": "string"
         }
       ]
     },
@@ -1655,6 +1850,17 @@
     "JobSnapshot": {
       "description": "One job as a client sees it. Every snapshot carries the revision and the\nlast durable event sequence it reflects, so a client can resume its event\nstream exactly after it.",
       "properties": {
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present while the job is `awaiting_approval`."
+        },
         "attempt": {
           "default": 0,
           "description": "Automatic retries already spent.",
@@ -1671,7 +1877,7 @@
           "$ref": "#/$defs/Timestamp"
         },
         "destination": {
-          "description": "The local file path. Shown to the person's own clients; policy for\nother principals is the engine's (FP-054).",
+          "description": "The local file path. An agent sees only jobs it created (contract D1).",
           "type": [
             "string",
             "null"
@@ -1748,6 +1954,11 @@
             "null"
           ]
         },
+        "principal": {
+          "$ref": "#/$defs/Principal",
+          "default": "user",
+          "description": "Who created the job."
+        },
         "progress": {
           "$ref": "#/$defs/Progress"
         },
@@ -1818,6 +2029,11 @@
             "cancelled",
             "failed"
           ],
+          "type": "string"
+        },
+        {
+          "const": "awaiting_approval",
+          "description": "Asked for by an agent outside its policy; waits for the person to\napprove or deny it (contract D1).",
           "type": "string"
         },
         {
@@ -1927,6 +2143,11 @@
         }
       },
       "type": "object"
+    },
+    "Principal": {
+      "description": "Who a connection acts for: user, browser or agent:<name>.",
+      "pattern": "^(user|browser|agent:[a-z0-9][a-z0-9._-]{0,63})$",
+      "type": "string"
     },
     "Progress": {
       "description": "Progress facts (contract §7). An unknown total is `null`, never zero, and\nthere is no remaining time without both a total and a rate.",

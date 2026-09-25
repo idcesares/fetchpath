@@ -2,6 +2,7 @@
 
 use crate::error::ProtocolError;
 use crate::ids::{JobId, Timestamp};
+use crate::principal::{ApprovalRequest, Principal};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -121,6 +122,9 @@ pub enum JobState {
     Cancelling,
     Cancelled,
     Failed,
+    /// Asked for by an agent outside its policy; waits for the person to
+    /// approve or deny it (contract D1).
+    AwaitingApproval,
     /// A state this client does not know, from a newer engine.
     #[serde(other)]
     Unknown,
@@ -225,8 +229,7 @@ pub struct JobSnapshot {
     pub last_seq: u64,
     /// The link without user info, query or fragment.
     pub source_display: String,
-    /// The local file path. Shown to the person's own clients; policy for
-    /// other principals is the engine's (FP-054).
+    /// The local file path. An agent sees only jobs it created (contract D1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destination: Option<String>,
     pub progress: Progress,
@@ -258,6 +261,12 @@ pub struct JobSnapshot {
     pub finished_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_label: Option<String>,
+    /// Who created the job.
+    #[serde(default)]
+    pub principal: Principal,
+    /// Present while the job is `awaiting_approval`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalRequest>,
 }
 
 /// One byte range in flight: received into memory, not yet written.

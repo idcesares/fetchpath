@@ -51,6 +51,7 @@ impl ErrorCode {
             Some("resource") => ErrorFamily::Resource,
             Some("media") => ErrorFamily::Media,
             Some("contract") => ErrorFamily::Contract,
+            Some("policy") => ErrorFamily::Policy,
             _ => ErrorFamily::Internal,
         }
     }
@@ -118,6 +119,9 @@ pub enum ErrorFamily {
     Resource,
     Media,
     Contract,
+    /// Not permitted for this principal, or refused by the person
+    /// (contract D1).
+    Policy,
     Internal,
 }
 
@@ -160,6 +164,9 @@ pub enum Action {
     RefreshClient,
     /// Wait; the engine will continue on its own.
     Wait,
+    /// Wait for the person to approve or deny the job in Fetchpath. An
+    /// agent relays this rather than retrying.
+    AwaitApproval,
     #[serde(other)]
     Unknown,
 }

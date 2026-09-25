@@ -229,3 +229,54 @@ ledger rules, and F2 to F4. Findings and fixes:
 | Nit: revision check not atomic with desktop changes | Documented above | — |
 
 Re-review of the fixes, 24 September 2026: **approve with nits**. Every fix was re-probed, including a per-job case: after a backup fallback, `SubscribeJob` from the last seen `seq` gets a snapshot boundary, and a command with the old `expected_revision` gets `contract.revision_conflict`. The nits are the last three limitations above.
+
+## FP-054: principals, agent policy and approval
+
+Contract amendment D1 in [the job contract](../architecture/JOB-CONTRACT.md#14-decision-record)
+came first; the code follows it.
+
+- **Where.** The principal is declared in the pipe handshake (`Hello.principal`,
+  absent = `user`) and checked once per connection; an invalid one fails the
+  handshake. The engine enforces it: `Engine::execute_as` / `subscribe_as`, with
+  the allowlist in `crates/fetchpath-session/src/policy.rs`. Only a `user`
+  connection may ask the engine to restart.
+- **State.** A record carries its creator's principal and, while it waits, an
+  approval with reasons; both persist in the queue file only when not the
+  default, so a 0.1.0 file still writes back byte for byte. A waiting record
+  is shown as `awaiting_approval` whatever its prepared job reports, and
+  nothing starts it but `ApproveJob`. Agent access is stored in
+  `agents-v1.json` beside the queue; a missing or unreadable file grants
+  nothing.
+- **Size.** A running agent job whose stated total or received bytes pass its
+  limit is cancelled to its checkpoint in `reconcile_locked` and held. Approval
+  joins the stopped transfer before a new one resumes from the checkpoint.
+
+### Checks
+
+`crates/fetchpath-session/tests/policy.rs` (12 tests): grant inside and
+outside, a sibling folder sharing the grant's prefix, `..`, a junction out of
+a grant and a grant that is a junction, credentials in a link, a stored
+`credential_ref` and in media inspection, `replace_existing` on create and on
+resolve, another principal's jobs through every job command, a subscription
+and a stale revision, person-only commands, the browser's single command,
+approval and denial, the agent retrying a denied job, a restart while
+waiting, a command id reused across principals, the hourly rate and the
+pending cap, and a size stop with the length stated and with it unknown,
+each finishing with the right bytes after approval. Pipe:
+`a_connection_declares_its_principal_in_the_handshake_and_a_bad_one_is_refused`.
+`cargo test --workspace`: 343 passed, 8 ignored; clippy and fmt clean.
+
+### Limitations
+
+- The size limit is checked when the engine samples progress, so a download
+  can pass it by one sampling interval, and one that publishes inside that
+  interval completes (contract D1).
+- A media download stopped for size restarts from zero after approval; media
+  has no checkpoint.
+- The hourly rate is counted in memory and restarts empty with the engine.
+- A build from before D1 reading this queue would not know the approval gate
+  and could start a waiting job; downgrades are not supported (see FP-070).
+- `EngineStatus` shows an agent queue-wide counts, not jobs.
+- Approval surfaces in the terminal and desktop, and the agent-access page,
+  are FP-066.
+

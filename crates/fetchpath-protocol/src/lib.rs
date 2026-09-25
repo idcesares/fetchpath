@@ -21,6 +21,7 @@ pub mod message;
 pub mod model;
 #[cfg(windows)]
 pub mod pipe;
+pub mod principal;
 pub mod schema;
 
 /// The protocol's major version, carried by every message.
@@ -33,3 +34,4 @@ pub use frame::{MAX_FRAME_BYTES, decode_command, decode_server_message, encode_f
 pub use ids::{AttemptId, ClientId, CommandId, CredentialRef, JobId, Timestamp};
 pub use message::{CommandResult, EventPayload, JobEvent, ProgressSample, Reply, ServerMessage};
 pub use model::{JobSnapshot, JobState, SensitiveUrl};
+pub use principal::{AgentName, AgentPolicy, Principal};

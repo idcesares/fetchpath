@@ -1,6 +1,6 @@
 # Job, identity, and event contract
 
-Status: accepted foundation contract for FP-005 · 20 September 2026
+Status: accepted foundation contract for FP-005 · 20 September 2026 · amended by [D1](#14-decision-record) (FP-054, 24 September 2026)
 
 This contract is the stable boundary between Fetchpath clients (desktop, CLI, browser bridge), the coordinator, storage, and transfer/media adapters. It specifies behavior before implementation. Rust types may refine representation but must preserve these semantics unless a later decision supersedes this document.
 
@@ -150,9 +150,15 @@ stateDiagram-v2
     verifying --> failed: mismatch or verifier error
     publishing --> failed: publication error
     failed --> probing: Retry
+    [*] --> awaiting_approval: CreateJob outside the principal's policy
+    running --> awaiting_approval: size limit crossed
+    awaiting_approval --> queued: Approve
+    awaiting_approval --> cancelled: Deny or Cancel
 ```
 
 `ready`, `pausing`, `cancelling`, `verifying`, and `publishing` may be brief but remain observable for diagnostics. `completed` and `cancelled` are terminal. `failed` records `retryable`; retry creates new attempts without erasing the failure event.
+
+`awaiting_approval` (D1) holds a job an agent asked for outside its policy until a `user` principal approves or denies it; nothing about it starts while it waits.
 
 `waiting_for_selection`, `waiting_for_source`, and destination-conflict waits are non-terminal and carry a `waiting_reason`. Schedules use a separate `not_before` field; a scheduled job stays `queued` rather than inventing another state.
 
@@ -169,6 +175,7 @@ stateDiagram-v2
 | `publishing`, at/after publication fence | Return immutable `too_late`; reconcile to `completed` or `failed` | Return immutable `too_late_to_cancel`; reconcile to `completed` or `failed` | Publication reconciliation has priority; never restart transfer or report cancellation first |
 | `failed` | Idempotently remains failed | Cleanup according to retain-partial policy, then `cancelled` | Remain failed with the same retryability and error record |
 | `completed`, `cancelled` | Return terminal no-op result | Return terminal no-op result | Remain terminal after reconciliation |
+| `awaiting_approval` (D1) | Idempotent no-op; nothing is running | Persist `cancelled`; a size-limit pause keeps its checkpoint until then | Remain `awaiting_approval` with the same reasons; never start |
 
 The publication fence is a documented platform operation selected by the storage implementation. Publication admission/execution and pause/cancel acceptance share a per-job serialization gate:
 
@@ -247,6 +254,7 @@ An error has stable `code`, user-facing `message_key`, `retryable`, `action`, `s
 | `resource.*` | memory/process/temp quota exceeded | lower concurrency or change policy |
 | `media.*` | unsupported site, format vanished, helper/mux failure | refresh an unfrozen choice set, create a linked replacement job for a different frozen format, or update helper |
 | `contract.*` | revision conflict, unsupported version, invalid transition | refresh client or update software |
+| `policy.*` (D1) | command not permitted for this principal, credentials from an agent, too many pending approvals, approval denied | the person changes agent access or decides; the agent cannot fix it itself |
 | `internal.*` | invariant violation, metadata failure | preserve diagnostics and stop unsafe work |
 
 Retryable errors specify a bounded `retry_after` or backoff category. UI buttons come from `action`, not string parsing. An unrecognized error remains safe and visible as `internal.unknown`; clients do not assume it is retryable.
@@ -335,3 +343,17 @@ A safe progress event:
 FP-009 must implement a narrow subset: file jobs, create/start/cancel, snapshots/events, one source, bounded pipeline, observed SHA-256, destination conflict handling, and safe publication. Pause/resume and durable checkpoints belong to FP-011. Media inspection/selection uses the same job/event vocabulary in FP-014.
 
 The implementation review must derive tests from the invariants: duplicate commands, revision conflicts, event gaps, unknown totals, late callbacks after cancellation, validator changes, full-200-on-range, truncation, disk full, destination races, and crashes around checkpoint/publication. Any change to identity trust, cancellation fencing, checkpoint ordering, or publication requires lead review and a superseding decision record.
+
+## 14. Decision record
+
+### D1 · Principals, agent policy and `awaiting_approval` (FP-054, 24 September 2026)
+
+Supersedes the assumption, implicit in §5 and §6, that every command comes from the person at the keyboard. Source: [engine platform design §6](specs/2026-09-24-engine-platform-design.md#6-principals-policy-and-approval).
+
+- **Principal per connection.** A connection declares `user`, `browser` or `agent:<name>` once, in its transport handshake; an absent declaration is `user`. The engine, not the client, enforces the principal's permissions on every command. A command outside them is refused with a `policy.*` code. Commands are allowed per principal by an explicit list, so a future command is never open to agents by accident.
+- **Who may do what.** `user`: everything. `browser`: `CreateJob` only. `agent:<name>`: `CreateJob`; on jobs it created, `GetJob`, `JobDetails`, `ListJobs`, `History`, `SubscribeJob`, `Pause`, `Resume`, `Cancel`, `Retry`, `RemoveJob`, `UpdatePolicy`, `RefreshSource` and `ResolveDestination` (new path or cancel); plus `InspectMedia` and `EngineStatus`. A job another principal created answers `contract.unknown_job`, exactly as a missing one does. Settings, agent access, approvals, queue-wide streams and statistics, and engine shutdown are `user` only.
+- **Hard refusals, not approvals.** From an agent, a link with user info, a stored `credential_ref`, and `replace_existing` are refused outright (`policy.credentials_not_allowed`, `policy.replace_not_allowed`). Approving them would let a misled agent have a person rubber-stamp credential use or an overwrite; the person can still do either from their own client.
+- **Out of policy becomes `awaiting_approval`.** A job whose destination is not inside a folder granted to that agent, or that exceeds the agent's rate of new jobs, is created in `awaiting_approval` with its reasons (`outside_granted_folders`, `rate_limit`). A destination is inside a grant when its deepest existing ancestor, with links and junctions resolved, lies within the resolved granted folder; `..` is refused for everyone. A running agent job whose stated or received size passes the agent's limit is stopped at its checkpoint and moved to `awaiting_approval` (`size_limit`). The limit is checked each time the engine samples progress, so a download that publishes within one sampling interval of crossing it completes; it cannot exceed the limit by more than one interval of transfer. An agent with no configured access has no granted folders, the default size limit and the default rate. Only a bounded number of approvals per agent may wait at once; beyond that `CreateJob` is refused (`policy.too_many_pending`).
+- **Leaving the state.** Only a `user` principal may `ApproveJob` (to `queued`, resuming from any retained checkpoint; approving a size stop lifts the limit for that job only) or `DenyJob` (to `cancelled`, recording `policy.approval_denied` so the agent can relay it). The job's agent may `Cancel` or `RemoveJob` it. No other command starts a job that is awaiting approval, and the wait survives an engine restart.
+- **Ledger identity.** The command fingerprint includes a non-`user` principal, so a command id reused across principals is an idempotency conflict and never returns another principal's stored result.
+- **Threat model.** Unchanged from the design: the pipe admits only the current user and both sides prove the per-install secret. A program already running as the same user can claim `user`; that is out of scope and documented as such.

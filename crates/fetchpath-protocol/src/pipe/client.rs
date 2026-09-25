@@ -7,6 +7,7 @@ use crate::command::{Command, CommandEnvelope};
 use crate::error::{Action, ProtocolError};
 use crate::frame::decode_server_message;
 use crate::message::{CommandResult, ServerMessage};
+use crate::principal::Principal;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -26,7 +27,18 @@ impl PipeClient {
         limits: Limits,
         connect_timeout: Duration,
     ) -> Result<Self, ProtocolError> {
-        Self::open(name, secret, limits, connect_timeout, None)
+        Self::connect_as(name, secret, limits, connect_timeout, &Principal::User)
+    }
+
+    /// Connects on behalf of `principal`, such as an agent host.
+    pub fn connect_as(
+        name: &PipeName,
+        secret: &EngineSecret,
+        limits: Limits,
+        connect_timeout: Duration,
+        principal: &Principal,
+    ) -> Result<Self, ProtocolError> {
+        Self::open(name, secret, limits, connect_timeout, None, principal)
     }
 
     /// Asks the engine to stop so a new one can start. Works whatever
@@ -38,7 +50,15 @@ impl PipeClient {
         limits: Limits,
         connect_timeout: Duration,
     ) -> Result<(), ProtocolError> {
-        Self::open(name, secret, limits, connect_timeout, Some("restart")).map(drop)
+        Self::open(
+            name,
+            secret,
+            limits,
+            connect_timeout,
+            Some("restart"),
+            &Principal::User,
+        )
+        .map(drop)
     }
 
     fn open(
@@ -47,6 +67,7 @@ impl PipeClient {
         limits: Limits,
         connect_timeout: Duration,
         intent: Option<&str>,
+        principal: &Principal,
     ) -> Result<Self, ProtocolError> {
         let handle = ffi::open_client(&name.wide(), connect_timeout).map_err(|error| {
             let detail = match error {
@@ -68,6 +89,7 @@ impl PipeClient {
                 version: auth::TRANSPORT_VERSION,
                 client_nonce: client_nonce.to_hex(),
                 intent: intent.map(str::to_owned),
+                principal: (!principal.is_user()).then(|| principal.to_string()),
             },
             deadline.saturating_duration_since(Instant::now()),
         )?;
@@ -170,6 +192,7 @@ pub struct PipeEngineClient {
     limits: Limits,
     connect_timeout: Duration,
     reply_timeout: Duration,
+    principal: Principal,
     connection: Mutex<Option<PipeClient>>,
 }
 
@@ -181,12 +204,25 @@ impl PipeEngineClient {
             limits,
             connect_timeout: Duration::from_secs(5),
             reply_timeout: Duration::from_secs(60),
+            principal: Principal::User,
             connection: Mutex::new(None),
         }
     }
 
+    /// Acts for `principal` on every connection it opens.
+    pub fn with_principal(mut self, principal: Principal) -> Self {
+        self.principal = principal;
+        self
+    }
+
     fn open(&self) -> Result<PipeClient, ProtocolError> {
-        PipeClient::connect(&self.name, &self.secret, self.limits, self.connect_timeout)
+        PipeClient::connect_as(
+            &self.name,
+            &self.secret,
+            self.limits,
+            self.connect_timeout,
+            &self.principal,
+        )
     }
 }
 

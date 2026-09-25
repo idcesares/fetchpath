@@ -3,6 +3,7 @@
 use crate::SCHEMA_VERSION;
 use crate::ids::{ClientId, CommandId, CredentialRef, JobId, Timestamp};
 use crate::model::{EngineSettings, SensitiveUrl};
+use crate::principal::{AgentName, AgentPolicy};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -42,9 +43,10 @@ impl CommandEnvelope {
 }
 
 /// The command set. Names are the contract's where it has one, plus the
-/// engine-level queries and controls from the platform design §4. Principals,
-/// approvals and rules arrive with FP-054 and FP-064; an engine that does not
-/// know a command answers `contract.unknown_command`.
+/// engine-level queries and controls from the platform design §4. Rules
+/// arrive with FP-064; an engine that does not know a command answers
+/// `contract.unknown_command`. Which principal may send which command is the
+/// engine's decision (contract D1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type")]
 pub enum Command {
@@ -122,6 +124,25 @@ pub enum Command {
         settings: EngineSettings,
     },
 
+    // Approvals and agent access (contract D1). The person only.
+    /// Lets a job that is `awaiting_approval` run. Approving a size stop
+    /// lifts the limit for that job only.
+    ApproveJob {
+        job_id: JobId,
+    },
+    /// Refuses a job that is `awaiting_approval`; it ends `cancelled`.
+    DenyJob {
+        job_id: JobId,
+    },
+    GetAgentPolicies,
+    /// Sets one agent's access, or removes it with `null`, so the agent is
+    /// back to asking for everything.
+    SetAgentPolicy {
+        agent: AgentName,
+        #[serde(default)]
+        policy: Option<AgentPolicy>,
+    },
+
     // Event streams (contract §8).
     /// Replays durable events after `after_seq`, or answers with a snapshot
     /// boundary when they were compacted, then streams new ones.
@@ -163,6 +184,10 @@ impl Command {
             Self::History { .. } => "History",
             Self::GetSettings => "GetSettings",
             Self::UpdateSettings { .. } => "UpdateSettings",
+            Self::ApproveJob { .. } => "ApproveJob",
+            Self::DenyJob { .. } => "DenyJob",
+            Self::GetAgentPolicies => "GetAgentPolicies",
+            Self::SetAgentPolicy { .. } => "SetAgentPolicy",
             Self::SubscribeJob { .. } => "SubscribeJob",
             Self::SubscribeQueue { .. } => "SubscribeQueue",
             Self::EngineStatus => "EngineStatus",
@@ -182,6 +207,7 @@ impl Command {
                 | Self::QueueStats
                 | Self::History { .. }
                 | Self::GetSettings
+                | Self::GetAgentPolicies
                 | Self::SubscribeJob { .. }
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus
@@ -283,4 +309,6 @@ pub enum JobFilter {
     Active,
     Failed,
     Finished,
+    /// Waiting for the person to approve or deny.
+    AwaitingApproval,
 }

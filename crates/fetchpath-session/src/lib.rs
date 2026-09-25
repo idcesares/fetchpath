@@ -7,6 +7,7 @@
 pub mod browser_inbox;
 mod durable;
 pub mod engine;
+pub mod policy;
 pub mod settings;
 mod wire;
 
@@ -14,9 +15,10 @@ use browser_inbox::BridgeStore;
 use durable::{Durable, DurableEngine, RecordDurable, RemovedJob, Reported};
 use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext, normalize_sha256};
 use fetchpath_media::{MediaInspection, MediaJob, MediaJobState, MediaTools};
+use fetchpath_protocol::principal::{AgentName, AgentPolicy, ApprovalReason, Principal};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -48,6 +50,9 @@ pub struct Session {
     durable: Mutex<Durable>,
     /// Set when the engine stops: no job starts any more (FP-053).
     halted: std::sync::atomic::AtomicBool,
+    /// What each configured agent may do without asking (contract D1).
+    agents: Mutex<BTreeMap<AgentName, AgentPolicy>>,
+    agents_path: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -99,6 +104,13 @@ impl JobHandle {
         match self {
             Self::File(job) => job.join(),
             Self::Media(job) => job.join(),
+        }
+    }
+
+    fn completed(&self) -> bool {
+        match self {
+            Self::File(job) => job.snapshot().state == FileJobState::Completed,
+            Self::Media(job) => job.snapshot().state == MediaJobState::Completed,
         }
     }
 }
@@ -202,7 +214,67 @@ struct QueueRecord {
     retry_at_ms: Option<u64>,
     /// Revision, event sequence and last durable report (FP-051).
     durable: RecordDurable,
+    /// Who created the job (contract D1).
+    principal: Principal,
+    /// A wait for the person's decision, or its refusal.
+    approval: Option<Approval>,
+    /// The person approved this job past its agent's size limit.
+    size_approved: bool,
     view: JobSnapshot,
+}
+
+/// A job an agent asked for outside its policy (contract D1). While it is
+/// pending nothing about the job starts; a denial ends it cancelled.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Approval {
+    reasons: Vec<ApprovalReason>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    denied: bool,
+}
+
+impl QueueRecord {
+    /// Records who asked for the job and holds it for approval when needed.
+    fn apply(&mut self, origin: &Origin) {
+        self.principal = origin.principal.clone();
+        if !origin.approval.is_empty() {
+            self.hold(origin.approval.clone());
+        }
+    }
+
+    /// Puts the job in `awaiting_approval`. Whatever was prepared for it
+    /// stays unstarted until the person decides.
+    fn hold(&mut self, reasons: Vec<ApprovalReason>) {
+        self.approval = Some(Approval {
+            reasons,
+            denied: false,
+        });
+        self.view.state = "awaiting_approval".into();
+        self.view.error = None;
+        self.view.action = None;
+        self.view.retryable = false;
+        self.finished_at_ms = None;
+        self.view.finished_at_ms = None;
+        sample_rate(self);
+    }
+
+    /// Waiting for the person to approve or deny it.
+    fn awaiting_approval(&self) -> bool {
+        self.approval
+            .as_ref()
+            .is_some_and(|approval| !approval.denied)
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Who a new job is for and whether it must wait for approval.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Origin {
+    pub principal: Principal,
+    pub approval: Vec<ApprovalReason>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -356,6 +428,14 @@ struct PersistedRecord {
     media_quality: Option<String>,
     #[serde(flatten, default)]
     durable: RecordDurable,
+    /// Absent for the person's own jobs, so a 0.1.0 file writes back
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Principal::is_user")]
+    principal: Principal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval: Option<Approval>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    size_approved: bool,
     view: JobSnapshot,
 }
 
@@ -381,6 +461,7 @@ impl Session {
             .parent()
             .map(|parent| BridgeStore::new(parent.to_path_buf()));
         let settings_path = state_path.with_file_name("settings-v1.json");
+        let agents_path = state_path.with_file_name(policy::AGENTS_FILE);
         let loaded = settings::load(&settings_path);
         let mut stored = loaded.settings;
         // A caller-supplied concurrency (the tests, and the launch default) only
@@ -430,6 +511,8 @@ impl Session {
                 ..Durable::default()
             }),
             halted: std::sync::atomic::AtomicBool::new(false),
+            agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
+            agents_path: Some(agents_path),
         })
     }
 
@@ -451,6 +534,8 @@ impl Session {
             media_tools: Mutex::new(None),
             durable: Mutex::new(Durable::default()),
             halted: std::sync::atomic::AtomicBool::new(false),
+            agents: Mutex::new(BTreeMap::new()),
+            agents_path: None,
         }
     }
 
@@ -520,6 +605,14 @@ impl Session {
     }
 
     pub fn enqueue(&self, drafts: Vec<JobDraft>) -> Result<Vec<JobSnapshot>, String> {
+        self.enqueue_for(drafts, &Origin::default())
+    }
+
+    pub(crate) fn enqueue_for(
+        &self,
+        drafts: Vec<JobDraft>,
+        origin: &Origin,
+    ) -> Result<Vec<JobSnapshot>, String> {
         if drafts.is_empty() {
             return Err("Add at least one download address.".into());
         }
@@ -574,7 +667,8 @@ impl Session {
         self.reconcile_locked(&mut state);
         let mut created_ids = Vec::with_capacity(accepted.len());
         for (url, destination, not_before_ms, checksum) in accepted {
-            let record = QueueRecord::new_checked(url, destination, not_before_ms, checksum);
+            let mut record = QueueRecord::new_checked(url, destination, not_before_ms, checksum);
+            record.apply(origin);
             created_ids.push(record.id.clone());
             state.records.push(record);
         }
@@ -598,6 +692,14 @@ impl Session {
     }
 
     pub fn enqueue_media(&self, draft: MediaDraft) -> Result<JobSnapshot, String> {
+        self.enqueue_media_for(draft, &Origin::default())
+    }
+
+    pub(crate) fn enqueue_media_for(
+        &self,
+        draft: MediaDraft,
+        origin: &Origin,
+    ) -> Result<JobSnapshot, String> {
         let tools = self.media_tools().ok_or_else(|| {
             "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
                 .to_string()
@@ -620,7 +722,7 @@ impl Session {
         if selected.label != draft.quality_label {
             return Err("That quality changed. Inspect the source again.".into());
         }
-        let record = QueueRecord::new_media(
+        let mut record = QueueRecord::new_media(
             url,
             destination,
             draft.not_before_ms,
@@ -628,6 +730,7 @@ impl Session {
             draft.quality_label,
             tools,
         );
+        record.apply(origin);
         let id = record.id.clone();
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         self.reconcile_locked(&mut state);
@@ -693,8 +796,26 @@ impl Session {
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         self.reconcile_locked(&mut state);
         let record = find_record_mut(&mut state, job_id)?;
+        // Cancelling a job that waits for approval ends it; the person no
+        // longer has anything to decide.
+        let awaiting = record.awaiting_approval();
+        if awaiting {
+            record.approval = None;
+            if record.job.is_none() {
+                record.view.state = "cancelled".into();
+                record.finished_at_ms = Some(now_ms());
+                record.view.finished_at_ms = record.finished_at_ms;
+            }
+        }
         let outcome = if let Some(job) = record.job.as_ref() {
-            job.cancel()
+            match job.cancel() {
+                // A size stop already cancelled it; this cancel is the one
+                // that counts.
+                "already_terminal" if awaiting => "accepted",
+                outcome => outcome,
+            }
+        } else if awaiting {
+            "accepted"
         } else {
             "already_terminal"
         };
@@ -746,9 +867,39 @@ impl Session {
         destination: Option<String>,
         checksum: Option<String>,
     ) -> Result<JobSnapshot, String> {
+        self.retry_as(
+            job_id,
+            url,
+            destination,
+            checksum,
+            &Principal::User,
+            Vec::new(),
+        )
+    }
+
+    /// Retries on behalf of `by`. Only the person may retry a download they
+    /// declined; `hold` puts the retried job back in front of them.
+    pub(crate) fn retry_as(
+        &self,
+        job_id: &str,
+        url: Option<String>,
+        destination: Option<String>,
+        checksum: Option<String>,
+        by: &Principal,
+        hold: Vec<ApprovalReason>,
+    ) -> Result<JobSnapshot, String> {
         let checksum = checksum.map(|text| checked_checksum(&text)).transpose()?;
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         let record = find_record_mut(&mut state, job_id)?;
+        if record.awaiting_approval() {
+            return Err("This download is waiting for the person to approve it.".into());
+        }
+        if record.approval.is_some() {
+            if !by.is_user() {
+                return Err("The person declined this download.".into());
+            }
+            record.approval = None;
+        }
         if !matches!(
             record.view.state.as_str(),
             "failed" | "cancelled" | "needs_source"
@@ -821,6 +972,9 @@ impl Session {
             record.view.retryable = false;
             record.view.not_before_ms = None;
             record.view.finished_at_ms = None;
+        }
+        if !hold.is_empty() {
+            record.hold(hold);
         }
         self.reconcile_locked(&mut state);
         self.save_locked(&mut state)?;
@@ -958,6 +1112,230 @@ impl Session {
         self.save_locked(&mut state)
     }
 
+    /// Lets a job that waits for approval run (contract D1). A size stop is
+    /// joined first, so its checkpoint is quiet before anything reuses it,
+    /// and the job then continues from that checkpoint.
+    pub fn approve(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        let stopped = {
+            let mut state = self.inner.lock().expect("desktop jobs poisoned");
+            let record = find_record_mut(&mut state, job_id)?;
+            if !record.awaiting_approval() {
+                return Err("This download is not waiting for approval.".into());
+            }
+            record.job.take()
+        };
+        // Joining waits for a network read to unwind; never under the lock.
+        if let Some(job) = stopped {
+            job.cancel();
+            job.join();
+        }
+
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let media_tools = self.media_tools();
+        let record = find_record_mut(&mut state, job_id)?;
+        if !record.awaiting_approval() {
+            return Err("This download is not waiting for approval.".into());
+        }
+        let reasons = record
+            .approval
+            .take()
+            .map(|approval| approval.reasons)
+            .unwrap_or_default();
+        if reasons.contains(&ApprovalReason::SizeLimit) {
+            record.size_approved = true;
+        }
+        record.finished_at_ms = None;
+        record.view.finished_at_ms = None;
+        let prepared = match record.live_url.clone() {
+            None => Err((
+                "needs_source",
+                "Paste a refreshed link because private query values were not saved.",
+                "edit_link",
+            )),
+            Some(_) if record.destination.exists() => Err((
+                "failed",
+                "A file already exists at this destination.",
+                "choose_new_path",
+            )),
+            Some(url) => match record.media_variant_id.clone() {
+                Some(variant_id) => media_tools
+                    .map(|tools| {
+                        JobHandle::Media(MediaJob::create(
+                            url,
+                            variant_id,
+                            record.destination.clone(),
+                            tools,
+                        ))
+                    })
+                    .ok_or((
+                        "failed",
+                        "Media tools are unavailable. Configure them to retry this download.",
+                        "configure_media_tools",
+                    )),
+                // A recoverable job validates any retained checkpoint against
+                // the source before reusing a byte of it.
+                None => file_job(
+                    url,
+                    record.destination.clone(),
+                    record.live_context.clone(),
+                    record.view.expected_sha256.as_deref(),
+                )
+                .map(JobHandle::File)
+                .map_err(|_| ("failed", UNREADABLE_CHECKSUM, "check_checksum")),
+            },
+        };
+        match prepared {
+            Ok(job) => {
+                record.job = Some(job);
+                record.view.state = if record.not_before_ms.is_some_and(|due| due > now_ms()) {
+                    "scheduled".into()
+                } else {
+                    "queued".into()
+                };
+                record.view.error = None;
+                record.view.action = None;
+                record.view.retryable = false;
+            }
+            Err((state_name, error, action)) => {
+                record.view.state = state_name.into();
+                record.view.error = Some(error.into());
+                record.view.action = Some(action.into());
+                record.view.retryable = true;
+                if state_name == "failed" {
+                    record.finished_at_ms = Some(now_ms());
+                    record.view.finished_at_ms = record.finished_at_ms;
+                }
+            }
+        }
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)?;
+        Ok(find_record(&state, job_id)?.view.clone())
+    }
+
+    /// Refuses a job that waits for approval. It ends cancelled, and its
+    /// agent is told the person declined it.
+    pub fn deny(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        let (view, stopped) = {
+            let mut state = self.inner.lock().expect("desktop jobs poisoned");
+            let record = find_record_mut(&mut state, job_id)?;
+            if !record.awaiting_approval() {
+                return Err("This download is not waiting for approval.".into());
+            }
+            if let Some(approval) = record.approval.as_mut() {
+                approval.denied = true;
+            }
+            let stopped = record.job.take();
+            let now = now_ms();
+            record.view.state = "cancelled".into();
+            record.view.error = Some("The person declined this download.".into());
+            record.view.action = None;
+            record.view.retryable = false;
+            record.finished_at_ms = Some(now);
+            record.view.finished_at_ms = Some(now);
+            sample_rate(record);
+            let view = record.view.clone();
+            self.save_locked(&mut state)?;
+            (view, stopped)
+        };
+        if let Some(job) = stopped {
+            job.cancel();
+            job.join();
+        }
+        Ok(view)
+    }
+
+    /// Stops a running agent download whose stated or received size passed
+    /// its agent's limit and holds it for approval. The stop is requested
+    /// here and joined on approval, so the queue lock never waits on it.
+    fn stop_oversize_agent_jobs(&self, state: &mut QueueState) {
+        let agents = self.agents.lock().expect("agents poisoned").clone();
+        for record in &mut state.records {
+            let Principal::Agent(agent) = &record.principal else {
+                continue;
+            };
+            if record.size_approved || record.approval.is_some() || record.view.state != "running" {
+                continue;
+            }
+            let limit = agents
+                .get(agent)
+                .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+            let over = record.view.total_bytes.is_some_and(|total| total > limit)
+                || record.view.bytes_received > limit;
+            if !over {
+                continue;
+            }
+            if let Some(job) = record.job.as_ref() {
+                job.cancel();
+            }
+            record.hold(vec![ApprovalReason::SizeLimit]);
+        }
+    }
+
+    /// Jobs of `principal` waiting for the person.
+    pub(crate) fn pending_approvals(&self, principal: &Principal) -> usize {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        state
+            .records
+            .iter()
+            .filter(|record| &record.principal == principal && record.awaiting_approval())
+            .count()
+    }
+
+    /// Who created a job, if it exists.
+    pub(crate) fn principal_of(&self, job_id: &str) -> Option<Principal> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        find_record(&state, job_id)
+            .ok()
+            .map(|record| record.principal.clone())
+    }
+
+    /// An agent's policy, or the default for an agent the person has not
+    /// configured.
+    pub fn agent_policy(&self, agent: &AgentName) -> AgentPolicy {
+        self.agents
+            .lock()
+            .expect("agents poisoned")
+            .get(agent)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn agent_policies(&self) -> Vec<fetchpath_protocol::principal::AgentAccess> {
+        self.agents
+            .lock()
+            .expect("agents poisoned")
+            .iter()
+            .map(
+                |(agent, policy)| fetchpath_protocol::principal::AgentAccess {
+                    agent: agent.clone(),
+                    policy: policy.clone(),
+                },
+            )
+            .collect()
+    }
+
+    /// Sets or removes one agent's access and saves every agent's.
+    pub fn set_agent_policy(
+        &self,
+        agent: AgentName,
+        next: Option<AgentPolicy>,
+    ) -> Result<(), String> {
+        let next = next.map(policy::validated).transpose()?;
+        let mut agents = self.agents.lock().expect("agents poisoned");
+        let mut updated = agents.clone();
+        match next {
+            Some(policy) => updated.insert(agent, policy),
+            None => updated.remove(&agent),
+        };
+        if let Some(path) = self.agents_path.as_ref() {
+            write_json_atomically(path, &policy::AgentsFile::new(updated.clone())).map_err(
+                |error| format!("Could not save agent access at {}: {error}", path.display()),
+            )?;
+        }
+        *agents = updated;
+        Ok(())
+    }
+
     pub fn cancel_all_and_join(&self) {
         let jobs: Vec<(String, JobHandle)> = {
             let state = self.inner.lock().expect("desktop jobs poisoned");
@@ -1036,6 +1414,7 @@ impl Session {
                 let _ = store.remove_secret(&credential_ref);
             }
         }
+        self.stop_oversize_agent_jobs(state);
         if settings.auto_retry {
             self.schedule_automatic_retries(state, &settings);
         }
@@ -1477,6 +1856,9 @@ impl QueueRecord {
             attempt: 0,
             retry_at_ms: None,
             durable: RecordDurable::default(),
+            principal: Principal::User,
+            approval: None,
+            size_approved: false,
             view: JobSnapshot {
                 job_id: id,
                 source: display,
@@ -1550,6 +1932,9 @@ impl QueueRecord {
             attempt: 0,
             retry_at_ms: None,
             durable: RecordDurable::default(),
+            principal: Principal::User,
+            approval: None,
+            size_approved: false,
             view: JobSnapshot {
                 job_id: id,
                 source: display,
@@ -1606,7 +1991,15 @@ impl QueueRecord {
         // silently start a transfer the user deliberately stopped, which is the
         // one thing a pause has to be able to promise across a restart.
         let paused = saved.view.state == "paused";
-        let (job, state, error, action, retryable) = if paused && live_url.is_some() {
+        // A job waiting for the person's decision keeps waiting. Nothing is
+        // prepared for it until it is approved (contract D1).
+        let awaiting_approval = saved
+            .approval
+            .as_ref()
+            .is_some_and(|approval| !approval.denied);
+        let (job, state, error, action, retryable) = if awaiting_approval {
+            (None, "awaiting_approval".into(), None, None, false)
+        } else if paused && live_url.is_some() {
             (None, "paused".into(), None, None, false)
         } else if private_source_needs_refresh {
             (
@@ -1736,12 +2129,27 @@ impl QueueRecord {
             attempt: view.attempt,
             retry_at_ms: None,
             durable,
+            principal: saved.principal,
+            approval: saved.approval,
+            size_approved: saved.size_approved,
             view,
         }
     }
 }
 
 fn refresh_record(record: &mut QueueRecord) {
+    // A job waiting for approval never takes its state from a prepared job,
+    // which would report itself queued and be started. The one exception is
+    // a size stop that lost the race with publication: that download really
+    // finished, and saying otherwise would hide a file already on disk.
+    if record.awaiting_approval() {
+        if !record.job.as_ref().is_some_and(JobHandle::completed) {
+            record.view.state = "awaiting_approval".into();
+            sample_rate(record);
+            return;
+        }
+        record.approval = None;
+    }
     // A paused record may still hold a prepared job that never started. That
     // job reports itself as queued, and copying its state over the view would
     // put the record straight back in the queue for reconcile to start, which
@@ -2234,6 +2642,9 @@ fn write_queue(
                 media_variant_id: record.media_variant_id.clone(),
                 media_quality: record.media_quality.clone(),
                 durable: record.durable.clone(),
+                principal: record.principal.clone(),
+                approval: record.approval.clone(),
+                size_approved: record.size_approved,
                 view: record.view.clone(),
             })
             .collect(),
@@ -2625,6 +3036,9 @@ mod tests {
             media_variant_id: None,
             media_quality: None,
             durable: RecordDurable::default(),
+            principal: Principal::User,
+            approval: None,
+            size_approved: false,
             view,
         };
         let restored = QueueRecord::restore(saved, now_ms(), None, None);
