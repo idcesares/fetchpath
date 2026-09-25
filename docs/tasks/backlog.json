@@ -2046,6 +2046,40 @@
       "verification": "A test writes a newer-schema queue, opens and saves repeatedly, and finds the original bytes intact; strong-model review.",
       "evidence": [],
       "blockedReason": null
+    },
+    {
+      "id": "FP-071",
+      "title": "Clear accumulated clutter so work stays on the core engine",
+      "milestone": "M10",
+      "dependsOn": [],
+      "status": "in_progress",
+      "owner": "lead",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "standard",
+      "files": [
+        "work",
+        "docs/development",
+        "docs/tasks/backlog.json",
+        "tests",
+        "tools",
+        "crates",
+        "apps",
+        "adapters",
+        "AGENTS.md",
+        "PROJECT.md",
+        "CONTRIBUTING.md",
+        "target"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A04",
+        "A12"
+      ],
+      "acceptance": "Scratch under work/ (1.4 GB of per-task probes, logs, sandboxes, spikes) is deleted except anything a live task names, and the 41 GB target/ build cache is cleaned and kept from regrowing unbounded (stale profiles and per-task target dirs removed). Finished implementation plans, spike write-ups and per-task review/evidence records in docs/development are removed or folded into one short decision note each, keeping only what a current or ready task, a contract, or the release process still reads; the development README lists what remains. Tests are cut to those that guard a shipped contract or invariant: characterization tests whose code has moved (FP-048/049) are kept only where they pin current behavior or an open finding, duplicate or tautological tests are removed, and slow manual-only harnesses that no check runs are dropped or marked. Done and superseded backlog tasks keep their records but lose bulky evidence text. AGENTS.md and PROJECT.md are trimmed to the rules an agent needs per session. Nothing that the release, installer or repository-structure checks depend on is removed without updating them in the same change.",
+      "verification": "Before/after inventory (tracked file count and bytes per area, work/ size, test count and cargo test + node --test wall time) recorded in the task evidence with the list of removed items and why; node tools/tasks.mjs check, node --test and cargo test --workspace pass.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }
