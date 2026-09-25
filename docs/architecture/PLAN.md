@@ -2,7 +2,7 @@
 
 Revision 0.3 · Research checked 19 September 2026 · Product direction incorporates the user's answers; implementation choices remain proposals
 
-Confirmed product direction and open decisions are owned by [PROJECT.md](../../PROJECT.md). Model delegation is described in [BUILD-ORCHESTRATION.md](../development/ORCHESTRATION.md).
+Confirmed product direction and open decisions are owned by [PROJECT.md](../../PROJECT.md). Model routing is in [the task workflow](../development/WORKFLOW.md).
 
 ## 1. What we should optimize
 
@@ -230,4 +230,4 @@ Before implementation locks packaging, select a supported Windows baseline and a
 
 Stop general technology research now: enough evidence exists to define the first slices. Resume focused research when a milestone reaches a concrete unknown, such as authenticated browser capture, media extractor lifecycle, native HTTP/3 packaging, or power-loss recovery. Keep FEC, custom protocols, proprietary manifest design, and speculative zero-copy rewrites out of the critical path until a measured workload justifies them.
 
-This plan is the architecture reference. Foundation prototype and local HTTP/1.1 harness now exist; see ../development/FOUNDATION-RESULTS.md for actual evidence. No universal speed or compatibility claim has been validated.
+This plan is the architecture reference. Per-area evidence is indexed in [development records](../development/README.md). No universal speed or compatibility claim has been validated.

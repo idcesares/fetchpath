@@ -21,7 +21,7 @@
       "acceptance": "Task graph checks and tooling tests pass; task ownership and evidence are documented.",
       "verification": "See docs/development/FOUNDATION-RESULTS.md",
       "evidence": [
-        "docs/development/FOUNDATION-RESULTS.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -45,7 +45,7 @@
       "acceptance": "Browser walkthrough covers add, media quality, pause/resume, filtering, power mode, keyboard dialog; simulation is clear.",
       "verification": "See docs/development/FOUNDATION-RESULTS.md",
       "evidence": [
-        "docs/development/FOUNDATION-RESULTS.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -71,7 +71,7 @@
       "acceptance": "Range/ETag/fault tests pass; two curl runs record independent matching hashes. No comparative claim.",
       "verification": "See docs/development/FOUNDATION-RESULTS.md",
       "evidence": [
-        "docs/development/FOUNDATION-RESULTS.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -96,8 +96,7 @@
       "acceptance": "Package a minimal Rust/libcurl candidate with reproducible H1/H2/H3 capability checks, TLS trust, proxy, cancellation and clean native build evidence.",
       "verification": "Tracked Rust/libcurl spike builds with a lockfile and passes controlled H1, public TLS, explicit proxy, and bounded cancellation checks. Runtime feature detection correctly fails the HTTP/2 and HTTP/3 capability gate; protocol transfers remain not-run.",
       "evidence": [
-        "docs/development/HTTP-BACKEND-SPIKE.md",
-        "docs/development/evidence/http-backend/http-backend-spike.json"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -124,7 +123,7 @@
       "verification": "Accepted contract covers states/errors, cancellation and publication fencing, identity provenance, progress streams, bounded buffers, checkpoints and restart. Independent Astra High/high adversarial review passed after corrections.",
       "evidence": [
         "docs/architecture/JOB-CONTRACT.md",
-        "docs/development/JOB-CONTRACT-REVIEW.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -150,8 +149,7 @@
       "acceptance": "Document Chrome/Edge/Firefox GET/auth/POST/blob/signed-URL matrix and acknowledged handoff/fallback using real supported browser APIs.",
       "verification": "Chrome for Testing 153.0.8010.52 exercised real downloads, webRequest, cookies, and nativeMessaging APIs. Controlled plain and signed GETs were durably acknowledged before observed browser cancellation; cookie-authenticated GET, POST, and blob cases preserved the browser path; duplicate capture ID was idempotent; secret-persistence assertions passed. Hidden Authorization headers remain an explicit generic auto-capture limitation. Edge and Firefox API differences are documented; runtime execution is explicitly not run.",
       "evidence": [
-        "docs/development/BROWSER-HANDOFF-SPIKE.md",
-        "docs/development/evidence/browser/browser-spike.json"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -175,8 +173,7 @@
       "acceptance": "Select first site/format corpus; record yt-dlp/FFmpeg and runtime dependencies, muxed output, cancellation, errors, update and license requirements.",
       "verification": "Tracked helper harness passes controlled local direct MP4, HLS, DASH enumeration, separate video/audio mux, MP3 extraction, process-tree cancellation, and bounded 404 failure using yt-dlp 2026.08.19 and FFmpeg 9.0.1. Public extractor compatibility remains an explicit FP-014 release gate.",
       "evidence": [
-        "docs/development/MEDIA-SPIKE.md",
-        "docs/development/evidence/media/run.jsonl"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -203,7 +200,7 @@
       "verification": "Tauri 2 and WinUI 3 implemented the same Windows journey and passed release builds, Windows UI Automation discovery, and close-to-tray probes. Five UIA-ready startup and process-tree memory samples plus installer artifacts were recorded. Tauri 2 was selected for direct Rust-core integration and smaller/faster delivery despite its higher measured renderer footprint. Support is Windows 11 x64 on Microsoft-serviced releases; 24H2 is the current floor and 25H2 the primary QA target.",
       "evidence": [
         "docs/architecture/DESKTOP-FRAMEWORK.md",
-        "docs/development/evidence/ui/framework-spike.json"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -230,8 +227,7 @@
       "acceptance": "Real URL to staging file to validated safe publication; fixture byte check; bounded memory, cancellation, native build/test.",
       "verification": "Native Rust job and CLI stream one real HTTP source through a 16 KiB buffer to unique staging, observed SHA-256, serialized cancellation/publication, and create-only safe publication. Eleven adversarial core tests, locked build/check, Clippy, and a 1 MiB CLI smoke hash pass.",
       "evidence": [
-        "docs/development/FIRST-DOWNLOAD.md",
-        "docs/development/FIRST-DOWNLOAD-REVIEW.md",
+        "docs/development/ARCHIVE.md",
         "crates/fetchpath-core/src/lib.rs",
         "apps/cli/src/main.rs"
       ],
@@ -559,7 +555,7 @@
         "docs/development/evidence/release/fp018-benchmark-uncertainty.json",
         "docs/development/evidence/release/fp018-rerun-2026-09-24.json",
         "docs/development/evidence/windows/sandbox-lifecycle.json",
-        "docs/development/RELEASE-READINESS.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -778,7 +774,7 @@
       "acceptance": "Total size, percent complete, transfer rate and remaining time are derived from engine-confirmed values, are absent rather than guessed when the source withholds a length, and never imply progress the engine has not reported.",
       "verification": "The engine already computed the total and discarded it at the boundary. `CancellationToken` now carries it beside the received count, set at the three points the engine learns it: a recovered checkpoint, each adaptive chunk, and validated response headers. A new `header_total` reads headers with no fallback, because `response_total` substitutes the bytes received when a length is absent, which is right for a checkpoint written after the body is complete and would report 100% from the first chunk if used for live progress. Rate and remaining time are derived in the desktop layer from a time-based EWMA over poll samples, ignoring intervals under 400 ms and withdrawing after 5 s without progress, and are cleared for every state except running. Three core tests fix the behaviour: a stated Content-Length becomes the reported total; a response with no declared length reports no total while still receiving every byte; a queued job has no total before the source states one. No speed claim is made: the statistics panel reports observed throughput and says so. End to end through the desktop queue, a completed keyboard-only journey records 262144 of 262144 bytes.",
       "evidence": [
-        "docs/development/RELEASE-POLISH.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/evidence/windows/ui-accessibility.json"
       ],
       "blockedReason": null
@@ -806,7 +802,7 @@
       "acceptance": "A running file download pauses to a retained checkpoint and resumes from that offset without re-downloading verified bytes. A pause that loses the race against publication reports completion rather than a false paused state. Paused items survive a restart still paused.",
       "verification": "Pause stops a running file download at its retained checkpoint; resume recreates a recoverable job, which revalidates the checkpoint against the source before reusing a byte. The publication race is handled rather than assumed: a pause refused because the engine had committed to publishing reports the completion instead of a false paused state, and the worker is joined with the queue lock released so the poll that draws the interface is not blocked. Two defects were found by the tests rather than by inspection: `refresh_record` copied a prepared job’s queued state over a paused view so the next poll restarted it, and `QueueRecord::restore` rebuilt any non-terminal saved state as queued so a paused download started itself on the next launch. Four desktop tests cover it; the central one pauses a throttled 768 KB transfer partway through and asserts exactly one If-Range request, the header only the resume path sends, and a published file matching the source byte for byte. Media downloads have no checkpoint to return to, so pause is refused for them by name rather than offered and then failing. The welcome card added for first run is dismissible from the keyboard and does not return after a restart, which the harness asserts.",
       "evidence": [
-        "docs/development/RELEASE-POLISH.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/evidence/windows/ui-accessibility.json"
       ],
       "blockedReason": null
@@ -833,7 +829,7 @@
       "acceptance": "Persisted settings govern concurrency, the default destination, automatic retry and tray behavior; every value is bounded and a corrupt settings file falls back to documented defaults rather than failing launch. Power mode adds diagnostics inline without removing or duplicating ordinary controls.",
       "verification": "Settings persist to settings-v1.json beside the queue. A truncated or hand-edited file falls back to defaults, a file from an older build keeps every field it does have, and the load reports that it repaired something so the interface can say so rather than presenting defaults as the user’s choices. Every bound is enforced in one place: concurrency 1-8, retry attempts 0-10, backoff 5-3600 s doubling to the ceiling, and a stored directory discarded unless absolute because a relative path would resolve against the launch directory. Automatic retry applies only to failures the engine classified as transport trouble; destination conflicts, invalid links, expired private sources and missing helpers always wait for a person. Power mode is off by default and strictly additive. Six settings tests and two desktop tests cover clamping, the round trip, the truncated-file fallback, the relative-path rejection, the backoff ceiling, and that a stored concurrency wins over the launch default across a restart. The accessibility harness was extended for the new surface and passes with no failures against the optimized executable: 19 tab stops in reading order, 26 focusable controls with none unnamed, and a modal Settings dialog exposed as a named Window with 11 focusable controls, none unnamed, that takes focus, hides the page behind it and returns focus on Escape.",
       "evidence": [
-        "docs/development/RELEASE-POLISH.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/evidence/windows/ui-accessibility.json"
       ],
       "blockedReason": null
@@ -861,7 +857,7 @@
       "acceptance": "Missing media helpers produce a guided in-app path rather than a bare error: detection, an explanation, a folder the user already has, or a pinned download verified against a recorded SHA-256 before it is installed. An unverified or unpinned artifact is never installed.",
       "verification": "Missing helpers now lead to a guided path instead of a bare helper_unavailable: detection of helpers already present, a folder the user points at that is accepted only after both programs answer --version, or a pinned download fetched through the same verified transfer path as any other download and checked against a recorded SHA-256 before installation. This build ships deliberately unpinned: media-tools.json has empty sha256 fields, the guided download is refused by name for any unpinned entry, and the interface offers only the manual path in that state. A digest computed from whatever arrived would prove the bytes survived the network and nothing about the publisher, so it is never presented as authenticity. tools/media-tools/pin.mjs is the only sanctioned way to record one: it downloads the artifact and the publisher’s own checksum document and writes the digest only when the two agree. Known limitation: until a maintainer runs pin.mjs with network access, guided download is unavailable and media setup is the detect-or-choose-folder path. Six module tests and five repository tests cover the manifest shape, the refusal leaving nothing behind, an empty directory reporting not ready, a wrong folder rejected with the path named, and the wrapper-directory flattening published ffmpeg archives need. The harness now checks whichever media branch the machine presents; on a machine with no helpers it is the setup path, and that path is named and operable rather than a dead end.",
       "evidence": [
-        "docs/development/RELEASE-POLISH.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/evidence/windows/ui-accessibility.json"
       ],
       "blockedReason": null
@@ -887,7 +883,7 @@
       "acceptance": "Uninstall offers an explicit data-removal choice, removes exactly what the user chose, and leaves the rest where the user can find it. The third-party notice file is generated from Cargo.lock rather than maintained by hand, and regenerating it is a checked command.",
       "verification": "installer-hooks.nsh adds NSIS_HOOK_PREUNINSTALL. An interactive uninstall asks whether to also remove the queue, history and settings and defaults to No, because an uninstall is often a reinstall; a silent uninstall takes the keeping branch because nobody is present to choose. Answering yes removes exactly %APPDATA%\\app.fetchpath.desktop and %LOCALAPPDATA%\\app.fetchpath.desktop, the two directories the packaging harness observes, and never a downloaded file. makensis accepted the hook and produced Fetchpath_0.1.0_x64-setup.exe, so the branch is compiled into the shipped installer. tools/licenses/generate.mjs replaces the hand-maintained notices with a file generated from Cargo.lock covering 566 packages, each row stating whether its license was read from the crate manifest or recorded by a maintainer; an unresolvable crate fails the run and --check fails when the file is out of date. A false record was also corrected: packaging-lifecycle.ps1 hardcoded uninstallerOffersDataRemovalCheckbox = true for a control that did not exist, and now reads the configured hook and asserts it is present.",
       "evidence": [
-        "docs/development/RELEASE-POLISH.md",
+        "docs/development/ARCHIVE.md",
         "apps/desktop/src-tauri/THIRD-PARTY-NOTICES.md"
       ],
       "blockedReason": null
@@ -923,7 +919,7 @@
       "verification": "Implemented and tested; stays in_progress until the UI walkthrough runs. The engine enforces an optional user-supplied SHA-256 at all three publication points: normal completion (known-bad staging is discarded), recovery of a pending publication intent, and recovery that finds a file already published (reported with its real digest, never deleted). Pause, resume and progress are unchanged. The desktop takes the checksum under Advanced options, normalizes what people paste, refuses non-SHA-256 input and batches with a plain explanation, persists it with the row, and applies it at every file-job creation site; an unreadable saved checksum fails closed. A mismatch shows both values with Edit checksum and Retry and is never retried automatically. A match reads 'matches the checksum you entered' with fine print that makes no authenticity claim. The media-tool setup now also passes its recorded SHA-256 to the engine. Removing either recovery check, or classifying a mismatch as a transport failure, makes a named test fail. Recorded 23 September 2026 on Windows 11 Pro 26200 x64: cargo test --workspace --locked 223 passed 0 failed 4 ignored (pre-existing) against a 210 baseline; clippy -D warnings, fmt, tsc and the vite build clean. UI walkthrough on 23 September 2026 through the real release executable over the DevTools protocol: a messily pasted SHA256: digest matched and published; a wrong one published nothing, showed both digests with Edit checksum and Retry, and was not retried; the checksum field passes the accessibility harness. ui-smoke.ps1 was not run because it sends global keystrokes.",
       "evidence": [
         "docs/development/DESKTOP-CHECKSUM.md",
-        "docs/development/RELEASE-READINESS.md"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -1037,7 +1033,7 @@
       "acceptance": "The download list is visible without scrolling at the default window size; adding a link is a compact bar with batch, media, destination and advanced options in a dialog; first-run guidance is a slim dismissible banner; no marketing hero; every existing journey, keyboard shortcut, live-region announcement and accessible name still works.",
       "verification": "The queue is the page: app bar, compact rows, one-line welcome banner, empty state, and the unchanged composer in a modal Add download dialog opened by button, Ctrl+N/L or paste-anywhere. ui-accessibility.ps1 passed on 23 September 2026: 15 tab stops in order across page and dialog, 17 focusable controls none unnamed, keyboard-only journey published and announced, Esc keeps the draft and Cancel clears it, live regions present inside the modal. Driving real downloads exposed and fixed: HTTP 4xx retried automatically, NaN remaining time, stale speed on stopped rows, 100% on a mismatch, inert live regions under a modal, focus lost after the first add and after Pause.",
       "evidence": [
-        "docs/development/RELEASE-READINESS.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/evidence/windows/ui-accessibility.json"
       ],
       "blockedReason": null
@@ -1069,7 +1065,7 @@
       "acceptance": "The installer writes the native-messaging host manifests with the installed path and registers them under HKCU for Chrome, Edge and Firefox, and the uninstaller removes them; an unpacked extension folder ships with the app; Settings reports host registration and walks the user through loading the extension.",
       "verification": "Installer ships relative-path host manifests and the unpacked Chromium extension, registers com.fetchpath.browser under HKCU for Chrome, Edge and Firefox, and removes exactly those keys on uninstall; verified by a real silent install and uninstall on 23 September 2026. The installed app reports Chrome and Edge connected and guides Load unpacked; Firefox is not offered because release Firefox loads only signed add-ons. browser_setup reads the registry through reg.exe with no unsafe code.",
       "evidence": [
-        "docs/development/RELEASE-READINESS.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/BROWSER-CAPTURE.md"
       ],
       "blockedReason": null
@@ -1098,7 +1094,7 @@
       "acceptance": "fetchpath --version and --help work; download accepts a folder destination and derives the file name; human-readable progress and results by default with --json for scripts; distinct non-zero exit codes for input, conflict, network and integrity failures; the CLI is installed with the desktop app.",
       "verification": "fetchpath --version/--help, download with optional or folder destination, progress on a terminal, --json, --quiet, --sha256, and exit codes 0/2/3/4/5/6/130, observed on real runs except 6 and 130. Installed as a sidecar and added to the per-user PATH by tools/user-path.ps1, which replaced an NSIS PATH edit that wiped a long PATH during testing (restored byte for byte from a saved copy). Real install put fetchpath on PATH and --version ran from a fresh environment; uninstall left PATH byte-identical. LAN and cache commands remain callable but unlisted pending FP-020 review.",
       "evidence": [
-        "docs/development/RELEASE-READINESS.md",
+        "docs/development/ARCHIVE.md",
         "docs/user/CLI.md",
         "tests/installer/user-path.test.mjs"
       ],
@@ -1158,7 +1154,7 @@
       "acceptance": "media-tools.json records a SHA-256 and size for each helper artifact, fetched over HTTPS from the publisher release and cross-checked against the publisher-listed digest where one exists; the guided setup downloads and installs them; media is documented as best-effort with no named supported sites.",
       "verification": "yt-dlp 2026.08.19 and GyanD ffmpeg 9.0.2 essentials pinned by pin.mjs against their publishers' checksum files, also matching GitHub asset digests; the old ffmpeg URL returned 404. The first real guided install failed because the ffmpeg archive was unpacked beside yt-dlp and never flattened; fixed with staged extraction and a regression test. The ignored network test guided_install_fetches_verifies_and_runs_the_pinned_helpers passed in 167 s. Media is documented as best-effort with no named sites.",
       "evidence": [
-        "docs/development/RELEASE-READINESS.md",
+        "docs/development/ARCHIVE.md",
         "docs/development/MEDIA-INTEGRATION.md"
       ],
       "blockedReason": null
@@ -1459,8 +1455,7 @@
       "evidence": [
         "crates/fetchpath-session/src/lib.rs",
         "docs/development/ENGINE-SESSION.md",
-        "docs/development/evidence/engine-session/fp-049-walkthrough/after-transcript.json",
-        "docs/development/evidence/engine-session/fp-049-walkthrough/before-transcript.json"
+        "docs/development/ARCHIVE.md"
       ],
       "blockedReason": null
     },
@@ -2052,7 +2047,7 @@
       "title": "Clear accumulated clutter so work stays on the core engine",
       "milestone": "M10",
       "dependsOn": [],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -2076,9 +2071,13 @@
         "A04",
         "A12"
       ],
-      "acceptance": "Scratch under work/ (1.4 GB of per-task probes, logs, sandboxes, spikes) is deleted except anything a live task names, and the 41 GB target/ build cache is cleaned and kept from regrowing unbounded (stale profiles and per-task target dirs removed). Finished implementation plans, spike write-ups and per-task review/evidence records in docs/development are removed or folded into one short decision note each, keeping only what a current or ready task, a contract, or the release process still reads; the development README lists what remains. Tests are cut to those that guard a shipped contract or invariant: characterization tests whose code has moved (FP-048/049) are kept only where they pin current behavior or an open finding, duplicate or tautological tests are removed, and slow manual-only harnesses that no check runs are dropped or marked. Done and superseded backlog tasks keep their records but lose bulky evidence text. AGENTS.md and PROJECT.md are trimmed to the rules an agent needs per session. Nothing that the release, installer or repository-structure checks depend on is removed without updating them in the same change.",
+      "acceptance": "Scratch under work/ and the target/ build cache are cleared; merged branches and worktrees are removed. Plans, spike, review and superseded release records in docs/development are removed and listed with the commit that holds them in docs/development/ARCHIVE.md, and finished tasks cite that page. Tests are reviewed and only those guarding a contract, persisted format or invariant are kept. AGENTS.md and the workflow carry rules that stop plans, logs and evidence accumulating again. Release, installer and repository-structure checks still pass.",
       "verification": "Before/after inventory (tracked file count and bytes per area, work/ size, test count and cargo test + node --test wall time) recorded in the task evidence with the list of removed items and why; node tools/tasks.mjs check, node --test and cargo test --workspace pass.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/ARCHIVE.md",
+        "docs/development/WORKFLOW.md",
+        "AGENTS.md"
+      ],
       "blockedReason": null
     }
   ]

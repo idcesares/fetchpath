@@ -24,6 +24,9 @@ node tools/licenses/generate.mjs --check   # third-party notices are current
 node tools/media-tools/pin.mjs --check     # media helper pins still match their publishers
 ```
 
+The native-host test in `node --test` runs `target/debug/fetchpath-browser-host.exe`,
+so after a `cargo clean` run `cargo build --workspace` first.
+
 The Rust workspace needs Rust 1.98+:
 
 ```powershell

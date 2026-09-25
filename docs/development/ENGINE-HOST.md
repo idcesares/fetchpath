@@ -8,7 +8,7 @@ authenticated pipe
 ## FP-053: single owner, launch or attach, idle exit
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
-[2026-09-24-fp-053-engine-host](plans/2026-09-24-fp-053-engine-host.md).
+[2026-09-24-fp-053-engine-host](ARCHIVE.md).
 Code: `apps/cli/src/engine`, `crates/fetchpath-protocol/src/launch.rs`.
 
 | Part | What it does |

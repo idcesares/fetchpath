@@ -308,8 +308,7 @@ research. `node tools/tasks.mjs next` lists ready tasks in this order.
 
 Strong-model review is required for FP-049, FP-051, FP-052, FP-053, FP-054,
 FP-057, FP-065 and FP-067: persistence ordering, credential boundaries, FFI
-and agent policy. Implementation plans are written per task at its start in
-`docs/development/plans`, not in advance.
+and agent policy. Implementation plans, when needed, are scratch in ignored `work/plans`.
 
 ## 12. Open points, decided inside their tasks
 

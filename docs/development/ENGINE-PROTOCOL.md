@@ -8,7 +8,7 @@ its clients ([platform design](../architecture/specs/2026-09-24-engine-platform-
 ## FP-050: protocol v1 and the `EngineClient` interface
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
-[2026-09-24-fp-050-protocol-v1](plans/2026-09-24-fp-050-protocol-v1.md).
+[2026-09-24-fp-050-protocol-v1](ARCHIVE.md).
 
 `crates/fetchpath-protocol` defines the messages, framing, schema and client
 interface. It holds no queue logic and no transport, and does not depend on
@@ -99,7 +99,7 @@ carried a payload. `JobEvent` now decodes the kind first and falls back to
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Code:
 `crates/fetchpath-protocol/src/pipe` (Windows only). Plan:
-[2026-09-24-fp-052-pipe-transport](plans/2026-09-24-fp-052-pipe-transport.md).
+[2026-09-24-fp-052-pipe-transport](ARCHIVE.md).
 
 | Part | What it does |
 |---|---|

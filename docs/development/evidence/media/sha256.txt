@@ -1,7 +1,0 @@
-66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a  work/media-spike/tools/yt-dlp.exe
-2e8e28af97c2ae338ccef92e36da9b2a4cd21d0cad9dde093545606cb07f5b00  work/media-spike/tools/ffmpeg-9.0.1-full_build.zip
-94e38cacc6cbfefe54d8c37e6d7337be194f32fae958d2867a03b70e2c2a1bcf  work/media-spike/fixtures/direct.mp4
-d3c836750f32d1b6815451d55628a1bec80a277b469ed52f3f923ae1f93cd2ff  work/media-spike/output/cancelled.mp4.part
-046fea50e522a4831ec09866c5088e85fdb47c732563ee4136dbdb50a1c1d5c8  work/media-spike/output/dash-audio.mp3
-ab2b99473ae03197f39ecab04c21cd2c87ba5e23ee6ac50fe38b02cfd1f5c891  work/media-spike/output/dash-muxed.mp4
-675b4e7c960f76f170e7684a8113eb4c23ab6fe96ab378ff6ac42b35d422d14c  work/media-spike/output/hls.mp4

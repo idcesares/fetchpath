@@ -8,7 +8,7 @@ leave these tests passing unchanged.
 ## FP-048: characterization of the desktop queue
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
-[2026-09-24-fp-048-desktop-queue-characterization](plans/2026-09-24-fp-048-desktop-queue-characterization.md).
+[2026-09-24-fp-048-desktop-queue-characterization](ARCHIVE.md).
 
 Twenty-one tests, now in `crates/fetchpath-session/src/characterization.rs` (moved by FP-049), pin, on
 unchanged production code:
@@ -57,7 +57,7 @@ purpose.
 ## FP-049: the queue moves into `fetchpath-session`
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
-[2026-09-24-fp-049-session-crate](plans/2026-09-24-fp-049-session-crate.md).
+[2026-09-24-fp-049-session-crate](ARCHIVE.md).
 
 `crates/fetchpath-session` now holds the queue model, its persistence,
 scheduling, automatic retry, rate estimates, history, settings, media
@@ -97,11 +97,7 @@ dependencies. `Cargo.lock` gained no third-party package.
 Recorded 24 September 2026. The desktop was built twice with its frontend
 embedded (`cargo build -p fetchpath-desktop --features tauri/custom-protocol`):
 "before" from `d7376aa` in a separate worktree, "after" from the FP-049 tree.
-Each ran against an empty data folder and a local server
-([`server.mjs`](evidence/engine-session/fp-049-walkthrough/server.mjs))
-that sends files at about 1 MB/s with a strong ETag and byte ranges. A
-driver ([`drive.mjs`](evidence/engine-session/fp-049-walkthrough/drive.mjs))
-worked the real window through WebView2's DevTools port, clicking the same
+Each ran against an empty data folder and a local server that sends files at about 1 MB/s with a strong ETag and byte ranges. A driver worked the real window through WebView2's DevTools port, clicking the same
 buttons a person would:
 
 1. First start: empty queue, onboarding dismissed.
@@ -116,13 +112,9 @@ buttons a person would:
 8. Kill and restart again: all three are still listed as completed.
 
 The two transcripts
-([before](evidence/engine-session/fp-049-walkthrough/before-transcript.json),
-[after](evidence/engine-session/fp-049-walkthrough/after-transcript.json))
+(retired with the scripts; see [the archive](ARCHIVE.md))
 are byte-identical: the same states, row actions, saved queue records and
-file checks at every step. The request logs
-([before](evidence/engine-session/fp-049-walkthrough/before-requests.txt),
-[after](evidence/engine-session/fp-049-walkthrough/after-requests.txt)) have
-the same sequence, with every resume a range request carrying `If-Range`.
+file checks at every step. The request logs have the same sequence, with every resume a range request carrying `If-Range`.
 They differ only in the byte offset of the final resume, which depends on
 how much arrived before the second pause. Screenshots at each step matched;
 they show local paths, so they are not checked in.
@@ -140,7 +132,7 @@ omissions in the list above (added).
 ## FP-051: command ledger, revisions and event sequencing
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Plan:
-[2026-09-24-fp-051-ledger-and-events](plans/2026-09-24-fp-051-ledger-and-events.md).
+[2026-09-24-fp-051-ledger-and-events](ARCHIVE.md).
 
 The session now carries out protocol v1 commands through `Engine` and the
 in-process `EngineClient` (`fetchpath_session::engine`). The desktop still

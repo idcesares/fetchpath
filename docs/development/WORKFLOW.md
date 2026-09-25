@@ -1,31 +1,62 @@
 # Task workflow
 
-Open the Fetchpath folder in Codex or Claude Code and keep the strongest model as the lead (Astra High or Opus). Repository instructions express routing intent; no project file silently changes either tool's model settings. Both tools read `AGENTS.md`.
+The lead is the strongest model the user selected (Astra High in Codex, Opus in
+Claude Code). Both tools read `AGENTS.md`.
 
-1. Run `node tools/tasks.mjs next`; it shows active work, then ready tasks ordered by priority (P0 blocks the phase, P1 is a headline outcome, P2 is next, P3 is later or research). Choose the highest priority ready task unless the user says otherwise.
-2. Read `node tools/tasks.mjs show FP-XXX` and its relevant specification. Resolve blocking contracts before delegation. For a task larger than one sitting, write its implementation plan in `docs/development/plans` first.
-3. Lead records owner/status, a branch such as `fp-004-http-backend-spike`, file ownership, and exact acceptance. Use a worktree after the first baseline commit exists.
-4. Delegate independent tasks to a suitable smaller model. Start with two implementers at most. Lead retains shared-file and integration ownership.
-5. Implement the smallest working behavior. Record commands, results, and limitations. Strong-model review covers protected invariants and is mandatory for tasks marked `review: "strong"`.
-6. Integrate, run affected checks, update evidence and task state, then choose the next ready task. Do not dispatch blocked dependants.
+1. `node tools/tasks.mjs next` lists active work, then ready tasks by priority
+   (P0 blocks the phase, P1 is a headline outcome, P2 next, P3 later or
+   research). Take the highest unless the user says otherwise.
+2. `node tools/tasks.mjs show FP-XXX`; read only the contracts and source it
+   names. Record status `in_progress`, owner and file area in the backlog.
+3. Build the smallest working behavior with the tests that guard its contract.
+4. Tasks marked `review: "strong"` get an independent lead-tier review that
+   derives failure cases from the contract before the task is done. Other
+   tasks get the lead's own check; no review ceremony for routine edits.
+5. Run the affected checks, update the task's record and evidence, mark it
+   done, commit, and take the next task.
 
-The executable backlog replaces scattered TODO lists. Milestones remain in the plan; a task can be complete while its milestone still has outstanding tasks. `next` reports eligible work, not an instruction to execute every task automatically.
+After two failed repair attempts, return the evidence to the lead instead of
+retrying.
 
-## Handoff packet
+## Model tiers
 
-Use [the task template](../tasks/TEMPLATE.md). Give the agent only the relevant contract and files. Preserve explicit command outputs when a conclusion depends on them; summarize routine successful checks. After two failed repair attempts, send evidence back to the lead instead of extending the retry loop indefinitely.
+The backlog's `modelTier` names a role. Record the model that actually did the
+work.
 
-The initial model pairing is a practical trial. Measure accepted changes, corrections and wall time; compare cost only when actual usage is available. Never claim efficiency solely because the agent used a smaller model.
+| `modelTier` | Role | Codex | Claude Code |
+|---|---|---|---|
+| `astra-high` | Lead: contracts, persistence, security, integration | Astra High | Opus |
+| `terra-medium` | Bounded implementation against frozen interfaces | Terra Medium | Sonnet |
+| (mechanical) | Docs, fixtures, formatting | smaller fast model | Haiku |
 
-## Daily verification
+Choose by cost per accepted change, not tokens; make no savings claim without
+measured usage. No model call belongs in the download data path.
 
-`node tools/tasks.mjs check` validates IDs, statuses, ownership, dependencies, cycles, done prerequisites, and evidence paths. `node --test` runs the repository, fixture, extension and installer tests, including `tests/repo/structure.test.mjs`, which keeps the [repository map](../architecture/REPOSITORY.md), documentation links and workspace entries in step with the tree. The Rust and desktop checks are listed in [CONTRIBUTING.md](../../CONTRIBUTING.md); CI (`.github/workflows/checks.yml`) runs only the Node checks.
+## Keeping the tree small
 
-## Keeping the tree clean
+Every file an agent may read costs tokens in every later session, so:
 
-- A new component is added to the repository map in the same change; the structure test enforces it.
-- Task records go in `docs/development` and are listed in [its index](README.md); design specs in `docs/architecture/specs`; implementation plans in `docs/development/plans`. Tool-specific default locations are not used.
-- Spikes and prototypes are disposable. Once production code supersedes one, delete it, keep its record and evidence, and point the record at the commit that still holds the source.
-- Scratch output lives in ignored `work/` and must be safe to delete; anything a record depends on is promoted into `docs/development/evidence`.
+- **Plans are scratch.** Write an implementation plan, if one is needed, under
+  ignored `work/plans/`; it is never committed and is deleted with the task.
+- **One short record per task area.** A task record in `docs/development`
+  states what was built, how it was verified, and the limitations that still
+  hold. Update it in place; do not append logs, review transcripts or
+  follow-up diaries. Review findings go in commit messages.
+- **Evidence only when a claim depends on it.** Raw evidence goes in
+  `docs/development/evidence/<area>/` and stays small; output that can be
+  regenerated stays in `work/`.
+- **Tests guard contracts.** Add a test for behavior a person or client relies
+  on, a persisted format, or a protected invariant (A01–A13). Do not add
+  tests that restate implementation details or documentation.
+- **Retire what is superseded.** When code or a record is superseded, delete
+  it and list it in [the archive](ARCHIVE.md) with the commit that holds it.
+- A new component enters the [repository map](../architecture/REPOSITORY.md)
+  in the same change; `tests/repo/structure.test.mjs` enforces it.
 
-GitHub CI cannot be described as passed until a remote run occurs. Publishing a remote repository remains separate from organizing this local project.
+## Checks
+
+`node tools/tasks.mjs check` validates the backlog and its evidence paths.
+`node --test` runs the repository, fixture, extension and installer tests.
+Rust and desktop checks are in [CONTRIBUTING.md](../../CONTRIBUTING.md); CI
+runs only the Node checks. CI cannot be called passed until a remote run
+occurs.

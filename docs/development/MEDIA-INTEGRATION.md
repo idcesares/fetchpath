@@ -36,4 +36,4 @@ This proves the production integration against lawful local DASH plus the earlie
 
 ## Pinned helpers (FP-039, 23 September 2026)
 
-yt-dlp 2026.08.19 and the GyanD ffmpeg 9.0.2 essentials build are pinned in `apps/desktop/src-tauri/media-tools.json` against their publishers' checksum files. The first real guided install exposed and fixed an archive-flattening defect; the ignored network test `guided_install_fetches_verifies_and_runs_the_pinned_helpers` now passes. No public site is promised. See [release readiness](RELEASE-READINESS.md).
+yt-dlp 2026.08.19 and the GyanD ffmpeg 9.0.2 essentials build are pinned in `apps/desktop/src-tauri/media-tools.json` against their publishers' checksum files. The first real guided install exposed and fixed an archive-flattening defect; the ignored network test `guided_install_fetches_verifies_and_runs_the_pinned_helpers` now passes. No public site is promised. See [release readiness](ARCHIVE.md).

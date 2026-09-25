@@ -1,6 +1,0 @@
-format_name=mp3
-duration=12.000000
-format_name=mov,mp4,m4a,3gp,3g2,mj2
-duration=12.000000
-format_name=mov,mp4,m4a,3gp,3g2,mj2
-duration=12.027937

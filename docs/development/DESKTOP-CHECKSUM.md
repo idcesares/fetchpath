@@ -116,4 +116,4 @@ weaker guarantee.
 
 ## UI walkthrough (23 September 2026)
 
-Run through the real release executable over the DevTools protocol, with no global input: a checksum pasted as `  SHA256:` plus capitals and spaces matched and the file was published; a wrong checksum published nothing, discarded the staging, showed Expected and Received with Edit checksum and Retry, and was not retried automatically. The checksum field is in the accessibility harness tab order with its accessible name. `apps/desktop/tools/ui-smoke.ps1` was not run because it sends global keystrokes. See [release readiness](RELEASE-READINESS.md).
+Run through the real release executable over the DevTools protocol, with no global input: a checksum pasted as `  SHA256:` plus capitals and spaces matched and the file was published; a wrong checksum published nothing, discarded the staging, showed Expected and Received with Edit checksum and Retry, and was not retried automatically. The checksum field is in the accessibility harness tab order with its accessible name. `apps/desktop/tools/ui-smoke.ps1` was not run because it sends global keystrokes. See [release readiness](ARCHIVE.md).

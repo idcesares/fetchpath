@@ -32,7 +32,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | `docs/product` | User journeys and interaction contract | UX owner, lead review |
 | `docs/user` | End-user guide and CLI reference | Release owner |
 | `docs/tasks` | `backlog.json` (task state, dependencies, acceptance, evidence) and the handoff template | Lead while agents run |
-| `docs/development` | Workflow, per-task verification records, all raw evidence in `docs/development/evidence` (none beside source), implementation plans in `docs/development/plans`; indexed by [its README](../development/README.md) | Lead/integrator |
+| `docs/development` | Workflow, per-task verification records, all raw evidence in `docs/development/evidence` (none beside source); retired records listed in its archive; indexed by [its README](../development/README.md) | Lead/integrator |
 
 ## Tooling and tests
 
@@ -51,7 +51,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | Area | Holds |
 |---|---|
 | `target` | Cargo build output |
-| `work` | Generated output, raw logs, downloaded toolchains, temporary probes. Promote a small verified summary into `docs/development`; everything here must be safe to delete |
+| `work` | Generated output, raw logs, downloaded toolchains, temporary probes, implementation plans (`work/plans`). Promote a small verified summary into `docs/development`; everything here must be safe to delete |
 
 Retired: the simulated desktop prototype (`prototypes/desktop`, FP-002) and the backend, browser and media spikes (`tools/spikes`, FP-004/6/7) were removed on 23 September 2026 once production code superseded them. Their records and evidence stay in `docs/development`; the source is in history at commit `b7a5fc3`.
 
