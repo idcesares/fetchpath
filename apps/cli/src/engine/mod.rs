@@ -10,8 +10,9 @@
 mod signin;
 
 use fetchpath_protocol::command::Command;
+use fetchpath_protocol::error::{ErrorCode, ErrorScope};
 use fetchpath_protocol::launch::{self, EngineHome};
-use fetchpath_protocol::message::{Reply, ServerMessage};
+use fetchpath_protocol::message::{Reply, ReplyResult, ServerMessage};
 use fetchpath_protocol::pipe::{
     EngineSecret, Limits, PendingConnection, PipeListener, PipeName, current_user_sid, endpoint,
 };
@@ -19,8 +20,8 @@ use fetchpath_protocol::{ClientId, EngineClient, ProtocolError, StreamItem};
 use fetchpath_session::engine::{Engine, TICK_INTERVAL};
 use fetchpath_session::{DEFAULT_MAX_ACTIVE, Session};
 use std::fs::File;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long the engine stays with no client and nothing of its own to do.
@@ -128,8 +129,17 @@ fn claim(home: &EngineHome) -> Result<Option<File>, String> {
 
 struct Host {
     engine: Arc<Engine>,
+    /// Set once the engine decides to stop. From then on no command is
+    /// carried out; clients are told the engine is unavailable.
     stop: AtomicBool,
+    /// Connections accepted and not yet closed, authenticated or not, so a
+    /// client still in its handshake keeps the engine from going idle.
     connections: AtomicUsize,
+    /// Serializes a settings change with the sign-in start it implies.
+    settings: Mutex<()>,
+    /// Whether this engine uses the default data folder. Only then does it
+    /// touch the person's sign-in start.
+    default_home: bool,
 }
 
 impl Host {
@@ -139,9 +149,23 @@ impl Host {
     fn has_own_work(&self) -> bool {
         self.engine.session().has_own_work()
     }
+
+    fn stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst) || INTERRUPTED.load(Ordering::SeqCst)
+    }
+
+    fn apply_sign_in(&self, enabled: bool) {
+        if self.default_home {
+            signin::apply(enabled);
+        }
+    }
 }
 
+/// Set by Ctrl+C on an engine run in a terminal.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
 fn host(grace: Duration) -> i32 {
+    let _ = ctrlc::set_handler(|| INTERRUPTED.store(true, Ordering::SeqCst));
     match serve(grace) {
         Ok(code) => code,
         Err(message) => {
@@ -149,6 +173,14 @@ fn host(grace: Duration) -> i32 {
             1
         }
     }
+}
+
+/// Stops the engine's work cleanly: no job starts any more, running ones
+/// stop at their checkpoints, and the queue is saved, as quitting the
+/// desktop does.
+fn wind_down(engine: &Engine) {
+    engine.session().halt();
+    engine.session().cancel_all_and_join();
 }
 
 fn serve(grace: Duration) -> Result<i32, String> {
@@ -164,26 +196,39 @@ fn serve(grace: Duration) -> Result<i32, String> {
     let engine = Engine::new(Arc::new(session));
     engine.tick();
 
-    let sid = current_user_sid().map_err(|error| error.message)?;
-    let secret =
-        EngineSecret::load_or_create(&home.secret_path(), &sid).map_err(|error| error.message)?;
-    let name = PipeName::fresh().map_err(|error| error.message)?;
-    let mut listener =
-        PipeListener::bind(&name, secret, Limits::default()).map_err(|error| error.message)?;
-    endpoint::publish(&home.endpoint_path(), &name, &sid).map_err(|error| error.message)?;
-    if engine.session().settings().start_engine_at_sign_in {
-        signin::apply(true);
-    }
+    let opened = (|| {
+        let sid = current_user_sid().map_err(|error| error.message)?;
+        let secret = EngineSecret::load_or_create(&home.secret_path(), &sid)
+            .map_err(|error| error.message)?;
+        let name = PipeName::fresh().map_err(|error| error.message)?;
+        let listener =
+            PipeListener::bind(&name, secret, Limits::default()).map_err(|error| error.message)?;
+        endpoint::publish(&home.endpoint_path(), &name, &sid).map_err(|error| error.message)?;
+        Ok::<_, String>(listener)
+    })();
+    let mut listener = match opened {
+        Ok(listener) => listener,
+        Err(message) => {
+            // The first reconcile may already have started work.
+            wind_down(&engine);
+            return Err(message);
+        }
+    };
 
     let host = Arc::new(Host {
         engine,
         stop: AtomicBool::new(false),
         connections: AtomicUsize::new(0),
+        settings: Mutex::new(()),
+        default_home: std::env::var_os("FETCHPATH_APP_DATA_DIR").is_none(),
     });
+    if host.engine.session().settings().start_engine_at_sign_in {
+        host.apply_sign_in(true);
+    }
     let ticker = {
         let host = Arc::clone(&host);
         std::thread::spawn(move || {
-            while !host.stop.load(Ordering::SeqCst) {
+            while !host.stopping() {
                 host.engine.tick();
                 std::thread::sleep(TICK_INTERVAL);
             }
@@ -191,11 +236,16 @@ fn serve(grace: Duration) -> Result<i32, String> {
     };
 
     let mut idle_since = Instant::now();
-    while !host.stop.load(Ordering::SeqCst) {
+    while !host.stopping() {
         match listener.accept(Some(TICK_INTERVAL)) {
             Ok(Some(pending)) => {
+                // Counted from acceptance, before the handshake.
+                host.connections.fetch_add(1, Ordering::SeqCst);
                 let host = Arc::clone(&host);
-                std::thread::spawn(move || connection(&host, pending));
+                std::thread::spawn(move || {
+                    let _counted = Connected(&host.connections);
+                    connection(&host, pending);
+                });
             }
             Ok(None) => {}
             // Transient: clients that open and close the pipe quickly.
@@ -207,22 +257,31 @@ fn serve(grace: Duration) -> Result<i32, String> {
             host.stop.store(true, Ordering::SeqCst);
         }
     }
+    host.stop.store(true, Ordering::SeqCst);
 
-    let _ = ticker.join();
-    // As quitting the desktop does: running work stops at its checkpoints
-    // and the queue is saved, ready to continue on the next start.
-    host.engine.session().cancel_all_and_join();
+    // Close the pipe first, so a client arriving now finds no engine and
+    // starts the next one instead of stalling in a handshake here.
     drop(listener);
+    let _ = ticker.join();
+    wind_down(&host.engine);
     Ok(0)
 }
 
-/// Counts an authenticated connection while it lives.
+/// Counts a connection while it lives.
 struct Connected<'a>(&'a AtomicUsize);
 
 impl Drop for Connected<'_> {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
+}
+
+fn stopping_error() -> ProtocolError {
+    ProtocolError::new(
+        ErrorCode::ENGINE_UNAVAILABLE,
+        ErrorScope::Engine,
+        "The Fetchpath engine is stopping. Try again in a moment.",
+    )
 }
 
 fn connection(host: &Arc<Host>, pending: PendingConnection) {
@@ -233,10 +292,15 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
         host.stop.store(true, Ordering::SeqCst);
         return;
     }
-    host.connections.fetch_add(1, Ordering::SeqCst);
-    let _counted = Connected(&host.connections);
     let sender = connection.sender();
     while let Ok(Some(envelope)) = connection.receive() {
+        if host.stopping() {
+            let _ = sender.send(&ServerMessage::Reply(Reply::error(
+                Some(envelope.command_id.clone()),
+                stopping_error(),
+            )));
+            return;
+        }
         match &envelope.payload {
             Command::SubscribeJob { .. } | Command::SubscribeQueue { .. } => {
                 match host.engine.subscribe(&envelope) {
@@ -256,7 +320,7 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                         let sender = sender.clone();
                         let host = Arc::clone(host);
                         std::thread::spawn(move || {
-                            while !host.stop.load(Ordering::SeqCst) {
+                            while !host.stopping() {
                                 let message = match events.next_item(Duration::from_millis(500)) {
                                     Ok(None) => continue,
                                     Ok(Some(StreamItem::Event(event))) => {
@@ -286,26 +350,31 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                 }
             }
             payload => {
-                let signin_before = host.engine.session().settings().start_engine_at_sign_in;
                 let shutdown = matches!(payload, Command::EngineShutdown);
-                let settings = matches!(payload, Command::UpdateSettings { .. });
+                let settings_change = matches!(payload, Command::UpdateSettings { .. });
+                let serialized = settings_change.then(|| {
+                    host.settings
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                });
+                let before = host.engine.session().settings().start_engine_at_sign_in;
                 let reply = match host.engine.execute(&envelope) {
                     Ok(result) => Reply::ok(envelope.command_id.clone(), result),
                     Err(error) => Reply::error(Some(envelope.command_id.clone()), error),
                 };
-                let succeeded = matches!(
-                    reply.result,
-                    fetchpath_protocol::message::ReplyResult::Ok(_)
-                );
-                let _ = sender.send(&ServerMessage::Reply(reply));
-                if settings && succeeded {
+                let succeeded = matches!(reply.result, ReplyResult::Ok(_));
+                if settings_change && succeeded {
                     let after = host.engine.session().settings().start_engine_at_sign_in;
-                    if after != signin_before {
-                        signin::apply(after);
+                    if after != before {
+                        host.apply_sign_in(after);
                     }
                 }
+                drop(serialized);
                 if shutdown && succeeded {
                     host.stop.store(true, Ordering::SeqCst);
+                }
+                if sender.send(&ServerMessage::Reply(reply)).is_err() {
+                    return;
                 }
             }
         }

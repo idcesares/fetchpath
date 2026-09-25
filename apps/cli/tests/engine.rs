@@ -394,3 +394,47 @@ fn another_protocol_version_is_refused_and_can_still_restart_the_engine() {
         .send(&ClientId::random(), Command::EngineShutdown)
         .unwrap();
 }
+
+#[test]
+fn once_stopping_the_engine_refuses_commands_and_a_new_client_gets_a_new_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    let mut stopping = engine(&home, 30_000);
+    let bystander = attached(&home);
+    bystander
+        .send(&ClientId::random(), Command::EngineStatus)
+        .unwrap();
+    let stopper = attached(&home);
+    stopper
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+    // Acknowledged: nothing more is carried out on any connection.
+    let refused = bystander
+        .send(
+            &ClientId::random(),
+            Command::ListJobs {
+                filter: JobFilter::All,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(refused.code.as_str(), "contract.engine_unavailable");
+
+    // A client arriving while it winds down ends up on a fresh engine.
+    let fresh = launch::attach_or_launch(
+        &home,
+        Path::new(EXE),
+        Limits::default(),
+        launch::LAUNCH_WAIT,
+    )
+    .unwrap();
+    fresh
+        .send(&ClientId::random(), Command::EngineStatus)
+        .unwrap();
+    assert_eq!(
+        exited_within(&mut stopping, Duration::from_secs(10)),
+        Some(0)
+    );
+    fresh
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+}

@@ -1563,7 +1563,7 @@
         "FP-051",
         "FP-052"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -1579,9 +1579,14 @@
         "A07",
         "A12"
       ],
-      "acceptance": "fetchpath engine hosts one session behind the pipe and holds the single-instance claim; any client connects or starts a detached, windowless engine and connects within a bounded wait; the engine runs while a client is connected or a job is non-terminal and exits after an idle grace period; startup recovery completes before commands are accepted; a version mismatch is refused with the contract code and the client can ask the engine to restart; an opt-in sign-in start setting exists and is off by default.",
-      "verification": "Tests start two engines concurrently (one wins), kill the engine mid-download and verify recovery on relaunch, verify idle exit and that scheduled jobs keep it alive, and exercise version refusal; independent strong-model review of ownership and recovery ordering.",
-      "evidence": [],
+      "acceptance": "fetchpath engine hosts one session behind the pipe and holds the single-instance claim; any client connects or starts a detached, windowless engine and connects within a bounded wait; the engine runs while a client is connected or it has work of its own (a job queued, scheduled or running; paused jobs and failures waiting for a person are restored when a client next starts it, lead decision 24 September 2026) and exits after an idle grace period; startup recovery completes before commands are accepted; a version mismatch is refused with the contract code and the client can ask the engine to restart; an opt-in sign-in start setting exists and is off by default.",
+      "verification": "Recorded 24 September 2026 on Windows 11 Pro 26200 x64: cargo test -p fetchpath --test engine 6 passed, repeated runs clean, running the real fetchpath.exe: two engines started together leave one owner; a client starts a windowless engine and a second reaches the same one; idle exit, with a scheduled job and a listening client each keeping it up; an engine killed mid-download finishes it from its checkpoint when relaunched (If-Range resume, file matches); another protocol version refused and a restart request replacing the engine; a stopping engine refuses commands while a new client reaches a fresh engine. Five mutations each failed a named test (one by hanging the suite). Workspace tests, clippy -D warnings, fmt and node --test clean. Independent strong-model review: approve with nits, all addressed. See docs/development/ENGINE-HOST.md.",
+      "evidence": [
+        "apps/cli/src/engine/mod.rs",
+        "apps/cli/tests/engine.rs",
+        "crates/fetchpath-protocol/src/launch.rs",
+        "docs/development/ENGINE-HOST.md"
+      ],
       "blockedReason": null
     },
     {

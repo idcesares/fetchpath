@@ -46,6 +46,8 @@ pub struct Session {
     /// The ledger, the event log and the subscribers (FP-051). Locked after
     /// `inner`, never before it.
     durable: Mutex<Durable>,
+    /// Set when the engine stops: no job starts any more (FP-053).
+    halted: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -427,6 +429,7 @@ impl Session {
                 committed: generation,
                 ..Durable::default()
             }),
+            halted: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -447,6 +450,7 @@ impl Session {
             browser_download_dir: None,
             media_tools: Mutex::new(None),
             durable: Mutex::new(Durable::default()),
+            halted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -1041,8 +1045,9 @@ impl Session {
             .filter(|record| matches!(record.view.state.as_str(), "running" | "cancelling"))
             .count();
         let now = now_ms();
+        let halted = self.halted.load(std::sync::atomic::Ordering::SeqCst);
         for record in &mut state.records {
-            if active >= max_active {
+            if active >= max_active || halted {
                 break;
             }
             if record.view.state == "scheduled" && record.not_before_ms.is_none_or(|due| due <= now)
@@ -1144,6 +1149,13 @@ impl Session {
                 record.attempt, settings.auto_retry_max_attempts
             ));
         }
+    }
+
+    /// Stops starting jobs, for an engine that is shutting down. Running
+    /// ones are then cancelled to their checkpoints by `cancel_all_and_join`
+    /// and nothing takes their place.
+    pub fn halt(&self) {
+        self.halted.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// True while a job is queued, scheduled (including an automatic retry)

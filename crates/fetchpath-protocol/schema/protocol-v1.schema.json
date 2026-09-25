@@ -979,9 +979,11 @@
           "type": "boolean"
         },
         "start_engine_at_sign_in": {
-          "default": false,
-          "description": "Start the engine when the person signs in to Windows, so schedules\nsurvive a restart. Off unless the person turns it on.",
-          "type": "boolean"
+          "description": "Start the engine when the person signs in to Windows, so schedules\nsurvive a restart. Off unless the person turns it on. Absent from an\nupdate means \"leave it as it is\", so a client that does not know the\nsetting cannot turn it off by accident.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "theme": {
           "$ref": "#/$defs/Theme"

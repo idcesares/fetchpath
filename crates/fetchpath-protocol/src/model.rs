@@ -353,9 +353,11 @@ pub struct EngineSettings {
     pub theme: Theme,
     pub onboarding_completed: bool,
     /// Start the engine when the person signs in to Windows, so schedules
-    /// survive a restart. Off unless the person turns it on.
-    #[serde(default)]
-    pub start_engine_at_sign_in: bool,
+    /// survive a restart. Off unless the person turns it on. Absent from an
+    /// update means "leave it as it is", so a client that does not know the
+    /// setting cannot turn it off by accident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_engine_at_sign_in: Option<bool>,
 }
 
 /// Settings as stored plus the limits the engine enforces.

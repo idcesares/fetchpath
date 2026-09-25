@@ -158,7 +158,7 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
             settings::Theme::Dark => Theme::Dark,
         },
         onboarding_completed: settings.onboarding_completed,
-        start_engine_at_sign_in: settings.start_engine_at_sign_in,
+        start_engine_at_sign_in: Some(settings.start_engine_at_sign_in),
     }
 }
 
@@ -182,7 +182,9 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             Theme::Unknown => current.theme,
         },
         onboarding_completed: wire.onboarding_completed,
-        start_engine_at_sign_in: wire.start_engine_at_sign_in,
+        start_engine_at_sign_in: wire
+            .start_engine_at_sign_in
+            .unwrap_or(current.start_engine_at_sign_in),
     }
 }
 

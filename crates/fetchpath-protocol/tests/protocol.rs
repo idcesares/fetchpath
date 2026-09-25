@@ -65,7 +65,7 @@ fn settings() -> EngineSettings {
         confirm_remove_completed: true,
         theme: Theme::Dark,
         onboarding_completed: true,
-        start_engine_at_sign_in: false,
+        start_engine_at_sign_in: Some(false),
     }
 }
 

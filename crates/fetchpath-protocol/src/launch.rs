@@ -6,7 +6,9 @@
 //! clients racing may start two engines; the engine's single-owner lock lets
 //! one keep running and the other exit, and both clients find the winner.
 
+use crate::command::{Command, CommandEnvelope};
 use crate::error::{ErrorCode, ErrorScope, ProtocolError};
+use crate::ids::ClientId;
 use crate::pipe::{EngineSecret, Limits, PipeClient, PipeEngineClient, endpoint};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -71,9 +73,14 @@ impl EngineHome {
 pub fn attach(home: &EngineHome, limits: Limits) -> Result<PipeEngineClient, ProtocolError> {
     let name = endpoint::read(&home.endpoint_path())?;
     let secret = EngineSecret::load(&home.secret_path())?;
-    // Prove it is reachable and genuine now, so the caller learns the
-    // outcome here rather than on its first command.
-    PipeClient::connect(&name, &secret, limits, Duration::from_secs(2))?;
+    // Prove it is reachable, genuine and serving now, so the caller learns
+    // the outcome here rather than on its first command. An engine that is
+    // stopping still completes a handshake, but answers this as unavailable.
+    let probe = PipeClient::connect(&name, &secret, limits, Duration::from_secs(2))?;
+    probe.call(
+        &CommandEnvelope::new(ClientId::random(), Command::EngineStatus),
+        Duration::from_secs(5),
+    )?;
     Ok(PipeEngineClient::new(
         name,
         EngineSecret::load(&home.secret_path())?,
@@ -88,6 +95,20 @@ fn absent(error: &ProtocolError) -> bool {
     )
 }
 
+/// An engine that is starting or stopping can drop a connection mid
+/// handshake; that is worth another try, not an answer.
+fn transient(error: &ProtocolError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "auth.handshake_failed" | "contract.connection_lost" | "contract.connection_timed_out"
+    )
+}
+
+/// How often a waiting client starts the engine again while none answers,
+/// for the case where the one it started found a stopping engine still
+/// holding the lock and left.
+const RELAUNCH_EVERY: Duration = Duration::from_secs(1);
+
 /// Connects to the engine, starting `engine_exe engine` first when none is
 /// running, and waits up to `wait` for it.
 pub fn attach_or_launch(
@@ -96,17 +117,22 @@ pub fn attach_or_launch(
     limits: Limits,
     wait: Duration,
 ) -> Result<PipeEngineClient, ProtocolError> {
-    match attach(home, limits) {
-        Ok(client) => return Ok(client),
-        Err(error) if !absent(&error) => return Err(error),
-        Err(_) => {}
-    }
-    start_engine(home, engine_exe)?;
     let deadline = Instant::now() + wait;
+    let mut launched: Option<Instant> = None;
     loop {
         match attach(home, limits) {
             Ok(client) => return Ok(client),
-            Err(error) if !absent(&error) || Instant::now() >= deadline => {
+            Err(error) if transient(&error) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+            Err(error) if absent(&error) && Instant::now() < deadline => {
+                if launched.is_none_or(|at| at.elapsed() >= RELAUNCH_EVERY) {
+                    start_engine(home, engine_exe)?;
+                    launched = Some(Instant::now());
+                }
+            }
+            Err(error) => {
                 return Err(if absent(&error) {
                     ProtocolError::new(
                         ErrorCode::ENGINE_UNAVAILABLE,
@@ -120,8 +146,8 @@ pub fn attach_or_launch(
                     error
                 });
             }
-            Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -170,7 +196,12 @@ fn start_engine(home: &EngineHome, engine_exe: &Path) -> Result<(), ProtocolErro
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     let spawn = |flags: u32| {
-        Command::new(engine_exe)
+        let mut command = Command::new(engine_exe);
+        if let Some(folder) = engine_exe.parent() {
+            // Not the caller's directory, which the engine would hold open.
+            command.current_dir(folder);
+        }
+        command
             .arg("engine")
             .env("FETCHPATH_APP_DATA_DIR", home.dir())
             .stdin(Stdio::null())
