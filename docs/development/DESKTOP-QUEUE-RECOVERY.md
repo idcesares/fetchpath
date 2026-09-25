@@ -27,7 +27,7 @@ The optimized executable was built with:
 corepack pnpm --dir apps/desktop tauri build --no-bundle
 ```
 
-`apps/desktop/tools/ui-smoke.ps1` (since gone stale: it waits for the link box, which moved into the Add download dialog in 0.1.0) then drove that executable through Windows UI Automation using localhost-only HTTP fixtures. It observed:
+`apps/desktop/tools/ui-smoke.ps1` then drove that executable through Windows UI Automation using localhost-only HTTP fixtures. It observed:
 
 - a two-item batch preview;
 - a complete 1 MiB transfer at the selected destination;
@@ -72,6 +72,14 @@ tests, `tests/repo/structure.test.mjs`.
   the new commands and fields (policy tests).
 - CLI: `a_command_that_starts_the_engine_returns_at_once_to_a_script_reading_its_output`
   (failed at 61 s before the launch fix).
+- `apps/desktop/tools/ui-smoke.ps1`, repaired: it had gone stale when the
+  composer moved into the Add download dialog (0.1.0) and used global
+  keystrokes. It now opens the dialog, sends input by window message through
+  `uia-common.ps1`, and runs against its own engine in `work\desktop-e2e`.
+  Against the engine: a two-link batch preview; a 1 MiB download published
+  with the displayed SHA-256 `bf63d8a9…` equal to the file (as in FP-012);
+  progress then cancellation publishing nothing; a wrong checksum saving
+  nothing with Edit checksum offered, and `SHA256:` in capitals matching.
 - Release build (`tauri build --no-bundle`) with the release engine beside it:
   `tests/compatibility/windows/ui-accessibility.ps1` passed twice against the
   engine (keyboard journey with a real download, live regions, dialogs),
