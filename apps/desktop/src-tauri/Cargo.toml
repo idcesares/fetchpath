@@ -23,6 +23,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 fetchpath-core = { path = "../../../crates/fetchpath-core" }
 fetchpath-media = { path = "../../../adapters/media" }
+fetchpath-protocol = { path = "../../../crates/fetchpath-protocol" }
+# The browser host (a separate program) uses its inbox types only; the app
+# itself holds no session (FP-055).
 fetchpath-session = { path = "../../../crates/fetchpath-session" }
 tauri = { version = "2.11.6", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.6.0"

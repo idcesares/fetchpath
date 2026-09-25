@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 type JobState =
@@ -10,7 +11,8 @@ type JobState =
   | "completed"
   | "cancelled"
   | "failed"
-  | "needs_source";
+  | "needs_source"
+  | "awaiting_approval";
 type QueueFilter = "all" | "active" | "paused" | "scheduled" | "completed" | "failed";
 
 interface JobSnapshot {
@@ -262,6 +264,8 @@ let editingJobId: string | null = null;
 /** True while the composer is correcting a checksum, where the link is optional. */
 let editingChecksum = false;
 let refreshRunning = false;
+/** A change arrived while a refresh was running; refresh once more after it. */
+let refreshAgain = false;
 let refreshTimer = 0;
 let mediaInspection: MediaInspection | null = null;
 let inspectedMediaUrl = "";
@@ -1255,7 +1259,10 @@ function renderPreview(): void {
 }
 
 async function refreshQueue(): Promise<void> {
-  if (refreshRunning) return;
+  if (refreshRunning) {
+    refreshAgain = true;
+    return;
+  }
   refreshRunning = true;
   try {
     jobs = await invoke<JobSnapshot[]>("list_downloads");
@@ -1278,7 +1285,55 @@ async function refreshQueue(): Promise<void> {
     showError(formError, typeof error === "string" ? error : "Could not refresh the queue.");
   } finally {
     refreshRunning = false;
+    if (refreshAgain) {
+      refreshAgain = false;
+      void refreshQueue();
+    }
   }
+}
+
+/* The engine ----------------------------------------------------------------
+   The queue lives in Fetchpath's engine, a background process this window is
+   a client of. It tells the window when the queue changes; if it stops, the
+   window says so until a new engine is running, and downloads carry on from
+   their saved progress. */
+
+const engineStatus = required<HTMLElement>("engine-status");
+let engineNoticeTimer = 0;
+
+interface EngineConnection {
+  connected: boolean;
+  message?: string;
+}
+
+/** Reads the host's current view rather than trusting event order: two
+ *  reports a moment apart may arrive in either order. */
+async function syncEngineState(): Promise<void> {
+  showEngineState(await invoke<EngineConnection>("engine_connection"));
+}
+
+function showEngineState(state: EngineConnection): void {
+  if (state.connected) {
+    window.clearTimeout(engineNoticeTimer);
+    engineNoticeTimer = 0;
+    if (!engineStatus.hidden) {
+      engineStatus.hidden = true;
+      announce("Fetchpath is running again.");
+      void refreshQueue();
+    }
+    return;
+  }
+  if (!engineStatus.hidden || engineNoticeTimer) return;
+  // An engine that is back within a second is not worth an alarm.
+  engineNoticeTimer = window.setTimeout(async () => {
+    engineNoticeTimer = 0;
+    const now = await invoke<EngineConnection>("engine_connection");
+    if (now.connected || !engineStatus.hidden) return;
+    engineStatus.textContent =
+      "Fetchpath's engine stopped. Reconnecting… Downloads continue from their saved progress once it is back.";
+    engineStatus.hidden = false;
+    announceProblem(engineStatus.textContent);
+  }, 1000);
 }
 
 async function refreshStats(): Promise<void> {
@@ -2089,6 +2144,7 @@ function stateLabel(state: JobState): string {
     cancelled: "Cancelled",
     failed: "Needs attention",
     needs_source: "Link needed",
+    awaiting_approval: "Waiting for approval",
   }[state];
 }
 
@@ -2287,8 +2343,14 @@ async function start(): Promise<void> {
   }
   void refreshToolsStatus();
   renderPreview();
+  await listen("fetchpath://queue", () => void refreshQueue());
+  await listen("fetchpath://engine", () => void syncEngineState());
+  // The engine may have been lost before this page was listening.
+  await syncEngineState();
   await refreshQueue();
-  refreshTimer = window.setInterval(() => void refreshQueue(), 350);
+  // Changes arrive as events; this slower pass catches what has no event of
+  // its own, such as a schedule coming due or a link sent from the browser.
+  refreshTimer = window.setInterval(() => void refreshQueue(), 1000);
 }
 
 void start();

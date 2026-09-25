@@ -54,6 +54,11 @@ pub enum Command {
     CreateJob {
         request: JobRequest,
     },
+    /// Several jobs at once, all or none: if any request is refused, none is
+    /// created. File jobs only, from the person.
+    CreateJobs {
+        requests: Vec<JobRequest>,
+    },
     Start {
         job_id: JobId,
     },
@@ -71,6 +76,11 @@ pub enum Command {
     },
     Retry {
         job_id: JobId,
+        /// Replaces the expected SHA-256 before retrying; an empty string
+        /// removes it. The person only. Identity replacement revokes earlier
+        /// work (contract D2).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_sha256: Option<String>,
     },
     UpdatePolicy {
         job_id: JobId,
@@ -87,6 +97,13 @@ pub enum Command {
     RefreshSource {
         job_id: JobId,
         source: JobInput,
+        /// A new full path to save to, changed in the same step. The person
+        /// only; an agent uses `ResolveDestination`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<String>,
+        /// As for `Retry`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_sha256: Option<String>,
     },
     RefreshMediaChoices {
         job_id: JobId,
@@ -120,6 +137,9 @@ pub enum Command {
         limit: Option<u32>,
     },
     GetSettings,
+    /// Media pages the person sent from the browser, to be opened for a
+    /// format choice. Each is returned once. The person only.
+    TakeLinkReviews,
     UpdateSettings {
         settings: EngineSettings,
     },
@@ -165,6 +185,7 @@ impl Command {
     pub fn name(&self) -> &'static str {
         match self {
             Self::CreateJob { .. } => "CreateJob",
+            Self::CreateJobs { .. } => "CreateJobs",
             Self::Start { .. } => "Start",
             Self::Pause { .. } => "Pause",
             Self::Resume { .. } => "Resume",
@@ -183,6 +204,7 @@ impl Command {
             Self::QueueStats => "QueueStats",
             Self::History { .. } => "History",
             Self::GetSettings => "GetSettings",
+            Self::TakeLinkReviews => "TakeLinkReviews",
             Self::UpdateSettings { .. } => "UpdateSettings",
             Self::ApproveJob { .. } => "ApproveJob",
             Self::DenyJob { .. } => "DenyJob",
@@ -196,11 +218,13 @@ impl Command {
     }
 
     /// True when the command changes engine state, and so goes through the
-    /// durable command ledger.
+    /// durable command ledger. `TakeLinkReviews` changes only memory and
+    /// returns links, which must never reach the ledger, so it is not.
     pub fn is_mutating(&self) -> bool {
         !matches!(
             self,
             Self::ListJobs { .. }
+                | Self::TakeLinkReviews
                 | Self::GetJob { .. }
                 | Self::JobDetails { .. }
                 | Self::InspectMedia { .. }

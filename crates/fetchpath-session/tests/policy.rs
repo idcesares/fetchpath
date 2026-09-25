@@ -310,11 +310,39 @@ fn credentials_and_replacement_are_refused_outright_not_offered_for_approval() {
         )),
         "policy.replace_not_allowed"
     );
+    // What the bytes must match, and moving them in the same step as a new
+    // link, are the person's to do.
+    for command in [
+        Command::Retry {
+            job_id: own.job_id.clone(),
+            expected_sha256: Some(String::new()),
+        },
+        Command::RefreshSource {
+            job_id: own.job_id.clone(),
+            destination: None,
+            expected_sha256: Some("ab".repeat(32)),
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/a.bin"),
+            },
+        },
+        Command::RefreshSource {
+            job_id: own.job_id.clone(),
+            destination: Some(s.outside.join("a.bin").display().to_string()),
+            expected_sha256: None,
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/a.bin"),
+            },
+        },
+    ] {
+        assert_eq!(code(send(&s.agent, command)), "policy.not_permitted");
+    }
     assert_eq!(
         code(send(
             &s.agent,
             Command::RefreshSource {
                 job_id: own.job_id,
+                destination: None,
+                expected_sha256: None,
                 source: JobInput::Url {
                     url: url("https://token@example.test/a.bin"),
                 },
@@ -361,6 +389,7 @@ fn an_agent_sees_and_controls_only_the_jobs_it_created() {
             },
             Command::Retry {
                 job_id: job_id.clone(),
+                expected_sha256: None,
             },
         ] {
             assert_eq!(code(send(&s.agent, command)), "contract.unknown_job");
@@ -446,6 +475,10 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         Command::GetSettings,
         Command::QueueStats,
         Command::EngineShutdown,
+        Command::TakeLinkReviews,
+        Command::CreateJobs {
+            requests: Vec::new(),
+        },
     ] {
         let name = command.name();
         assert_eq!(
@@ -468,6 +501,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         },
         Command::Retry {
             job_id: waiting.job_id.clone(),
+            expected_sha256: None,
         },
         Command::ResolveDestination {
             job_id: waiting.job_id.clone(),
@@ -555,9 +589,12 @@ fn approval_queues_the_job_and_denial_ends_it_with_a_reason_the_agent_can_relay(
     for command in [
         Command::Retry {
             job_id: deny.job_id.clone(),
+            expected_sha256: None,
         },
         Command::RefreshSource {
             job_id: deny.job_id.clone(),
+            destination: None,
+            expected_sha256: None,
             source: JobInput::Url {
                 url: url("http://127.0.0.1:9/other.bin"),
             },
@@ -787,6 +824,7 @@ fn a_withdrawn_request_retried_by_its_agent_waits_for_the_person_again() {
         &s.agent,
         Command::Retry {
             job_id: asked.job_id.clone(),
+            expected_sha256: None,
         },
     )
     .unwrap());
@@ -806,6 +844,8 @@ fn a_withdrawn_request_retried_by_its_agent_waits_for_the_person_again() {
         &s.agent,
         Command::RefreshSource {
             job_id: asked.job_id.clone(),
+            destination: None,
+            expected_sha256: None,
             source: JobInput::Url {
                 url: url("http://127.0.0.1:9/b.bin"),
             },
@@ -849,6 +889,8 @@ fn an_approved_job_given_a_new_link_by_its_agent_is_checked_again() {
         &s.agent,
         Command::RefreshSource {
             job_id: asked.job_id,
+            destination: None,
+            expected_sha256: None,
             source: JobInput::Url {
                 url: url("http://127.0.0.1:9/other.bin"),
             },
@@ -883,6 +925,7 @@ fn a_request_withdrawn_past_the_rate_cannot_be_retried_around_it() {
         &s.agent,
         Command::Retry {
             job_id: over.job_id,
+            expected_sha256: None,
         },
     )
     .unwrap());
@@ -911,6 +954,8 @@ fn a_refused_retry_keeps_the_hold_it_would_have_shed() {
             &s.agent,
             Command::RefreshSource {
                 job_id: over.job_id.clone(),
+                destination: None,
+                expected_sha256: None,
                 source: JobInput::Url {
                     url: url("ftp://nope"),
                 },
@@ -922,6 +967,7 @@ fn a_refused_retry_keeps_the_hold_it_would_have_shed() {
         &s.agent,
         Command::Retry {
             job_id: over.job_id,
+            expected_sha256: None,
         },
     )
     .unwrap());

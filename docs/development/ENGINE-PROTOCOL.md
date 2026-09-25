@@ -56,11 +56,15 @@ the session: the engine maps between session and wire types (FP-051, FP-053).
 - **Destination is a full path** with a conflict policy (`ask` or
   `replace_existing`), as the queue takes it today. Directory references and
   network profiles are additive later.
-- **Not in v1 yet**: principals and approvals (FP-054), rules (FP-064), and
-  the browser's link-review handoff, which becomes an event with FP-055.
-  The desktop's "retry with a corrected checksum" is not a contract command,
-  because the contract makes the expected identity immutable. FP-055 decides
-  between a replacement job and a contract amendment.
+- **Not in v1 yet**: rules (FP-064). Principals and approvals arrived
+  with FP-054; FP-055 added `CreateJobs`, `TakeLinkReviews` (a command, not
+  an event: a link review is not a job) and optional `expected_sha256` on
+  `Retry`/`RefreshSource` plus `destination` on `RefreshSource`
+  ([contract D2](../architecture/JOB-CONTRACT.md#14-decision-record)). New
+  commands and optional fields keep v1; an older engine answers
+  `contract.unknown_command`.
+  The desktop's "retry with a corrected checksum" became an identity
+  replacement on the same job (contract D2, FP-055).
 
 ### Commands and results
 

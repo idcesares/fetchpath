@@ -170,6 +170,14 @@ fn every_command() -> Vec<Command> {
                 quality_label: "1080p".into(),
             },
         },
+        Command::CreateJobs {
+            requests: vec![JobRequest::File {
+                input: JobInput::Url { url: secret_url() },
+                destination: destination(),
+                not_before: None,
+                expected_sha256: None,
+            }],
+        },
         Command::Start { job_id: job_id() },
         Command::Pause { job_id: job_id() },
         Command::Resume { job_id: job_id() },
@@ -177,7 +185,14 @@ fn every_command() -> Vec<Command> {
             job_id: job_id(),
             retain_partial: true,
         },
-        Command::Retry { job_id: job_id() },
+        Command::Retry {
+            job_id: job_id(),
+            expected_sha256: None,
+        },
+        Command::Retry {
+            job_id: job_id(),
+            expected_sha256: Some("ab".repeat(32)),
+        },
         Command::UpdatePolicy {
             job_id: job_id(),
             patch: PolicyPatch {
@@ -212,7 +227,15 @@ fn every_command() -> Vec<Command> {
         },
         Command::RefreshSource {
             job_id: job_id(),
+            destination: None,
             source: JobInput::Url { url: secret_url() },
+            expected_sha256: None,
+        },
+        Command::RefreshSource {
+            job_id: job_id(),
+            destination: Some(r"D:\Downloads\renamed.bin".into()),
+            source: JobInput::Url { url: secret_url() },
+            expected_sha256: Some(String::new()),
         },
         Command::RefreshMediaChoices { job_id: job_id() },
         Command::RemoveJob { job_id: job_id() },
@@ -228,6 +251,7 @@ fn every_command() -> Vec<Command> {
             limit: Some(50),
         },
         Command::GetSettings,
+        Command::TakeLinkReviews,
         Command::UpdateSettings {
             settings: settings(),
         },
@@ -253,6 +277,7 @@ fn every_command() -> Vec<Command> {
     for command in &commands {
         match command {
             Command::CreateJob { .. }
+            | Command::CreateJobs { .. }
             | Command::Start { .. }
             | Command::Pause { .. }
             | Command::Resume { .. }
@@ -271,6 +296,7 @@ fn every_command() -> Vec<Command> {
             | Command::QueueStats
             | Command::History { .. }
             | Command::GetSettings
+            | Command::TakeLinkReviews
             | Command::UpdateSettings { .. }
             | Command::ApproveJob { .. }
             | Command::DenyJob { .. }
@@ -331,6 +357,9 @@ fn every_result() -> Vec<CommandResult> {
             },
         },
         CommandResult::Removed { job_id: job_id() },
+        CommandResult::LinkReviews {
+            urls: vec![secret_url()],
+        },
         CommandResult::Subscribed {
             position: StreamPosition::Job {
                 job_id: job_id(),
@@ -369,6 +398,7 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::QueueStats { .. }
             | CommandResult::Settings { .. }
             | CommandResult::Removed { .. }
+            | CommandResult::LinkReviews { .. }
             | CommandResult::Subscribed { .. }
             | CommandResult::SnapshotBoundary { .. }
             | CommandResult::EngineStatus { .. }
@@ -872,6 +902,7 @@ fn only_queries_skip_the_command_ledger() {
         "QueueStats",
         "History",
         "GetSettings",
+        "TakeLinkReviews",
         "GetAgentPolicies",
         "SubscribeJob",
         "SubscribeQueue",

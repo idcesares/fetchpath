@@ -49,6 +49,7 @@ The desktop application needs `pnpm` through corepack:
 
 ```powershell
 corepack pnpm --dir apps/desktop install
+& $cargo build -p fetchpath                    # the engine the app starts, beside it
 corepack pnpm --dir apps/desktop tauri dev     # run it
 corepack pnpm --dir apps/desktop release       # optimized build and installer, with the CLI
 ```

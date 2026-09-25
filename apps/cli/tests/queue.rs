@@ -476,3 +476,30 @@ fn add_wait_batch_settings_inspect_and_engine_status() {
     assert_eq!(code(&home.run(&["ls", "--bogus"])), 2);
     assert_eq!(code(&home.run(&["add", "--wait"])), 2);
 }
+
+#[test]
+fn a_command_that_starts_the_engine_returns_at_once_to_a_script_reading_its_output() {
+    // No engine yet: the command starts one, which then stays for its idle
+    // grace. The engine must not hold the script's pipe open that long.
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let run = |args: &[&str]| {
+        Command::new(EXE)
+            .args(args)
+            .env("FETCHPATH_APP_DATA_DIR", &data)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let started = Instant::now();
+    let listed = run(&["ls"]);
+    let took = started.elapsed();
+    let stopped = run(&["engine", "stop"]);
+    assert_eq!(code(&listed), 0, "{}", text(&listed.stderr));
+    assert_eq!(text(&listed.stdout).trim(), "No downloads.");
+    assert!(
+        took < Duration::from_secs(15),
+        "the script waited {took:?} for the engine to let go of its output"
+    );
+    assert_eq!(code(&stopped), 0);
+}

@@ -753,3 +753,163 @@ fn a_queue_restored_from_its_backup_never_reuses_numbers_a_subscriber_saw() {
         other => panic!("expected a snapshot boundary, got {other:?}"),
     }
 }
+
+fn file_request(url: &str, destination: String, checksum: Option<String>) -> JobRequest {
+    JobRequest::File {
+        input: JobInput::Url {
+            url: SensitiveUrl::try_from(url.to_owned()).unwrap(),
+        },
+        destination: DestinationIntent {
+            path: destination,
+            conflict: ConflictPolicy::Ask,
+        },
+        not_before: Some(Timestamp::from_unix_ms(
+            Timestamp::now().unix_ms() + 3_600_000,
+        )),
+        expected_sha256: checksum,
+    }
+}
+
+#[test]
+fn a_batch_creates_every_job_or_none_and_a_resend_creates_nothing_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let link = "http://127.0.0.1:9/file.bin";
+    let good = |name: &str| file_request(link, dir.path().join(name).display().to_string(), None);
+
+    // One request the queue refuses (a relative path) and none is created.
+    let refused = engine
+        .send(
+            &client(),
+            Command::CreateJobs {
+                requests: vec![good("a.bin"), file_request(link, "b.bin".into(), None)],
+            },
+        )
+        .unwrap_err();
+    assert_eq!(code(&refused), "input.invalid_request");
+    assert!(jobs(&engine).is_empty());
+
+    let envelope = CommandEnvelope::new(
+        client(),
+        Command::CreateJobs {
+            requests: vec![good("a.bin"), good("b.bin")],
+        },
+    );
+    let first = engine.execute(&envelope).unwrap();
+    let CommandResult::Jobs { jobs: created } = &first else {
+        panic!("{first:?}");
+    };
+    let names: Vec<_> = created
+        .iter()
+        .map(|job| job.destination.clone().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            dir.path().join("a.bin").display().to_string(),
+            dir.path().join("b.bin").display().to_string()
+        ]
+    );
+    assert_eq!(engine.execute(&envelope).unwrap(), first);
+    assert_eq!(jobs(&engine).len(), 2);
+}
+
+#[test]
+fn the_person_can_correct_the_expected_checksum_before_a_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(&dir.path().join("queue-v1.json"));
+    let body = b"checked bytes".repeat(1000);
+    let base = serve(body.clone());
+    let destination = dir.path().join("checked.bin");
+    let mut request = file_request(
+        &format!("{base}/checked.bin"),
+        destination.display().to_string(),
+        Some("0".repeat(64)),
+    );
+    if let JobRequest::File { not_before, .. } = &mut request {
+        *not_before = None;
+    }
+    let job = job_of(
+        &engine
+            .send(&client(), Command::CreateJob { request })
+            .unwrap(),
+    );
+    let settled = |engine: &InProcessClient, state: JobState| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            engine.engine().tick();
+            let now = jobs(engine)
+                .into_iter()
+                .find(|j| j.job_id == job.job_id)
+                .unwrap();
+            if now.state == state {
+                return now;
+            }
+            assert!(Instant::now() < deadline, "{now:?}");
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let failed = settled(&engine, JobState::Failed);
+    assert_eq!(
+        failed.error.unwrap().code.as_str(),
+        "integrity.checksum_mismatch"
+    );
+    assert!(!destination.exists());
+
+    // sha256 of the body, computed independently of the engine.
+    let expected = {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(&body))
+    };
+    let retried = job_of(
+        &engine
+            .send(
+                &client(),
+                Command::Retry {
+                    job_id: job.job_id.clone(),
+                    expected_sha256: Some(expected.clone()),
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(retried.expected_sha256.as_deref(), Some(expected.as_str()));
+    let done = settled(&engine, JobState::Completed);
+    assert_eq!(done.observed_sha256.as_deref(), Some(expected.as_str()));
+    assert_eq!(std::fs::read(&destination).unwrap(), body);
+}
+
+#[test]
+fn a_media_page_from_the_browser_is_offered_for_review_once() {
+    use fetchpath_session::browser_inbox::{BridgeStore, CaptureRequest, SCHEMA_VERSION};
+    let dir = tempfile::tempdir().unwrap();
+    let queue = dir.path().join("queue-v1.json");
+    let downloads = dir.path().join("Downloads");
+    std::fs::create_dir_all(&downloads).unwrap();
+    let session =
+        Arc::new(Session::load_with_browser(queue.clone(), 3, Some(downloads.clone())).unwrap());
+    let engine = InProcessClient::manual(Engine::new(session));
+    let page = "https://www.youtube.com/watch?v=abc123";
+    BridgeStore::new(dir.path().to_path_buf())
+        .accept(&CaptureRequest {
+            schema_version: SCHEMA_VERSION,
+            capture_id: "5f0c3f7e-8b2a-4d6e-9c1f-2a3b4c5d6e7f".into(),
+            method: "GET".into(),
+            url: page.into(),
+            suggested_filename: "watch.html".into(),
+            referrer: None,
+            cookies: Vec::new(),
+            user_initiated: true,
+        })
+        .unwrap();
+
+    // Listing takes in what the browser sent: a page is not a download.
+    assert!(jobs(&engine).is_empty());
+    let take = || match engine.send(&client(), Command::TakeLinkReviews).unwrap() {
+        CommandResult::LinkReviews { urls } => urls,
+        other => panic!("{other:?}"),
+    };
+    let first = take();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].expose(), page);
+    assert!(take().is_empty());
+}

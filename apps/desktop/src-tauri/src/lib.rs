@@ -1,176 +1,367 @@
 pub mod browser_bridge;
 pub mod browser_setup;
+pub mod engine_link;
 pub mod media_setup;
-pub use fetchpath_session::settings;
+pub mod view;
 
-use fetchpath_media::MediaInspection;
-use fetchpath_session::{
-    CancelResponse, DEFAULT_MAX_ACTIVE, JobDetails, JobDraft, JobSnapshot, MAX_DESTINATION_LENGTH,
-    MediaDraft, QueueStats, Session,
-};
-use serde::Serialize;
-use settings::Settings;
+use engine_link::{EngineLink, Signal};
+use fetchpath_protocol::command::{Command, DestinationDecision, JobFilter, JobInput};
+use fetchpath_protocol::launch::EngineHome;
+use fetchpath_protocol::message::{CommandResult, ControlOutcome};
+use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, Timestamp};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
-#[tauri::command]
-fn start_download(
-    url: String,
-    destination: String,
-    jobs: State<'_, Session>,
-) -> Result<JobSnapshot, String> {
-    jobs.enqueue(vec![JobDraft {
-        url,
-        destination,
-        not_before_ms: None,
-        checksum: None,
-    }])?
-    .into_iter()
-    .next()
-    .ok_or_else(|| "The download was not queued.".to_string())
+/// Longest folder path accepted from the interface.
+const MAX_PATH_LENGTH: usize = 4_096;
+
+type Engine<'a> = State<'a, Arc<EngineLink>>;
+
+/// The close button's setting, kept here so closing the window never waits
+/// on the engine.
+struct CloseToTray(AtomicBool);
+
+/// Whether the engine is reachable, as last reported by the queue watcher.
+struct Connection(std::sync::Mutex<serde_json::Value>);
+
+impl Default for Connection {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(
+            serde_json::json!({ "connected": true }),
+        ))
+    }
 }
 
+/// The engine's reachability now, for a page that starts listening after
+/// the watcher's first report.
 #[tauri::command]
+fn engine_connection(connection: State<'_, Arc<Connection>>) -> serde_json::Value {
+    connection
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// The interface shows errors as text.
+fn text(error: ProtocolError) -> String {
+    error.message
+}
+
+fn unexpected(result: &CommandResult) -> String {
+    let kind = serde_json::to_value(result)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(|kind| kind.as_str().map(str::to_owned))
+        })
+        .unwrap_or_default();
+    format!("Fetchpath's engine gave an unexpected answer ({kind}).")
+}
+
+fn job_id(value: &str) -> Result<JobId, String> {
+    JobId::try_from(value).map_err(|_| "This download is no longer available.".to_string())
+}
+
+fn one(result: CommandResult) -> Result<JobSnapshot, String> {
+    match result {
+        CommandResult::Job { job } | CommandResult::Control { job, .. } => Ok(job),
+        other => Err(unexpected(&other)),
+    }
+}
+
+fn send_job(engine: &EngineLink, command: Command) -> Result<view::JobView, String> {
+    let job = one(engine.send(command).map_err(text)?)?;
+    Ok(view::job(&job, Timestamp::now()))
+}
+
+fn snapshot(engine: &EngineLink, id: &str) -> Result<JobSnapshot, String> {
+    one(engine
+        .send(Command::GetJob {
+            job_id: job_id(id)?,
+        })
+        .map_err(text)?)
+}
+
+#[tauri::command(async)]
 fn start_batch(
-    drafts: Vec<JobDraft>,
-    jobs: State<'_, Session>,
-) -> Result<Vec<JobSnapshot>, String> {
-    jobs.enqueue(drafts)
+    drafts: Vec<view::JobDraft>,
+    engine: Engine<'_>,
+) -> Result<Vec<view::JobView>, String> {
+    let requests = drafts
+        .iter()
+        .map(view::JobDraft::request)
+        .collect::<Result<Vec<_>, _>>()?;
+    match engine
+        .send(Command::CreateJobs { requests })
+        .map_err(text)?
+    {
+        CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
+        other => Err(unexpected(&other)),
+    }
 }
 
-#[tauri::command]
-fn inspect_media(url: String, jobs: State<'_, Session>) -> Result<MediaInspection, String> {
-    jobs.inspect_media(&url)
+#[tauri::command(async)]
+fn inspect_media(url: String, engine: Engine<'_>) -> Result<view::Inspection, String> {
+    match engine
+        .send(Command::InspectMedia {
+            url: view::link(&url)?,
+        })
+        .map_err(text)?
+    {
+        CommandResult::MediaInspection { inspection } => Ok(view::Inspection::from(&inspection)),
+        other => Err(unexpected(&other)),
+    }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_media_download(
-    draft: MediaDraft,
-    jobs: State<'_, Session>,
-) -> Result<JobSnapshot, String> {
-    jobs.enqueue_media(draft)
+    draft: view::MediaDraft,
+    engine: Engine<'_>,
+) -> Result<view::JobView, String> {
+    send_job(
+        &engine,
+        Command::CreateJob {
+            request: draft.request()?,
+        },
+    )
 }
 
-#[tauri::command]
-fn list_downloads(jobs: State<'_, Session>) -> Result<Vec<JobSnapshot>, String> {
-    jobs.list()
+#[tauri::command(async)]
+fn list_downloads(engine: Engine<'_>) -> Result<Vec<view::JobView>, String> {
+    match engine
+        .send(Command::ListJobs {
+            filter: JobFilter::All,
+        })
+        .map_err(text)?
+    {
+        CommandResult::Jobs { jobs } => Ok(view::jobs(&jobs)),
+        other => Err(unexpected(&other)),
+    }
 }
 
 /// Media pages sent from the browser, taken once each by the interface.
-#[tauri::command]
-fn take_link_reviews(jobs: State<'_, Session>) -> Vec<String> {
-    jobs.take_link_reviews()
+#[tauri::command(async)]
+fn take_link_reviews(engine: Engine<'_>) -> Result<Vec<String>, String> {
+    match engine.send(Command::TakeLinkReviews).map_err(text)? {
+        CommandResult::LinkReviews { urls } => Ok(urls.into_iter().map(String::from).collect()),
+        other => Err(unexpected(&other)),
+    }
 }
 
-#[tauri::command]
-fn get_download(job_id: String, jobs: State<'_, Session>) -> Result<JobSnapshot, String> {
-    jobs.snapshot(&job_id)
+#[tauri::command(async)]
+fn download_details(job_id: String, engine: Engine<'_>) -> Result<view::JobDetails, String> {
+    match engine
+        .send(Command::JobDetails {
+            job_id: self::job_id(&job_id)?,
+        })
+        .map_err(text)?
+    {
+        CommandResult::Details { details } => Ok(view::JobDetails::from(&details)),
+        other => Err(unexpected(&other)),
+    }
 }
 
-#[tauri::command]
-fn download_details(job_id: String, jobs: State<'_, Session>) -> Result<JobDetails, String> {
-    jobs.details(&job_id)
+#[tauri::command(async)]
+fn cancel_download(job_id: String, engine: Engine<'_>) -> Result<view::CancelResponse, String> {
+    match engine
+        .send(Command::Cancel {
+            job_id: self::job_id(&job_id)?,
+            retain_partial: false,
+        })
+        .map_err(text)?
+    {
+        CommandResult::Control { outcome, job } => Ok(view::CancelResponse {
+            outcome: match outcome {
+                ControlOutcome::Accepted => "accepted",
+                ControlOutcome::TooLateToCancel | ControlOutcome::TooLate => "too_late",
+                ControlOutcome::AlreadyTerminal => "already_terminal",
+                _ => "no_op",
+            },
+            job: view::job(&job, Timestamp::now()),
+        }),
+        other => Err(unexpected(&other)),
+    }
 }
 
-#[tauri::command]
-fn cancel_download(job_id: String, jobs: State<'_, Session>) -> Result<CancelResponse, String> {
-    jobs.cancel(&job_id)
+#[tauri::command(async)]
+fn start_now(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    send_job(
+        &engine,
+        Command::Start {
+            job_id: self::job_id(&job_id)?,
+        },
+    )
 }
 
-#[tauri::command]
-fn start_now(job_id: String, jobs: State<'_, Session>) -> Result<JobSnapshot, String> {
-    jobs.start_now(&job_id)
-}
-
-#[tauri::command]
+/// Retry, a new destination, a refreshed link or a corrected checksum. A new
+/// link travels with its destination and checksum in one step; a new
+/// destination alone is a destination decision.
+#[tauri::command(async)]
 fn retry_download(
     job_id: String,
     url: Option<String>,
     destination: Option<String>,
     checksum: Option<String>,
-    jobs: State<'_, Session>,
-) -> Result<JobSnapshot, String> {
-    jobs.retry(&job_id, url, destination, checksum)
+    engine: Engine<'_>,
+) -> Result<view::JobView, String> {
+    let current = snapshot(&engine, &job_id)?;
+    send_job(
+        &engine,
+        retry_command(&current, url, destination, checksum)?,
+    )
 }
 
-#[tauri::command]
-fn pause_download(job_id: String, jobs: State<'_, Session>) -> Result<JobSnapshot, String> {
-    jobs.pause(&job_id)
-}
-
-#[tauri::command]
-fn resume_download(job_id: String, jobs: State<'_, Session>) -> Result<JobSnapshot, String> {
-    jobs.resume(&job_id)
-}
-
-#[tauri::command]
-fn queue_stats(jobs: State<'_, Session>) -> Result<QueueStats, String> {
-    Ok(jobs.stats())
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SettingsView {
-    settings: Settings,
-    /// True when the stored settings file was unusable and defaults were
-    /// substituted, so the interface can say so instead of presenting the
-    /// defaults as the user's own choices.
-    repaired: bool,
-    max_active_limit: usize,
-    max_retry_attempts: u32,
-    /// The folder used when no default destination is set.
-    system_download_dir: Option<String>,
-}
-
-#[tauri::command]
-fn get_settings(app: AppHandle, jobs: State<'_, Session>) -> Result<SettingsView, String> {
-    Ok(SettingsView {
-        settings: jobs.settings(),
-        repaired: jobs.settings_repaired(),
-        max_active_limit: settings::MAX_ACTIVE_DOWNLOADS,
-        max_retry_attempts: settings::MAX_RETRY_ATTEMPTS,
-        system_download_dir: app
-            .path()
-            .download_dir()
-            .ok()
-            .map(|dir| dir.display().to_string()),
+/// The command for a retry from the interface, sending only what changed.
+fn retry_command(
+    current: &JobSnapshot,
+    url: Option<String>,
+    destination: Option<String>,
+    checksum: Option<String>,
+) -> Result<Command, String> {
+    let moved = destination
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty() && Some(path) != current.destination.as_ref());
+    let checksum = checksum
+        .map(|sum| sum.trim().to_ascii_lowercase())
+        .filter(|sum| sum.as_str() != current.expected_sha256.as_deref().unwrap_or_default());
+    let job_id = current.job_id.clone();
+    Ok(match (url.filter(|url| !url.trim().is_empty()), moved) {
+        (Some(url), destination) => Command::RefreshSource {
+            job_id,
+            source: JobInput::Url {
+                url: view::link(&url)?,
+            },
+            destination,
+            expected_sha256: checksum,
+        },
+        (None, Some(_)) if checksum.is_some() => {
+            return Err(
+                "Change the destination and the checksum one at a time, or paste the link again to change both."
+                    .into(),
+            );
+        }
+        (None, Some(path)) => Command::ResolveDestination {
+            job_id,
+            decision: DestinationDecision::ChooseNewPath { path },
+        },
+        (None, None) => Command::Retry {
+            job_id,
+            expected_sha256: checksum,
+        },
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn pause_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    send_job(
+        &engine,
+        Command::Pause {
+            job_id: self::job_id(&job_id)?,
+        },
+    )
+}
+
+#[tauri::command(async)]
+fn resume_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    send_job(
+        &engine,
+        Command::Resume {
+            job_id: self::job_id(&job_id)?,
+        },
+    )
+}
+
+#[tauri::command(async)]
+fn queue_stats(engine: Engine<'_>) -> Result<view::QueueStats, String> {
+    match engine.send(Command::QueueStats).map_err(text)? {
+        CommandResult::QueueStats { stats } => Ok(view::QueueStats::from(&stats)),
+        other => Err(unexpected(&other)),
+    }
+}
+
+fn system_download_dir(app: &AppHandle) -> Option<String> {
+    app.path()
+        .download_dir()
+        .ok()
+        .map(|dir| dir.display().to_string())
+}
+
+fn settings_of(app: &AppHandle, result: CommandResult) -> Result<view::SettingsView, String> {
+    match result {
+        CommandResult::Settings { view } => {
+            app.state::<CloseToTray>()
+                .0
+                .store(view.settings.close_to_tray, Ordering::SeqCst);
+            Ok(view::SettingsView::new(&view, system_download_dir(app)))
+        }
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command(async)]
+fn get_settings(app: AppHandle, engine: Engine<'_>) -> Result<view::SettingsView, String> {
+    settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)
+}
+
+#[tauri::command(async)]
 fn update_settings(
-    next: Settings,
+    next: view::Settings,
     app: AppHandle,
-    jobs: State<'_, Session>,
-) -> Result<SettingsView, String> {
-    jobs.update_settings(next)?;
-    get_settings(app, jobs)
+    engine: Engine<'_>,
+) -> Result<view::SettingsView, String> {
+    settings_of(
+        &app,
+        engine
+            .send(Command::UpdateSettings {
+                settings: next.to_engine(),
+            })
+            .map_err(text)?,
+    )
+}
+
+/// Changes settings starting from what the engine holds now.
+fn change_settings(
+    app: &AppHandle,
+    engine: &EngineLink,
+    change: impl FnOnce(&mut view::Settings),
+) -> Result<view::SettingsView, String> {
+    let current = settings_of(app, engine.send(Command::GetSettings).map_err(text)?)?;
+    let mut next = current.settings;
+    change(&mut next);
+    settings_of(
+        app,
+        engine
+            .send(Command::UpdateSettings {
+                settings: next.to_engine(),
+            })
+            .map_err(text)?,
+    )
 }
 
 /// The folder new downloads are saved in: the user's choice, else Windows'
 /// own Downloads folder.
-#[tauri::command]
-fn default_destination_dir(
-    app: AppHandle,
-    jobs: State<'_, Session>,
-) -> Result<Option<String>, String> {
-    Ok(jobs.settings().default_destination_dir.or_else(|| {
-        app.path()
-            .download_dir()
-            .ok()
-            .map(|dir| dir.display().to_string())
-    }))
+#[tauri::command(async)]
+fn default_destination_dir(app: AppHandle, engine: Engine<'_>) -> Result<Option<String>, String> {
+    let view = settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)?;
+    Ok(view
+        .settings
+        .default_destination_dir
+        .or(view.system_download_dir))
 }
 
 /// Opens Explorer with the finished file selected.
 ///
-/// Only ever points at a destination this queue recorded, so a renderer message
-/// cannot turn this into a way to launch an arbitrary path.
-#[tauri::command]
-fn reveal_download(job_id: String, jobs: State<'_, Session>) -> Result<(), String> {
-    let snapshot = jobs.snapshot(&job_id)?;
+/// Only ever points at a destination the engine recorded for this job, so a
+/// renderer message cannot turn this into a way to launch an arbitrary path.
+#[tauri::command(async)]
+fn reveal_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
+    let snapshot = snapshot(&engine, &job_id)?;
     let destination = snapshot
         .destination
         .ok_or_else(|| "This download has no saved file yet.".to_string())?;
@@ -186,8 +377,8 @@ fn reveal_download(job_id: String, jobs: State<'_, Session>) -> Result<(), Strin
     // writes the command line exactly.
     //
     // A quote inside the path would escape the quoting below, so it is refused.
-    // `validated_destination` already rejects one, which makes this a second
-    // fence rather than the only one.
+    // The queue already rejects one, which makes this a second fence rather
+    // than the only one.
     if destination.contains('"') {
         return Err("That destination cannot be shown in File Explorer.".into());
     }
@@ -203,55 +394,54 @@ fn reveal_download(job_id: String, jobs: State<'_, Session>) -> Result<(), Strin
     .map_err(|error| format!("Could not open the folder: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn media_tools_status(
     app: AppHandle,
-    jobs: State<'_, Session>,
+    engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
-    let install_dir = media_tools_install_dir(&app)?;
+    let install_dir = media_tools_install_dir()?;
+    let view = settings_of(&app, engine.send(Command::GetSettings).map_err(text)?)?;
     Ok(media_setup::status(
-        jobs.settings().media_tools_dir.as_deref(),
+        view.settings.media_tools_dir.as_deref(),
         &install_dir,
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn install_media_tools(
     app: AppHandle,
-    jobs: State<'_, Session>,
+    engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
-    let install_dir = media_tools_install_dir(&app)?;
+    let install_dir = media_tools_install_dir()?;
     media_setup::install(&install_dir)?;
-    let mut settings = jobs.settings();
-    settings.media_tools_dir = Some(install_dir.display().to_string());
-    jobs.update_settings(settings)?;
-    media_tools_status(app, jobs)
+    change_settings(&app, &engine, |settings| {
+        settings.media_tools_dir = Some(install_dir.display().to_string());
+    })?;
+    media_tools_status(app, engine)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn use_media_tools_dir(
     directory: String,
     app: AppHandle,
-    jobs: State<'_, Session>,
+    engine: Engine<'_>,
 ) -> Result<media_setup::ToolsStatus, String> {
-    if directory.len() > MAX_DESTINATION_LENGTH {
+    if directory.len() > MAX_PATH_LENGTH {
         return Err("That folder path is too long.".into());
     }
     let accepted = media_setup::use_directory(&PathBuf::from(&directory))?;
-    let mut settings = jobs.settings();
-    settings.media_tools_dir = Some(accepted);
-    jobs.update_settings(settings)?;
-    media_tools_status(app, jobs)
+    change_settings(&app, &engine, |settings| {
+        settings.media_tools_dir = Some(accepted);
+    })?;
+    media_tools_status(app, engine)
 }
 
 /// Where the `fetchpath` command is, when the installer put it beside the app.
 #[tauri::command]
 fn cli_path() -> Option<String> {
-    let cli = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .join("fetchpath.exe");
-    cli.is_file().then(|| cli.display().to_string())
+    engine_link::engine_exe()
+        .filter(|cli| cli.is_file())
+        .map(|cli| cli.display().to_string())
 }
 
 #[tauri::command]
@@ -264,29 +454,42 @@ fn reveal_extension_folder(app: AppHandle) -> Result<(), String> {
     browser_setup::reveal_extension_folder(app.path().resource_dir().ok().as_deref())
 }
 
-fn media_tools_install_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|dir| dir.join("media-tools"))
-        .map_err(|error| format!("Could not resolve the Fetchpath data folder: {error}"))
+/// The media helpers live in the engine's data folder, where it looks.
+fn media_tools_install_dir() -> Result<PathBuf, String> {
+    EngineHome::from_env()
+        .map(|home| home.dir().join("media-tools"))
+        .map_err(|error| {
+            format!(
+                "Could not resolve the Fetchpath data folder: {}",
+                error.message
+            )
+        })
 }
 
-#[tauri::command]
-fn remove_download(job_id: String, jobs: State<'_, Session>) -> Result<(), String> {
-    jobs.remove(&job_id)
+#[tauri::command(async)]
+fn remove_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
+    match engine
+        .send(Command::RemoveJob {
+            job_id: self::job_id(&job_id)?,
+        })
+        .map_err(text)?
+    {
+        CommandResult::Removed { .. } => Ok(()),
+        other => Err(unexpected(&other)),
+    }
 }
 
-/// One Fetchpath process per Windows user account.
+/// One Fetchpath window per Windows user account.
 ///
-/// Two processes would both own `queue-v1.json` and both claim the tray icon, so
-/// the second one would race the first over the persisted queue. The guard is a
-/// deny-sharing handle on a lock file in the same application-data directory as
-/// the queue: whoever opens it first keeps it for the life of the process.
+/// The queue belongs to the engine, which holds `instance.lock` itself; this
+/// guard only keeps a second window (and a second tray icon) from opening.
+/// It is a deny-sharing handle on `desktop-window.lock` in the same folder:
+/// whoever opens it first keeps it for the life of the process.
 ///
-/// It fails open. Only a sharing or locking violation means "another instance is
-/// running"; any other error (an unwritable directory, a missing `%APPDATA%`)
-/// lets the application start, because refusing to launch is worse than the
-/// unlikely double-launch it would prevent.
+/// It fails open. Only a sharing or locking violation means "another window is
+/// open"; any other error (an unwritable directory, a missing `%APPDATA%`)
+/// lets the application start, because two windows are only untidy: both are
+/// clients of the one engine.
 mod single_instance {
     use std::fs::{File, OpenOptions};
     use std::os::windows::fs::OpenOptionsExt;
@@ -314,13 +517,10 @@ mod single_instance {
         fn SetForegroundWindow(window: *mut core::ffi::c_void) -> i32;
     }
 
+    /// Not `instance.lock`: that one is the engine's, the queue's owner.
     pub fn lock_path() -> Option<PathBuf> {
-        let roaming = std::env::var_os("APPDATA")?;
-        Some(
-            Path::new(&roaming)
-                .join("app.fetchpath.desktop")
-                .join("instance.lock"),
-        )
+        let home = fetchpath_protocol::launch::EngineHome::from_env().ok()?;
+        Some(home.dir().join("desktop-window.lock"))
     }
 
     /// `true` when this process may proceed as the single instance.
@@ -384,13 +584,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            start_download,
+            engine_connection,
             start_batch,
             inspect_media,
             start_media_download,
             list_downloads,
             take_link_reviews,
-            get_download,
             download_details,
             cancel_download,
             start_now,
@@ -411,13 +610,34 @@ pub fn run() {
             reveal_extension_folder
         ])
         .setup(|app| {
-            let state_path = app.path().app_data_dir()?.join("queue-v1.json");
-            let download_dir = app.path().download_dir()?;
-            app.manage(Session::load_with_browser(
-                state_path,
-                DEFAULT_MAX_ACTIVE,
-                Some(download_dir),
-            )?);
+            // The desktop holds no queue: the engine does, and this window is
+            // one of its clients. It starts the engine when none is running.
+            let home = EngineHome::from_env().map_err(|error| error.message)?;
+            let engine = Arc::new(EngineLink::new(home, engine_link::engine_exe()));
+            app.manage(Arc::clone(&engine));
+            app.manage(CloseToTray(AtomicBool::new(true)));
+            let connection = Arc::new(Connection::default());
+            app.manage(Arc::clone(&connection));
+            let handle = app.handle().clone();
+            // Runs for the life of the window.
+            let _watcher = engine_link::watch(engine, move |signal| {
+                let state = match signal {
+                    Signal::Queue => {
+                        let _ = handle.emit("fetchpath://queue", ());
+                        return;
+                    }
+                    Signal::Connected => serde_json::json!({ "connected": true }),
+                    Signal::Disconnected(message) => {
+                        serde_json::json!({ "connected": false, "message": message })
+                    }
+                };
+                // Kept as well as sent: the page may not be listening yet.
+                *connection
+                    .0
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = state.clone();
+                let _ = handle.emit("fetchpath://engine", state);
+            });
             let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Fetchpath", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -428,10 +648,9 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
-                    "quit" => {
-                        app.state::<Session>().cancel_all_and_join();
-                        app.exit(0);
-                    }
+                    // The window goes; downloads carry on in the engine,
+                    // which stops by itself once it has nothing left to do.
+                    "quit" => app.exit(0),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -450,16 +669,14 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Closing to the tray is the default because a running queue
-                // should survive a stray click on the X. A user who turned that
-                // off means the close button to close, so finish the transfers
-                // down cleanly and exit rather than hiding.
-                let jobs = window.app_handle().state::<Session>();
-                if jobs.settings().close_to_tray {
+                // Closing to the tray is the default, so the window is quick to
+                // bring back. A user who turned that off means the close button
+                // to close. Either way downloads carry on in the engine.
+                let to_tray = window.app_handle().state::<CloseToTray>();
+                if to_tray.0.load(Ordering::SeqCst) {
                     api.prevent_close();
                     let _ = window.hide();
                 } else {
-                    jobs.cancel_all_and_join();
                     window.app_handle().exit(0);
                 }
             }
@@ -489,19 +706,111 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn failed(destination: &str, checksum: Option<&str>) -> JobSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "job_id": "3f1c2a9b-0000-4000-8000-000000000001",
+            "kind": "file",
+            "state": "failed",
+            "job_revision": 3,
+            "last_seq": 3,
+            "source_display": "https://example.test/a.zip?…",
+            "destination": destination,
+            "expected_sha256": checksum,
+            "progress": { "bytes_received": 0 },
+            "created_at": "2026-09-25T10:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_retry_from_the_interface_sends_only_what_changed() {
+        let here = r"C:\Downloads\a.zip";
+        let sum = "ab".repeat(32);
+        let job = failed(here, Some(&sum));
+        let retry = |url: Option<&str>, destination: Option<&str>, checksum: Option<&str>| {
+            retry_command(
+                &job,
+                url.map(str::to_owned),
+                destination.map(str::to_owned),
+                checksum.map(str::to_owned),
+            )
+        };
+
+        // The retry button, and the edit dialog with nothing changed.
+        for command in [
+            retry(None, None, None).unwrap(),
+            retry(None, Some(here), Some(&sum.to_uppercase())).unwrap(),
+        ] {
+            assert!(matches!(
+                command,
+                Command::Retry {
+                    expected_sha256: None,
+                    ..
+                }
+            ));
+        }
+        // A corrected checksum; an emptied one removes it.
+        let Command::Retry {
+            expected_sha256: Some(new),
+            ..
+        } = retry(None, Some(here), Some(&"cd".repeat(32))).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(new, "cd".repeat(32));
+        assert!(matches!(
+            retry(None, Some(here), Some("")).unwrap(),
+            Command::Retry { expected_sha256: Some(cleared), .. } if cleared.is_empty()
+        ));
+        // A new destination alone.
+        assert!(matches!(
+            retry(None, Some(r"D:\b.zip"), Some(&sum)).unwrap(),
+            Command::ResolveDestination {
+                decision: DestinationDecision::ChooseNewPath { path },
+                ..
+            } if path == r"D:\b.zip"
+        ));
+        // A new link carries the destination and checksum in one step.
+        let Command::RefreshSource {
+            source: JobInput::Url { url },
+            destination,
+            expected_sha256,
+            ..
+        } = retry(
+            Some("https://example.test/a.zip?sig=2"),
+            Some(r"D:\b.zip"),
+            Some(""),
+        )
+        .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(url.expose(), "https://example.test/a.zip?sig=2");
+        assert_eq!(destination.as_deref(), Some(r"D:\b.zip"));
+        assert_eq!(expected_sha256.as_deref(), Some(""));
+        // Both without a link cannot be one step, so nothing is sent.
+        assert!(retry(None, Some(r"D:\b.zip"), Some(&"cd".repeat(32))).is_err());
+    }
+
+    #[test]
+    fn the_window_lock_is_not_the_engines() {
+        let path = single_instance::lock_path().unwrap();
+        assert_eq!(path.file_name().unwrap(), "desktop-window.lock");
+    }
+
     #[test]
     fn a_second_instance_is_refused_while_the_first_holds_the_lock() {
         use std::fs::OpenOptions;
         use std::os::windows::fs::OpenOptionsExt;
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("nested").join("instance.lock");
+        let path = dir.path().join("nested").join("desktop-window.lock");
 
         // The first claim also creates the application-data directory.
         assert!(single_instance::claim(&path));
         assert!(path.exists());
 
-        // A second process is modelled by an independent deny-sharing open of
+        // A second window is modelled by an independent deny-sharing open of
         // the same path, because the in-process claim is held by a static.
         let contended = OpenOptions::new()
             .read(true)

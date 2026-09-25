@@ -1,6 +1,6 @@
 # Job, identity, and event contract
 
-Status: accepted foundation contract for FP-005 · 20 September 2026 · amended by [D1](#14-decision-record) (FP-054, 24 September 2026)
+Status: accepted foundation contract for FP-005 · 20 September 2026 · amended by [D1](#14-decision-record) (FP-054, 24 September 2026) and [D2](#d2--corrected-identity-batches-and-link-reviews-fp-055-25-september-2026) (FP-055, 25 September 2026)
 
 This contract is the stable boundary between Fetchpath clients (desktop, CLI, browser bridge), the coordinator, storage, and transfer/media adapters. It specifies behavior before implementation. Rust types may refine representation but must preserve these semantics unless a later decision supersedes this document.
 
@@ -96,11 +96,11 @@ Lookup by `(client_id, command_id)` happens before time validation. A retained m
 | `Pause(job_id)` | Any state; outcome follows the command/state matrix | Before the publication fence, requests quiescence; otherwise returns the matrix's no-op or too-late result |
 | `Resume(job_id)` | `paused` | Revalidates required source identity, then schedules work |
 | `Cancel(job_id, retain_partial)` | Any state; outcome follows the command/state matrix | Before the publication fence, enters `cancelling`; otherwise returns the matrix's terminal no-op or too-late result |
-| `Retry(job_id)` | Retryable `failed` | Creates new attempts; never reuses an old `attempt_id` |
+| `Retry(job_id, expected_sha256?)` | Retryable `failed` | Creates new attempts; never reuses an old `attempt_id`. A corrected expected identity (D2) advances `work_generation` |
 | `UpdatePolicy(job_id, patch)` | Non-terminal job and matching revision | New revision; rejects immutable-field changes |
 | `ResolveDestination(job_id, decision)` | Waiting on conflict | `choose_new_path`, `replace_existing`, or `cancel`; replacement requires explicit user intent |
 | `SelectMedia(job_id, selection_id)` | `waiting_for_selection` and current inspection revision | Freezes the selected format/components and permits transfer |
-| `RefreshSource(job_id, source_patch)` | `waiting_for_source`, `paused`, or retryable `failed`; matching revision | Replaces an expired URL or credential reference, advances `work_generation`, and re-probes identity before any retained bytes are reused |
+| `RefreshSource(job_id, source_patch, destination?, expected_sha256?)` | `waiting_for_source`, `paused`, or retryable `failed`; matching revision | Replaces an expired URL or credential reference, advances `work_generation`, and re-probes identity before any retained bytes are reused |
 | `RefreshMediaChoices(job_id)` | `waiting_for_selection` before a selection is frozen | Re-inspects and replaces the choice set; stale choice IDs become invalid |
 
 `Pause` and `Cancel` acknowledge receipt separately from completion when their matrix result is `accepted`. That immutable result includes the persisted intent and linearization generation; the definitive outcome is a later state event. Clients may wait for a target state with a timeout and then refresh the snapshot. A repeated command returns the original result even if the job has since progressed.
@@ -357,3 +357,23 @@ Supersedes the assumption, implicit in §5 and §6, that every command comes fro
 - **Leaving the state.** Only a `user` principal may `ApproveJob` (to `queued`, resuming from any retained checkpoint; approving a size stop lifts the limit for that job only) or `DenyJob` (to `cancelled`, recording `policy.approval_denied` so the agent can relay it). The job's agent may `Cancel` (withdraw) or `RemoveJob` it; a withdrawn request keeps its reasons, so the agent retrying it waits for the person again. Whenever an agent retries a job, gives it a new link or a new path, its grants are checked again and a new link drops any size approval. No other command starts a job that is awaiting approval, and the wait survives an engine restart. An approval or denial that meets a size stop which already published reports the completion.
 - **Ledger identity.** The command fingerprint includes a non-`user` principal, so a command id reused across principals is an idempotency conflict and never returns another principal's stored result.
 - **Threat model.** Unchanged from the design: the pipe admits only the current user and both sides prove the per-install secret. A program already running as the same user can claim `user`; that is out of scope and documented as such.
+
+### D2 · Corrected identity, batches and link reviews (FP-055, 25 September 2026)
+
+Moving the desktop onto the engine needed three things its own queue did in
+process. Source: `crates/fetchpath-protocol/src/command.rs`.
+
+- **Correcting the expected identity is an identity replacement on the same
+  job**, which §2 already provides for: `Retry` and `RefreshSource` take an
+  optional `expected_sha256` (an empty value removes it) and advance
+  `work_generation`, revoking earlier work. `RefreshSource` may also carry a
+  new destination, so a new link, path and checksum change in one step.
+  Only a `user` principal may send either field; an agent keeps using
+  `ResolveDestination`, under its grants. A replacement job was rejected:
+  the client cannot build one for a link whose private query it never saw.
+- **`CreateJobs(requests)`** creates file jobs all or none, as the queue's
+  batch always did. `user` only.
+- **`TakeLinkReviews`** returns, once, media pages the person sent from the
+  browser, for a format choice in their client. `user` only. It is not
+  ledgered, so the links never reach the ledger file; a reply lost in
+  transit loses those links, as a crash already did.

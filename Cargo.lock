@@ -1266,6 +1266,7 @@ version = "0.1.0"
 dependencies = [
  "fetchpath-core",
  "fetchpath-media",
+ "fetchpath-protocol",
  "fetchpath-session",
  "serde",
  "serde_json",

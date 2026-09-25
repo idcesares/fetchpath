@@ -1625,8 +1625,8 @@
       "dependsOn": [
         "FP-053"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "blocked",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
       "review": "strong",
@@ -1640,8 +1640,13 @@
       ],
       "acceptance": "Tauri commands become EngineClient calls and the UI updates from the event stream; closing the window no longer stops downloads and the tray reopens it; the queue, pause and resume, media, batch, schedules, checksum, details window, recovery and settings journeys behave as before; the desktop never hosts a session in-process in a shipped build.",
       "verification": "Desktop queue and recovery walkthrough and the accessibility harness pass against the engine; kill the engine during a desktop download and verify the window reports and recovers; strong-model review of the no-second-owner guarantee.",
-      "evidence": [],
-      "blockedReason": null
+      "evidence": [
+        "apps/desktop/src-tauri/src/engine_link.rs",
+        "apps/desktop/src-tauri/tests/engine.rs",
+        "tests/repo/structure.test.mjs",
+        "docs/development/DESKTOP-QUEUE-RECOVERY.md"
+      ],
+      "blockedReason": "Built and verified (workspace tests, accessibility harness, real-window kill and close probes); the required independent strong-model review has not run: the reviewer stopped at the account session limit on 25 September 2026. Next action: run the strong review of the no-second-owner guarantee, resend safety in engine_link.rs, contract D2 and the launch.rs CreateProcessW FFI; fix findings; then mark done."
     },
     {
       "id": "FP-056",

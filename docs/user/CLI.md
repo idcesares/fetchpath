@@ -144,8 +144,8 @@ value it applied. The desktop app shows the same settings.
 stops it after saving every download's progress, and the next command starts
 it again and carries on.
 
-In this version the desktop app still keeps its own copy of the queue, so the
-engine cannot start while the desktop app is open; close the app first.
+The desktop app is a client of the same engine, so a download added here
+shows in the app, and the other way round.
 
 ### For scripts
 

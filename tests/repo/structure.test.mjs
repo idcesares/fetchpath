@@ -89,3 +89,22 @@ test('package scripts run files that exist', () => {
     }
   }
 });
+
+// Two owners of one queue corrupt it (engine platform design §9). The engine
+// is the only owner; the desktop app is its client and must never build a
+// session of its own or take the engine's lock (FP-055). The browser host
+// shares the crate and may use the session's inbox types, nothing more.
+test('the desktop app never owns the queue', () => {
+  const sources = files.filter((file) => file.startsWith('apps/desktop/src-tauri/src/') && file.endsWith('.rs'));
+  assert.ok(sources.length > 0);
+  for (const file of sources) {
+    const text = read(file);
+    for (const [pattern, what] of [
+      [/\bSession::|fetchpath_session::(Session\b|engine\b|\{[^}]*\bSession\b)/, 'a session'],
+      [/fetchpath_session::engine|\bEngine::new\b/, 'an engine'],
+      [/"instance\.lock"/, "the engine's lock"],
+    ]) {
+      assert.ok(!pattern.test(text), `${file} builds or claims ${what}`);
+    }
+  }
+});

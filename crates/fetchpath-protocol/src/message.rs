@@ -6,7 +6,7 @@ use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
     EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, MediaInspection, Progress,
-    QueueStats, SettingsView, WaitingReason,
+    QueueStats, SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -99,6 +99,10 @@ pub enum CommandResult {
     },
     Removed {
         job_id: JobId,
+    },
+    /// `TakeLinkReviews`: links as the browser sent them, never shown whole.
+    LinkReviews {
+        urls: Vec<SensitiveUrl>,
     },
     /// The subscription starts here: every retained event after `position`
     /// follows, then new ones.

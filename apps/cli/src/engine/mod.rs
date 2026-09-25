@@ -172,8 +172,11 @@ fn serve(grace: Duration) -> Result<i32, String> {
     };
 
     // Restart recovery happens as the session loads, before any pipe exists.
-    let session = Session::load_with_browser(home.queue_path(), DEFAULT_MAX_ACTIVE, None)
-        .map_err(|error| format!("The download queue could not be opened: {error}"))?;
+    // Browser captures are taken in from the inbox beside the queue and
+    // saved to Downloads, as the desktop did while it held the queue.
+    let session =
+        Session::load_with_browser(home.queue_path(), DEFAULT_MAX_ACTIVE, downloads_dir())
+            .map_err(|error| format!("The download queue could not be opened: {error}"))?;
     let engine = Engine::new(Arc::new(session));
     engine.tick();
 
@@ -246,6 +249,26 @@ fn serve(grace: Duration) -> Result<i32, String> {
     let _ = ticker.join();
     wind_down(&host.engine);
     Ok(0)
+}
+
+/// The person's Downloads folder, wherever they moved it.
+fn downloads_dir() -> Option<std::path::PathBuf> {
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+    let mut raw: windows_sys::core::PWSTR = std::ptr::null_mut();
+    // SAFETY: the out pointer is valid; the returned buffer is freed with
+    // CoTaskMemFree whether or not the call succeeded, as documented.
+    let path = unsafe {
+        let status = SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut raw);
+        let path = (status == 0 && !raw.is_null()).then(|| {
+            let length = (0..).take_while(|&index| *raw.add(index) != 0).count();
+            String::from_utf16_lossy(std::slice::from_raw_parts(raw, length))
+        });
+        CoTaskMemFree(raw as *const core::ffi::c_void);
+        path
+    };
+    path.map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
 }
 
 /// Counts a connection while it lives.

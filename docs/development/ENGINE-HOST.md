@@ -19,7 +19,7 @@ Code: `apps/cli/src/engine`, `crates/fetchpath-protocol/src/launch.rs`.
 | Serving | A thread per connection. Commands are answered in order; a subscription gets a forwarding thread for events and progress, and its connection's idle limit is lifted. `EngineShutdown` stops the engine after replying |
 | Staying up | While a client is connected (counted from acceptance, before its handshake), or a job is queued, scheduled (including an automatic retry) or running. Otherwise it stops after a 60-second grace period |
 | Stopping | Once it decides to stop (idle, `EngineShutdown`, a restart request, Ctrl+C, or a failure after startup began), every further command is refused with `contract.engine_unavailable`, the pipe closes, the session starts no more jobs, and running work is cancelled to its checkpoints and saved, as quitting the desktop does |
-| Launch or attach | `launch::attach_or_launch` connects and asks for `EngineStatus` (a stopping engine answers unavailable), or starts `fetchpath engine` detached with no console window, in its own folder, outside the caller's job object where allowed. It retries for up to 10 seconds, treats a dropped handshake as transient, and starts the engine again each second while none answers, so a client arriving while an engine winds down reaches the next one. Racing clients may start two engines; one keeps the lock and both clients reach it |
+| Launch or attach | `launch::attach_or_launch` connects and asks for `EngineStatus` (a stopping engine answers unavailable), or starts `fetchpath engine` detached with no console window, in its own folder, outside the caller's job object where allowed, inheriting no handles (FP-055 found that an inherited pipe kept a script reading a client's output waiting for the engine's idle grace). It retries for up to 10 seconds, treats a dropped handshake as transient, and starts the engine again each second while none answers, so a client arriving while an engine winds down reaches the next one. Racing clients may start two engines; one keeps the lock and both clients reach it |
 | Versions | Another protocol major is refused with `contract.unsupported_version`. `launch::request_restart` stops the engine through the handshake (`hello` with `intent: "restart"`), which works across protocol versions and needs the secret |
 | Sign-in start | Setting `startEngineAtSignIn`, off by default and written only when on. Changing it adds or removes `HKCU\...\Run` value `Fetchpath engine` = `"<fetchpath.exe>" engine`, serialized with the change; the engine only ever adds it at startup, never removes it, and touches it only when using the default data folder. On the wire the field is optional and absent means unchanged |
 | Commands | `fetchpath engine`, `fetchpath engine status [--json]`, `fetchpath engine stop`. In `--help` and the user guide since FP-058; see its section for the release constraint |
@@ -65,13 +65,12 @@ running is restored as queued and resumed anyway.
 
 ### Limitations
 
-- **Not for release yet.** Until FP-055 moves the desktop onto the engine,
-  the two exclude each other through the shared lock: while one runs, the
-  other exits (the desktop without a message, since it looks for a window
-  that does not exist). No build given to people should offer the engine
-  before FP-055, as the design requires.
-- Browser captures are not ingested by the engine yet (FP-056); they wait in
-  the inbox.
+- Since FP-055 the desktop is a client and holds only its own window lock.
+  The installer does not yet stop a running engine before replacing files
+  (FP-057).
+- The engine takes in browser captures on every tick, but only while it
+  runs; the browser host still wakes the desktop window, which starts the
+  engine, rather than the engine itself (FP-056).
 - The engine's own diagnostics go to standard error, which is discarded
   when a client starts it.
 
@@ -148,10 +147,9 @@ tests `apps/cli/tests/queue.rs`. User guide: [CLI](../user/CLI.md).
 
 ### Limitations
 
-- **Release constraint unchanged.** Until FP-055 the desktop keeps its own
-  queue; while it runs the engine cannot take the lock, so `download` and
-  every queue command fail with exit 1 ("did not start in time"). The user
-  guide says to close the app. No build goes to people before FP-055.
+- An engine left running by a 0.1.0 desktop (which held `instance.lock`
+  itself) keeps a new engine from starting until it exits; upgrade handling
+  is FP-057.
 - Ctrl+C itself is not exercised by a test (a console control event cannot
   be sent to a child without a shared console); the 130 path is covered by a
   cancellation from another client, which ends the wait the same way.

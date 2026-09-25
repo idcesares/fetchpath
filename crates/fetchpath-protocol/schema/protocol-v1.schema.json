@@ -222,6 +222,26 @@
           "type": "object"
         },
         {
+          "description": "Several jobs at once, all or none: if any request is refused, none is\ncreated. File jobs only, from the person.",
+          "properties": {
+            "requests": {
+              "items": {
+                "$ref": "#/$defs/JobRequest"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "CreateJobs",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "requests"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "job_id": {
               "$ref": "#/$defs/JobId"
@@ -292,6 +312,13 @@
         },
         {
           "properties": {
+            "expected_sha256": {
+              "description": "Replaces the expected SHA-256 before retrying; an empty string\nremoves it. The person only. Identity replacement revokes earlier\nwork (contract D2).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "job_id": {
               "$ref": "#/$defs/JobId"
             },
@@ -368,6 +395,20 @@
         },
         {
           "properties": {
+            "destination": {
+              "description": "A new full path to save to, changed in the same step. The person\nonly; an agent uses `ResolveDestination`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "expected_sha256": {
+              "description": "As for `Retry`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "job_id": {
               "$ref": "#/$defs/JobId"
             },
@@ -526,6 +567,19 @@
           "properties": {
             "type": {
               "const": "GetSettings",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Media pages the person sent from the browser, to be opened for a\nformat choice. Each is returned once. The person only.",
+          "properties": {
+            "type": {
+              "const": "TakeLinkReviews",
               "type": "string"
             }
           },
@@ -873,6 +927,26 @@
           "required": [
             "type",
             "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`TakeLinkReviews`: links as the browser sent them, never shown whole.",
+          "properties": {
+            "type": {
+              "const": "LinkReviews",
+              "type": "string"
+            },
+            "urls": {
+              "items": {
+                "$ref": "#/$defs/SensitiveUrl"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "urls"
           ],
           "type": "object"
         },

@@ -189,39 +189,103 @@ pub fn request_restart(
 
 /// Starts `engine_exe engine` detached, with no console window, outside the
 /// caller's job object where that is allowed, and with the same data folder.
+///
+/// It inherits no handles. `std::process::Command` would pass on every
+/// inheritable handle the caller holds, such as the pipe a script reads the
+/// caller's output from, and the engine would keep that pipe open until it
+/// exits, so the script would wait out the engine's idle grace.
 fn start_engine(home: &EngineHome, engine_exe: &Path) -> Result<(), ProtocolError> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let spawn = |flags: u32| {
-        let mut command = Command::new(engine_exe);
-        if let Some(folder) = engine_exe.parent() {
-            // Not the caller's directory, which the engine would hold open.
-            command.current_dir(folder);
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
+        CREATE_UNICODE_ENVIRONMENT, CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+    };
+    let failed = |reason: String| {
+        ProtocolError::new(
+            ErrorCode::ENGINE_UNAVAILABLE,
+            ErrorScope::Engine,
+            format!(
+                "The Fetchpath engine could not be started from {}: {reason}",
+                engine_exe.display()
+            ),
+        )
+    };
+    let path = engine_exe.as_os_str();
+    if path.encode_wide().any(|unit| unit == u16::from(b'"')) {
+        return Err(failed("the path contains a quotation mark".into()));
+    }
+    let application: Vec<u16> = path.encode_wide().chain([0]).collect();
+    let command_line: Vec<u16> = "\""
+        .encode_utf16()
+        .chain(path.encode_wide())
+        .chain("\" engine".encode_utf16())
+        .chain([0])
+        .collect();
+    // Not the caller's directory, which the engine would hold open.
+    let folder: Option<Vec<u16>> = engine_exe
+        .parent()
+        .map(|folder| folder.as_os_str().encode_wide().chain([0]).collect());
+    let environment = environment_block(home.dir());
+
+    let spawn = |flags: u32| -> std::io::Result<()> {
+        let mut line = command_line.clone();
+        // SAFETY: every pointer is to a live, NUL-terminated buffer owned
+        // above (the environment block ends in two NULs); `line` is a
+        // private copy CreateProcessW may write to; the structures are
+        // zero-initialized plain data with `cb` set; both returned handles
+        // are closed once, only when the call succeeded.
+        unsafe {
+            let mut startup: STARTUPINFOW = std::mem::zeroed();
+            startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            let mut info: PROCESS_INFORMATION = std::mem::zeroed();
+            let created = CreateProcessW(
+                application.as_ptr(),
+                line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                flags | CREATE_UNICODE_ENVIRONMENT,
+                environment.as_ptr().cast(),
+                folder
+                    .as_ref()
+                    .map_or(std::ptr::null(), |folder| folder.as_ptr()),
+                &startup,
+                &mut info,
+            );
+            if created == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            CloseHandle(info.hThread);
+            CloseHandle(info.hProcess);
         }
-        command
-            .arg("engine")
-            .env("FETCHPATH_APP_DATA_DIR", home.dir())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(flags)
-            .spawn()
+        Ok(())
     };
     let base = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
     spawn(base | CREATE_BREAKAWAY_FROM_JOB)
         .or_else(|_| spawn(base))
-        .map(drop)
-        .map_err(|error| {
-            ProtocolError::new(
-                ErrorCode::ENGINE_UNAVAILABLE,
-                ErrorScope::Engine,
-                format!(
-                    "The Fetchpath engine could not be started from {}: {error}",
-                    engine_exe.display()
-                ),
-            )
-        })
+        .map_err(|error| failed(error.to_string()))
+}
+
+/// This process's environment with `FETCHPATH_APP_DATA_DIR` set to `dir`,
+/// as a Unicode environment block: `NAME=value` entries sorted by name
+/// without regard to case, each ending in a NUL, then one more NUL.
+fn environment_block(dir: &Path) -> Vec<u16> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStrExt;
+    const KEY: &str = "FETCHPATH_APP_DATA_DIR";
+    let mut entries: Vec<(OsString, OsString)> = std::env::vars_os()
+        .filter(|(name, _)| !name.eq_ignore_ascii_case(KEY))
+        .collect();
+    entries.push((KEY.into(), dir.as_os_str().to_owned()));
+    entries.sort_by_key(|(name, _)| name.to_string_lossy().to_uppercase());
+    let mut block = Vec::new();
+    for (name, value) in &entries {
+        block.extend(name.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(value.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    block
 }

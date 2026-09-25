@@ -110,7 +110,7 @@ fn target(command: &Command) -> Option<&JobId> {
         | Command::Pause { job_id }
         | Command::Resume { job_id }
         | Command::Cancel { job_id, .. }
-        | Command::Retry { job_id }
+        | Command::Retry { job_id, .. }
         | Command::UpdatePolicy { job_id, .. }
         | Command::ResolveDestination { job_id, .. }
         | Command::SelectMedia { job_id, .. }
@@ -141,6 +141,7 @@ impl Drop for DeferGuard<'_> {
 /// What a change did, turned into a result once its events are derived.
 enum Outcome {
     Job(String),
+    Jobs(Vec<String>),
     Control(ControlOutcome, String),
     Removed(String),
     Settings,
@@ -152,6 +153,7 @@ impl Outcome {
     fn jobs(&self) -> HashSet<String> {
         match self {
             Self::Job(id) | Self::Control(_, id) | Self::Removed(id) => HashSet::from([id.clone()]),
+            Self::Jobs(ids) => ids.iter().cloned().collect(),
             Self::Settings | Self::AgentPolicies | Self::ShuttingDown => HashSet::new(),
         }
     }
@@ -319,6 +321,11 @@ impl Engine {
         };
         let result = match &outcome {
             Outcome::Job(id) => snapshot_of(id).map(|job| CommandResult::Job { job }),
+            Outcome::Jobs(ids) => ids
+                .iter()
+                .map(|id| snapshot_of(id))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|jobs| CommandResult::Jobs { jobs }),
             Outcome::Control(control, id) => snapshot_of(id).map(|job| CommandResult::Control {
                 outcome: *control,
                 job,
@@ -515,6 +522,45 @@ impl Engine {
                     Ok(Outcome::Job(job.job_id))
                 }
             },
+            Command::CreateJobs { requests } => {
+                // All or none (finding F4): the session checks every draft
+                // before it queues any. Only the person gets here.
+                let mut drafts = Vec::with_capacity(requests.len());
+                let mut origin = None;
+                for request in requests {
+                    let JobRequest::File {
+                        input: source,
+                        destination,
+                        not_before,
+                        expected_sha256,
+                    } = request
+                    else {
+                        return Err(unsupported("Adding video or audio in a batch"));
+                    };
+                    if origin.is_none() {
+                        origin = Some(self.origin(principal, source, destination)?);
+                    }
+                    let JobInput::Url { url } = source else {
+                        return Err(unsupported("Creating a job from a stored request"));
+                    };
+                    if destination.conflict != ConflictPolicy::Ask {
+                        return Err(unsupported("Replacing an existing file"));
+                    }
+                    drafts.push(JobDraft {
+                        url: url.expose().to_owned(),
+                        destination: destination.path.clone(),
+                        not_before_ms: not_before.map(millis).transpose()?,
+                        checksum: expected_sha256.clone(),
+                    });
+                }
+                let origin =
+                    origin.ok_or_else(|| input("Add at least one download address.".into()))?;
+                let created = session.enqueue_for(drafts, &origin).map_err(input)?;
+                self.created(principal);
+                Ok(Outcome::Jobs(
+                    created.into_iter().map(|job| job.job_id).collect(),
+                ))
+            }
             Command::Start { job_id } => session
                 .start_now(job_id.as_str())
                 .map(|job| Outcome::Job(job.job_id))
@@ -558,10 +604,24 @@ impl Engine {
                 }
                 self.cancel(job_id.as_str())
             }
-            Command::Retry { job_id } => {
+            Command::Retry {
+                job_id,
+                expected_sha256,
+            } => {
+                // Replacing what the bytes must match is the person's call.
+                if expected_sha256.is_some() && !principal.is_user() {
+                    return Err(policy::not_permitted(principal, command));
+                }
                 let hold = self.retry_hold(principal, job_id)?;
                 session
-                    .retry_as(job_id.as_str(), None, None, None, principal, hold)
+                    .retry_as(
+                        job_id.as_str(),
+                        None,
+                        None,
+                        expected_sha256.clone(),
+                        principal,
+                        hold,
+                    )
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(transition)
             }
@@ -606,8 +666,16 @@ impl Engine {
                 Err(unsupported("Choosing a media format after creation"))
             }
             Command::RefreshMediaChoices { .. } => Err(unsupported("Refreshing media choices")),
-            Command::RefreshSource { job_id, source } => {
+            Command::RefreshSource {
+                job_id,
+                source,
+                destination,
+                expected_sha256,
+            } => {
                 if !principal.is_user() {
+                    if expected_sha256.is_some() || destination.is_some() {
+                        return Err(policy::not_permitted(principal, command));
+                    }
                     policy::check_agent_input(source)?;
                 }
                 let JobInput::Url { url } = source else {
@@ -618,8 +686,8 @@ impl Engine {
                     .retry_as(
                         job_id.as_str(),
                         Some(url.expose().to_owned()),
-                        None,
-                        None,
+                        destination.clone(),
+                        expected_sha256.clone(),
                         principal,
                         hold,
                     )
@@ -818,6 +886,15 @@ impl Engine {
                     .collect();
                 Ok(CommandResult::Jobs { jobs })
             }
+            Command::TakeLinkReviews => Ok(CommandResult::LinkReviews {
+                // Only the person reaches this (policy::authorize).
+                urls: self
+                    .session
+                    .take_link_reviews()
+                    .into_iter()
+                    .filter_map(|url| fetchpath_protocol::SensitiveUrl::try_from(url).ok())
+                    .collect(),
+            }),
             Command::GetSettings => Ok(CommandResult::Settings {
                 view: wire::settings_view(
                     &self.session.settings(),

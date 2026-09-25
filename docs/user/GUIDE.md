@@ -107,9 +107,12 @@ act on.
 
 Video and audio downloads can't be paused. You can cancel them and start again.
 
-Closing the window keeps Fetchpath running in the notification area (near the
-clock), so downloads continue. To quit completely, right-click the Fetchpath
-icon there and choose **Quit Fetchpath**. You can change this in Settings.
+Downloads run in the background, so closing the window never stops them.
+By default the window goes to the notification area (near the clock); click
+the Fetchpath icon there to bring it back. **Quit Fetchpath** in that icon's
+menu closes the window too, and downloads still finish. Fetchpath's
+background part stops by itself about a minute after the last download ends
+and every window is closed. To stop downloads, pause or cancel them first.
 
 ## Several links at once
 
@@ -245,7 +248,7 @@ Changes save straight away.
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
-| Keep running in the notification area | Whether closing the window keeps Fetchpath running. |
+| Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
 | Appearance | Match Windows, Light or Dark. |

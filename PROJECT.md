@@ -21,7 +21,7 @@ Do not duplicate task status into multiple checklists. The backlog is authoritat
 
 ## What exists
 
-Fetchpath 0.1.0 is a Windows download manager (Tauri 2 desktop, `fetchpath` CLI, browser extension) over a Rust core: recoverable checkpoints with strong-validator resume, bounded adaptive ranges, no-overwrite publication, Metalink verified repair, a bounded content cache and paired LAN peers, media downloads through supervised pinned helpers, and a per-user NSIS installer. Limitations per area are in the development records. The engine platform has so far moved the queue into `fetchpath-session`, defined protocol v1 with its pipe transport, and added the `fetchpath engine` host (FP-048 to FP-053).
+Fetchpath 0.1.0 is a Windows download manager (Tauri 2 desktop, `fetchpath` CLI, browser extension) over a Rust core: recoverable checkpoints with strong-validator resume, bounded adaptive ranges, no-overwrite publication, Metalink verified repair, a bounded content cache and paired LAN peers, media downloads through supervised pinned helpers, and a per-user NSIS installer. Limitations per area are in the development records. The engine platform has so far moved the queue into `fetchpath-session`, defined protocol v1 with its pipe transport, added the `fetchpath engine` host with principals and agent policy (FP-048 to FP-054), put the whole queue on the command line (FP-058), and made the desktop a client of the engine (FP-055).
 
 ## Direction (decided 24 September 2026)
 

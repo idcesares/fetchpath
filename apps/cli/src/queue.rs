@@ -603,7 +603,10 @@ pub fn control(action: Control, args: &[String]) -> i32 {
                     job_id,
                     retain_partial: false,
                 },
-                Control::Retry => Command::Retry { job_id },
+                Control::Retry => Command::Retry {
+                    job_id,
+                    expected_sha256: None,
+                },
                 Control::Remove => Command::RemoveJob { job_id },
             };
             match engine.send(command) {

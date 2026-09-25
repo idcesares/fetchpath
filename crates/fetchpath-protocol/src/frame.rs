@@ -26,6 +26,7 @@ const PREFIX_BYTES: usize = 4;
 /// failing as unreadable.
 pub const KNOWN_COMMANDS: &[&str] = &[
     "CreateJob",
+    "CreateJobs",
     "Start",
     "Pause",
     "Resume",
@@ -44,6 +45,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "QueueStats",
     "History",
     "GetSettings",
+    "TakeLinkReviews",
     "UpdateSettings",
     "ApproveJob",
     "DenyJob",
