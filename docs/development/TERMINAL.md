@@ -153,6 +153,13 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   walkthrough found and fixed a real bug: the pipe treats a zero read wait as
   "do not read", so the view now polls with at least 1 ms.
 
+- Strong review (FP-073), 26 September 2026, of 2b8dfff, 9779b2a and
+  07e7d49; findings and fixes are in the commit messages. Regression tests:
+  a redirect to FTP is not followed (`fetchpath-http` `link`), a
+  right-to-left override cannot disguise an extension
+  (`download::tests`), the size cap (`setup::tests`); the ignored real
+  guided install passed again (193 s).
+
 - Keyboard and mouse walkthrough by the person, 26 September 2026, in
   Windows Terminal and in the classic console host (`conhost`), release
   build at 07e7d49: a file link carded and downloaded with a moving bar;
@@ -163,8 +170,12 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
 
 ## Limitations
 
-- The link inspection, the terminal's tools installer and the show-in-folder
-  shell call await an independent strong review (FP-073).
+- `InspectLink` lets an agent read the headers of any HTTP(S) address the
+  engine can reach, local network included; that is no more than a job it
+  may already create. Redirects stay on HTTP(S), up to libcurl's 30.
+- A helper already in the tools folder is used as found, not re-checked
+  against its pin, so a newer pin does not replace it; a desktop and a
+  terminal installing at the same moment are not serialized.
 - Narrowing the window clears the visible screen (ratatui's inline behavior on
   a horizontal shrink); scrollback above it is kept.
 - Commands other than looking at links run synchronously; none of them
@@ -174,6 +185,6 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
 - `fetchpath add LINK` from scripts still queues a video page as a file
   unless `--quality` is given; only the interactive terminal looks first.
 - Prompt history is kept for the session only; saving it (with query strings
-  and user info stripped) is FP-063. Rules preview on paste is FP-064; media,
-  batch, conflict, checksum and approval prompts are FP-061; themes and keys
+  and user info stripped) is FP-063. Rules preview on paste is FP-064; batch,
+  conflict, checksum and approval prompts are FP-061; themes and keys
   are FP-062; the dashboard is FP-060.

@@ -1801,7 +1801,7 @@
     },
     {
       "id": "FP-060",
-      "title": "Add the full-screen dashboard with details, speed graph and segments",
+      "title": "Add the full-screen dashboard with a details pane, speed graph and segments",
       "milestone": "M11",
       "dependsOn": [
         "FP-059",
@@ -1818,14 +1818,14 @@
       "acceptanceIds": [
         "A01"
       ],
-      "acceptance": "A key toggles a full-screen view with the queue, a details pane (speed graph, segments and connections from the engine details data) and single-key actions with an on-screen key map; leaving restores the inline view and scrollback; resizing never corrupts the screen.",
+      "acceptance": "The inline panel already draws a bar per download and /queue lists jobs with their actions (FP-059). A key toggles a full-screen view with the queue, a details pane for the selected job (speed graph, segments and connections from the engine details data) and single-key actions with an on-screen key map; leaving restores the inline view and scrollback; resizing never corrupts the screen.",
       "verification": "Render snapshot tests at several sizes; walkthrough through the real engine including resize and toggling during a download.",
       "evidence": [],
       "blockedReason": null
     },
     {
       "id": "FP-061",
-      "title": "Handle media, batch, conflict, checksum and approval flows in the terminal",
+      "title": "Handle batch, conflict, checksum and approval flows in the terminal",
       "milestone": "M11",
       "dependsOn": [
         "FP-059",
@@ -1845,7 +1845,7 @@
         "A11",
         "A13"
       ],
-      "acceptance": "Inline prompts pick a media quality, preview and confirm a batch, resolve a destination conflict without silent replacement, enter and normalize a checksum, and approve or deny an agent request with its principal, size and folder shown; every prompt can be cancelled by Esc and has a plain-mode form.",
+      "acceptance": "The link card already picks a media quality and confirms a file before it starts (FP-059). Inline prompts preview and confirm a batch of links, resolve a destination conflict without silent replacement, enter and normalize a checksum, and approve or deny an agent request with its principal, size and folder shown; every prompt can be cancelled by Esc and has a plain-mode form.",
       "verification": "Flow tests against a real engine for each prompt, including cancelling each one; an agent request approved and denied from the terminal.",
       "evidence": [],
       "blockedReason": null
@@ -1870,7 +1870,7 @@
         "A01",
         "A07"
       ],
-      "acceptance": "cli.toml in the data folder holds theme, glyph set, density, keybindings and aliases; built-in themes include high-contrast and plain; /theme, /keys and /alias edit it live; aliases and custom commands expand only to Fetchpath commands and can never run a shell or external program; invalid entries are reported with their line and ignored, never fatal.",
+      "acceptance": "The /settings menu already edits the engine settings (FP-059); this is the terminal's own configuration. cli.toml in the data folder holds theme, glyph set, density, keybindings and aliases; built-in themes include high-contrast and plain; /theme, /keys and /alias edit it live; aliases and custom commands expand only to Fetchpath commands and can never run a shell or external program; invalid entries are reported with their line and ignored, never fatal.",
       "verification": "Config parse and error-report tests; alias expansion tests including recursion limits and a refused shell escape; theme contrast check for built-ins.",
       "evidence": [],
       "blockedReason": null
@@ -2179,8 +2179,8 @@
       "dependsOn": [
         "FP-059"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2198,7 +2198,11 @@
       ],
       "acceptance": "A strong model that did not write them reviews commits 2b8dfff, 9779b2a and 07e7d49: InspectLink (requests made for any principal, user info refused for agents, headers only, timeouts, no body kept), the guided installer run from the terminal (pinned digests checked before install, cancellation, nothing installed without consent, --yes only for scripts), and the unsafe SHOpenFolderAndSelectItems call (COM pairing, ID list lifetime, path encoding). Findings are fixed or recorded with reasons.",
       "verification": "Findings and their resolution in the commit messages of the fixes; the touched crates’ tests and clippy pass; TERMINAL.md limitations updated if anything remains.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/TERMINAL.md",
+        "crates/fetchpath-http/src/link.rs",
+        "adapters/media/src/setup.rs"
+      ],
       "blockedReason": null
     }
   ]
