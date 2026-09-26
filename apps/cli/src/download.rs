@@ -220,10 +220,12 @@ pub fn file_name_from_url(url: &str) -> String {
 }
 
 /// `text` made into a name Windows can create, or `None` when nothing
-/// usable is left.
+/// usable is left. Invisible direction and width marks are dropped, so a
+/// name cannot display an extension other than its real one.
 pub fn safe_file_name(text: &str) -> Option<String> {
     let cleaned: String = text
         .chars()
+        .filter(|c| !is_invisible_format(*c))
         .map(|c| {
             if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
                 '_'
@@ -242,6 +244,19 @@ pub fn safe_file_name(text: &str) -> Option<String> {
         return None;
     }
     Some(cleaned.chars().take(200).collect())
+}
+
+/// Bidirectional overrides, isolates and marks, zero-width characters and
+/// the byte order mark: they change how a name reads, not what it is.
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2069}'
+            | '\u{FEFF}'
+    )
 }
 
 fn percent_decode(value: &str) -> String {
@@ -386,6 +401,16 @@ mod tests {
             "a_b_.._c"
         );
         assert_eq!(file_name_from_url("https://a.test/%2E%2E"), "download");
+    }
+
+    #[test]
+    fn a_name_cannot_hide_its_extension() {
+        // "invoice", RIGHT-TO-LEFT OVERRIDE, "fdp.exe" reads as "invoiceexe.pdf".
+        assert_eq!(
+            safe_file_name("invoice\u{202E}fdp.exe").as_deref(),
+            Some("invoicefdp.exe")
+        );
+        assert_eq!(safe_file_name("\u{200B}\u{FEFF}"), None);
     }
 
     #[test]
