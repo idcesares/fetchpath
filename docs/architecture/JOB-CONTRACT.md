@@ -379,5 +379,15 @@ process. Source: `crates/fetchpath-protocol/src/command.rs`.
   batch always did. `user` only.
 - **`TakeLinkReviews`** returns, once, media pages the person sent from the
   browser, for a format choice in their client. `user` only. It is not
-  ledgered, so the links never reach the ledger file; a reply lost in
-  transit loses those links, as a crash already did.
+  ledgered, so the links never reach the ledger file. Since FP-056 each
+  page's capture stays pending in the browser inbox until it is handed out
+  here, and only then is marked done and its unused protected context
+  deleted, so an engine that stops first loses none; a reply lost in transit
+  still loses those links.
+- **`TakeBrowserCaptures`** (FP-056) takes the browser inbox in now instead
+  of at the next tick, and answers `CapturesTaken`. `browser` and `user`
+  only. It is not ledgered: intake is idempotent by capture id and
+  credential reference, and the inbox stays the durable handoff. The browser
+  host sends it after each accepted capture, or starts an engine, which takes
+  the inbox in before it serves; an engine that does not know it answers
+  `contract.unknown_command` and takes the inbox in at its next tick.

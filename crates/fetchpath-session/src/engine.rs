@@ -932,6 +932,11 @@ impl Engine {
                     self.session.settings_repaired(),
                 ),
             }),
+            Command::TakeBrowserCaptures => {
+                // Intake runs with every commit of the queue; this one is now.
+                self.session.list().map_err(persistence)?;
+                Ok(CommandResult::CapturesTaken)
+            }
             Command::GetAgentPolicies => Ok(CommandResult::AgentPolicies {
                 policies: self.session.agent_policies(),
             }),

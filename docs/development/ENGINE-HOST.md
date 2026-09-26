@@ -67,9 +67,8 @@ running is restored as queued and resumed anyway.
 
 - Since FP-055 the desktop is a client and holds only its own window lock;
   since FP-057 setup stops a running engine before replacing files.
-- The engine takes in browser captures on every tick, but only while it
-  runs; the browser host still wakes the desktop window, which starts the
-  engine, rather than the engine itself (FP-056).
+- Since FP-056 the browser host hands each capture to the engine itself,
+  starting it when none runs; see the browser capture record.
 - The engine's own diagnostics go to standard error, which is discarded
   when a client starts it.
 

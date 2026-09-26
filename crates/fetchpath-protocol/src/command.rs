@@ -140,6 +140,10 @@ pub enum Command {
     /// Media pages the person sent from the browser, to be opened for a
     /// format choice. Each is returned once. The person only.
     TakeLinkReviews,
+    /// The browser host has left captures in its inbox: take them in now
+    /// rather than at the next tick (FP-056). Idempotent; the inbox stays the
+    /// durable handoff. The browser host and the person only.
+    TakeBrowserCaptures,
     UpdateSettings {
         settings: EngineSettings,
     },
@@ -205,6 +209,7 @@ impl Command {
             Self::History { .. } => "History",
             Self::GetSettings => "GetSettings",
             Self::TakeLinkReviews => "TakeLinkReviews",
+            Self::TakeBrowserCaptures => "TakeBrowserCaptures",
             Self::UpdateSettings { .. } => "UpdateSettings",
             Self::ApproveJob { .. } => "ApproveJob",
             Self::DenyJob { .. } => "DenyJob",
@@ -218,13 +223,16 @@ impl Command {
     }
 
     /// True when the command changes engine state, and so goes through the
-    /// durable command ledger. `TakeLinkReviews` changes only memory and
-    /// returns links, which must never reach the ledger, so it is not.
+    /// durable command ledger. `TakeLinkReviews` and `TakeBrowserCaptures`
+    /// only take the browser inbox in and hand it out, as any query's intake
+    /// does, and deal in links, which must never reach the ledger, so they
+    /// are not.
     pub fn is_mutating(&self) -> bool {
         !matches!(
             self,
             Self::ListJobs { .. }
                 | Self::TakeLinkReviews
+                | Self::TakeBrowserCaptures
                 | Self::GetJob { .. }
                 | Self::JobDetails { .. }
                 | Self::InspectMedia { .. }

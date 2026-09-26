@@ -75,7 +75,10 @@ pub(crate) fn too_many_pending() -> ProtocolError {
 pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), ProtocolError> {
     let allowed = match principal {
         Principal::User => true,
-        Principal::Browser => matches!(command, Command::CreateJob { .. }),
+        Principal::Browser => matches!(
+            command,
+            Command::CreateJob { .. } | Command::TakeBrowserCaptures
+        ),
         Principal::Agent(_) => match command {
             Command::CreateJob { .. }
             | Command::Start { .. }

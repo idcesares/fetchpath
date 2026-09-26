@@ -1,5 +1,6 @@
 //! The native messaging host the browser extension talks to. It validates
-//! a capture, stores it in the session's browser inbox and wakes the app.
+//! a capture, stores it in the browser inbox, hands it to the engine and
+//! wakes the app.
 
 use fetchpath_browser_inbox::storage_reason;
 pub use fetchpath_browser_inbox::{
@@ -54,6 +55,7 @@ pub fn run_native_host() {
                 .and_then(|store| store.accept(&request))
             {
                 Ok(deduplicated) => {
+                    nudge_engine();
                     launch_desktop();
                     accepted(Some(request.capture_id), deduplicated, "capture_ack")
                 }
@@ -63,6 +65,29 @@ pub fn run_native_host() {
         }
     };
     let _ = write_message(io::stdout(), &response);
+}
+
+/// How long the browser waits on the engine for a capture, at most. The
+/// capture is already safe in the inbox; this only decides how soon it shows.
+const NUDGE_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Hands the capture to the engine as the `browser` principal (FP-056): a
+/// running engine takes the inbox in at once; otherwise the `fetchpath.exe`
+/// beside this host is started and takes it in as it starts. No window is
+/// needed. A failure changes nothing: the capture waits in the inbox for the
+/// next engine, which is what the extension was told.
+fn nudge_engine() {
+    use fetchpath_protocol::launch::{self, EngineHome};
+    use fetchpath_protocol::pipe::Limits;
+    let Some(engine) = std::env::current_exe()
+        .ok()
+        .and_then(|host| host.parent().map(|dir| dir.join("fetchpath.exe")))
+    else {
+        return;
+    };
+    if let Ok(home) = EngineHome::from_env() {
+        let _ = launch::nudge_for_browser(&home, &engine, Limits::default(), NUDGE_WAIT);
+    }
 }
 
 /// Starts Fetchpath, or brings it forward when it is already running (a

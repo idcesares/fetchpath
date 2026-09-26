@@ -589,6 +589,19 @@
           "type": "object"
         },
         {
+          "description": "The browser host has left captures in its inbox: take them in now\nrather than at the next tick (FP-056). Idempotent; the inbox stays the\ndurable handoff. The browser host and the person only.",
+          "properties": {
+            "type": {
+              "const": "TakeBrowserCaptures",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "settings": {
               "$ref": "#/$defs/EngineSettings"
@@ -1032,6 +1045,19 @@
           "properties": {
             "type": {
               "const": "ShuttingDown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Browser captures waiting in the inbox were taken in (FP-056).",
+          "properties": {
+            "type": {
+              "const": "CapturesTaken",
               "type": "string"
             }
           },

@@ -260,6 +260,7 @@ fn every_command() -> Vec<Command> {
         },
         Command::GetSettings,
         Command::TakeLinkReviews,
+        Command::TakeBrowserCaptures,
         Command::UpdateSettings {
             settings: settings(),
         },
@@ -305,6 +306,7 @@ fn every_command() -> Vec<Command> {
             | Command::History { .. }
             | Command::GetSettings
             | Command::TakeLinkReviews
+            | Command::TakeBrowserCaptures
             | Command::UpdateSettings { .. }
             | Command::ApproveJob { .. }
             | Command::DenyJob { .. }
@@ -414,6 +416,7 @@ fn every_result() -> Vec<CommandResult> {
             }],
         },
         CommandResult::ShuttingDown,
+        CommandResult::CapturesTaken,
     ];
     for result in &results {
         match result {
@@ -430,7 +433,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::SnapshotBoundary { .. }
             | CommandResult::EngineStatus { .. }
             | CommandResult::AgentPolicies { .. }
-            | CommandResult::ShuttingDown => {}
+            | CommandResult::ShuttingDown
+            | CommandResult::CapturesTaken => {}
         }
     }
     results
@@ -930,6 +934,7 @@ fn only_queries_skip_the_command_ledger() {
         "History",
         "GetSettings",
         "TakeLinkReviews",
+        "TakeBrowserCaptures",
         "GetAgentPolicies",
         "SubscribeJob",
         "SubscribeQueue",

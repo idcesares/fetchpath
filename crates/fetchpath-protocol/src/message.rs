@@ -124,6 +124,8 @@ pub enum CommandResult {
     },
     /// The engine is stopping after finishing in-flight work safely.
     ShuttingDown,
+    /// Browser captures waiting in the inbox were taken in (FP-056).
+    CapturesTaken,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

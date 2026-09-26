@@ -1657,15 +1657,18 @@
         "FP-053",
         "FP-054"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
         "apps/desktop/src-tauri/src/browser_bridge.rs",
-        "apps/desktop/src-tauri/src/bin",
-        "crates/fetchpath-session/src/browser_inbox.rs"
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-protocol/src/command.rs",
+        "crates/fetchpath-protocol/src/launch.rs",
+        "crates/fetchpath-session/src/policy.rs"
       ],
       "acceptanceIds": [
         "A07",
@@ -1673,7 +1676,11 @@
       ],
       "acceptance": "The browser host keeps the DPAPI inbox as the durable handoff, connects as the browser principal and nudges the engine, which ingests idempotently; a capture reaches the shared queue with only the engine running; duplicates and a stopped engine still lose nothing.",
       "verification": "Browser capture tests pass with and without the desktop window; duplicate capture and engine-down cases verified.",
-      "evidence": [],
+      "evidence": [
+        "apps/desktop/src-tauri/tests/browser_host.rs",
+        "crates/fetchpath-session/tests/policy.rs",
+        "docs/development/BROWSER-CAPTURE.md"
+      ],
       "blockedReason": null
     },
     {

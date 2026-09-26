@@ -64,9 +64,17 @@ struct QueueState {
     records: Vec<QueueRecord>,
     /// Pages captured from the browser that are media rather than files. They
     /// open in Add download, where the quality is chosen, instead of being
-    /// saved as a web page. In memory only: the interface takes them within a
-    /// poll, and the browser inbox has already recorded the capture.
-    link_reviews: Vec<String>,
+    /// saved as a web page. Their captures stay pending in the browser inbox
+    /// until a client takes them (FP-056), so an engine that leaves before
+    /// any window opens loses none.
+    link_reviews: Vec<LinkReview>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LinkReview {
+    capture_id: String,
+    credential_ref: String,
+    url: String,
 }
 
 #[derive(Clone)]
@@ -585,15 +593,26 @@ impl Session {
         self.read_only.as_deref()
     }
 
-    /// Media pages sent from the browser, each handed out once.
+    /// Media pages sent from the browser, each handed out once. Only now is
+    /// the capture marked done and its protected context, which a media page
+    /// does not use, deleted. Both happen under the queue lock, so the next
+    /// intake cannot offer the page again.
     pub fn take_link_reviews(&self) -> Vec<String> {
-        std::mem::take(
-            &mut self
-                .inner
-                .lock()
-                .expect("desktop jobs poisoned")
-                .link_reviews,
-        )
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let reviews = std::mem::take(&mut state.link_reviews);
+        let mut urls = Vec::with_capacity(reviews.len());
+        for review in reviews {
+            if let Some(store) = self.browser_store.as_ref() {
+                // A receipt that cannot be written offers the page again
+                // after a restart, which is the safe way round.
+                let _ = store.mark_processed(&review.capture_id, "link-review");
+                let _ = store.remove_secret(&review.credential_ref);
+            }
+            if !urls.contains(&review.url) {
+                urls.push(review.url);
+            }
+        }
+        urls
     }
 
     fn max_active(&self) -> usize {
@@ -1782,10 +1801,17 @@ impl Session {
             // to Add download instead, where the video and its quality are
             // found. Its cookies are not carried over.
             if is_media_page(&secret.url) {
-                if !state.link_reviews.contains(&secret.url) {
-                    state.link_reviews.push(secret.url);
+                if !state
+                    .link_reviews
+                    .iter()
+                    .any(|review| review.capture_id == capture.capture_id)
+                {
+                    state.link_reviews.push(LinkReview {
+                        capture_id: capture.capture_id,
+                        credential_ref: capture.credential_ref,
+                        url: secret.url,
+                    });
                 }
-                processed.push((capture.capture_id, "link-review".into()));
                 continue;
             }
             let context = RequestContext::new(secret.cookie_lines, secret.referer)
@@ -3744,16 +3770,36 @@ mod tests {
             })
             .unwrap();
 
+        let credential_ref = store.pending().unwrap()[0].credential_ref.clone();
+        let queue = dir.path().join("queue-v1.json");
         let jobs =
-            Session::load_with_browser(dir.path().join("queue-v1.json"), 1, Some(download_dir))
-                .unwrap();
+            Session::load_with_browser(queue.clone(), 1, Some(download_dir.clone())).unwrap();
         assert!(jobs.list().unwrap().is_empty(), "not queued as a file");
-        assert!(
-            store.pending().unwrap().is_empty(),
-            "the capture is consumed"
+        jobs.list().unwrap();
+        // FP-056: taken in, but still pending in the inbox until a client
+        // takes it, so an engine leaving now loses nothing.
+        assert_eq!(store.pending().unwrap().len(), 1, "kept until handed out");
+        drop(jobs);
+        let jobs =
+            Session::load_with_browser(queue.clone(), 1, Some(download_dir.clone())).unwrap();
+        jobs.list().unwrap();
+        jobs.list().unwrap();
+        assert_eq!(
+            jobs.take_link_reviews(),
+            vec![page.to_owned()],
+            "once, after a restart"
         );
-        let reviews = std::mem::take(&mut jobs.inner.lock().unwrap().link_reviews);
-        assert_eq!(reviews, vec![page.to_owned()]);
+        assert!(store.pending().unwrap().is_empty(), "handed out, then done");
+        assert!(
+            store.load_secret(&credential_ref).is_err(),
+            "its unused protected context is deleted"
+        );
+        jobs.list().unwrap();
+        assert!(jobs.take_link_reviews().is_empty(), "never offered twice");
+        drop(jobs);
+        let jobs = Session::load_with_browser(queue, 1, Some(download_dir)).unwrap();
+        jobs.list().unwrap();
+        assert!(jobs.take_link_reviews().is_empty());
     }
 
     #[test]

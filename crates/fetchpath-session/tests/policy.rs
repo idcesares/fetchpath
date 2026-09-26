@@ -537,12 +537,23 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         "pause is a no-op"
     );
 
-    // The browser host may add downloads and nothing else.
+    // The browser host may add downloads and have its inbox taken in
+    // (FP-056), and nothing else.
     let browser = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(Principal::Browser);
     let captured = job(send(&browser, later(&s.outside.join("captured.bin"))).unwrap());
     assert_eq!(captured.principal, Principal::Browser);
     assert_eq!(captured.state, JobState::Queued);
+    assert!(matches!(
+        send(&browser, Command::TakeBrowserCaptures).unwrap(),
+        CommandResult::CapturesTaken
+    ));
+    assert_eq!(
+        code(send(&s.agent, Command::TakeBrowserCaptures)),
+        "policy.not_permitted",
+        "an agent cannot"
+    );
     for command in [
+        Command::TakeLinkReviews,
         Command::ListJobs {
             filter: JobFilter::All,
         },

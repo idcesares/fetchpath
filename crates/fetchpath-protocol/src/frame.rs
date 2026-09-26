@@ -46,6 +46,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "History",
     "GetSettings",
     "TakeLinkReviews",
+    "TakeBrowserCaptures",
     "UpdateSettings",
     "ApproveJob",
     "DenyJob",

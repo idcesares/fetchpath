@@ -228,6 +228,8 @@ add the extension to your browser once:
 - Fetchpath opens (or comes to the front) with what you sent. A file starts
   downloading; a video page opens **Add download** with a quality chosen, so
   you only need to confirm.
+- A file you send starts downloading even if the window can't open. A video
+  page waits, however long, until you next open Fetchpath.
 
 The first time you send from a website, the browser asks whether Fetchpath may
 use that site; this lets it pass along your sign-in for that site only, so

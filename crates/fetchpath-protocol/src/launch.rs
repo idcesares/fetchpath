@@ -207,6 +207,73 @@ pub fn attach_or_launch(
     }
 }
 
+/// What [`nudge_for_browser`] achieved. The capture is safe in the inbox in
+/// every case; this only says how soon it reaches the queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Nudged {
+    /// A running engine took the inbox in.
+    Taken,
+    /// An engine was started; it takes the inbox in as it starts.
+    Started,
+    /// Setup holds engines off; the next engine takes it in.
+    Held,
+}
+
+/// The browser host's handoff (FP-056): as the `browser` principal, asks a
+/// running engine to take in the captures waiting in the inbox, or starts
+/// `engine_exe engine`, which takes them in before it serves. Bounded by
+/// `wait`, since the browser is waiting for the host's answer.
+pub fn nudge_for_browser(
+    home: &EngineHome,
+    engine_exe: &Path,
+    limits: Limits,
+    wait: Duration,
+) -> Result<Nudged, ProtocolError> {
+    let deadline = Instant::now() + wait;
+    let mut launched: Option<Instant> = None;
+    loop {
+        let attempt = endpoint::read(&home.endpoint_path())
+            .and_then(|name| Ok((name, EngineSecret::load(&home.secret_path())?)))
+            .and_then(|(name, secret)| {
+                let pipe = PipeClient::connect_as(
+                    &name,
+                    &secret,
+                    limits,
+                    Duration::from_secs(1),
+                    &crate::principal::Principal::Browser,
+                )?;
+                pipe.call(
+                    &CommandEnvelope::new(ClientId::random(), Command::TakeBrowserCaptures),
+                    Duration::from_secs(2),
+                )
+            });
+        match attempt {
+            Ok(_) => return Ok(Nudged::Taken),
+            // An engine from before FP-056 takes the inbox in on its next tick.
+            Err(error) if error.code.as_str() == "contract.unknown_command" => {
+                return Ok(Nudged::Taken);
+            }
+            Err(error) if (absent(&error) || transient(&error)) && home.update_held() => {
+                return Ok(Nudged::Held);
+            }
+            Err(error) if absent(&error) || transient(&error) => {
+                if Instant::now() >= deadline {
+                    return match launched {
+                        Some(_) => Ok(Nudged::Started),
+                        None => Err(error),
+                    };
+                }
+                if absent(&error) && launched.is_none_or(|at| at.elapsed() >= RELAUNCH_EVERY) {
+                    start_engine(home, engine_exe)?;
+                    launched = Some(Instant::now());
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// Asks a running engine to stop, whatever protocol version it speaks, and
 /// waits up to `wait` for its pipe to go away. `Ok` when none was running.
 pub fn request_restart(
