@@ -53,6 +53,14 @@ with `--json`, it prints help and exits 2.
   make sense for the chosen job's state). Job commands given no job open the
   same list filtered to the jobs they apply to. Plain mode keeps typed
   commands.
+- **Show in folder.** `reveal.rs`: a saved file opens in File Explorer
+  selected (`SHOpenFolderAndSelectItems` on the file's ID list, so spaces
+  and any characters are safe); a file not written yet, or moved away, opens
+  its folder with `explorer.exe FOLDER`, saying which. Offered first among a
+  finished job's actions, as `/folder [JOB]` (a picker without a job) and
+  `fetchpath folder JOB`. Verified 26 September 2026 by revealing a scratch
+  download and reading Explorer's selection back through
+  `Shell.Application` (the file name), then closing only that window.
 - **Mouse.** Captured only while a list, menu or card is showing, so the
   terminal's own scrollback, wheel and text selection work at the prompt.
   Each frame records which screen row holds which item (`view::Drawn`); a

@@ -3,6 +3,7 @@ mod download;
 mod engine;
 mod lan;
 mod queue;
+mod reveal;
 mod tools;
 mod tui;
 mod wait;
@@ -24,6 +25,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...
   fetchpath watch [JOB]                       fetchpath inspect LINK
+  fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
 
@@ -90,6 +92,7 @@ fn main() {
         Some("settings") => queue::settings(&args[1..]),
         Some("engine") => engine::run(&args[1..]),
         Some("tools") => tools::run(&args[1..]),
+        Some("folder") => reveal::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

@@ -147,6 +147,13 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Jobs,
     },
     Spec {
+        name: "folder",
+        aliases: &["open", "reveal"],
+        usage: "/folder [JOB]",
+        summary: "Show a download's file in File Explorer",
+        takes: Takes::Jobs,
+    },
+    Spec {
         name: "history",
         aliases: &[],
         usage: "/history [TEXT] [--limit N]",
@@ -294,7 +301,7 @@ fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
     match spec.name {
         "settings" => Some(Open::Settings),
         "queue" => Some(Open::Jobs(None)),
-        "show" | "pause" | "resume" | "cancel" | "retry" | "rm" => {
+        "show" | "pause" | "resume" | "cancel" | "retry" | "rm" | "folder" => {
             Some(Open::Jobs(Some(spec.name)))
         }
         _ => None,
@@ -354,6 +361,18 @@ fn execute(
                 }
                 for line in queue::job_lines(job) {
                     reply.say(Tone::Normal, line);
+                }
+            }
+            Ok(())
+        }
+        "folder" => {
+            if parsed.words.is_empty() {
+                return Err(usage_error(spec, "Name a download"));
+            }
+            for job in resolve(jobs, &parsed.words)? {
+                match crate::reveal::show_job(&job) {
+                    Ok(said) => reply.say(Tone::Normal, said),
+                    Err(message) => reply.say(Tone::Bad, message),
                 }
             }
             Ok(())

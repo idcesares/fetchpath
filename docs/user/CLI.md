@@ -189,6 +189,9 @@ line into the window's history saying where the file went or why it stopped.
 - `/queue` lists the downloads; choose one to pause, resume, cancel, retry,
   remove or show it. `/pause`, `/resume`, `/cancel`, `/retry`, `/rm` and
   `/show` on their own ask which download.
+- `/folder` (or **Show in folder** in `/queue`) opens File Explorer at the
+  download with the file selected; for a download still in progress it opens
+  the folder. `fetchpath folder JOB` does the same from the command line.
 - The mouse works in lists, menus and cards: click to choose, wheel to move,
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.

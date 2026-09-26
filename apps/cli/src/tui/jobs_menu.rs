@@ -13,6 +13,8 @@ use fetchpath_protocol::{JobId, JobSnapshot};
 pub enum Deed {
     Control(Control),
     Show,
+    /// Open File Explorer at the file.
+    Reveal,
 }
 
 fn deed_for(command: &str) -> Deed {
@@ -22,6 +24,7 @@ fn deed_for(command: &str) -> Deed {
         "cancel" => Deed::Control(Control::Cancel),
         "retry" => Deed::Control(Control::Retry),
         "rm" => Deed::Control(Control::Remove),
+        "folder" => Deed::Reveal,
         _ => Deed::Show,
     }
 }
@@ -33,6 +36,10 @@ pub fn deeds(job: &JobSnapshot) -> Vec<(Deed, &'static str)> {
     let mut deeds = Vec::new();
     let finished = matches!(job.state, Completed | Cancelled)
         || (job.state == Failed && job.retry_at.is_none());
+    // A saved file is what people most often want next.
+    if job.state == Completed && job.destination.is_some() {
+        deeds.push((Deed::Reveal, "Show in folder"));
+    }
     match job.state {
         Running | Probing | Ready | Queued if job.not_before.is_none() => {
             deeds.push((Deed::Control(Control::Pause), "Pause"));
@@ -47,6 +54,9 @@ pub fn deeds(job: &JobSnapshot) -> Vec<(Deed, &'static str)> {
     }
     if !finished && !matches!(job.state, Cancelling | Publishing) {
         deeds.push((Deed::Control(Control::Cancel), "Cancel"));
+    }
+    if job.state != Completed && job.destination.is_some() {
+        deeds.push((Deed::Reveal, "Open its folder"));
     }
     deeds.push((Deed::Show, "Show details"));
     if finished {
@@ -137,6 +147,7 @@ impl JobsMenu {
             Some("cancel") => "Cancel which download?",
             Some("retry") => "Retry which download?",
             Some("rm") => "Remove which download from the list?",
+            Some("folder") => "Show which download in File Explorer?",
             Some(_) => "Show which download?",
             None => "Downloads",
         };
@@ -182,6 +193,10 @@ impl JobsMenu {
 
     fn act(engine: &Engine, deed: Deed, job: &JobSnapshot) -> Vec<Out> {
         match deed {
+            Deed::Reveal => vec![match crate::reveal::show_job(job) {
+                Ok(said) => Out::new(Tone::Normal, said),
+                Err(message) => Out::new(Tone::Bad, message),
+            }],
             Deed::Show => queue::job_lines(job)
                 .into_iter()
                 .map(|line| Out::new(Tone::Normal, line))
@@ -268,6 +283,22 @@ mod tests {
         assert_eq!(
             labels(&job("running", serde_json::json!({}))),
             ["Pause", "Cancel", "Show details"]
+        );
+        let saved = job(
+            "completed",
+            serde_json::json!({"destination": "C:\\Users\\person\\Downloads\\x.zip"}),
+        );
+        assert_eq!(
+            labels(&saved),
+            ["Show in folder", "Show details", "Remove from the list"]
+        );
+        let moving = job(
+            "running",
+            serde_json::json!({"destination": "C:\\Users\\person\\Downloads\\x.zip"}),
+        );
+        assert_eq!(
+            labels(&moving),
+            ["Pause", "Cancel", "Open its folder", "Show details"]
         );
         assert_eq!(
             labels(&job("paused", serde_json::json!({}))),
