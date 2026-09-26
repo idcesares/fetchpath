@@ -175,8 +175,12 @@ line into the window's history saying where the file went or why it stopped.
   not a file. Each card shows where the file will be saved. Press Enter to
   start or Esc to cancel. Add `--to FOLDER`, `--at TIME`, `--sha256 HEX` or
   `--quality Q` after the link as with `fetchpath add`.
-- Videos need `yt-dlp` and `ffmpeg`, set up once in the desktop app under
-  **Settings → Video and audio**.
+- Videos need `yt-dlp` and `ffmpeg`, two free programs that are not part of
+  Fetchpath. If they are missing, the terminal says so when it opens, and a
+  video card offers to set them up: press **I** to see what will be
+  downloaded (each program's version, publisher and licence, and the folder
+  it goes to), then Enter to download and set them up. The video is looked
+  at again afterwards. `/tools` shows whether they are ready.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
   `/retry`, `/rm`, `/history`, `/settings`, `/engine`, `/help` and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.
@@ -186,6 +190,23 @@ line into the window's history saying where the file went or why it stopped.
 Leaving never stops a download. `fetchpath --plain` prints plain lines and
 redraws nothing, which suits screen readers; it is chosen automatically when
 `NO_COLOR` is set, `TERM` is `dumb`, or Windows reports a screen reader.
+
+## Video and audio tools
+
+Saving video or audio needs `yt-dlp` and `ffmpeg`. Fetchpath does not ship
+them; it can fetch pinned versions from their publishers and install them
+only if they match the checksums recorded in this Fetchpath.
+
+```powershell
+fetchpath tools                  # are they set up, and where
+fetchpath tools install          # lists what it will download, then asks
+fetchpath tools install --yes    # the same without asking, for scripts
+fetchpath tools use D:\Tools     # use copies you already have
+```
+
+Without a terminal, `tools install` refuses unless given `--yes`. A video
+download that fails because the programs are missing says to run
+`fetchpath tools install`.
 
 ## Paired devices (advanced)
 

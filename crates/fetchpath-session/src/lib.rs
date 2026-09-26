@@ -731,10 +731,9 @@ impl Session {
     }
 
     pub fn inspect_media(&self, source: &str) -> Result<MediaInspection, String> {
-        let tools = self.media_tools().ok_or_else(|| {
-            "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
-                .to_string()
-        })?;
+        let tools = self
+            .media_tools()
+            .ok_or_else(|| TOOLS_MISSING.to_string())?;
         let source = validated_source(source)?;
         tools.inspect(&source).map_err(|error| error.to_string())
     }
@@ -780,10 +779,9 @@ impl Session {
         draft: MediaDraft,
         origin: &Origin,
     ) -> Result<JobSnapshot, String> {
-        let tools = self.media_tools().ok_or_else(|| {
-            "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
-                .to_string()
-        })?;
+        let tools = self
+            .media_tools()
+            .ok_or_else(|| TOOLS_MISSING.to_string())?;
         let url = validated_source(&draft.url)?;
         let destination = validated_destination(&draft.destination)?;
         if draft.variant_id.len() > 512 || draft.quality_label.len() > 512 {
@@ -1043,10 +1041,9 @@ impl Session {
             record.view.retryable = true;
         } else {
             record.job = Some(if let Some(variant_id) = record.media_variant_id.clone() {
-                let tools = self.media_tools().ok_or_else(|| {
-                    "Media tools are not set up yet. Open Settings to install or locate yt-dlp and ffmpeg."
-                        .to_string()
-                })?;
+                let tools = self
+                    .media_tools()
+                    .ok_or_else(|| TOOLS_MISSING.to_string())?;
                 JobHandle::Media(MediaJob::create(
                     live_url,
                     variant_id,
@@ -1868,6 +1865,11 @@ impl Session {
         Ok(processed)
     }
 }
+
+/// Why a video or audio request cannot run yet. The code lets every client
+/// offer its own way to set the helpers up.
+const TOOLS_MISSING: &str = "media.helper_unavailable: Video and audio need yt-dlp and ffmpeg, \
+     which are not set up. Set them up in Settings, Video and audio, or run `fetchpath tools install`.";
 
 /// Sites whose pages are video or audio rather than files. Kept in step with
 /// `MEDIA_HOSTS` in the desktop interface, which uses it for pasted links.

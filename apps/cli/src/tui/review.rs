@@ -34,6 +34,9 @@ pub struct Look {
     /// Why a media page could not be inspected (tools missing, the site
     /// refused), shown instead of a quality list.
     pub media_error: Option<String>,
+    /// The video tools are not set up (`media.helper_unavailable`), so the
+    /// card offers to set them up.
+    pub tools_missing: bool,
     /// Where a download goes without `--to`.
     pub folder: Option<PathBuf>,
 }
@@ -48,6 +51,7 @@ pub fn look(engine: &Engine, draft: &Draft) -> Result<Look, ProtocolError> {
         CommandResult::LinkInspection { inspection } => inspection,
         other => return Err(client::unexpected(&other)),
     };
+    let mut tools_missing = false;
     let (media, media_error) = match link.kind {
         LinkKind::MediaPage | LinkKind::WebPage => match engine.send(Command::InspectMedia {
             url: draft.url.clone(),
@@ -58,7 +62,10 @@ pub fn look(engine: &Engine, draft: &Draft) -> Result<Look, ProtocolError> {
                 (Some(inspection), None)
             }
             Ok(_) => (None, Some("The page offers no video or audio.".to_owned())),
-            Err(error) => (None, Some(error.message)),
+            Err(error) => {
+                tools_missing = error.code.as_str() == TOOLS_MISSING;
+                (None, Some(error.message))
+            }
         },
         _ => (None, None),
     };
@@ -66,9 +73,13 @@ pub fn look(engine: &Engine, draft: &Draft) -> Result<Look, ProtocolError> {
         link,
         media,
         media_error,
+        tools_missing,
         folder: queue::default_folder(engine)?,
     })
 }
+
+/// The error code for video tools that are not set up.
+pub const TOOLS_MISSING: &str = "media.helper_unavailable";
 
 pub enum Stage {
     Looking,
@@ -82,6 +93,8 @@ pub enum Answer {
     None,
     Confirm,
     Cancel,
+    /// Set up the video tools, then look at this link again.
+    SetUpTools,
 }
 
 pub struct Card {
@@ -154,6 +167,11 @@ impl Card {
         }
     }
 
+    /// The video tools are needed for this link and are not set up.
+    pub fn tools_missing(&self) -> bool {
+        self.look().is_some_and(|look| look.tools_missing)
+    }
+
     pub fn is_media(&self) -> bool {
         !self.variants().is_empty()
     }
@@ -184,6 +202,7 @@ impl Card {
             KeyCode::Esc => Answer::Cancel,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Answer::Cancel,
             KeyCode::Enter if self.can_confirm() => Answer::Confirm,
+            KeyCode::Char('i' | 'I') if self.tools_missing() => Answer::SetUpTools,
             KeyCode::Up | KeyCode::Char('k') => {
                 self.choice = self.choice.saturating_sub(1);
                 Answer::None
@@ -411,6 +430,7 @@ mod tests {
                 ],
             }),
             media_error: None,
+            tools_missing: false,
             folder: None,
         }
     }
@@ -467,10 +487,15 @@ mod tests {
     fn a_media_page_without_formats_cannot_start_but_a_web_page_can() {
         let mut look = media_look();
         look.media = None;
-        look.media_error = Some("Media tools are not set up yet.".into());
+        look.media_error = Some("media.helper_unavailable: not set up".into());
+        look.tools_missing = true;
         let mut card = Card::new(draft("https://youtu.be/x", None));
         card.set(Ok(look.clone()));
         assert!(!card.can_confirm());
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let press = |card: &mut Card, code| card.key(KeyEvent::new(code, KeyModifiers::NONE));
+        assert_eq!(press(&mut card, KeyCode::Enter), Answer::None);
+        assert_eq!(press(&mut card, KeyCode::Char('i')), Answer::SetUpTools);
 
         look.link.kind = LinkKind::WebPage;
         let mut page = Card::new(draft("https://example.com/about", None));
@@ -492,6 +517,7 @@ mod tests {
             },
             media: None,
             media_error: None,
+            tools_missing: false,
             folder: None,
         }));
         assert!(card.can_confirm());

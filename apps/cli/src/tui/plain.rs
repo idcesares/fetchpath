@@ -44,7 +44,13 @@ pub fn card_lines(card: &Card) -> Vec<String> {
             .collect();
         format!("  {}", flat.trim_end())
     }));
-    lines.push(if !card.can_confirm() {
+    lines.push(if card.tools_missing() && !card.can_confirm() {
+        "Type i to see what would be downloaded and set up the video tools, or press Enter to skip."
+            .to_owned()
+    } else if card.tools_missing() {
+        "Press Enter to save the page, type i to set up the video tools, or no to cancel."
+            .to_owned()
+    } else if !card.can_confirm() {
         "Press Enter to close.".to_owned()
     } else if card.is_media() {
         "Press Enter for the chosen format, type its number for another, or no to cancel."
@@ -61,10 +67,14 @@ pub enum Reply {
     Confirm,
     Cancel,
     Unclear,
+    SetUpTools,
 }
 
 pub fn answer(card: &mut Card, text: &str) -> Reply {
     let text = text.trim().to_ascii_lowercase();
+    if card.tools_missing() && text == "i" {
+        return Reply::SetUpTools;
+    }
     if !card.can_confirm() {
         return Reply::Cancel;
     }
@@ -92,6 +102,53 @@ fn next_card(session: &Session, waiting: &mut VecDeque<Draft>) -> Option<Card> {
         println!("{line}");
     }
     Some(card)
+}
+
+/// Says what setting up the video tools will download and asks.
+fn ask_setup() -> bool {
+    match crate::tools::install_dir() {
+        Ok(dir) => {
+            for line in crate::tools::disclosure(&dir) {
+                println!("{line}");
+            }
+            println!("Type yes to download and set them up, or no.");
+            true
+        }
+        Err(error) => {
+            println!("{}", error.message);
+            false
+        }
+    }
+}
+
+/// Runs the setup to its end, one line per step, and says what is ready.
+fn run_setup() -> bool {
+    let progress = match crate::tools::install_in_background() {
+        Ok(progress) => progress,
+        Err(error) => {
+            println!("{}", error.message);
+            return false;
+        }
+    };
+    loop {
+        match progress.recv() {
+            Ok(crate::tools::Progress::Step { label, .. }) => println!("Downloading {label}..."),
+            Ok(crate::tools::Progress::Done(Ok(ready))) => {
+                for line in ready {
+                    println!("{line}");
+                }
+                return true;
+            }
+            Ok(crate::tools::Progress::Done(Err(message))) => {
+                println!("{message}");
+                return false;
+            }
+            Err(_) => {
+                println!("The setup stopped unexpectedly.");
+                return false;
+            }
+        }
+    }
 }
 
 fn say(lines: &[Out]) {
@@ -126,11 +183,30 @@ pub fn run(mut session: Session) -> i32 {
     });
     let mut waiting = VecDeque::new();
     let mut card: Option<Card> = None;
+    // Waiting for yes or no to the video tools setup, with the video link
+    // that asked for it, if one did.
+    let mut asking: Option<Option<Draft>> = None;
     loop {
         if client::interrupted() {
             return 0;
         }
         match input.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(text)) if asking.is_some() => {
+                let then = asking.take().expect("checked");
+                match text.trim().to_ascii_lowercase().as_str() {
+                    "y" | "yes" => {
+                        if run_setup()
+                            && let Some(draft) = then
+                        {
+                            waiting.push_front(draft);
+                        }
+                    }
+                    _ => println!("Video tools not set up; nothing was downloaded."),
+                }
+                if card.is_none() {
+                    card = next_card(&session, &mut waiting);
+                }
+            }
             Ok(Ok(text)) if card.is_some() => {
                 let current = card.as_mut().expect("checked");
                 match answer(current, &text) {
@@ -145,6 +221,13 @@ pub fn run(mut session: Session) -> i32 {
                     Reply::Unclear => {
                         println!("Type a number from the list, press Enter, or type no.");
                     }
+                    Reply::SetUpTools => {
+                        let draft = current.draft.clone();
+                        card = None;
+                        if ask_setup() {
+                            asking = Some(Some(draft));
+                        }
+                    }
                 }
             }
             Ok(Ok(text)) => {
@@ -155,10 +238,18 @@ pub fn run(mut session: Session) -> i32 {
                 }
                 waiting.extend(reply.drafts);
                 card = next_card(&session, &mut waiting);
+                if reply.set_up_tools && card.is_none() && ask_setup() {
+                    asking = Some(None);
+                }
             }
             // The end of input, or an unreadable console, ends the session.
             Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return 0,
             Err(RecvTimeoutError::Timeout) => {}
+        }
+        if let Some(lines) = session.tools_notice() {
+            for line in lines {
+                println!("{line}");
+            }
         }
         match session.poll(Duration::ZERO) {
             Ok(notices) => {
@@ -222,6 +313,7 @@ mod tests {
                 variants: vec![variant("a", 720), variant("b", 1080)],
             }),
             media_error: None,
+            tools_missing: false,
             folder: None,
         }));
         let lines = card_lines(&card);

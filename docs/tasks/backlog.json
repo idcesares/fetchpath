@@ -1776,7 +1776,16 @@
         "crates/fetchpath-session/src/engine.rs",
         "crates/fetchpath-session/src/policy.rs",
         "crates/fetchpath-session/tests/policy.rs",
-        "docs/development/ENGINE-PROTOCOL.md"
+        "docs/development/ENGINE-PROTOCOL.md",
+        "apps/cli/src/tools.rs",
+        "adapters/media/src/setup.rs",
+        "adapters/media/media-tools.json",
+        "adapters/media/Cargo.toml",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/Cargo.toml",
+        "docs/user/GUIDE.md",
+        "docs/development/MEDIA-INTEGRATION.md",
+        "docs/architecture/REPOSITORY.md"
       ],
       "acceptanceIds": [
         "A01"

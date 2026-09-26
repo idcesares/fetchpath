@@ -75,7 +75,7 @@ for fixture and curl baseline commands. Generated files belong under ignored
 
 ## Releasing
 
-- Media helpers are pinned in `apps/desktop/src-tauri/media-tools.json` with
+- Media helpers are pinned in `adapters/media/media-tools.json` with
   `node tools/media-tools/pin.mjs`, which records a digest only when the
   download matches the publisher's own checksum file. Pin only permanent,
   versioned release URLs.

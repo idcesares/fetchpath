@@ -5,6 +5,7 @@
 use super::line::{Out, Tone};
 use super::live::Row;
 use super::review::{self, Card, Stage};
+use super::setup::Setup;
 use crate::client;
 use fetchpath_protocol::JobSnapshot;
 use fetchpath_protocol::model::{JobState, LinkKind};
@@ -458,6 +459,23 @@ pub fn card_text(card: &Card, glyphs: &Glyphs, tick: u64, width: usize) -> CardT
                     keys: format!("↑↓ choose · Enter download{starting} · Esc cancel")
                         .replace("↑↓", if glyphs.unicode { "↑↓" } else { "Up/Down" }),
                 }
+            } else if look.link.kind == LinkKind::MediaPage && look.tools_missing {
+                let mut body = note(
+                    "Saving video needs two free programs that are not part of Fetchpath:",
+                    warn,
+                    width,
+                );
+                body.extend(tool_notes(width));
+                body.extend(note(
+                    "Press I to see what will be downloaded and set them up; this video will be looked at again afterwards.",
+                    DIM,
+                    width,
+                ));
+                CardText {
+                    title: format!("Video · {site}"),
+                    body,
+                    keys: "I set up video tools · Esc cancel".into(),
+                }
             } else if look.link.kind == LinkKind::MediaPage {
                 CardText {
                     title: format!("Video · {site}"),
@@ -490,7 +508,13 @@ pub fn card_text(card: &Card, glyphs: &Glyphs, tick: u64, width: usize) -> CardT
                     ),
                     Line::styled(format!("{kind} · {size} · {resume}"), DIM),
                 ];
-                if look.link.kind == LinkKind::WebPage {
+                if look.link.kind == LinkKind::WebPage && look.tools_missing {
+                    body.extend(note(
+                        "This link is a web page, not a file. If it holds a video, Fetchpath needs its video tools to read it: press I to set them up.",
+                        warn,
+                        width,
+                    ));
+                } else if look.link.kind == LinkKind::WebPage {
                     body.extend(note(
                         "This link is a web page, not a file. It holds no video Fetchpath can read.",
                         warn,
@@ -503,13 +527,107 @@ pub fn card_text(card: &Card, glyphs: &Glyphs, tick: u64, width: usize) -> CardT
                 } else {
                     ("File", "Enter download")
                 };
+                let tools = if look.tools_missing {
+                    " · I set up video tools"
+                } else {
+                    ""
+                };
                 CardText {
                     title: format!("{title} · {site}"),
                     body,
-                    keys: format!("{enter}{starting} · Esc cancel"),
+                    keys: format!("{enter}{starting}{tools} · Esc cancel"),
                 }
             }
         }
+    }
+}
+
+/// The helpers a setup would fetch, one wrapped line each.
+fn tool_notes(width: usize) -> Vec<Line<'static>> {
+    crate::tools::tool_lines(&fetchpath_media::setup::pinned_tools())
+        .iter()
+        .flat_map(|line| note(&format!("  {line}"), Style::new(), width))
+        .collect()
+}
+
+/// The setup card: what will be downloaded before the person agrees, then
+/// the download's progress.
+pub fn setup_text(setup: &Setup, glyphs: &Glyphs, tick: u64, width: usize) -> CardText {
+    let title = "Set up video tools".to_owned();
+    if !setup.is_running() {
+        let mut body = Vec::new();
+        for line in crate::tools::disclosure(&setup.dir) {
+            let style = if line.starts_with("  ") {
+                Style::new()
+            } else {
+                DIM
+            };
+            body.extend(note(&line, style, width));
+        }
+        return CardText {
+            title,
+            body,
+            keys: "Enter download and set up · Esc cancel".into(),
+        };
+    }
+    let spinner = glyphs.spinner[(tick as usize) % glyphs.spinner.len()];
+    let mut body = Vec::new();
+    match setup.current() {
+        Some((label, received, total)) => {
+            body.push(Line::from(vec![
+                Span::styled(spinner, Style::new().fg(ACCENT)),
+                Span::raw(format!(" Downloading {label}")),
+            ]));
+            let amount = match total {
+                Some(total) if total > 0 => format!(
+                    " {:>3.0}%  {} of {}",
+                    received as f64 / total as f64 * 100.0,
+                    client::bytes(received),
+                    client::bytes(total)
+                ),
+                _ => format!(" {}", client::bytes(received)),
+            };
+            let bar_width = width.saturating_sub(amount.width() + 1).clamp(4, 40);
+            let filled = total
+                .filter(|total| *total > 0)
+                .map_or(0, |total| {
+                    ((received as f64 / total as f64) * bar_width as f64).round() as usize
+                })
+                .min(bar_width);
+            body.push(Line::from(vec![
+                Span::styled(glyphs.bar_full.repeat(filled), Style::new().fg(ACCENT)),
+                Span::styled(glyphs.bar_empty.repeat(bar_width - filled), DIM),
+                Span::styled(amount, DIM),
+            ]));
+        }
+        None => body.push(Line::from(vec![
+            Span::styled(spinner, Style::new().fg(ACCENT)),
+            Span::raw(" Checking what is already there".to_owned() + glyphs.more),
+        ])),
+    }
+    body.extend(note(
+        "Each download is checked against its recorded SHA-256 before it is installed.",
+        DIM,
+        width,
+    ));
+    CardText {
+        title,
+        body,
+        keys: "Esc cancel".into(),
+    }
+}
+
+/// What sits below the panel instead of the prompt.
+#[derive(Clone, Copy)]
+pub enum Overlay<'a> {
+    Link(&'a Card),
+    Setup(&'a Setup),
+}
+
+fn overlay_text(overlay: Overlay, glyphs: &Glyphs, tick: u64, width: usize) -> CardText {
+    match overlay {
+        Overlay::Link(card) => card_text(card, glyphs, tick, width),
+        Overlay::Setup(setup) => setup_text(setup, glyphs, tick, width),
     }
 }
 
@@ -530,7 +648,7 @@ pub struct Frame<'a> {
     /// Most panel rows to draw before summarizing the rest.
     pub max_rows: usize,
     /// A link being confirmed; it takes the prompt's place.
-    pub card: Option<&'a Card>,
+    pub card: Option<Overlay<'a>>,
     /// Animation step for spinners and sliding bars.
     pub tick: u64,
 }
@@ -549,7 +667,12 @@ impl Frame<'_> {
     /// the card.
     pub fn height(&self, width: u16) -> u16 {
         let below = match self.card {
-            Some(card) => card_text(card, self.glyphs, 0, card_room(width)).body.len() + 2,
+            Some(card) => {
+                overlay_text(card, self.glyphs, 0, card_room(width))
+                    .body
+                    .len()
+                    + 2
+            }
             None => 2,
         };
         (self.panel_rows() + 1 + below) as u16
@@ -686,7 +809,7 @@ impl Frame<'_> {
         );
 
         if let Some(card) = self.card {
-            let text = card_text(card, self.glyphs, self.tick, card_room(area.width));
+            let text = overlay_text(card, self.glyphs, self.tick, card_room(area.width));
             let height = (text.body.len() + 2) as u16;
             let block_area = Rect::new(area.x, y, area.width, height.min(bottom.saturating_sub(y)));
             let block = Block::bordered()
@@ -942,6 +1065,7 @@ mod tests {
                 ],
             }),
             media_error: None,
+            tools_missing: false,
             folder: None,
         }));
         let live = Live::default();
@@ -953,7 +1077,7 @@ mod tests {
             hint: "",
             glyphs: &ASCII,
             max_rows: 4,
-            card: Some(&card),
+            card: Some(Overlay::Link(&card)),
             tick: 0,
         };
         let area = Rect::new(0, 0, 60, frame.height(60));
@@ -971,5 +1095,33 @@ mod tests {
                 "+ Up/Down choose · Enter download · Esc cancel ------------+",
             ]
         );
+    }
+    #[test]
+    fn the_setup_card_says_what_is_downloaded_before_asking() {
+        let setup = crate::tui::setup::Setup::new(None).unwrap();
+        let text = setup_text(&setup, &ASCII, 0, 76);
+        let body: Vec<String> = text
+            .body
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        let joined = body.join(
+            "
+",
+        );
+        for tool in fetchpath_media::setup::pinned_tools() {
+            assert!(
+                joined.contains(&tool.name) && joined.contains(&tool.license),
+                "{joined}"
+            );
+        }
+        assert!(joined.contains("not part of Fetchpath"), "{joined}");
+        assert!(body.iter().all(|line| line.width() <= 76), "{body:#?}");
+        assert_eq!(text.keys, "Enter download and set up · Esc cancel");
     }
 }

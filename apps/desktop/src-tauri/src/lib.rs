@@ -1,7 +1,7 @@
 pub mod browser_bridge;
 pub mod browser_setup;
 pub mod engine_link;
-pub mod media_setup;
+pub use fetchpath_media::setup as media_setup;
 pub mod view;
 
 use engine_link::{EngineLink, Signal};

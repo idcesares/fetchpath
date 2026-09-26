@@ -172,6 +172,10 @@ checksums recorded in this version of Fetchpath. It shows each program's
 licence before you start. If you already have both programs, choose **I
 already have them…** and pick the folder that contains them.
 
+From a terminal, `fetchpath tools install` does the same after listing what
+it will download and asking, and the interactive terminal offers it when you
+paste a video link before the programs are set up.
+
 **Then:**
 
 1. Copy the video page's link and paste it into Fetchpath.

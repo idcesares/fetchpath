@@ -521,3 +521,25 @@ fn without_a_terminal_the_interactive_mode_prints_help_and_exits_2() {
     // It never reached for the engine, so it made no data folder.
     assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn tools_say_what_is_missing_and_never_install_from_a_script_without_yes() {
+    let home = Home::new();
+    let status = home.run(&["tools"]);
+    assert_eq!(code(&status), 0);
+    let said = text(&status.stdout);
+    assert!(said.contains("not set up"), "{said}");
+    assert!(said.contains("yt-dlp") && said.contains("ffmpeg"), "{said}");
+    assert!(said.contains("fetchpath tools install"), "{said}");
+
+    let install = home.run(&["tools", "install"]);
+    assert_eq!(code(&install), 2);
+    let said = text(&install.stdout);
+    assert!(said.contains("Unlicense") && said.contains("GPL"), "{said}");
+    assert!(text(&install.stderr).contains("--yes"));
+    assert!(
+        !home.dir.path().join("data").join("media-tools").exists(),
+        "nothing was downloaded"
+    );
+    assert_eq!(code(&home.run(&["tools", "use", "nowhere-at-all"])), 2);
+}

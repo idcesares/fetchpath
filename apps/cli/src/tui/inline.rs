@@ -7,6 +7,8 @@ use super::line::{self, Context, Out, Tone};
 use super::live::Notice;
 use super::prompt::{Action, Prompt};
 use super::review::{self, Answer, Card, Draft, Look};
+use super::setup::{Answer as SetupAnswer, Setup};
+use super::view::Overlay;
 use super::view::{self, Frame, Glyphs};
 use crate::client::{self, EXIT_ENGINE, Engine};
 use crossterm::event::{self, Event};
@@ -230,6 +232,13 @@ impl Reviews {
         self.answer = Some(receive);
     }
 
+    /// Shows the next waiting card if none is showing.
+    fn next_if_idle(&mut self) {
+        if self.card.is_none() {
+            self.next();
+        }
+    }
+
     fn add(&mut self, drafts: Vec<Draft>) {
         self.waiting.extend(drafts);
         if self.card.is_none() {
@@ -289,6 +298,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     let mut prompt = Prompt::default();
     let mut completion: Option<String> = None;
     let mut reviews = Reviews::default();
+    let mut setup: Option<Setup> = None;
     let mut rows = max_rows();
     let started = Instant::now();
     let tick = || (started.elapsed().as_millis() / 100) as u64;
@@ -311,8 +321,9 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     let mut drawn = Instant::now();
     'running: loop {
         // Animate spinners and bars while anything moves.
-        let moving =
-            reviews.card.is_some() || session.live.panel().iter().any(|row| row.group == 0);
+        let moving = reviews.card.is_some()
+            || setup.is_some()
+            || session.live.panel().iter().any(|row| row.group == 0);
         let every = Duration::from_millis(if moving { 100 } else { 500 });
         if dirty || drawn.elapsed() >= every {
             let panel = session.live.panel();
@@ -324,7 +335,11 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                 hint: &hint_text,
                 glyphs,
                 max_rows: rows,
-                card: reviews.card.as_ref(),
+                card: match (&setup, &reviews.card) {
+                    (Some(setup), _) => Some(Overlay::Setup(setup)),
+                    (None, Some(card)) => Some(Overlay::Link(card)),
+                    (None, None) => None,
+                },
                 tick: tick(),
             })?;
             dirty = false;
@@ -332,6 +347,28 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
         }
         if event::poll(Duration::from_millis(40))? {
             match event::read()? {
+                Event::Key(key) if setup.is_some() => {
+                    let current = setup.as_mut().expect("checked");
+                    match current.key(key) {
+                        SetupAnswer::None => {}
+                        SetupAnswer::Start => {
+                            if let Err(error) = current.start() {
+                                screen.print(&[Out::new(Tone::Bad, error.message)])?;
+                                setup = None;
+                                reviews.next_if_idle();
+                            }
+                        }
+                        SetupAnswer::Cancel => {
+                            screen.print(&[Out::new(
+                                Tone::Dim,
+                                "Video tools not set up; nothing was downloaded.",
+                            )])?;
+                            setup = None;
+                            reviews.next_if_idle();
+                        }
+                    }
+                    dirty = true;
+                }
                 Event::Key(key) if reviews.card.is_some() => {
                     let card = reviews.card.as_mut().expect("checked");
                     match card.key(key) {
@@ -348,6 +385,14 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                             )])?;
                             reviews.next();
                         }
+                        Answer::SetUpTools => match Setup::new(Some(card.draft.clone())) {
+                            Ok(opened) => {
+                                // The card waits for the setup's outcome.
+                                reviews.card = None;
+                                setup = Some(opened);
+                            }
+                            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+                        },
                     }
                     dirty = true;
                 }
@@ -376,9 +421,17 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                             break 'running;
                         }
                         reviews.add(reply.drafts);
+                        if reply.set_up_tools && setup.is_none() {
+                            match Setup::new(None) {
+                                Ok(opened) => setup = Some(opened),
+                                Err(error) => {
+                                    screen.print(&[Out::new(Tone::Bad, error.message)])?
+                                }
+                            }
+                        }
                     }
                 },
-                Event::Paste(text) if reviews.card.is_none() => {
+                Event::Paste(text) if reviews.card.is_none() && setup.is_none() => {
                     prompt.insert(&text);
                     completion = None;
                     dirty = true;
@@ -391,6 +444,33 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             }
         }
         if reviews.settle() {
+            dirty = true;
+        }
+        if let Some(outcome) = setup.as_mut().and_then(Setup::poll) {
+            let waiting = setup.take().and_then(|done| done.then);
+            match outcome {
+                Ok(ready) => {
+                    let lines: Vec<Out> = ready
+                        .into_iter()
+                        .map(|line| Out::new(Tone::Good, line))
+                        .collect();
+                    screen.print(&lines)?;
+                    // Look at the video that asked for the tools again.
+                    if let Some(draft) = waiting {
+                        reviews.waiting.push_front(draft);
+                    }
+                }
+                Err(message) => screen.print(&[Out::new(Tone::Bad, message)])?,
+            }
+            reviews.next_if_idle();
+            dirty = true;
+        }
+        if let Some(lines) = session.tools_notice() {
+            let lines: Vec<Out> = lines
+                .into_iter()
+                .map(|line| Out::new(Tone::Dim, line))
+                .collect();
+            screen.print(&lines)?;
             dirty = true;
         }
         match session.poll(Duration::ZERO) {

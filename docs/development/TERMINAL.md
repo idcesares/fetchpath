@@ -28,6 +28,19 @@ with `--json`, it prints help and exits 2.
   be started from its card, so a page is never saved in a video's place.
   Several links are carded one after another. Plain mode prints the card as
   lines and reads the answer (Enter, a number, or `no`).
+- **Third-party tools.** Video and audio need `yt-dlp` and `ffmpeg`, which
+  Fetchpath does not ship. At start a background check (`tools::status`)
+  prints a note when they are missing. A video card for a page whose formats
+  failed with `media.helper_unavailable` lists the two programs and offers
+  **I**; so does a web-page card, since the page may hold a video. **I** or
+  `/tools install` opens a setup card that shows each program's version,
+  publisher and licence and the destination folder before anything is
+  downloaded; Enter runs the desktop's installer (`fetchpath_media::setup`,
+  pinned SHA-256) on its own thread with a bar per download, Esc cancels it,
+  and afterwards the engine is pointed at the folder and the waiting video is
+  looked at again. `fetchpath tools [install [--yes] | use FOLDER]` does the
+  same from the command line and refuses to install without a terminal
+  unless `--yes` is given.
 - **Progress.** Each panel row has a bar sized to the window (colored by
   state; a sliding block when the size is unknown), the percent, speed and
   time left, and a spinner while moving. Narrow windows drop the bar first.
@@ -87,6 +100,14 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   1080p preselected, moved with the arrow keys and cancelled. The same run
   on the previous build reproduced the reported bug: the YouTube link saved
   a 1.1 MiB page named `watch`.
+- Headless ConPTY walkthrough of the tools setup, 26 September 2026, in a
+  scratch data folder: the startup note; a YouTube card naming yt-dlp
+  2026.08.19 (Unlicense) and ffmpeg 9.0.2 (GPL-3.0-or-later); **I** showed
+  the setup card; Enter downloaded 17.0 MiB and 109.5 MiB with bars, both
+  checked against their pins; the tools were reported ready and the same
+  video's card came back with ten formats. `fetchpath add … --quality 360p
+  --wait` then saved the 28.8 MiB video. `tools` and `tools install`
+  without a terminal are covered in `apps/cli/tests/queue.rs`.
 - Keyboard-only walkthrough in a Windows pseudo-console (ConPTY, the layer
   under both Windows Terminal and the console host), driven headlessly and
   read back through a VT emulator, 26 September 2026: the engine was started
@@ -107,9 +128,7 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
 - Commands other than looking at links run synchronously; none of them
   waits on a site.
 - The media card lists formats without sizes: the helper's inspection does
-  not report them. Video downloads still need the media tools, set up once
-  from the desktop's Settings (or `FETCHPATH_MEDIA_TOOLS_DIR`); the terminal
-  has no setup flow of its own yet.
+  not report them.
 - `fetchpath add LINK` from scripts still queues a video page as a file
   unless `--quality` is given; only the interactive terminal looks first.
 - Prompt history is kept for the session only; saving it (with query strings

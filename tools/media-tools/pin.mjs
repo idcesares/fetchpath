@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Records the SHA-256 of each pinned media helper in
- * `apps/desktop/src-tauri/media-tools.json`.
+ * `adapters/media/media-tools.json`.
  *
  * This is the only sanctioned way to fill in a `sha256` field. It downloads the
  * artifact *and* the publisher's own checksum file, and writes the digest only
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const manifestPath = path.join(root, 'apps/desktop/src-tauri/media-tools.json');
+const manifestPath = path.join(root, 'adapters/media/media-tools.json');
 
 const force = process.argv.includes('--force');
 const checkOnly = process.argv.includes('--check');

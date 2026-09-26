@@ -1328,6 +1328,7 @@ dependencies = [
  "ctrlc",
  "fetchpath-core",
  "fetchpath-lan",
+ "fetchpath-media",
  "fetchpath-protocol",
  "fetchpath-session",
  "ratatui",
@@ -1383,7 +1384,6 @@ dependencies = [
  "fetchpath-protocol",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -1423,6 +1423,7 @@ dependencies = [
 name = "fetchpath-media"
 version = "0.1.0"
 dependencies = [
+ "fetchpath-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",

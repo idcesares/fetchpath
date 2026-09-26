@@ -3,6 +3,7 @@ mod download;
 mod engine;
 mod lan;
 mod queue;
+mod tools;
 mod tui;
 mod wait;
 mod when;
@@ -25,6 +26,12 @@ The download queue, kept by the Fetchpath engine:
   fetchpath watch [JOB]                       fetchpath inspect LINK
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
+
+Video and audio need two free programs, yt-dlp and ffmpeg, that are not
+part of Fetchpath:
+  fetchpath tools                             whether they are set up
+  fetchpath tools install [--yes]             download and set them up (asks first)
+  fetchpath tools use FOLDER                  use copies you already have
 
 JOB is a download's number in `fetchpath ls`, or the start of its id.
 Every queue command takes --json to print the engine's own records.
@@ -82,6 +89,7 @@ fn main() {
         Some("history") => queue::history(&args[1..]),
         Some("settings") => queue::settings(&args[1..]),
         Some("engine") => engine::run(&args[1..]),
+        Some("tools") => tools::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

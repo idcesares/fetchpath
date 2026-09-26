@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Pinned media helpers for the guided setup in src/media_setup.rs.",
+    "Pinned media helpers for the guided setup in src/setup.rs (desktop Settings and `fetchpath tools`).",
     "",
     "`sha256` is the maintainer's statement about one specific published",
     "artifact. It is recorded by `node tools/media-tools/pin.mjs`, which",

@@ -102,7 +102,8 @@ impl CancellationToken {
     fn set_received(&self, value: u64) {
         self.0.received.store(value, Ordering::Release);
     }
-    fn received(&self) -> u64 {
+    /// Bytes received so far, for a progress display.
+    pub fn received(&self) -> u64 {
         self.0.received.load(Ordering::Acquire)
     }
     /// Records the total the source actually stated. `None` and a stated zero
@@ -112,7 +113,8 @@ impl CancellationToken {
             self.0.total.store(total, Ordering::Release);
         }
     }
-    fn total(&self) -> Option<u64> {
+    /// The size the source stated, if it stated one.
+    pub fn total(&self) -> Option<u64> {
         match self.0.total.load(Ordering::Acquire) {
             0 => None,
             total => Some(total),

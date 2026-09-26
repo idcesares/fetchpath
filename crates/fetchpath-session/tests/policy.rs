@@ -1036,7 +1036,9 @@ fn a_link_is_looked_at_without_downloading_it_and_never_with_credentials_for_an_
     assert_eq!((file.size_bytes, file.resumable), (Some(9000), true));
     let page = inspect(
         &s.user,
-        &answer_with("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\n<html"),
+        &answer_with(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\n<html",
+        ),
     );
     assert_eq!(page.kind, LinkKind::WebPage);
     assert_eq!(
@@ -1048,5 +1050,8 @@ fn a_link_is_looked_at_without_downloading_it_and_never_with_credentials_for_an_
         )),
         "policy.credentials_not_allowed"
     );
-    assert!(list(&s.user, JobFilter::All).is_empty(), "looking queued nothing");
+    assert!(
+        list(&s.user, JobFilter::All).is_empty(),
+        "looking queued nothing"
+    );
 }

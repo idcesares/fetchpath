@@ -12,6 +12,7 @@ pub(crate) mod live;
 mod plain;
 mod prompt;
 mod review;
+mod setup;
 mod view;
 
 use crate::client::{self, Engine};
@@ -86,6 +87,9 @@ pub struct Session {
     live: Live,
     /// Setting names for completion, in the command line's spelling.
     settings: Vec<String>,
+    /// Whether the video tools are ready, checked once in the background
+    /// (running the helpers takes a moment).
+    tools_check: Option<std::sync::mpsc::Receiver<fetchpath_media::setup::ToolsStatus>>,
 }
 
 impl Session {
@@ -94,11 +98,18 @@ impl Session {
         let mut live = Live::default();
         let (events, _) = Self::sync(&engine, &mut live)?;
         let settings = crate::queue::setting_names(&engine).unwrap_or_default();
+        let (found, tools_check) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok(status) = Engine::connect().and_then(|engine| crate::tools::status(&engine)) {
+                let _ = found.send(status);
+            }
+        });
         Ok(Self {
             engine,
             events,
             live,
             settings,
+            tools_check: Some(tools_check),
         })
     }
 
@@ -199,6 +210,28 @@ impl Session {
             }
         }
         Ok(notices)
+    }
+
+    /// Once, when the background check finds the video tools missing, what
+    /// to say about it.
+    fn tools_notice(&mut self) -> Option<Vec<String>> {
+        let status = self.tools_check.as_ref()?.try_recv();
+        match status {
+            Ok(status) => {
+                self.tools_check = None;
+                (!status.ready).then(|| {
+                    vec![
+                        "Saving video and audio needs yt-dlp and ffmpeg, free programs that are not part of Fetchpath and are not set up yet.".to_owned(),
+                        "Type /tools install to see what would be downloaded and set them up.".to_owned(),
+                    ]
+                })
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.tools_check = None;
+                None
+            }
+        }
     }
 
     fn run_line(&self, text: &str) -> line::Reply {

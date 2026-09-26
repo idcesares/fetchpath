@@ -4,6 +4,8 @@
 //! passed without a shell, output is bounded, cancellation terminates the process
 //! tree, and an output is published only after an independent ffprobe check.
 
+pub mod setup;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};

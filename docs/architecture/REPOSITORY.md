@@ -14,10 +14,10 @@ Use a single repository while the product shares identity, lifecycle, and releas
 | `crates/fetchpath-protocol` | Protocol v1 wire types (command envelopes, replies, durable and ephemeral events, snapshots, errors), length-prefixed framing with a size cap, the checked-in JSON Schema, the `EngineClient` interface, and on Windows the authenticated per-user named pipe with its engine secret, the pipe-backed client, and launch-or-attach; no queue logic |
 | `crates/fetchpath-browser-inbox` | The browser capture inbox: captures the browser host accepted, their DPAPI-protected request context, and which job took each. Its own crate so the desktop's browser host can use it without linking the session (FP-055) |
 | `crates/fetchpath-session` | The download session: queue model and persistence, scheduling, retry classification, rate estimates, history, settings, media orchestration, ingestion from the browser capture inbox, and principals with agent policy and approvals (`policy`, contract D1); the protocol engine over it (command ledger, revisions, durable events, subscriptions) and the in-process `EngineClient`. No UI or transport types. Only the engine hosts it; the desktop does not depend on it |
-| `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors |
+| `adapters/media` | Supervised extractor/muxer lifecycle, normalized progress and errors; the guided helper setup (`setup`) and its pinned manifest `media-tools.json`, shared by the desktop and `fetchpath tools` |
 | `adapters/lan` | Device identity, pairing, authenticated peer sessions, upload budget; depends on the cache only, and core reaches it through `PeerSource` |
 | `apps/cli` | The `fetchpath` command line over the same core, and `fetchpath engine`: the single-owner host of the session behind the authenticated pipe |
-| `apps/desktop` | Tauri 2 Windows client: commands over the session, tray and single instance, the browser native-messaging host, media-tool setup, installer hooks, pinned media-tool manifest, third-party notices |
+| `apps/desktop` | Tauri 2 Windows client: commands over the session, tray and single instance, the browser native-messaging host, the media-tool setup screens, installer hooks, third-party notices |
 | `extensions/browser` | Browser capture and native control bridge; no payload transport |
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.

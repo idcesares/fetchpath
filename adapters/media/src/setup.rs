@@ -22,9 +22,13 @@
 //! `pinnedDigestMissing`, and the guided download for it is refused. The manual
 //! path stays available so the feature still works.
 //!
+//! The desktop's Settings and the terminal's `fetchpath tools` both use it,
+//! so there is one installer and one pin list.
+//!
 //! [`media-tools.json`]: ../media-tools.json
 
-use fetchpath_media::MediaTools;
+use crate::MediaTools;
+use fetchpath_core::CancellationToken;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -113,19 +117,7 @@ fn manifest() -> Manifest {
 
 /// Reports what is installed, where, and what a guided install would fetch.
 pub fn status(configured_dir: Option<&str>, install_dir: &Path) -> ToolsStatus {
-    let manifest = manifest();
-    let available = manifest
-        .tools
-        .iter()
-        .map(|entry| AvailableTool {
-            name: entry.name.clone(),
-            version: entry.version.clone(),
-            url: entry.url.clone(),
-            checksum_source: entry.checksum_source.clone(),
-            license: entry.license.clone(),
-            pinned: !entry.sha256.is_empty(),
-        })
-        .collect();
+    let available = pinned_tools();
 
     let mut status = ToolsStatus {
         install_dir: install_dir.display().to_string(),
@@ -180,18 +172,55 @@ pub struct InstallOutcome {
     pub install_dir: String,
 }
 
+/// One helper about to be downloaded, for a progress display. `token`
+/// reports its bytes received and stated size, and cancels it.
+pub struct Step<'a> {
+    pub tool: &'a AvailableTool,
+    /// From 1.
+    pub number: usize,
+    pub count: usize,
+    pub token: CancellationToken,
+}
+
+/// The pinned helpers a guided install would fetch, with versions, sources
+/// and licences, for showing before anything is downloaded.
+pub fn pinned_tools() -> Vec<AvailableTool> {
+    manifest()
+        .tools
+        .iter()
+        .map(|entry| AvailableTool {
+            name: entry.name.clone(),
+            version: entry.version.clone(),
+            url: entry.url.clone(),
+            checksum_source: entry.checksum_source.clone(),
+            license: entry.license.clone(),
+            pinned: !entry.sha256.is_empty(),
+        })
+        .collect()
+}
+
 /// Downloads and installs every pinned helper that is not already present.
 ///
 /// Each artifact is fetched through the same verified transfer path the rest of
 /// Fetchpath uses, checked against its recorded digest, and only then moved
 /// into place. A digest mismatch removes the download and stops.
 pub fn install(install_dir: &Path) -> Result<InstallOutcome, String> {
+    install_with(install_dir, |_| {})
+}
+
+/// [`install`], calling `on_step` as each helper's download begins.
+pub fn install_with(
+    install_dir: &Path,
+    mut on_step: impl FnMut(Step<'_>),
+) -> Result<InstallOutcome, String> {
     let manifest = manifest();
+    let tools = pinned_tools();
     fs::create_dir_all(install_dir)
         .map_err(|error| format!("Could not create {}: {error}", install_dir.display()))?;
 
     let mut installed = Vec::new();
-    for entry in &manifest.tools {
+    let count = manifest.tools.len();
+    for (index, entry) in manifest.tools.iter().enumerate() {
         if entry.sha256.is_empty() {
             return Err(format!(
                 "This build has no recorded checksum for {} {}, so it will not download it. \
@@ -203,7 +232,14 @@ pub fn install(install_dir: &Path) -> Result<InstallOutcome, String> {
         if is_present(entry, install_dir) {
             continue;
         }
-        install_entry(entry, install_dir)?;
+        let token = CancellationToken::default();
+        on_step(Step {
+            tool: &tools[index],
+            number: index + 1,
+            count,
+            token: token.clone(),
+        });
+        install_entry(entry, install_dir, token)?;
         installed.push(format!("{} {}", entry.name, entry.version));
     }
 
@@ -239,12 +275,16 @@ fn is_present(entry: &ManifestEntry, install_dir: &Path) -> bool {
     }
 }
 
-fn install_entry(entry: &ManifestEntry, install_dir: &Path) -> Result<(), String> {
+fn install_entry(
+    entry: &ManifestEntry,
+    install_dir: &Path,
+    token: CancellationToken,
+) -> Result<(), String> {
     let staging = install_dir.join(format!(".{}-download", entry.name));
     let _ = fs::remove_file(&staging);
     let _ = fs::remove_dir_all(&staging);
 
-    let downloaded = fetch(&entry.url, &staging, &entry.sha256)?;
+    let downloaded = fetch(&entry.url, &staging, &entry.sha256, token)?;
     let digest = sha256_file(&downloaded)
         .map_err(|error| format!("Could not read the downloaded file: {error}"))?;
     if !digest.eq_ignore_ascii_case(&entry.sha256) {
@@ -283,13 +323,18 @@ fn install_entry(entry: &ManifestEntry, install_dir: &Path) -> Result<(), String
 /// Fetches one artifact through the verified core download path.
 /// The engine refuses to publish bytes that do not match `sha256`; the caller
 /// still checks again before installing anything.
-fn fetch(url: &str, staging: &Path, sha256: &str) -> Result<PathBuf, String> {
-    use fetchpath_core::{CancelCleanup, CancellationToken, DownloadRequest, download};
+fn fetch(
+    url: &str,
+    staging: &Path,
+    sha256: &str,
+    cancellation: CancellationToken,
+) -> Result<PathBuf, String> {
+    use fetchpath_core::{CancelCleanup, DownloadRequest, download};
 
     let request = DownloadRequest {
         url: url.to_string(),
         destination: staging.to_path_buf(),
-        cancellation: CancellationToken::default(),
+        cancellation,
         cancel_cleanup: CancelCleanup::RemoveStaging,
         context: fetchpath_core::RequestContext::default(),
         expected_sha256: fetchpath_core::normalize_sha256(sha256),
@@ -321,8 +366,14 @@ fn sha256_file(path: &Path) -> io::Result<String> {
 fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
-    use std::os::windows::process::CommandExt;
-    let status = Command::new("tar")
+    let mut command = Command::new("tar");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: no console flash during guided setup.
+        command.creation_flags(0x0800_0000);
+    }
+    let status = command
         .arg("-xf")
         .arg(archive)
         .arg("-C")
@@ -330,8 +381,6 @@ fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        // CREATE_NO_WINDOW: no console flash during guided setup.
-        .creation_flags(0x0800_0000)
         .status()
         .map_err(|error| format!("Could not run the system archive extractor: {error}"))?;
     if !status.success() {

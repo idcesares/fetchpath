@@ -5,6 +5,7 @@
 use super::review::Draft;
 use crate::client::{self, Engine};
 use crate::queue::{self, Control};
+use crate::tools;
 use crate::when;
 use fetchpath_protocol::command::{Command, JobFilter};
 use fetchpath_protocol::message::CommandResult;
@@ -42,6 +43,8 @@ pub struct Reply {
     pub quit: bool,
     /// Links to look at and confirm before they download.
     pub drafts: Vec<Draft>,
+    /// Show the video tools setup card.
+    pub set_up_tools: bool,
 }
 
 impl Reply {
@@ -138,6 +141,13 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/settings [NAME [VALUE]]",
         summary: "Show or change engine settings",
         takes: Takes::Setting,
+    },
+    Spec {
+        name: "tools",
+        aliases: &[],
+        usage: "/tools [install | use FOLDER]",
+        summary: "Video tools (yt-dlp, ffmpeg): check or set them up",
+        takes: Takes::Nothing,
     },
     Spec {
         name: "engine",
@@ -365,6 +375,41 @@ fn execute(
             }
             Ok(())
         }
+        "tools" => match parsed
+            .words
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] | ["status"] => {
+                let status = tools::status(engine)?;
+                for line in tools::status_lines(&status) {
+                    reply.say(Tone::Normal, line);
+                }
+                if !status.ready {
+                    reply.say(
+                        Tone::Normal,
+                        "Set them up with /tools install, or use copies you have with /tools use FOLDER.",
+                    );
+                }
+                Ok(())
+            }
+            ["install"] => {
+                reply.set_up_tools = true;
+                Ok(())
+            }
+            ["use", folder] => {
+                let accepted = fetchpath_media::setup::use_directory(std::path::Path::new(folder))
+                    .map_err(|message| client::input_error(&message))?;
+                tools::record(engine, &accepted)?;
+                for line in tools::status_lines(&tools::status(engine)?) {
+                    reply.say(Tone::Good, line);
+                }
+                Ok(())
+            }
+            _ => Err(usage_error(spec, "Say install, or use and a folder")),
+        },
         "engine" => {
             let status = match engine.send(Command::EngineStatus)? {
                 CommandResult::EngineStatus { status } => status,

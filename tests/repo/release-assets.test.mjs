@@ -15,7 +15,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const read = (relative) => readFile(path.join(root, relative), 'utf8');
 
 test('the media tool manifest is complete enough to act on', async () => {
-  const manifest = JSON.parse(await read('apps/desktop/src-tauri/media-tools.json'));
+  const manifest = JSON.parse(await read('adapters/media/media-tools.json'));
   const names = manifest.tools.map((tool) => tool.name);
   assert.ok(names.includes('yt-dlp'), `expected yt-dlp in ${names.join(', ')}`);
   assert.ok(names.includes('ffmpeg'), `expected ffmpeg in ${names.join(', ')}`);
@@ -35,7 +35,7 @@ test('the media tool manifest is complete enough to act on', async () => {
 });
 
 test('an unpinned manifest entry is visible rather than silently broken', async () => {
-  const manifest = JSON.parse(await read('apps/desktop/src-tauri/media-tools.json'));
+  const manifest = JSON.parse(await read('adapters/media/media-tools.json'));
   const unpinned = manifest.tools.filter((tool) => !tool.sha256);
   if (!unpinned.length) return;
   // The application refuses to download an unpinned artifact, so the manifest

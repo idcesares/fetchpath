@@ -44,7 +44,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
   bundled. A user who wants them chooses to fetch them from their publishers
   through Settings, or points Fetchpath at a copy they already have. The
   versions, download locations, publisher checksum sources and licenses are in
-  `apps/desktop/src-tauri/media-tools.json`, and the license of each is shown
+  `adapters/media/media-tools.json`, and the license of each is shown
   in the application before anything is downloaded. ffmpeg builds are
   distributed under the GPL; because Fetchpath neither ships nor links them,
   that license applies to the user's own copy rather than to Fetchpath.
