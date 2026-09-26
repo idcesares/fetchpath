@@ -230,6 +230,19 @@ mod tests {
     }
 
     #[test]
+    fn a_redirect_to_ftp_is_not_followed() {
+        let ftp = TcpListener::bind("127.0.0.1:0").unwrap();
+        ftp.set_nonblocking(true).unwrap();
+        let answer = format!(
+            "HTTP/1.1 302 Found\r\nLocation: ftp://{}/file\r\nContent-Length: 0\r\n\r\n",
+            ftp.local_addr().unwrap()
+        );
+        let error = inspect(Box::leak(answer.into_boxed_str())).unwrap_err();
+        assert!(ftp.accept().is_err(), "the FTP address was contacted");
+        assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
     fn the_encoded_file_name_wins() {
         assert_eq!(
             disposition_file_name(

@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 curl = { version = "0.4.50", features = ["static-curl", "http2", "protocol-ftp"] }
+curl-sys = { version = "0.4.90", default-features = false }
 percent-encoding = "2.3.2"
 russh = { version = "0.63.3", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "3.0.0"

@@ -678,6 +678,7 @@ fn configure(
     decision: &ProtocolDecision,
 ) -> Result<(), TransferError> {
     easy.url(url).map_err(curl_error)?;
+    http_only(easy)?;
     easy.follow_location(true).map_err(curl_error)?;
     easy.fail_on_error(true).map_err(curl_error)?;
     easy.ssl_verify_peer(true).map_err(curl_error)?;
@@ -696,6 +697,26 @@ fn configure(
     }
     if let Some(referer) = &context.referer {
         easy.referer(referer).map_err(curl_error)?;
+    }
+    Ok(())
+}
+
+/// Limits the request and every redirect it follows to HTTP and HTTPS.
+/// libcurl otherwise follows a redirect to FTP, which this path neither
+/// expects nor ranges correctly. The curl crate has no safe setter for these.
+fn http_only(easy: &mut Easy) -> Result<(), TransferError> {
+    const HTTP_AND_HTTPS: std::os::raw::c_long =
+        (curl_sys::CURLPROTO_HTTP | curl_sys::CURLPROTO_HTTPS) as std::os::raw::c_long;
+    for option in [
+        curl_sys::CURLOPT_PROTOCOLS,
+        curl_sys::CURLOPT_REDIR_PROTOCOLS,
+    ] {
+        // SAFETY: `easy.raw()` is the live handle owned by `easy`, and both
+        // options take a long bitmask by value.
+        let code = unsafe { curl_sys::curl_easy_setopt(easy.raw(), option, HTTP_AND_HTTPS) };
+        if code != curl_sys::CURLE_OK {
+            return Err(curl_error(curl::Error::new(code)));
+        }
     }
     Ok(())
 }
