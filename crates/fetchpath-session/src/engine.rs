@@ -837,6 +837,25 @@ impl Engine {
                     },
                 })
             }
+            Command::InspectLink { url } => {
+                if !principal.is_user() && policy::has_userinfo(url.expose()) {
+                    return Err(policy::credentials_not_allowed());
+                }
+                let inspection = self.session.inspect_link(url.expose()).map_err(|message| {
+                    let code = error_code(&message);
+                    let code = if code == "internal.unknown" {
+                        "input.invalid_request".to_owned()
+                    } else {
+                        code
+                    };
+                    ProtocolError::new(
+                        ErrorCode::try_from(code).unwrap_or(ErrorCode::INTERNAL_UNKNOWN),
+                        ErrorScope::Command,
+                        message,
+                    )
+                })?;
+                Ok(CommandResult::LinkInspection { inspection })
+            }
             Command::InspectMedia { url } => {
                 if !principal.is_user() && policy::has_userinfo(url.expose()) {
                     return Err(policy::credentials_not_allowed());

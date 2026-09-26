@@ -5,8 +5,10 @@
 use super::Session;
 use super::line::Out;
 use super::live::{Notice, Row};
+use super::review::{self, Card, Draft};
 use super::view::{self, ASCII};
 use crate::client::{self, EXIT_ENGINE};
+use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
@@ -27,6 +29,69 @@ pub fn notice_line(notice: &Notice) -> String {
         Notice::Receipt(job) => view::receipt(job, &ASCII).text,
         Notice::Event { name, text, .. } => format!("{name}: {text}"),
     }
+}
+
+/// A card as plain lines, with what to type instead of which keys to press.
+pub fn card_lines(card: &Card) -> Vec<String> {
+    // Plain lines wrap in the console itself; nothing is cut.
+    let text = view::card_text(card, &ASCII, 0, usize::MAX / 2);
+    let mut lines = vec![text.title];
+    lines.extend(text.body.iter().map(|line| {
+        let flat: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        format!("  {}", flat.trim_end())
+    }));
+    lines.push(if !card.can_confirm() {
+        "Press Enter to close.".to_owned()
+    } else if card.is_media() {
+        "Press Enter for the chosen format, type its number for another, or no to cancel."
+            .to_owned()
+    } else {
+        "Press Enter to download, or type no to cancel.".to_owned()
+    });
+    lines
+}
+
+/// What a typed answer to a card means.
+#[derive(Debug, Eq, PartialEq)]
+pub enum Reply {
+    Confirm,
+    Cancel,
+    Unclear,
+}
+
+pub fn answer(card: &mut Card, text: &str) -> Reply {
+    let text = text.trim().to_ascii_lowercase();
+    if !card.can_confirm() {
+        return Reply::Cancel;
+    }
+    match text.as_str() {
+        "" | "y" | "yes" => Reply::Confirm,
+        "n" | "no" | "cancel" | "esc" => Reply::Cancel,
+        number => match number.parse::<usize>() {
+            Ok(row) if row >= 1 && row <= card.variants().len() => {
+                card.choose(row - 1);
+                Reply::Confirm
+            }
+            _ => Reply::Unclear,
+        },
+    }
+}
+
+/// Looks at the next waiting link (blocking; plain mode redraws nothing,
+/// so a pause here costs no animation) and prints its card.
+fn next_card(session: &Session, waiting: &mut VecDeque<Draft>) -> Option<Card> {
+    let draft = waiting.pop_front()?;
+    println!("Looking at {}...", review::host(&draft.link));
+    let mut card = Card::new(draft);
+    card.set(review::look(&session.engine, &card.draft));
+    for line in card_lines(&card) {
+        println!("{line}");
+    }
+    Some(card)
 }
 
 fn say(lines: &[Out]) {
@@ -59,17 +124,37 @@ pub fn run(mut session: Session) -> i32 {
             }
         }
     });
+    let mut waiting = VecDeque::new();
+    let mut card: Option<Card> = None;
     loop {
         if client::interrupted() {
             return 0;
         }
         match input.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(text)) if card.is_some() => {
+                let current = card.as_mut().expect("checked");
+                match answer(current, &text) {
+                    Reply::Confirm => {
+                        say(&[super::inline::confirmed(&session, current)]);
+                        card = next_card(&session, &mut waiting);
+                    }
+                    Reply::Cancel => {
+                        println!("Not downloaded: {}", current.draft.link);
+                        card = next_card(&session, &mut waiting);
+                    }
+                    Reply::Unclear => {
+                        println!("Type a number from the list, press Enter, or type no.");
+                    }
+                }
+            }
             Ok(Ok(text)) => {
                 let reply = session.run_line(&text);
                 say(&reply.lines);
                 if reply.quit {
                     return 0;
                 }
+                waiting.extend(reply.drafts);
+                card = next_card(&session, &mut waiting);
             }
             // The end of input, or an unreadable console, ends the session.
             Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return 0,
@@ -94,6 +179,65 @@ mod tests {
     use super::*;
     use crate::tui::live::{Live, tests::recorded};
     use fetchpath_protocol::message::ServerMessage;
+
+    #[test]
+    fn a_typed_answer_confirms_picks_a_format_or_cancels() {
+        use fetchpath_protocol::model::{
+            LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind,
+        };
+        let link = "https://youtu.be/x";
+        let draft = Draft {
+            link: link.into(),
+            url: fetchpath_protocol::SensitiveUrl::try_from(link.to_owned()).unwrap(),
+            to: None,
+            at: None,
+            sha256: None,
+            quality: None,
+        };
+        let variant = |id: &str, height| MediaVariant {
+            id: id.into(),
+            label: format!("{height}p"),
+            kind: MediaVariantKind::Video,
+            extension: "mp4".into(),
+            height: Some(height),
+            fps: None,
+        };
+        let mut card = Card::new(draft);
+        assert_eq!(
+            answer(&mut card, ""),
+            Reply::Cancel,
+            "nothing to confirm yet"
+        );
+        card.set(Ok(review::Look {
+            link: LinkInspection {
+                kind: LinkKind::MediaPage,
+                file_name: None,
+                content_type: None,
+                size_bytes: None,
+                resumable: false,
+            },
+            media: Some(MediaInspection {
+                title: "T".into(),
+                duration_seconds: None,
+                variants: vec![variant("a", 720), variant("b", 1080)],
+            }),
+            media_error: None,
+            folder: None,
+        }));
+        let lines = card_lines(&card);
+        assert!(lines[0].starts_with("Video"), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.contains("(*)  1  1080p")),
+            "{lines:?}"
+        );
+        assert!(lines.last().unwrap().contains("type its number"));
+        assert_eq!(answer(&mut card, "maybe"), Reply::Unclear);
+        assert_eq!(answer(&mut card, "9"), Reply::Unclear);
+        assert_eq!(answer(&mut card, "2"), Reply::Confirm);
+        assert_eq!(card.variants()[card.choice].label, "720p");
+        assert_eq!(answer(&mut card, " No "), Reply::Cancel);
+        assert_eq!(answer(&mut card, ""), Reply::Confirm);
+    }
 
     /// The whole recorded stream, as plain mode prints it once each job's
     /// snapshot has settled a failure.

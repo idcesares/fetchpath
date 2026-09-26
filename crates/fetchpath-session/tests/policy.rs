@@ -993,3 +993,60 @@ fn a_refused_retry_keeps_the_hold_it_would_have_shed() {
     assert_eq!(retried.state, JobState::AwaitingApproval);
     assert_eq!(reasons(&retried), [ApprovalReason::RateLimit]);
 }
+
+/// Answers every request with one fixed response.
+fn answer_with(response: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/get", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(response.as_bytes());
+        }
+    });
+    url
+}
+
+fn inspect(client: &InProcessClient, link: &str) -> fetchpath_protocol::model::LinkInspection {
+    match send(client, Command::InspectLink { url: url(link) }).unwrap() {
+        CommandResult::LinkInspection { inspection } => inspection,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[test]
+fn a_link_is_looked_at_without_downloading_it_and_never_with_credentials_for_an_agent() {
+    use fetchpath_protocol::model::LinkKind;
+    let s = setup(granting);
+    // A known video site is recognized without a request.
+    let video = inspect(&s.agent, "https://www.youtube.com/watch?v=x");
+    assert_eq!(video.kind, LinkKind::MediaPage);
+    let file = inspect(
+        &s.user,
+        &answer_with(
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: application/zip\r\n\
+             Content-Range: bytes 0-0/9000\r\nContent-Length: 1\r\n\
+             Content-Disposition: attachment; filename=\"r.zip\"\r\n\r\nx",
+        ),
+    );
+    assert_eq!(file.kind, LinkKind::File);
+    assert_eq!(file.file_name.as_deref(), Some("r.zip"));
+    assert_eq!((file.size_bytes, file.resumable), (Some(9000), true));
+    let page = inspect(
+        &s.user,
+        &answer_with("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 5\r\n\r\n<html"),
+    );
+    assert_eq!(page.kind, LinkKind::WebPage);
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::InspectLink {
+                url: url("https://user:hunter2@example.test/a.bin"),
+            }
+        )),
+        "policy.credentials_not_allowed"
+    );
+    assert!(list(&s.user, JobFilter::All).is_empty(), "looking queued nothing");
+}

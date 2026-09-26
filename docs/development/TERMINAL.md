@@ -15,6 +15,22 @@ with `--json`, it prints help and exits 2.
   one-line receipts into scrollback; so do warnings and recorded problems. The
   viewport's height follows the panel by reopening the viewport where it
   began, because ratatui's inline height is fixed.
+- **Look first, then confirm.** A pasted link (or `/add`) is not queued at
+  once. `review.rs` asks the engine (`InspectLink`, then `InspectMedia` for a
+  media page or a web page) on its own thread while a card shows a spinner.
+  The card then shows, for a video, the title, length and formats (tallest
+  first, the best up to 1080p preselected as the desktop does, or the
+  `--quality` given), chosen with arrows or a digit; for a file, its name
+  (from `Content-Disposition`, made safe), type, size and whether it resumes;
+  for a web page, a warning that it is not a file. Every card shows where the
+  file will be saved. Enter queues exactly what the card shows; Esc cancels.
+  A video page whose formats cannot be read (media tools not set up) cannot
+  be started from its card, so a page is never saved in a video's place.
+  Several links are carded one after another. Plain mode prints the card as
+  lines and reads the answer (Enter, a number, or `no`).
+- **Progress.** Each panel row has a bar sized to the window (colored by
+  state; a sliding block when the size is unknown), the percent, speed and
+  time left, and a spinner while moving. Narrow windows drop the bar first.
 - **Prompt.** A bare line is `/add` with its words; `/` commands mirror the
   command line (`add queue show pause resume cancel retry rm history settings
   engine help quit`) through the same `queue.rs` helpers, so wording and
@@ -56,6 +72,21 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   completion unit tests (`cargo test -p fetchpath --bin fetchpath tui`).
 - `without_a_terminal_the_interactive_mode_prints_help_and_exits_2` in
   `apps/cli/tests/queue.rs`.
+- Cards: format order and the 1080p default, preselected `--quality`, safe
+  server file names, type labels, the rendered media card, typed plain-mode
+  answers (`tui::review`, `tui::view`, `tui::plain` tests); `inspect_link`
+  against local servers (`fetchpath-http`); and `InspectLink` through the
+  engine, including an agent refused a link with user info
+  (`fetchpath-session/tests/policy.rs`).
+- Headless ConPTY walkthrough of the cards, 26 September 2026: a file card
+  (name, type, 23.8 MiB, cannot resume, folder) then Enter and an animated
+  bar to the saved receipt; a local HTML page carded as a web page and
+  cancelled; a YouTube link with media tools missing carded as a video that
+  cannot start; and, with the pinned `yt-dlp` (SHA-256 matching the pin) in
+  a scratch tools folder, the real YouTube page listed nine formats with
+  1080p preselected, moved with the arrow keys and cancelled. The same run
+  on the previous build reproduced the reported bug: the YouTube link saved
+  a 1.1 MiB page named `watch`.
 - Keyboard-only walkthrough in a Windows pseudo-console (ConPTY, the layer
   under both Windows Terminal and the console host), driven headlessly and
   read back through a VT emulator, 26 September 2026: the engine was started
@@ -73,8 +104,14 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   exercises the same console layer but not either host's rendering or fonts.
 - Narrowing the window clears the visible screen (ratatui's inline behavior on
   a horizontal shrink); scrollback above it is kept.
-- Commands run synchronously: `/add --quality` waits for media inspection
-  with the view paused.
+- Commands other than looking at links run synchronously; none of them
+  waits on a site.
+- The media card lists formats without sizes: the helper's inspection does
+  not report them. Video downloads still need the media tools, set up once
+  from the desktop's Settings (or `FETCHPATH_MEDIA_TOOLS_DIR`); the terminal
+  has no setup flow of its own yet.
+- `fetchpath add LINK` from scripts still queues a video page as a file
+  unless `--quality` is given; only the interactive terminal looks first.
 - Prompt history is kept for the session only; saving it (with query strings
   and user info stripped) is FP-063. Rules preview on paste is FP-064; media,
   batch, conflict, checksum and approval prompts are FP-061; themes and keys

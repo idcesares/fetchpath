@@ -1768,7 +1768,15 @@
         "apps/cli/Cargo.toml",
         "Cargo.lock",
         "docs/development/TERMINAL.md",
-        "docs/user/CLI.md"
+        "docs/user/CLI.md",
+        "crates/fetchpath-http/src/link.rs",
+        "crates/fetchpath-protocol",
+        "crates/fetchpath-core/src/lib.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/policy.rs",
+        "crates/fetchpath-session/tests/policy.rs",
+        "docs/development/ENGINE-PROTOCOL.md"
       ],
       "acceptanceIds": [
         "A01"

@@ -525,6 +525,23 @@
           "type": "object"
         },
         {
+          "description": "Looks at a link without downloading it: whether it is a file, a\nvideo or audio page, or a web page, with the file's name and size\nwhen the server states them.",
+          "properties": {
+            "type": {
+              "const": "InspectLink",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/$defs/SensitiveUrl"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "type": {
               "const": "QueueStats",
@@ -886,6 +903,22 @@
             },
             "type": {
               "const": "MediaInspection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "inspection"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "inspection": {
+              "$ref": "#/$defs/LinkInspection"
+            },
+            "type": {
+              "const": "LinkInspection",
               "type": "string"
             }
           },
@@ -2157,6 +2190,70 @@
         {
           "const": "unknown",
           "description": "A state this client does not know, from a newer engine.",
+          "type": "string"
+        }
+      ]
+    },
+    "LinkInspection": {
+      "description": "A link looked at before downloading. Every field is the server's claim,\nand `file_name` is untrusted text to be made safe before use.",
+      "properties": {
+        "content_type": {
+          "description": "The media type, such as `application/zip`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/LinkKind"
+        },
+        "resumable": {
+          "default": false,
+          "description": "The server accepts ranges, so an interrupted download can resume.",
+          "type": "boolean"
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "LinkKind": {
+      "description": "What a link leads to, as far as the engine can tell before downloading.",
+      "oneOf": [
+        {
+          "enum": [
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "A file to save as it is.",
+          "type": "string"
+        },
+        {
+          "const": "media_page",
+          "description": "A page on a video or audio site: inspect it with `InspectMedia` and\nchoose a quality.",
+          "type": "string"
+        },
+        {
+          "const": "web_page",
+          "description": "A web page (HTML), not a file. It may still hold video or audio.",
           "type": "string"
         }
       ]

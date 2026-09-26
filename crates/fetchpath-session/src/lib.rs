@@ -739,6 +739,38 @@ impl Session {
         tools.inspect(&source).map_err(|error| error.to_string())
     }
 
+    /// Whether a link is a file, a media page or a web page, and what its
+    /// server says about it. Known media sites are recognized without a
+    /// request; anything else is asked for its headers.
+    pub fn inspect_link(
+        &self,
+        source: &str,
+    ) -> Result<fetchpath_protocol::model::LinkInspection, String> {
+        use fetchpath_protocol::model::{LinkInspection, LinkKind};
+        let source = validated_source(source)?;
+        if is_media_page(&source) {
+            return Ok(LinkInspection {
+                kind: LinkKind::MediaPage,
+                file_name: None,
+                content_type: None,
+                size_bytes: None,
+                resumable: false,
+            });
+        }
+        let facts = fetchpath_core::inspect_link(&source)?;
+        Ok(LinkInspection {
+            kind: if facts.is_web_page() {
+                LinkKind::WebPage
+            } else {
+                LinkKind::File
+            },
+            file_name: facts.file_name,
+            content_type: facts.content_type,
+            size_bytes: facts.size,
+            resumable: facts.resumable,
+        })
+    }
+
     pub fn enqueue_media(&self, draft: MediaDraft) -> Result<JobSnapshot, String> {
         self.enqueue_media_for(draft, &Origin::default())
     }

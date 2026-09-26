@@ -5,8 +5,8 @@ use crate::SCHEMA_VERSION;
 use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
-    EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, MediaInspection, Progress,
-    QueueStats, SensitiveUrl, SettingsView, WaitingReason,
+    EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LinkInspection,
+    MediaInspection, Progress, QueueStats, SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -90,6 +90,9 @@ pub enum CommandResult {
     },
     MediaInspection {
         inspection: MediaInspection,
+    },
+    LinkInspection {
+        inspection: LinkInspection,
     },
     QueueStats {
         stats: QueueStats,

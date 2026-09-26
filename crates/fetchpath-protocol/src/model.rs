@@ -333,6 +333,38 @@ pub struct MediaInspection {
     pub variants: Vec<MediaVariant>,
 }
 
+/// What a link leads to, as far as the engine can tell before downloading.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkKind {
+    /// A file to save as it is.
+    File,
+    /// A page on a video or audio site: inspect it with `InspectMedia` and
+    /// choose a quality.
+    MediaPage,
+    /// A web page (HTML), not a file. It may still hold video or audio.
+    WebPage,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A link looked at before downloading. Every field is the server's claim,
+/// and `file_name` is untrusted text to be made safe before use.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LinkInspection {
+    pub kind: LinkKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    /// The media type, such as `application/zip`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// The server accepts ranges, so an interrupted download can resume.
+    #[serde(default)]
+    pub resumable: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Theme {

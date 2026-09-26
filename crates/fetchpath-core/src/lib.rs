@@ -5,7 +5,20 @@ mod checkpoint;
 mod transfer;
 mod verified;
 
-pub use fetchpath_http::SegmentProgress;
+pub use fetchpath_http::{LinkFacts, SegmentProgress};
+
+/// Looks at an HTTP(S) link's headers without downloading it. Errors carry
+/// a stable code first, as download errors do.
+pub fn inspect_link(url: &str) -> Result<LinkFacts, String> {
+    let decision = fetchpath_http::decide_protocol(fetchpath_http::ProtocolCapabilities::detect());
+    fetchpath_http::inspect_link(
+        url,
+        &fetchpath_http::RequestContext::default(),
+        &decision,
+        std::time::Duration::from_secs(20),
+    )
+    .map_err(|error| format!("source.transfer_failed: {error}"))
+}
 pub use fetchpath_metalink::{
     FileHash, Metalink, MetalinkError, MetalinkFile, MetalinkUrl, ParseLimits, PieceMap,
     PieceVerification, parse_metalink, parse_with_limits,

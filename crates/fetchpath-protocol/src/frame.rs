@@ -42,6 +42,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "GetJob",
     "JobDetails",
     "InspectMedia",
+    "InspectLink",
     "QueueStats",
     "History",
     "GetSettings",

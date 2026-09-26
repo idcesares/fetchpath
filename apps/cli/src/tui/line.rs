@@ -2,13 +2,14 @@
 //! line, with completion from commands, jobs, recent folders and folders on
 //! disk.
 
+use super::review::Draft;
 use crate::client::{self, Engine};
 use crate::queue::{self, Control};
 use crate::when;
 use fetchpath_protocol::command::{Command, JobFilter};
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::JobState;
-use fetchpath_protocol::{JobSnapshot, ProtocolError, Timestamp};
+use fetchpath_protocol::{JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
 use std::path::{Path, PathBuf};
 
 /// How a line of output should look; plain mode prints only the text.
@@ -39,6 +40,8 @@ impl Out {
 pub struct Reply {
     pub lines: Vec<Out>,
     pub quit: bool,
+    /// Links to look at and confirm before they download.
+    pub drafts: Vec<Draft>,
 }
 
 impl Reply {
@@ -70,7 +73,7 @@ pub const COMMANDS: &[Spec] = &[
         name: "add",
         aliases: &[],
         usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q]",
-        summary: "Download links (or just paste a link)",
+        summary: "Look at links and confirm to download (or just paste one)",
         takes: Takes::Links,
     },
     Spec {
@@ -268,7 +271,7 @@ fn execute(
     };
     let parsed = queue::parse(args, flags).map_err(|message| usage_error(spec, &message))?;
     match spec.name {
-        "add" => add(engine, spec, &parsed, reply),
+        "add" => add(spec, &parsed, reply),
         "queue" => {
             let all = engine.jobs(JobFilter::All)?;
             let shown: Vec<&JobSnapshot> = all
@@ -405,12 +408,8 @@ fn resolve(jobs: &[JobSnapshot], references: &[String]) -> Result<Vec<JobSnapsho
         .collect()
 }
 
-fn add(
-    engine: &Engine,
-    spec: &Spec,
-    parsed: &queue::Args,
-    reply: &mut Reply,
-) -> Result<(), ProtocolError> {
+/// Turns links into drafts to look at and confirm; nothing starts here.
+fn add(spec: &Spec, parsed: &queue::Args, reply: &mut Reply) -> Result<(), ProtocolError> {
     if parsed.words.is_empty() {
         return Err(usage_error(spec, "Give a link"));
     }
@@ -419,37 +418,23 @@ fn add(
             "A checksum describes one file; add links with --sha256 one at a time.",
         ));
     }
-    let not_before = parsed
+    let at = parsed
         .at
         .as_deref()
         .map(|at| when::parse(at, Timestamp::now()))
         .transpose()
         .map_err(|message| client::input_error(&message))?;
-    let folder = queue::default_folder(engine)?;
     for link in &parsed.words {
-        match queue::add_one(
-            engine,
-            parsed,
-            link,
-            parsed.to.as_deref(),
-            folder.as_deref(),
-            not_before,
-        ) {
-            Ok(job) => {
-                let starting = job
-                    .not_before
-                    .map(|at| format!(", starting {}", when::local(at)))
-                    .unwrap_or_default();
-                reply.say(
-                    Tone::Normal,
-                    format!(
-                        "Added {}  {}{starting}",
-                        client::short_id(&job),
-                        job.destination.as_deref().unwrap_or(&job.source_display)
-                    ),
-                );
-            }
-            Err(error) => reply.say(Tone::Bad, format!("{link}: {}", error.message)),
+        match SensitiveUrl::try_from(link.clone()) {
+            Ok(url) => reply.drafts.push(Draft {
+                link: link.clone(),
+                url,
+                to: parsed.to.clone(),
+                at,
+                sha256: parsed.sha256.clone(),
+                quality: parsed.quality.clone(),
+            }),
+            Err(message) => reply.say(Tone::Bad, format!("{link} cannot be used: {message}.")),
         }
     }
     Ok(())

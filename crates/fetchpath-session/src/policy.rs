@@ -93,6 +93,7 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
             | Command::GetJob { .. }
             | Command::JobDetails { .. }
             | Command::InspectMedia { .. }
+            | Command::InspectLink { .. }
             | Command::History { .. }
             | Command::SubscribeJob { .. }
             | Command::EngineStatus => true,

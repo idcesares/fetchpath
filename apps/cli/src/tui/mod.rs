@@ -11,6 +11,7 @@ mod line;
 pub(crate) mod live;
 mod plain;
 mod prompt;
+mod review;
 mod view;
 
 use crate::client::{self, Engine};

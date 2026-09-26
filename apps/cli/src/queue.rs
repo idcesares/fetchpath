@@ -337,20 +337,40 @@ pub(crate) fn add_one(
     };
     let destination = destination_path(target, default_folder, &suggested)
         .map_err(|message| client::input_error(&message))?;
+    create_job(
+        engine,
+        url,
+        &destination,
+        not_before,
+        parsed.sha256.clone(),
+        request,
+    )
+}
+
+/// Queues one job: a file, or with a chosen format (id and label) a video
+/// or audio download. The engine asks before replacing an existing file.
+pub(crate) fn create_job(
+    engine: &Engine,
+    url: SensitiveUrl,
+    destination: &Path,
+    not_before: Option<Timestamp>,
+    sha256: Option<String>,
+    media: Option<(String, String)>,
+) -> Result<JobSnapshot, ProtocolError> {
     let destination = DestinationIntent {
         path: destination.display().to_string(),
         conflict: ConflictPolicy::Ask,
     };
     let input = JobInput::Url { url };
-    let request = match request {
+    let request = match media {
         None => JobRequest::File {
             input,
             destination,
             not_before,
-            expected_sha256: parsed.sha256.clone(),
+            expected_sha256: sha256,
         },
         Some((variant_id, quality_label)) => {
-            if parsed.sha256.is_some() {
+            if sha256.is_some() {
                 return Err(client::input_error(
                     "A checksum cannot be checked for a video or audio download.",
                 ));
@@ -372,7 +392,7 @@ pub(crate) fn add_one(
 
 /// A folder (it exists, or ends in a slash) gets the suggested name; any
 /// other target is the file itself.
-fn destination_path(
+pub(crate) fn destination_path(
     target: Option<&str>,
     default_folder: Option<&Path>,
     suggested: &str,
@@ -391,7 +411,7 @@ fn destination_path(
 
 /// `best` is the tallest video, `audio` the first audio-only format;
 /// anything else must equal a format's label or id, ignoring case.
-fn pick_variant<'a>(
+pub(crate) fn pick_variant<'a>(
     inspection: &'a MediaInspection,
     quality: &str,
 ) -> Result<&'a fetchpath_protocol::model::MediaVariant, String> {
@@ -422,7 +442,7 @@ fn pick_variant<'a>(
 }
 
 /// The page title, which is untrusted text, reduced to a safe file name.
-fn safe_title(title: &str, link: &str) -> String {
+pub(crate) fn safe_title(title: &str, link: &str) -> String {
     match download::safe_file_name(title) {
         Some(name) => name,
         None => download::file_name_from_url(link),

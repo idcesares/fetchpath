@@ -85,7 +85,7 @@ process boundary rather than inventing a new one:
   §5). Command names are the contract's (`CreateJob`, `Pause`, `Resume`,
   `Cancel`, `Retry`, `UpdatePolicy`, `ResolveDestination`, `SelectMedia`,
   `RefreshSource`, `RefreshMediaChoices`) plus engine-level ones: `ListJobs`,
-  `GetJob`, `JobDetails`, `InspectMedia`, `QueueStats`, `History`,
+  `GetJob`, `JobDetails`, `InspectMedia`, `InspectLink`, `QueueStats`, `History`,
   `GetSettings`, `UpdateSettings`, `Rules*`, `Approvals*`, `EngineStatus`,
   `EngineShutdown`.
 - Durable events carry per-job `seq`; `SubscribeJob(after_seq)` and a

@@ -13,8 +13,8 @@ use fetchpath_protocol::message::{
 };
 use fetchpath_protocol::model::{
     Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
-    MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress, QueueStats, Segment,
-    SettingsView, Theme, WaitingReason,
+    LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress,
+    QueueStats, Segment, SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -253,6 +253,7 @@ fn every_command() -> Vec<Command> {
         Command::GetJob { job_id: job_id() },
         Command::JobDetails { job_id: job_id() },
         Command::InspectMedia { url: secret_url() },
+        Command::InspectLink { url: secret_url() },
         Command::QueueStats,
         Command::History {
             query: Some("archive".into()),
@@ -302,6 +303,7 @@ fn every_command() -> Vec<Command> {
             | Command::GetJob { .. }
             | Command::JobDetails { .. }
             | Command::InspectMedia { .. }
+            | Command::InspectLink { .. }
             | Command::QueueStats
             | Command::History { .. }
             | Command::GetSettings
@@ -343,6 +345,15 @@ fn every_result() -> Vec<CommandResult> {
         },
         CommandResult::MediaInspection {
             inspection: inspection(),
+        },
+        CommandResult::LinkInspection {
+            inspection: LinkInspection {
+                kind: LinkKind::File,
+                file_name: Some("ubuntu.iso".into()),
+                content_type: Some("application/octet-stream".into()),
+                size_bytes: Some(6_000_000_000),
+                resumable: true,
+            },
         },
         CommandResult::QueueStats {
             stats: QueueStats {
@@ -425,6 +436,7 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Jobs { .. }
             | CommandResult::Details { .. }
             | CommandResult::MediaInspection { .. }
+            | CommandResult::LinkInspection { .. }
             | CommandResult::QueueStats { .. }
             | CommandResult::Settings { .. }
             | CommandResult::Removed { .. }
@@ -930,6 +942,7 @@ fn only_queries_skip_the_command_ledger() {
         "GetJob",
         "JobDetails",
         "InspectMedia",
+        "InspectLink",
         "QueueStats",
         "History",
         "GetSettings",

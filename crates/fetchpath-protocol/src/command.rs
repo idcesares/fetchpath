@@ -128,6 +128,12 @@ pub enum Command {
     InspectMedia {
         url: SensitiveUrl,
     },
+    /// Looks at a link without downloading it: whether it is a file, a
+    /// video or audio page, or a web page, with the file's name and size
+    /// when the server states them.
+    InspectLink {
+        url: SensitiveUrl,
+    },
     QueueStats,
     History {
         /// Matched against display links and file names.
@@ -205,6 +211,7 @@ impl Command {
             Self::GetJob { .. } => "GetJob",
             Self::JobDetails { .. } => "JobDetails",
             Self::InspectMedia { .. } => "InspectMedia",
+            Self::InspectLink { .. } => "InspectLink",
             Self::QueueStats => "QueueStats",
             Self::History { .. } => "History",
             Self::GetSettings => "GetSettings",
@@ -236,6 +243,7 @@ impl Command {
                 | Self::GetJob { .. }
                 | Self::JobDetails { .. }
                 | Self::InspectMedia { .. }
+                | Self::InspectLink { .. }
                 | Self::QueueStats
                 | Self::History { .. }
                 | Self::GetSettings

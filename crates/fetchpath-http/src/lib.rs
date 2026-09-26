@@ -7,6 +7,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 mod compatibility;
+mod link;
+
+pub use link::{LinkFacts, disposition_file_name, inspect_link};
 
 pub use compatibility::{
     Authentication, CompatibilityCapabilities, CompatibilityContext, CompatibilityProtocol,

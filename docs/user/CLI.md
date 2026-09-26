@@ -168,8 +168,15 @@ Run `fetchpath` on its own in a terminal. Downloads in progress, paused,
 queued or scheduled appear in a panel above a prompt; finished ones print a
 line into the window's history saying where the file went or why it stopped.
 
-- Paste or type a link and press Enter to download it. Add `--to FOLDER`,
-  `--at TIME`, `--sha256 HEX` or `--quality Q` as with `fetchpath add`.
+- Paste or type a link and press Enter. Fetchpath looks at it first and
+  shows a card: for a video, its title and the available qualities (the best
+  up to 1080p is chosen; move with the arrow keys); for a file, its name,
+  type, size and whether it can resume; for a web page, a warning that it is
+  not a file. Each card shows where the file will be saved. Press Enter to
+  start or Esc to cancel. Add `--to FOLDER`, `--at TIME`, `--sha256 HEX` or
+  `--quality Q` after the link as with `fetchpath add`.
+- Videos need `yt-dlp` and `ffmpeg`, set up once in the desktop app under
+  **Settings → Video and audio**.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
   `/retry`, `/rm`, `/history`, `/settings`, `/engine`, `/help` and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.

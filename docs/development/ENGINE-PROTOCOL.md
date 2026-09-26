@@ -99,6 +99,18 @@ serde's fallback for unknown enum values rejected an unknown event kind that
 carried a payload. `JobEvent` now decodes the kind first and falls back to
 `Unknown` itself.
 
+### Additions within v1
+
+- `InspectLink { url }` → `LinkInspection` (26 September 2026, for the
+  terminal's confirmation cards, FP-059): whether a link is a `file`, a
+  `media_page` (a known video site, recognized without a request) or a
+  `web_page` (HTML), with the server's file name, media type, size and
+  whether it resumes, read from the headers of one ranged request whose body
+  is refused (`fetchpath_http::inspect_link`). A query, not a mutation; an
+  agent may use it, but never with a link carrying user info. An engine from
+  before it answers `contract.unknown_command`, which the terminal shows as
+  "could not look" and still lets the person download.
+
 ## FP-052: the authenticated per-user named pipe
 
 Recorded 24 September 2026 on Windows 11 Pro 26200 x64. Code:
