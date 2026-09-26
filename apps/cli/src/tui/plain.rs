@@ -130,9 +130,30 @@ fn run_setup() -> bool {
             return false;
         }
     };
+    // Ctrl+C cancels the helper being downloaded; the ending still arrives
+    // as the install's result.
+    let mut current: Option<fetchpath_core::CancellationToken> = None;
     loop {
-        match progress.recv() {
-            Ok(crate::tools::Progress::Step { label, .. }) => println!("Downloading {label}..."),
+        let message = match progress.recv_timeout(Duration::from_millis(100)) {
+            Ok(message) => Ok(message),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if client::interrupted()
+                    && let Some(token) = &current
+                {
+                    token.cancel();
+                }
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(()),
+        };
+        match message {
+            Ok(crate::tools::Progress::Step { label, token }) => {
+                if client::interrupted() {
+                    token.cancel();
+                }
+                current = Some(token);
+                println!("Downloading {label}... (Ctrl+C cancels)");
+            }
             Ok(crate::tools::Progress::Done(Ok(ready))) => {
                 for line in ready {
                     println!("{line}");

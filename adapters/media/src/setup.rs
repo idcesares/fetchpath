@@ -39,8 +39,9 @@ use std::path::{Path, PathBuf};
 /// cannot redirect an install.
 const MANIFEST: &str = include_str!("../media-tools.json");
 
-/// Upper bound on a helper download. Both helpers are far below this; the cap
-/// stops an unexpected redirect from filling the user's disk.
+/// Upper bound on a helper download. Both helpers are far below this; the
+/// download is cancelled as soon as it states or passes more, so an
+/// unexpected answer cannot fill the user's disk.
 const MAX_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -215,20 +216,22 @@ pub fn install_with(
 ) -> Result<InstallOutcome, String> {
     let manifest = manifest();
     let tools = pinned_tools();
+    // Every helper is checked before any is fetched, so a refusal leaves
+    // nothing half set up.
+    if let Some(entry) = manifest.tools.iter().find(|entry| entry.sha256.is_empty()) {
+        return Err(format!(
+            "This build has no recorded checksum for {} {}, so it will not download it. \
+             Install it yourself and point Fetchpath at the folder, or use a build where \
+             `node tools/media-tools/pin.mjs` has recorded the digest.",
+            entry.name, entry.version
+        ));
+    }
     fs::create_dir_all(install_dir)
         .map_err(|error| format!("Could not create {}: {error}", install_dir.display()))?;
 
     let mut installed = Vec::new();
     let count = manifest.tools.len();
     for (index, entry) in manifest.tools.iter().enumerate() {
-        if entry.sha256.is_empty() {
-            return Err(format!(
-                "This build has no recorded checksum for {} {}, so it will not download it. \
-                 Install it yourself and point Fetchpath at the folder, or use a build where \
-                 `node tools/media-tools/pin.mjs` has recorded the digest.",
-                entry.name, entry.version
-            ));
-        }
         if is_present(entry, install_dir) {
             continue;
         }
@@ -331,30 +334,61 @@ fn fetch(
 ) -> Result<PathBuf, String> {
     use fetchpath_core::{CancelCleanup, DownloadRequest, download};
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+
     let request = DownloadRequest {
         url: url.to_string(),
         destination: staging.to_path_buf(),
-        cancellation,
+        cancellation: cancellation.clone(),
         cancel_cleanup: CancelCleanup::RemoveStaging,
         context: fetchpath_core::RequestContext::default(),
         expected_sha256: fetchpath_core::normalize_sha256(sha256),
     };
-    let done = download(request).map_err(|error| format!("Could not download {url}: {error}"))?;
+    // Watches the transfer and stops it once it states or passes the cap.
+    let too_large = Arc::new(AtomicBool::new(false));
+    let (finished, wait) = mpsc::channel::<()>();
+    let watcher = {
+        let too_large = Arc::clone(&too_large);
+        std::thread::spawn(move || {
+            while let Err(mpsc::RecvTimeoutError::Timeout) =
+                wait.recv_timeout(std::time::Duration::from_millis(100))
+            {
+                if exceeds_cap(cancellation.received(), cancellation.total()) {
+                    too_large.store(true, Ordering::SeqCst);
+                    cancellation.cancel();
+                    return;
+                }
+            }
+        })
+    };
+    let result = download(request);
+    drop(finished);
+    let _ = watcher.join();
+    let limit = || format!("{url} is larger than the {MAX_ARTIFACT_BYTES} byte limit.");
+    let done = match result {
+        Err(_) if too_large.load(Ordering::SeqCst) => return Err(limit()),
+        Err(error) => return Err(format!("Could not download {url}: {error}")),
+        Ok(done) => done,
+    };
     let length = fs::metadata(&done.destination)
         .map(|meta| meta.len())
         .unwrap_or_default();
-    if length > MAX_ARTIFACT_BYTES {
+    if too_large.load(Ordering::SeqCst) || length > MAX_ARTIFACT_BYTES {
         let _ = fs::remove_file(&done.destination);
-        return Err(format!(
-            "{url} returned more than the {MAX_ARTIFACT_BYTES} byte limit."
-        ));
+        return Err(limit());
     }
     Ok(done.destination)
 }
 
+fn exceeds_cap(received: u64, stated: Option<u64>) -> bool {
+    received > MAX_ARTIFACT_BYTES || stated.is_some_and(|total| total > MAX_ARTIFACT_BYTES)
+}
+
 fn sha256_file(path: &Path) -> io::Result<String> {
-    let bytes = fs::read(path)?;
-    Ok(format!("{:x}", Sha256::digest(&bytes)))
+    let mut hasher = Sha256::new();
+    io::copy(&mut fs::File::open(path)?, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Extracts a zip using the `tar` that ships with Windows 10 1803 and later.
@@ -366,7 +400,13 @@ fn sha256_file(path: &Path) -> io::Result<String> {
 fn extract_zip(archive: &Path, into: &Path) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
-    let mut command = Command::new("tar");
+    // The system's own tar, by full path, rather than whatever a search
+    // finds first.
+    let tar = std::env::var_os("SystemRoot")
+        .map(|root| Path::new(&root).join("System32").join("tar.exe"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("tar"));
+    let mut command = Command::new(tar);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -506,6 +546,13 @@ mod tests {
         // Nothing may be left behind by a refused install.
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_download_stating_or_passing_the_cap_is_stopped() {
+        assert!(!exceeds_cap(MAX_ARTIFACT_BYTES, Some(MAX_ARTIFACT_BYTES)));
+        assert!(exceeds_cap(1, Some(MAX_ARTIFACT_BYTES + 1)));
+        assert!(exceeds_cap(MAX_ARTIFACT_BYTES + 1, None));
     }
 
     #[test]

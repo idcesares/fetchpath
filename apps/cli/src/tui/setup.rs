@@ -101,7 +101,7 @@ impl Setup {
                 }
                 Ok(Progress::Done(result)) => {
                     return Some(if *cancelled && result.is_err() {
-                        Err("Setup cancelled; nothing was installed.".to_owned())
+                        Err("Setup cancelled; nothing half downloaded was kept.".to_owned())
                     } else {
                         result
                     });
