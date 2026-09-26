@@ -1907,14 +1907,17 @@
         "FP-051",
         "FP-058"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
-        "crates/fetchpath-session/src/rules",
-        "apps/cli/src/rules"
+        "crates/fetchpath-session/src/rules.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-protocol/src/model.rs",
+        "apps/cli/src/rules.rs",
+        "apps/cli/src/tui/review.rs"
       ],
       "acceptanceIds": [
         "A01",
@@ -1922,7 +1925,11 @@
       ],
       "acceptance": "Rules by domain, file type or size choose destination, media quality, checksum requirement and concurrency for any principal; an agent rule-chosen folder must still be inside its grant; rules test LINK explains which rule matched and why; rules persist with the engine settings and are editable from the command line and terminal.",
       "verification": "Rule matching and precedence tests; explain output tests; an agent job whose rule points outside its grant goes to awaiting_approval.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/RULES.md",
+        "crates/fetchpath-session/tests/policy.rs",
+        "apps/cli/tests/queue.rs"
+      ],
       "blockedReason": null
     },
     {

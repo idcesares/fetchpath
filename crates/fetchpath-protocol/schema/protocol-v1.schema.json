@@ -203,7 +203,7 @@
       "type": "string"
     },
     "Command": {
-      "description": "The command set. Names are the contract's where it has one, plus the\nengine-level queries and controls from the platform design §4. Rules\narrive with FP-064; an engine that does not know a command answers\n`contract.unknown_command`. Which principal may send which command is the\nengine's decision (contract D1).",
+      "description": "The command set. Names are the contract's where it has one, plus the\nengine-level queries and controls from the platform design §4. An engine that does not know a command answers\n`contract.unknown_command`. Which principal may send which command is the\nengine's decision (contract D1).",
       "oneOf": [
         {
           "properties": {
@@ -709,6 +709,62 @@
           "type": "object"
         },
         {
+          "description": "Every rule, in the order they are tried.",
+          "properties": {
+            "type": {
+              "const": "ListRules",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Adds a rule: last, or at `position` counted from 1.",
+          "properties": {
+            "position": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "rule": {
+              "$ref": "#/$defs/RuleSpec"
+            },
+            "type": {
+              "const": "AddRule",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "rule"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "rule_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "RemoveRule",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "rule_id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
           "properties": {
             "after_seq": {
@@ -1070,6 +1126,26 @@
           "required": [
             "type",
             "policies"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every smart rule, in the order they are tried.",
+          "properties": {
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/Rule"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "Rules",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "rules"
           ],
           "type": "object"
         },
@@ -2218,6 +2294,17 @@
           "description": "The server accepts ranges, so an interrupted download can resume.",
           "type": "boolean"
         },
+        "rules": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RulesVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the person's smart rules decide for this link."
+        },
         "size_bytes": {
           "format": "uint64",
           "minimum": 0,
@@ -2687,6 +2774,174 @@
           "type": "object"
         }
       ]
+    },
+    "Rule": {
+      "description": "A smart rule (FP-064). A link matches when it meets every condition the\nrule sets; rules are tried in order and the first match decides.",
+      "properties": {
+        "id": {
+          "description": "Given by the engine; stable while the rule exists.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "then": {
+          "$ref": "#/$defs/RuleActions",
+          "default": {}
+        },
+        "when": {
+          "$ref": "#/$defs/RuleConditions",
+          "default": {}
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "RuleActions": {
+      "properties": {
+        "folder": {
+          "description": "The folder the download is saved in. For an agent it must still be\ninside the agent's grant, or the job waits for approval.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_connections": {
+          "description": "The most connections one download may open.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "media_quality": {
+          "description": "The quality to choose on a video or audio page: `best`, `audio`, or\nthe tallest height to accept, such as `720p`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "require_checksum": {
+          "description": "A file download must be given an expected SHA-256.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "RuleCheck": {
+      "properties": {
+        "matched": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "description": "One line per condition, for a person to read.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rule_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rule_id",
+        "matched",
+        "reasons"
+      ],
+      "type": "object"
+    },
+    "RuleConditions": {
+      "properties": {
+        "domains": {
+          "description": "Host names, lower case; `example.com` also matches its subdomains.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "file_types": {
+          "description": "File name extensions, lower case and without the dot.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_size_bytes": {
+          "description": "Inclusive bounds. A link whose size is not known does not match a\nrule with either.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RuleSpec": {
+      "description": "A rule as the person writes it: at least one condition and one action.",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "then": {
+          "$ref": "#/$defs/RuleActions",
+          "default": {}
+        },
+        "when": {
+          "$ref": "#/$defs/RuleConditions",
+          "default": {}
+        }
+      },
+      "type": "object"
+    },
+    "RulesVerdict": {
+      "description": "Which rule decides for a link, and why each rule did or did not match.",
+      "properties": {
+        "checks": {
+          "description": "Every rule tried, in order, up to and including the match.",
+          "items": {
+            "$ref": "#/$defs/RuleCheck"
+          },
+          "type": "array"
+        },
+        "matched": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Rule"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "checks"
+      ],
+      "type": "object"
     },
     "Schedule": {
       "oneOf": [

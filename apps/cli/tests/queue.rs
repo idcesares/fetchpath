@@ -24,6 +24,19 @@ impl Home {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("profile").join("Downloads")).unwrap();
         std::fs::create_dir_all(dir.path().join("out")).unwrap();
+        // The engine places a download sent without a folder; it must never
+        // reach the real Downloads folder.
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(
+            data.join("settings-v1.json"),
+            serde_json::json!({
+                "schemaVersion": 1,
+                "defaultDestinationDir": dir.path().join("profile").join("Downloads"),
+            })
+            .to_string(),
+        )
+        .unwrap();
         let engine = Command::new(EXE)
             .args(["engine", "--idle-grace-ms", "3000"])
             .env("FETCHPATH_APP_DATA_DIR", dir.path().join("data"))
@@ -542,4 +555,42 @@ fn tools_say_what_is_missing_and_never_install_from_a_script_without_yes() {
         "nothing was downloaded"
     );
     assert_eq!(code(&home.run(&["tools", "use", "nowhere-at-all"])), 2);
+}
+
+#[test]
+fn rules_place_downloads_explain_themselves_and_can_require_a_checksum() {
+    let home = Home::new();
+    let base = server(body(30_000), Duration::from_millis(1));
+    let sorted = home.out().join("sorted");
+    std::fs::create_dir_all(&sorted).unwrap();
+    let sorted_arg = sorted.display().to_string();
+
+    let added = home.run(&[
+        "rules", "add", "--name", "Archives", "--type", "zip", "--min-size", "20KB", "--folder",
+        &sorted_arg,
+    ]);
+    assert_eq!(added.status.code(), Some(0), "{}", text(&added.stderr));
+    assert!(text(&added.stdout).contains("Rule 1 (Archives): a .zip file, 20.0 KiB or more"));
+    let guarded = home.run(&["rules", "add", "--type", "iso", "--require-checksum"]);
+    assert_eq!(guarded.status.code(), Some(0), "{}", text(&guarded.stderr));
+    let refused = home.run(&["rules", "add", "--folder", &sorted_arg]);
+    assert_eq!(refused.status.code(), Some(2), "a rule needs a condition");
+
+    let tested = home.run(&["rules", "test", &format!("{base}/pack.zip")]);
+    let said = text(&tested.stdout);
+    assert!(said.contains("Rule 1 (Archives) decides: save in"), "{said}");
+    assert!(said.contains("the file is a .zip; 29.3 KiB is at least 20.0 KiB"), "{said}");
+
+    // Without --to, the engine puts it where the rule says.
+    let saved = home.run(&["add", &format!("{base}/pack.zip"), "--wait", "--quiet"]);
+    assert_eq!(saved.status.code(), Some(0), "{}", text(&saved.stderr));
+    assert_eq!(std::fs::read(sorted.join("pack.zip")).unwrap(), body(30_000));
+
+    // The second rule refuses an .iso without a checksum.
+    let unchecked = home.run(&["add", &format!("{base}/disc.iso")]);
+    assert_ne!(unchecked.status.code(), Some(0));
+    assert!(text(&unchecked.stderr).contains("requires a SHA-256"), "{}", text(&unchecked.stderr));
+
+    let removed = home.run(&["rules", "rm", "1"]);
+    assert!(!text(&removed.stdout).contains("Archives"));
 }

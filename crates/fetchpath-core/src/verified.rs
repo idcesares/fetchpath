@@ -1404,6 +1404,7 @@ fn as_download_request(request: &VerifiedDownloadRequest, url: &str) -> Download
         context: request.context.clone(),
         // This path verifies against its own trusted digests and piece hashes.
         expected_sha256: None,
+        max_connections: None,
     }
 }
 

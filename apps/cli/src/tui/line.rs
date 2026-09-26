@@ -168,6 +168,13 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Setting,
     },
     Spec {
+        name: "rules",
+        aliases: &[],
+        usage: "/rules [add ... | rm ID | test LINK]",
+        summary: "Where downloads go by site, type or size, and why",
+        takes: Takes::Text,
+    },
+    Spec {
         name: "tools",
         aliases: &[],
         usage: "/tools [install | use FOLDER]",
@@ -308,6 +315,50 @@ fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
     }
 }
 
+/// `/rules`: the same words as `fetchpath rules`.
+fn rules(
+    engine: &Engine,
+    spec: &Spec,
+    args: &[String],
+    reply: &mut Reply,
+) -> Result<(), ProtocolError> {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let lines = match words.as_slice() {
+        [] | ["list"] => {
+            crate::rules::list_lines(&crate::rules::fetch(engine, Command::ListRules)?)
+        }
+        ["add", rest @ ..] => {
+            let (rule, position) =
+                crate::rules::parse_add(rest).map_err(|message| usage_error(spec, &message))?;
+            crate::rules::list_lines(&crate::rules::fetch(
+                engine,
+                Command::AddRule {
+                    rule: Box::new(rule),
+                    position,
+                },
+            )?)
+        }
+        ["rm", id] => {
+            let rule_id = id
+                .trim_start_matches('#')
+                .parse()
+                .map_err(|_| usage_error(spec, "Give the rule's number"))?;
+            crate::rules::list_lines(&crate::rules::fetch(
+                engine,
+                Command::RemoveRule { rule_id },
+            )?)
+        }
+        ["test", link] => {
+            crate::rules::verdict_lines(crate::rules::inspect(engine, link)?.rules.as_ref())
+        }
+        _ => return Err(usage_error(spec, "Say add, rm or test")),
+    };
+    for line in lines {
+        reply.say(Tone::Normal, line);
+    }
+    Ok(())
+}
+
 fn usage_error(spec: &Spec, message: &str) -> ProtocolError {
     client::input_error(&format!("{message}. Usage: {}", spec.usage))
 }
@@ -319,6 +370,9 @@ fn execute(
     args: &[String],
     reply: &mut Reply,
 ) -> Result<(), ProtocolError> {
+    if spec.name == "rules" {
+        return rules(engine, spec, args, reply);
+    }
     let flags: &[&str] = match spec.name {
         "add" => &["--to", "--at", "--sha256", "--quality"],
         "queue" => &["--active", "--failed"],

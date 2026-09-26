@@ -72,6 +72,20 @@ fn input(message: String) -> ProtocolError {
     error("input.invalid_request", ErrorScope::Command, message).with_action(Action::CorrectInput)
 }
 
+/// A refusal from the rules, keeping its code (`integrity.checksum_required`).
+fn ruled(message: String) -> ProtocolError {
+    let code = crate::error_code(&message);
+    if code == "internal.unknown" {
+        return input(message);
+    }
+    ProtocolError::new(
+        ErrorCode::try_from(code).unwrap_or(ErrorCode::INTERNAL_UNKNOWN),
+        ErrorScope::Command,
+        message,
+    )
+    .with_action(Action::CorrectInput)
+}
+
 fn unsupported(what: &str) -> ProtocolError {
     error(
         "contract.unsupported",
@@ -156,6 +170,7 @@ enum Outcome {
     Removed(String),
     Settings,
     AgentPolicies,
+    Rules,
     ShuttingDown,
 }
 
@@ -164,7 +179,9 @@ impl Outcome {
         match self {
             Self::Job(id) | Self::Control(_, id) | Self::Removed(id) => HashSet::from([id.clone()]),
             Self::Jobs(ids) => ids.iter().cloned().collect(),
-            Self::Settings | Self::AgentPolicies | Self::ShuttingDown => HashSet::new(),
+            Self::Settings | Self::AgentPolicies | Self::Rules | Self::ShuttingDown => {
+                HashSet::new()
+            }
         }
     }
 }
@@ -362,6 +379,9 @@ impl Engine {
             Outcome::AgentPolicies => Ok(CommandResult::AgentPolicies {
                 policies: self.session.agent_policies(),
             }),
+            Outcome::Rules => Ok(CommandResult::Rules {
+                rules: self.session.rules(),
+            }),
             Outcome::ShuttingDown => Ok(CommandResult::ShuttingDown),
         };
         let result = match result {
@@ -402,6 +422,35 @@ impl Engine {
 
     /// Who a new job is for and whether it must wait for approval. Refuses
     /// what an agent may never ask for, even with approval.
+    /// The destination after the person's rules (FP-064), for every
+    /// principal and before an agent's grant is checked: a bare file name is
+    /// placed in the matching rule's folder or the default folder, and a
+    /// rule may require a checksum.
+    fn ruled_destination(
+        &self,
+        source: &JobInput,
+        destination: &DestinationIntent,
+        expected_sha256: &Option<String>,
+        media: bool,
+    ) -> Result<DestinationIntent, ProtocolError> {
+        let JobInput::Url { url } = source else {
+            return Ok(destination.clone());
+        };
+        let path = self
+            .session
+            .apply_rules(
+                url.expose(),
+                &destination.path,
+                expected_sha256.as_deref(),
+                media,
+            )
+            .map_err(ruled)?;
+        Ok(DestinationIntent {
+            path,
+            conflict: destination.conflict,
+        })
+    }
+
     fn origin(
         &self,
         principal: &Principal,
@@ -487,6 +536,8 @@ impl Engine {
                     not_before,
                     expected_sha256,
                 } => {
+                    let destination =
+                        &self.ruled_destination(source, destination, expected_sha256, false)?;
                     let origin = self.origin(principal, source, destination)?;
                     let JobInput::Url { url } = source else {
                         return Err(unsupported("Creating a job from a stored request"));
@@ -519,6 +570,7 @@ impl Engine {
                     variant_id,
                     quality_label,
                 } => {
+                    let destination = &self.ruled_destination(source, destination, &None, true)?;
                     let origin = self.origin(principal, source, destination)?;
                     let JobInput::Url { url } = source else {
                         return Err(unsupported("Creating a job from a stored request"));
@@ -557,6 +609,8 @@ impl Engine {
                     else {
                         return Err(unsupported("Adding video or audio in a batch"));
                     };
+                    let destination =
+                        &self.ruled_destination(source, destination, expected_sha256, false)?;
                     if origin.is_none() {
                         origin = Some(self.origin(principal, source, destination)?);
                     }
@@ -742,6 +796,16 @@ impl Engine {
                     .set_agent_policy(agent.clone(), policy.clone())
                     .map_err(input)?;
                 Ok(Outcome::AgentPolicies)
+            }
+            Command::AddRule { rule, position } => {
+                session
+                    .add_rule((**rule).clone(), *position)
+                    .map_err(input)?;
+                Ok(Outcome::Rules)
+            }
+            Command::RemoveRule { rule_id } => {
+                session.remove_rule(*rule_id).map_err(input)?;
+                Ok(Outcome::Rules)
             }
             Command::EngineShutdown => {
                 session.cancel_all_and_join();
@@ -956,6 +1020,9 @@ impl Engine {
                 self.session.list().map_err(persistence)?;
                 Ok(CommandResult::CapturesTaken)
             }
+            Command::ListRules => Ok(CommandResult::Rules {
+                rules: self.session.rules(),
+            }),
             Command::GetAgentPolicies => Ok(CommandResult::AgentPolicies {
                 policies: self.session.agent_policies(),
             }),

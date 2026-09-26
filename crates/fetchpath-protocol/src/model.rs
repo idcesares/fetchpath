@@ -363,6 +363,81 @@ pub struct LinkInspection {
     /// The server accepts ranges, so an interrupted download can resume.
     #[serde(default)]
     pub resumable: bool,
+    /// How the person's smart rules decide for this link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<RulesVerdict>,
+}
+
+/// A smart rule (FP-064). A link matches when it meets every condition the
+/// rule sets; rules are tried in order and the first match decides.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Rule {
+    /// Given by the engine; stable while the rule exists.
+    pub id: u32,
+    #[serde(flatten)]
+    pub spec: RuleSpec,
+}
+
+/// A rule as the person writes it: at least one condition and one action.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub when: RuleConditions,
+    #[serde(default)]
+    pub then: RuleActions,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleConditions {
+    /// Host names, lower case; `example.com` also matches its subdomains.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
+    /// File name extensions, lower case and without the dot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_types: Vec<String>,
+    /// Inclusive bounds. A link whose size is not known does not match a
+    /// rule with either.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size_bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleActions {
+    /// The folder the download is saved in. For an agent it must still be
+    /// inside the agent's grant, or the job waits for approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// The quality to choose on a video or audio page: `best`, `audio`, or
+    /// the tallest height to accept, such as `720p`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_quality: Option<String>,
+    /// A file download must be given an expected SHA-256.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_checksum: bool,
+    /// The most connections one download may open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<u32>,
+}
+
+/// Which rule decides for a link, and why each rule did or did not match.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RulesVerdict {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched: Option<Rule>,
+    /// Every rule tried, in order, up to and including the match.
+    pub checks: Vec<RuleCheck>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RuleCheck {
+    pub rule_id: u32,
+    pub matched: bool,
+    /// One line per condition, for a person to read.
+    pub reasons: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

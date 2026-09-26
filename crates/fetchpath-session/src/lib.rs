@@ -8,6 +8,7 @@ pub use fetchpath_browser_inbox as browser_inbox;
 mod durable;
 pub mod engine;
 pub mod policy;
+pub mod rules;
 pub mod settings;
 mod wire;
 
@@ -57,7 +58,13 @@ pub struct Session {
     /// What each configured agent may do without asking (contract D1).
     agents: Mutex<BTreeMap<AgentName, AgentPolicy>>,
     agents_path: Option<PathBuf>,
+    /// Sizes of links looked at lately, so a size rule decides the same way
+    /// when the job is created as it did on the card.
+    inspected_sizes: Mutex<std::collections::VecDeque<(String, u64)>>,
 }
+
+/// How many inspected sizes are remembered.
+const REMEMBERED_SIZES: usize = 64;
 
 #[derive(Default)]
 struct QueueState {
@@ -543,6 +550,7 @@ impl Session {
             read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
+            inspected_sizes: Mutex::default(),
         })
     }
 
@@ -567,6 +575,7 @@ impl Session {
             read_only: None,
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
+            inspected_sizes: Mutex::default(),
         }
     }
 
@@ -754,9 +763,19 @@ impl Session {
                 content_type: None,
                 size_bytes: None,
                 resumable: false,
+                rules: Some(self.decide_rules(&source, None, None)),
             });
         }
         let facts = fetchpath_core::inspect_link(&source)?;
+        if let Some(size) = facts.size {
+            let mut sizes = self.inspected_sizes.lock().expect("sizes poisoned");
+            sizes.retain(|(url, _)| *url != source);
+            if sizes.len() == REMEMBERED_SIZES {
+                sizes.pop_front();
+            }
+            sizes.push_back((source.clone(), size));
+        }
+        let rules = self.decide_rules(&source, facts.file_name.as_deref(), facts.size);
         Ok(LinkInspection {
             kind: if facts.is_web_page() {
                 LinkKind::WebPage
@@ -767,7 +786,123 @@ impl Session {
             content_type: facts.content_type,
             size_bytes: facts.size,
             resumable: facts.resumable,
+            rules: Some(rules),
         })
+    }
+
+    /// Which rule decides for a link, and why.
+    pub fn decide_rules(
+        &self,
+        url: &str,
+        file_name: Option<&str>,
+        size: Option<u64>,
+    ) -> fetchpath_protocol::model::RulesVerdict {
+        let rules = self
+            .settings
+            .lock()
+            .expect("settings poisoned")
+            .rules
+            .clone();
+        rules::decide(&rules, &rules::Facts::new(url, file_name, size))
+    }
+
+    /// The size an inspection found for this exact link, if one did lately.
+    fn inspected_size(&self, url: &str) -> Option<u64> {
+        self.inspected_sizes
+            .lock()
+            .expect("sizes poisoned")
+            .iter()
+            .find(|(seen, _)| seen == url)
+            .map(|(_, size)| *size)
+    }
+
+    /// Applies the rules to a new job before it is queued, for every
+    /// principal: a `destination` that is only a file name goes into the
+    /// matching rule's folder, or the default folder; a rule may require a
+    /// checksum of a file download. Returns the full destination.
+    pub fn apply_rules(
+        &self,
+        url: &str,
+        destination: &str,
+        checksum: Option<&str>,
+        media: bool,
+    ) -> Result<String, String> {
+        let path = Path::new(destination.trim());
+        let bare = path.components().count() == 1
+            && matches!(path.components().next(), Some(Component::Normal(_)));
+        let name = path.file_name().and_then(|name| name.to_str());
+        let verdict = self.decide_rules(url, name, self.inspected_size(url));
+        let matched = verdict.matched.as_ref();
+        if let Some(rule) = matched
+            && rule.spec.then.require_checksum
+            && !media
+            && !has_checksum(checksum)
+        {
+            return Err(format!(
+                "integrity.checksum_required: {} requires a SHA-256 for this download. \
+                 Add the checksum and try again.",
+                rules::label(rule)
+            ));
+        }
+        if !bare {
+            return Ok(destination.to_owned());
+        }
+        let folder = matched
+            .and_then(|rule| rule.spec.then.folder.clone())
+            .map(PathBuf::from)
+            .or_else(|| self.default_folder())
+            .ok_or_else(|| "Choose a full destination path, including its drive.".to_owned())?;
+        Ok(folder.join(path).display().to_string())
+    }
+
+    /// Where a download goes when nothing else says: the setting, or the
+    /// Downloads folder this engine was started with.
+    pub fn default_folder(&self) -> Option<PathBuf> {
+        self.settings
+            .lock()
+            .expect("settings poisoned")
+            .default_destination_dir
+            .clone()
+            .map(PathBuf::from)
+            .or_else(|| self.browser_download_dir.clone())
+    }
+
+    pub fn rules(&self) -> Vec<fetchpath_protocol::model::Rule> {
+        self.settings
+            .lock()
+            .expect("settings poisoned")
+            .rules
+            .clone()
+    }
+
+    /// Adds a rule last, or at `position` from 1, and saves it.
+    pub fn add_rule(
+        &self,
+        spec: fetchpath_protocol::model::RuleSpec,
+        position: Option<u32>,
+    ) -> Result<Vec<fetchpath_protocol::model::Rule>, String> {
+        let spec = rules::validate(spec)?;
+        let mut next = self.settings();
+        if next.rules.len() >= rules::MAX_RULES {
+            return Err(format!("There can be at most {} rules.", rules::MAX_RULES));
+        }
+        let id = next.rules.iter().map(|rule| rule.id).max().unwrap_or(0) + 1;
+        let at = position
+            .map(|position| (position.max(1) as usize - 1).min(next.rules.len()))
+            .unwrap_or(next.rules.len());
+        next.rules
+            .insert(at, fetchpath_protocol::model::Rule { id, spec });
+        Ok(self.update_settings(next)?.rules)
+    }
+
+    pub fn remove_rule(&self, id: u32) -> Result<Vec<fetchpath_protocol::model::Rule>, String> {
+        let mut next = self.settings();
+        let before = next.rules.len();
+        next.rules.retain(|rule| rule.id != id);
+        if next.rules.len() == before {
+            return Err(format!("There is no rule {id}."));
+        }
+        Ok(self.update_settings(next)?.rules)
     }
 
     pub fn enqueue_media(&self, draft: MediaDraft) -> Result<JobSnapshot, String> {
@@ -1587,6 +1722,22 @@ impl Session {
             let Some(job) = record.job.as_ref() else {
                 continue;
             };
+            if let JobHandle::File(file) = job {
+                // A rule may cap the connections, decided as the job starts.
+                let url = record.live_url.as_deref().unwrap_or(&record.display_url);
+                let name = record
+                    .destination
+                    .file_name()
+                    .and_then(|name| name.to_str());
+                let size = record.view.total_bytes.or_else(|| self.inspected_size(url));
+                let verdict = rules::decide(&settings.rules, &rules::Facts::new(url, name, size));
+                if let Some(connections) = verdict
+                    .matched
+                    .and_then(|rule| rule.spec.then.max_connections)
+                {
+                    let _ = file.limit_connections(connections as usize);
+                }
+            }
             if let Err(code) = job.start() {
                 record.view.state = "failed".into();
                 record.view.error = Some(format!("Could not start this download ({code})."));
@@ -2524,7 +2675,7 @@ fn action_for_code(code: &str, error: &str) -> &'static str {
 /// it has the shape of one, such as `input.invalid_url` from the core, or a
 /// bare name from the media adapter, read as `media.<name>`. A message with
 /// no code is `internal.unknown`.
-fn error_code(error: &str) -> String {
+pub(crate) fn error_code(error: &str) -> String {
     let token = error
         .trim_start()
         .split(|character: char| character == ':' || character.is_whitespace())

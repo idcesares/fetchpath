@@ -327,6 +327,7 @@ mod tests {
                 content_type: None,
                 size_bytes: None,
                 resumable: false,
+                rules: None,
             },
             media: Some(MediaInspection {
                 title: "T".into(),

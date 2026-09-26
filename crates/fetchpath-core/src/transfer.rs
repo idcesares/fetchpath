@@ -218,7 +218,10 @@ fn perform_adaptive_attempt(
     file: &mut File,
     faults: &dyn FaultInjector,
 ) -> Result<AttemptResult, CallbackFailure> {
-    let limits = TransferLimits::default();
+    let mut limits = TransferLimits::default();
+    if let Some(connections) = request.max_connections {
+        limits.max_concurrency = connections.clamp(1, limits.max_active_requests);
+    }
     let budget = http_budget();
     let context = HttpRequestContext {
         cookie_lines: request.context.cookie_lines.clone(),
@@ -717,6 +720,7 @@ mod tests {
             cancel_cleanup: CancelCleanup::RemoveStaging,
             context: crate::RequestContext::default(),
             expected_sha256: None,
+            max_connections: None,
         }
     }
 

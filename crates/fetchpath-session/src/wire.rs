@@ -233,6 +233,8 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
         start_engine_at_sign_in: wire
             .start_engine_at_sign_in
             .unwrap_or(current.start_engine_at_sign_in),
+        // Rules change only through their own commands.
+        rules: current.rules.clone(),
     }
 }
 

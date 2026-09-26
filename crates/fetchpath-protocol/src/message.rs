@@ -6,7 +6,7 @@ use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
     EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LinkInspection,
-    MediaInspection, Progress, QueueStats, SensitiveUrl, SettingsView, WaitingReason,
+    MediaInspection, Progress, QueueStats, Rule, SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -124,6 +124,10 @@ pub enum CommandResult {
     /// Every agent the person configured, sorted by name.
     AgentPolicies {
         policies: Vec<AgentAccess>,
+    },
+    /// Every smart rule, in the order they are tried.
+    Rules {
+        rules: Vec<Rule>,
     },
     /// The engine is stopping after finishing in-flight work safely.
     ShuttingDown,

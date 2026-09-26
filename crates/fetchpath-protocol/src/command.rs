@@ -2,7 +2,7 @@
 
 use crate::SCHEMA_VERSION;
 use crate::ids::{ClientId, CommandId, CredentialRef, JobId, Timestamp};
-use crate::model::{EngineSettings, SensitiveUrl};
+use crate::model::{EngineSettings, RuleSpec, SensitiveUrl};
 use crate::principal::{AgentName, AgentPolicy};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,8 +43,7 @@ impl CommandEnvelope {
 }
 
 /// The command set. Names are the contract's where it has one, plus the
-/// engine-level queries and controls from the platform design §4. Rules
-/// arrive with FP-064; an engine that does not know a command answers
+/// engine-level queries and controls from the platform design §4. An engine that does not know a command answers
 /// `contract.unknown_command`. Which principal may send which command is the
 /// engine's decision (contract D1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -173,6 +172,19 @@ pub enum Command {
         policy: Option<AgentPolicy>,
     },
 
+    // Smart rules (FP-064). The person only.
+    /// Every rule, in the order they are tried.
+    ListRules,
+    /// Adds a rule: last, or at `position` counted from 1.
+    AddRule {
+        rule: Box<RuleSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        position: Option<u32>,
+    },
+    RemoveRule {
+        rule_id: u32,
+    },
+
     // Event streams (contract §8).
     /// Replays durable events after `after_seq`, or answers with a snapshot
     /// boundary when they were compacted, then streams new ones.
@@ -222,6 +234,9 @@ impl Command {
             Self::DenyJob { .. } => "DenyJob",
             Self::GetAgentPolicies => "GetAgentPolicies",
             Self::SetAgentPolicy { .. } => "SetAgentPolicy",
+            Self::ListRules => "ListRules",
+            Self::AddRule { .. } => "AddRule",
+            Self::RemoveRule { .. } => "RemoveRule",
             Self::SubscribeJob { .. } => "SubscribeJob",
             Self::SubscribeQueue { .. } => "SubscribeQueue",
             Self::EngineStatus => "EngineStatus",
@@ -248,6 +263,7 @@ impl Command {
                 | Self::History { .. }
                 | Self::GetSettings
                 | Self::GetAgentPolicies
+                | Self::ListRules
                 | Self::SubscribeJob { .. }
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus

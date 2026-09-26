@@ -12,7 +12,7 @@ use fetchpath_protocol::command::{
     Command, ConflictPolicy, DestinationIntent, JobFilter, JobInput, JobRequest,
 };
 use fetchpath_protocol::message::{CommandResult, ControlOutcome, EventPayload, ServerMessage};
-use fetchpath_protocol::model::{EngineSettings, MediaInspection, MediaVariantKind};
+use fetchpath_protocol::model::{EngineSettings, LinkKind, MediaInspection, MediaVariantKind};
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, StreamItem, Timestamp};
 use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal};
@@ -148,7 +148,7 @@ pub fn add(args: &[String]) -> i32 {
         .iter()
         .map(|link| (link.clone(), None))
         .collect();
-    add_links(&parsed, &links)
+    add_links(&parsed, &links, true)
 }
 
 /// `fetchpath batch FILE|-`: one link per line, optionally followed by a
@@ -189,10 +189,14 @@ pub fn batch(args: &[String]) -> i32 {
     if links.is_empty() {
         return usage("the batch has no links");
     }
-    add_links(&parsed, &links)
+    // A batch does not look at each link first: rules by site and type
+    // still apply, a rule by size cannot.
+    add_links(&parsed, &links, false)
 }
 
-fn add_links(parsed: &Args, links: &[(String, Option<String>)]) -> i32 {
+/// `look`: ask the engine what each link is first, so a video page is saved
+/// as video and a rule by size can decide.
+fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i32 {
     if parsed.sha256.is_some() && links.len() > 1 {
         return usage("a checksum describes one file; add links with --sha256 one at a time");
     }
@@ -212,22 +216,11 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)]) -> i32 {
         Ok(engine) => engine,
         Err(error) => return client::fail(&error, parsed.json),
     };
-    let default_folder = match default_folder(&engine) {
-        Ok(folder) => folder,
-        Err(error) => return client::fail(&error, parsed.json),
-    };
     let mut worst = 0;
     let mut created = Vec::new();
     for (link, own_destination) in links {
         let target = own_destination.as_deref().or(parsed.to.as_deref());
-        match add_one(
-            &engine,
-            parsed,
-            link,
-            target,
-            default_folder.as_deref(),
-            not_before,
-        ) {
+        match add_one(&engine, parsed, link, target, look, not_before) {
             Ok(job) => {
                 if parsed.json {
                     client::print_json(&CommandResult::Job { job: job.clone() });
@@ -313,12 +306,29 @@ pub(crate) fn add_one(
     parsed: &Args,
     link: &str,
     target: Option<&str>,
-    default_folder: Option<&Path>,
+    look: bool,
     not_before: Option<Timestamp>,
 ) -> Result<JobSnapshot, ProtocolError> {
     let url = SensitiveUrl::try_from(link.to_owned())
         .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
-    let (request, suggested) = match &parsed.quality {
+    // A link that cannot be looked at is still added, as a file.
+    let seen = if look {
+        crate::rules::inspect(engine, link).ok()
+    } else {
+        None
+    };
+    // A video page is never saved as the page: the quality is the one asked
+    // for, else a matching rule's, else the best up to 1080p.
+    let quality = parsed.quality.clone().or_else(|| {
+        let seen = seen.as_ref()?;
+        (seen.kind == LinkKind::MediaPage).then(|| {
+            seen.rules
+                .as_ref()
+                .and_then(|verdict| verdict.matched.as_ref()?.spec.then.media_quality.clone())
+                .unwrap_or_else(|| "1080p".to_owned())
+        })
+    });
+    let (request, suggested) = match &quality {
         None => (None, download::file_name_from_url(link)),
         Some(quality) => {
             let inspection = match engine.send(Command::InspectMedia { url: url.clone() })? {
@@ -335,8 +345,13 @@ pub(crate) fn add_one(
             (Some((variant.id.clone(), variant.label.clone())), name)
         }
     };
-    let destination = destination_path(target, default_folder, &suggested)
-        .map_err(|message| client::input_error(&message))?;
+    // Without --to only the name is sent, and the engine places it by rule
+    // or in its default folder.
+    let destination = match target {
+        None => PathBuf::from(suggested),
+        Some(_) => destination_path(target, None, &suggested)
+            .map_err(|message| client::input_error(&message))?,
+    };
     create_job(
         engine,
         url,
@@ -424,10 +439,24 @@ pub(crate) fn pick_variant<'a>(
         "audio" => variants
             .iter()
             .find(|variant| variant.kind == MediaVariantKind::Audio),
-        wanted => variants.iter().find(|variant| {
-            variant.label.to_ascii_lowercase() == wanted
-                || variant.id.to_ascii_lowercase() == wanted
-        }),
+        wanted => variants
+            .iter()
+            .find(|variant| {
+                variant.label.to_ascii_lowercase() == wanted
+                    || variant.id.to_ascii_lowercase() == wanted
+            })
+            .or_else(|| {
+                // A height such as 720p also accepts the tallest video
+                // below it.
+                let limit: u32 = wanted.strip_suffix('p')?.parse().ok()?;
+                variants
+                    .iter()
+                    .filter(|variant| {
+                        variant.kind == MediaVariantKind::Video
+                            && variant.height.is_some_and(|height| height <= limit)
+                    })
+                    .max_by_key(|variant| (variant.height, variant.fps.unwrap_or(0)))
+            }),
     };
     found.ok_or_else(|| {
         let labels: Vec<&str> = variants

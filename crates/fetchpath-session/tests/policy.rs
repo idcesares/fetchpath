@@ -1055,3 +1055,168 @@ fn a_link_is_looked_at_without_downloading_it_and_never_with_credentials_for_an_
         "looking queued nothing"
     );
 }
+
+fn rules(result: CommandResult) -> Vec<fetchpath_protocol::model::Rule> {
+    match result {
+        CommandResult::Rules { rules } => rules,
+        other => panic!("not rules: {other:?}"),
+    }
+}
+
+fn add_rule(
+    client: &InProcessClient,
+    when: fetchpath_protocol::model::RuleConditions,
+    then: fetchpath_protocol::model::RuleActions,
+) -> Result<CommandResult, ProtocolError> {
+    send(
+        client,
+        Command::AddRule {
+            rule: Box::new(fetchpath_protocol::model::RuleSpec {
+                name: None,
+                when,
+                then,
+            }),
+            position: None,
+        },
+    )
+}
+
+/// `later`, from `link`, with an optional checksum.
+fn later_from(link: &str, destination: &str, checksum: Option<&str>) -> Command {
+    let mut command = later(Path::new(destination));
+    if let Command::CreateJob {
+        request:
+            JobRequest::File {
+                input,
+                expected_sha256,
+                ..
+            },
+    } = &mut command
+    {
+        *input = JobInput::Url { url: url(link) };
+        *expected_sha256 = checksum.map(str::to_owned);
+    }
+    command
+}
+
+#[test]
+fn smart_rules_place_and_check_new_jobs_for_every_principal_and_an_agent_stays_in_its_grant() {
+    use fetchpath_protocol::model::{RuleActions, RuleConditions};
+    let s = setup(granting);
+    let isos = add_rule(
+        &s.user,
+        RuleConditions {
+            file_types: vec!["iso".into()],
+            ..RuleConditions::default()
+        },
+        RuleActions {
+            folder: Some(s.outside.display().to_string()),
+            ..RuleActions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(rules(isos)[0].id, 1);
+    add_rule(
+        &s.user,
+        RuleConditions {
+            domains: vec!["checked.test".into()],
+            ..RuleConditions::default()
+        },
+        RuleActions {
+            require_checksum: true,
+            ..RuleActions::default()
+        },
+    )
+    .unwrap();
+
+    // Only the person changes rules.
+    assert_eq!(
+        code(add_rule(
+            &s.agent,
+            RuleConditions {
+                file_types: vec!["exe".into()],
+                ..RuleConditions::default()
+            },
+            RuleActions {
+                folder: Some(s.granted.display().to_string()),
+                ..RuleActions::default()
+            },
+        )),
+        "policy.not_permitted"
+    );
+    assert_eq!(
+        code(send(&s.agent, Command::RemoveRule { rule_id: 1 })),
+        "policy.not_permitted"
+    );
+
+    // A bare file name goes where the matching rule says.
+    let placed = job(send(
+        &s.user,
+        later_from("http://127.0.0.1:9/os.iso", "os.iso", None),
+    )
+    .unwrap());
+    assert_eq!(
+        placed.destination.as_deref().map(PathBuf::from),
+        Some(s.outside.join("os.iso"))
+    );
+    // For an agent the rule's folder is outside its grant, so it waits.
+    let held = job(send(
+        &s.agent,
+        later_from("http://127.0.0.1:9/os.iso", "os.iso", None),
+    )
+    .unwrap());
+    assert_eq!(held.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&held), [ApprovalReason::OutsideGrantedFolders]);
+
+    // A rule that requires a checksum refuses a file without one, for anyone.
+    let target = s.granted.join("a.bin");
+    let target = target.display().to_string();
+    for client in [&s.user, &s.agent] {
+        assert_eq!(
+            code(send(
+                client,
+                later_from("http://checked.test/a.bin", &target, None)
+            )),
+            "integrity.checksum_required"
+        );
+    }
+    let checksum = "a".repeat(64);
+    job(send(
+        &s.user,
+        later_from("http://checked.test/a.bin", &target, Some(&checksum)),
+    )
+    .unwrap());
+
+    // Looking at a link says which rule decides and why.
+    let look = inspect(
+        &s.user,
+        &answer_with(
+            "HTTP/1.1 206 Partial Content\r\nContent-Type: application/octet-stream\r\n\
+             Content-Range: bytes 0-0/9000\r\nContent-Length: 1\r\n\
+             Content-Disposition: attachment; filename=\"disc.ISO\"\r\n\r\nx",
+        ),
+    );
+    let verdict = look.rules.expect("a verdict");
+    assert_eq!(verdict.matched.map(|rule| rule.id), Some(1));
+    assert_eq!(verdict.checks[0].reasons, ["the file is a .iso"]);
+
+    // Rules are kept with the settings and survive a restart; removing one
+    // that does not exist is refused.
+    drop(s.user);
+    drop(s.agent);
+    drop(s.engine);
+    let engine = open(&s.queue);
+    let (user, _) = clients(&engine);
+    assert_eq!(rules(send(&user, Command::ListRules).unwrap()).len(), 2);
+    assert_eq!(
+        rules(send(&user, Command::RemoveRule { rule_id: 1 }).unwrap())
+            .iter()
+            .map(|rule| rule.id)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    assert_eq!(
+        code(send(&user, Command::RemoveRule { rule_id: 1 })),
+        "input.invalid_request"
+    );
+}

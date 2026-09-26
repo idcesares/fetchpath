@@ -174,10 +174,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
 /// A missing destination means the Downloads folder; a folder means "put it
 /// in there under the name the link suggests". Anything else is a file path,
 /// passed through unchanged so the engine's own checks apply to it.
+/// Without a destination only the file name is sent: the engine puts it
+/// where a matching rule says, or in its default folder.
 fn resolve_destination(url: &str, destination: Option<&str>) -> Result<PathBuf, String> {
     let folder = match destination {
-        None => downloads_dir()
-            .ok_or("could not find your Downloads folder; give a destination explicitly")?,
+        None => return Ok(PathBuf::from(file_name_from_url(url))),
         Some(value) if value.ends_with(['/', '\\']) || Path::new(value).is_dir() => {
             PathBuf::from(value)
         }
@@ -191,12 +192,6 @@ fn resolve_destination(url: &str, destination: Option<&str>) -> Result<PathBuf, 
 pub fn absolute(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path)
         .map_err(|error| format!("{} is not a usable path: {error}", path.display()))
-}
-
-fn downloads_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .map(|home| PathBuf::from(home).join("Downloads"))
-        .filter(|path| path.is_dir())
 }
 
 /// The last path segment of the link, decoded and made safe for Windows.

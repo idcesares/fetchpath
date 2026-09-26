@@ -14,7 +14,8 @@ use fetchpath_protocol::message::{
 use fetchpath_protocol::model::{
     Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
     LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress,
-    QueueStats, Segment, SettingsView, Theme, WaitingReason,
+    QueueStats, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment,
+    SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -276,6 +277,12 @@ fn every_command() -> Vec<Command> {
             agent: AgentName::try_from("claude-code").unwrap(),
             policy: None,
         },
+        Command::ListRules,
+        Command::AddRule {
+            rule: Box::new(rule().spec),
+            position: Some(1),
+        },
+        Command::RemoveRule { rule_id: 3 },
         Command::SubscribeJob {
             job_id: job_id(),
             after_seq: 7,
@@ -314,6 +321,9 @@ fn every_command() -> Vec<Command> {
             | Command::DenyJob { .. }
             | Command::GetAgentPolicies
             | Command::SetAgentPolicy { .. }
+            | Command::ListRules
+            | Command::AddRule { .. }
+            | Command::RemoveRule { .. }
             | Command::SubscribeJob { .. }
             | Command::SubscribeQueue { .. }
             | Command::EngineStatus
@@ -321,6 +331,27 @@ fn every_command() -> Vec<Command> {
         }
     }
     commands
+}
+
+fn rule() -> Rule {
+    Rule {
+        id: 3,
+        spec: RuleSpec {
+            name: Some("Disc images".into()),
+            when: RuleConditions {
+                domains: vec!["example.com".into()],
+                file_types: vec!["iso".into()],
+                min_size_bytes: Some(1 << 30),
+                max_size_bytes: None,
+            },
+            then: RuleActions {
+                folder: Some(r"D:\ISOs".into()),
+                media_quality: None,
+                require_checksum: true,
+                max_connections: Some(2),
+            },
+        },
+    }
 }
 
 fn every_result() -> Vec<CommandResult> {
@@ -353,7 +384,18 @@ fn every_result() -> Vec<CommandResult> {
                 content_type: Some("application/octet-stream".into()),
                 size_bytes: Some(6_000_000_000),
                 resumable: true,
+                rules: Some(RulesVerdict {
+                    matched: Some(rule()),
+                    checks: vec![RuleCheck {
+                        rule_id: 3,
+                        matched: true,
+                        reasons: vec!["the file is a .iso".into()],
+                    }],
+                }),
             },
+        },
+        CommandResult::Rules {
+            rules: vec![rule()],
         },
         CommandResult::QueueStats {
             stats: QueueStats {
@@ -431,7 +473,8 @@ fn every_result() -> Vec<CommandResult> {
     ];
     for result in &results {
         match result {
-            CommandResult::Job { .. }
+            CommandResult::Rules { .. }
+            | CommandResult::Job { .. }
             | CommandResult::Control { .. }
             | CommandResult::Jobs { .. }
             | CommandResult::Details { .. }
@@ -949,6 +992,7 @@ fn only_queries_skip_the_command_ledger() {
         "TakeLinkReviews",
         "TakeBrowserCaptures",
         "GetAgentPolicies",
+        "ListRules",
         "SubscribeJob",
         "SubscribeQueue",
         "EngineStatus",

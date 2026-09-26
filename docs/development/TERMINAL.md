@@ -182,9 +182,7 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   waits on a site.
 - The media card lists formats without sizes: the helper's inspection does
   not report them.
-- `fetchpath add LINK` from scripts still queues a video page as a file
-  unless `--quality` is given; only the interactive terminal looks first.
 - Prompt history is kept for the session only; saving it (with query strings
-  and user info stripped) is FP-063. Rules preview on paste is FP-064; batch,
+  and user info stripped) is FP-063. Batch,
   conflict, checksum and approval prompts are FP-061; themes and keys
   are FP-062; the dashboard is FP-060.

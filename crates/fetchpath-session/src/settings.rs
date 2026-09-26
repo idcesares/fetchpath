@@ -14,6 +14,7 @@
 //! retry counts and delays all clamp to ranges the engine can actually honour,
 //! so no other module has to re-check them.
 
+use fetchpath_protocol::model::Rule;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -81,6 +82,23 @@ pub struct Settings {
     /// writes back unchanged.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub start_engine_at_sign_in: bool,
+    /// Smart rules, in the order they are tried (FP-064). Written only when
+    /// there are some; an unreadable rule is dropped alone, never the file.
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "readable_rules"
+    )]
+    pub rules: Vec<Rule>,
+}
+
+fn readable_rules<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Rule>, D::Error> {
+    let values = Vec::<serde_json::Value>::deserialize(deserializer).unwrap_or_default();
+    Ok(values
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect())
 }
 
 impl Default for Settings {
@@ -98,6 +116,7 @@ impl Default for Settings {
             theme: Theme::System,
             onboarding_completed: false,
             start_engine_at_sign_in: false,
+            rules: Vec::new(),
         }
     }
 }
@@ -118,6 +137,7 @@ impl Settings {
             .clamp(MIN_RETRY_DELAY_SECONDS, MAX_RETRY_DELAY_SECONDS);
         self.default_destination_dir = clamp_directory(self.default_destination_dir.take());
         self.media_tools_dir = clamp_directory(self.media_tools_dir.take());
+        self.rules = crate::rules::sanitized(std::mem::take(&mut self.rules));
     }
 
     /// The delay before attempt number `attempt` (1-based), doubling each time
@@ -175,8 +195,14 @@ pub fn load(path: &Path) -> Loaded {
             let mut settings = file.settings;
             let before = settings.clone();
             settings.clamp();
+            let stored_rules = serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|value| value.get("rules")?.as_array().map(Vec::len))
+                .unwrap_or_default();
             Loaded {
-                repaired: file.schema_version != SCHEMA_VERSION || settings != before,
+                repaired: file.schema_version != SCHEMA_VERSION
+                    || settings != before
+                    || stored_rules != settings.rules.len(),
                 settings,
             }
         }
@@ -290,6 +316,31 @@ mod tests {
         // launched from, which is never a folder the user picked.
         assert_eq!(settings.default_destination_dir, None);
         assert_eq!(settings.media_tools_dir, None);
+    }
+
+    #[test]
+    fn rules_round_trip_and_an_unreadable_one_is_dropped_alone() {
+        let path = temp_path("rules");
+        fs::write(
+            &path,
+            br#"{"schemaVersion":1,"maxActiveDownloads":5,"rules":[
+                {"id":1,"when":{"file_types":["iso"]},"then":{"folder":"D:\\ISOs"}},
+                {"id":2,"when":"not a rule"}]}"#,
+        )
+        .unwrap();
+        let loaded = load(&path);
+        assert_eq!(loaded.settings.max_active_downloads, 5);
+        assert_eq!(loaded.settings.rules.len(), 1);
+        assert_eq!(
+            loaded.settings.rules[0].spec.then.folder.as_deref(),
+            Some(r"D:\ISOs")
+        );
+        assert!(loaded.repaired);
+
+        save(&path, &loaded.settings).unwrap();
+        let again = load(&path);
+        assert_eq!(again.settings, loaded.settings);
+        assert!(!again.repaired);
     }
 
     #[test]

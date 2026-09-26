@@ -194,6 +194,9 @@ pub struct DownloadRequest {
     /// publication path including recovery. A match shows the bytes are the
     /// ones that checksum describes; it is not publisher authenticity.
     pub expected_sha256: Option<String>,
+    /// The most connections this download may open, below the engine-wide
+    /// limit. `None` leaves it to the adaptive transfer.
+    pub max_connections: Option<usize>,
 }
 
 /// Normalizes a SHA-256 as people paste it: surrounding whitespace, an
@@ -465,6 +468,7 @@ impl FileJob {
                     cancel_cleanup,
                     context,
                     expected_sha256: None,
+                    max_connections: None,
                 }),
                 worker: None,
             })),
@@ -485,6 +489,17 @@ impl FileJob {
             request.expected_sha256 = Some(normalized);
         }
         Ok(self)
+    }
+
+    /// Caps the connections this download opens. Only before it starts.
+    pub fn limit_connections(&self, connections: usize) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap();
+        let request = inner
+            .request
+            .as_mut()
+            .ok_or("contract.invalid_transition")?;
+        request.max_connections = Some(connections.max(1));
+        Ok(())
     }
 
     pub fn start(&self) -> Result<(), &'static str> {
@@ -793,6 +808,7 @@ Connection: close
             cancel_cleanup: cleanup,
             context: RequestContext::default(),
             expected_sha256: None,
+            max_connections: None,
         }
     }
 

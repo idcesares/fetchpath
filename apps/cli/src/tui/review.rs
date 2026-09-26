@@ -37,8 +37,16 @@ pub struct Look {
     /// The video tools are not set up (`media.helper_unavailable`), so the
     /// card offers to set them up.
     pub tools_missing: bool,
-    /// Where a download goes without `--to`.
+    /// Where a download goes without `--to`: the matching rule's folder,
+    /// else the default one.
     pub folder: Option<PathBuf>,
+}
+
+impl Look {
+    /// The rule that decides for this link, if one matches.
+    pub fn rule(&self) -> Option<&fetchpath_protocol::model::Rule> {
+        self.link.rules.as_ref()?.matched.as_ref()
+    }
 }
 
 /// Asks the engine about a link: its kind, then for a media page (or a web
@@ -69,12 +77,20 @@ pub fn look(engine: &Engine, draft: &Draft) -> Result<Look, ProtocolError> {
         },
         _ => (None, None),
     };
+    let ruled = link
+        .rules
+        .as_ref()
+        .and_then(|verdict| verdict.matched.as_ref()?.spec.then.folder.clone());
+    let folder = match ruled {
+        Some(folder) => Some(PathBuf::from(folder)),
+        None => queue::default_folder(engine)?,
+    };
     Ok(Look {
         link,
         media,
         media_error,
         tools_missing,
-        folder: queue::default_folder(engine)?,
+        folder,
     })
 }
 
@@ -121,10 +137,15 @@ impl Card {
             Ok(look) => {
                 if let Some(media) = &look.media {
                     self.order = variant_order(&media.variants);
+                    // The quality typed, else the matching rule's.
+                    let ruled = look
+                        .rule()
+                        .and_then(|rule| rule.spec.then.media_quality.as_deref());
                     self.choice = self
                         .draft
                         .quality
                         .as_deref()
+                        .or(ruled)
                         .and_then(|quality| queue::pick_variant(media, quality).ok())
                         .and_then(|picked| {
                             self.order
@@ -177,13 +198,26 @@ impl Card {
     }
 
     /// Whether Enter would start something: a media page must have formats
-    /// to choose from; a file or a page can always be saved as it is.
+    /// to choose from; a file or a page can be saved as it is unless a rule
+    /// requires a checksum that was not given.
     pub fn can_confirm(&self) -> bool {
         match &self.stage {
             Stage::Looking => false,
             Stage::Failed(_) => true,
-            Stage::Ready(look) => look.link.kind != LinkKind::MediaPage || self.is_media(),
+            Stage::Ready(look) => {
+                (look.link.kind != LinkKind::MediaPage || self.is_media()) && !self.needs_checksum()
+            }
         }
+    }
+
+    /// A matching rule requires a checksum for this file and none was given.
+    pub fn needs_checksum(&self) -> bool {
+        !self.is_media()
+            && self.draft.sha256.is_none()
+            && self
+                .look()
+                .and_then(Look::rule)
+                .is_some_and(|rule| rule.spec.then.require_checksum)
     }
 
     pub fn choose(&mut self, row: usize) {
@@ -419,6 +453,7 @@ mod tests {
                 content_type: None,
                 size_bytes: None,
                 resumable: false,
+                rules: None,
             },
             media: Some(MediaInspection {
                 title: "Big Buck: Bunny?".into(),
@@ -514,6 +549,7 @@ mod tests {
                 content_type: Some("application/octet-stream".into()),
                 size_bytes: Some(6_000_000_000),
                 resumable: true,
+                rules: None,
             },
             media: None,
             media_error: None,

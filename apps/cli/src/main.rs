@@ -4,6 +4,7 @@ mod engine;
 mod lan;
 mod queue;
 mod reveal;
+mod rules;
 mod tools;
 mod tui;
 mod wait;
@@ -28,6 +29,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
+  fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
 
 Video and audio need two free programs, yt-dlp and ffmpeg, that are not
 part of Fetchpath:
@@ -47,8 +49,9 @@ Paired devices (advanced; off until you run `fetchpath lan enable`):
   fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION
   fetchpath cache status
 
-DESTINATION may be a file name or a folder. Without one, the file goes to
-your Downloads folder under the name the link suggests. Fetchpath never
+DESTINATION may be a file name or a folder. Without one, the file goes where
+a matching rule says, or to your Downloads folder, under the name the link
+suggests. Fetchpath never
 overwrites an existing file.
 
 Options:
@@ -93,6 +96,7 @@ fn main() {
         Some("engine") => engine::run(&args[1..]),
         Some("tools") => tools::run(&args[1..]),
         Some("folder") => reveal::run(&args[1..]),
+        Some("rules") => rules::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

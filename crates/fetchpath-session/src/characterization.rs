@@ -100,6 +100,8 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             onboarding_completed: true,
             // Added after 0.1.0 (FP-053); a 0.1.0 file leaves it off.
             start_engine_at_sign_in: false,
+            // Added after 0.1.0 (FP-064); a 0.1.0 file has none.
+            rules: Vec::new(),
         }
     );
 

@@ -110,6 +110,15 @@ carried a payload. `JobEvent` now decodes the kind first and falls back to
   agent may use it, but never with a link carrying user info. An engine from
   before it answers `contract.unknown_command`, which the terminal shows as
   "could not look" and still lets the person download.
+- Smart rules (26 September 2026, FP-064): `ListRules` (a query),
+  `AddRule { rule, position }` and `RemoveRule { rule_id }` (ledgered),
+  each answering `Rules { rules }`; the person only. `LinkInspection` gains
+  an optional `rules` verdict: the matching rule and, for each rule tried,
+  whether it matched and why. `CreateJob` and `CreateJobs` now accept a
+  destination that is only a file name, placed by the matching rule's folder
+  or the default folder before an agent's grant is checked, and refuse a
+  file job a matching rule requires a checksum for with
+  `integrity.checksum_required`. See [smart rules](RULES.md).
 
 ## FP-052: the authenticated per-user named pipe
 

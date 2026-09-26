@@ -403,143 +403,171 @@ pub fn card_text(card: &Card, glyphs: &Glyphs, tick: u64, width: usize) -> CardT
             keys: format!("Enter download anyway{starting} · Esc cancel"),
         },
         Stage::Ready(look) => {
-            if let Some(media) = &look.media {
-                let variants = card.variants();
-                let length = media
-                    .duration_seconds
-                    .map(|seconds| format!("  ·  {}", client::duration(seconds as u64)))
-                    .unwrap_or_default();
-                let title: String = media.title.chars().filter(|c| !c.is_control()).collect();
-                let title = fit(&title, width.saturating_sub(length.width()), glyphs.more);
-                let mut body = vec![Line::from(vec![
-                    Span::styled(title, Style::new().add_modifier(Modifier::BOLD)),
-                    Span::styled(length, DIM),
-                ])];
-                let first = card
-                    .choice
-                    .saturating_sub(CARD_ROWS - 1)
-                    .min(variants.len().saturating_sub(CARD_ROWS));
-                for (row, variant) in variants.iter().enumerate().skip(first).take(CARD_ROWS) {
-                    let chosen = row == card.choice;
-                    let mark = if chosen {
-                        glyphs.chosen
-                    } else {
-                        glyphs.unchosen
-                    };
-                    let style = if chosen {
-                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::new()
-                    };
-                    let best = if row == card.recommended() {
-                        "  recommended"
-                    } else {
-                        ""
-                    };
-                    body.push(Line::from(vec![
-                        Span::styled(format!("  {mark} "), style),
-                        Span::styled(format!("{:>2}  ", row + 1), DIM),
-                        Span::styled(review::variant_text(variant), style),
-                        Span::styled(best, DIM),
-                    ]));
-                }
-                if variants.len() > CARD_ROWS {
-                    body.push(Line::styled(
-                        format!("       {} of {} formats", card.choice + 1, variants.len()),
-                        DIM,
-                    ));
-                }
-                body.push(save(card));
-                let kind = if look.link.kind == LinkKind::MediaPage {
-                    "Video"
-                } else {
-                    "Video on a page"
-                };
-                CardText {
-                    title: format!("{kind} · {site}"),
-                    body,
-                    keys: format!("↑↓ choose · Enter download{starting} · Esc cancel")
-                        .replace("↑↓", if glyphs.unicode { "↑↓" } else { "Up/Down" }),
-                }
-            } else if look.link.kind == LinkKind::MediaPage && look.tools_missing {
-                let mut body = note(
-                    "Saving video needs two free programs that are not part of Fetchpath:",
+            let mut text = ready_text(card, look, glyphs, width, &site, &starting, warn, &save);
+            // Which rule decides, and why (FP-064).
+            if let Some(line) = crate::rules::card_line(look.link.rules.as_ref()) {
+                text.body.extend(note(&line, DIM, width));
+            }
+            if card.needs_checksum() {
+                text.body.extend(note(
+                    "That rule needs a checksum for this file: add the link again with --sha256 and its SHA-256.",
                     warn,
                     width,
-                );
-                body.extend(tool_notes(width));
-                body.extend(note(
+                ));
+                text.keys = "Esc cancel".into();
+            }
+            text
+        }
+    }
+}
+
+/// The card for a link the engine has looked at.
+#[allow(clippy::too_many_arguments)]
+fn ready_text(
+    card: &Card,
+    look: &review::Look,
+    glyphs: &Glyphs,
+    width: usize,
+    site: &str,
+    starting: &str,
+    warn: Style,
+    save: &dyn Fn(&Card) -> Line<'static>,
+) -> CardText {
+    if let Some(media) = &look.media {
+        let variants = card.variants();
+        let length = media
+            .duration_seconds
+            .map(|seconds| format!("  ·  {}", client::duration(seconds as u64)))
+            .unwrap_or_default();
+        let title: String = media.title.chars().filter(|c| !c.is_control()).collect();
+        let title = fit(&title, width.saturating_sub(length.width()), glyphs.more);
+        let mut body = vec![Line::from(vec![
+            Span::styled(title, Style::new().add_modifier(Modifier::BOLD)),
+            Span::styled(length, DIM),
+        ])];
+        let first = card
+            .choice
+            .saturating_sub(CARD_ROWS - 1)
+            .min(variants.len().saturating_sub(CARD_ROWS));
+        for (row, variant) in variants.iter().enumerate().skip(first).take(CARD_ROWS) {
+            let chosen = row == card.choice;
+            let mark = if chosen {
+                glyphs.chosen
+            } else {
+                glyphs.unchosen
+            };
+            let style = if chosen {
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            let best = if row == card.recommended() {
+                "  recommended"
+            } else {
+                ""
+            };
+            body.push(Line::from(vec![
+                Span::styled(format!("  {mark} "), style),
+                Span::styled(format!("{:>2}  ", row + 1), DIM),
+                Span::styled(review::variant_text(variant), style),
+                Span::styled(best, DIM),
+            ]));
+        }
+        if variants.len() > CARD_ROWS {
+            body.push(Line::styled(
+                format!("       {} of {} formats", card.choice + 1, variants.len()),
+                DIM,
+            ));
+        }
+        body.push(save(card));
+        let kind = if look.link.kind == LinkKind::MediaPage {
+            "Video"
+        } else {
+            "Video on a page"
+        };
+        CardText {
+            title: format!("{kind} · {site}"),
+            body,
+            keys: format!("↑↓ choose · Enter download{starting} · Esc cancel")
+                .replace("↑↓", if glyphs.unicode { "↑↓" } else { "Up/Down" }),
+        }
+    } else if look.link.kind == LinkKind::MediaPage && look.tools_missing {
+        let mut body = note(
+            "Saving video needs two free programs that are not part of Fetchpath:",
+            warn,
+            width,
+        );
+        body.extend(tool_notes(width));
+        body.extend(note(
                     "Press I to see what will be downloaded and set them up; this video will be looked at again afterwards.",
                     DIM,
                     width,
                 ));
-                CardText {
-                    title: format!("Video · {site}"),
-                    body,
-                    keys: "I set up video tools · Esc cancel".into(),
-                }
-            } else if look.link.kind == LinkKind::MediaPage {
-                CardText {
-                    title: format!("Video · {site}"),
-                    body: note(
-                        &format!(
-                            "This is a video page, but its formats could not be read: {}",
-                            look.media_error.as_deref().unwrap_or("no formats")
-                        ),
-                        warn,
-                        width,
-                    ),
-                    keys: "Esc close".into(),
-                }
-            } else {
-                let name = card.file_name();
-                let kind = review::kind_label(look.link.content_type.as_deref(), &name);
-                let size = look
-                    .link
-                    .size_bytes
-                    .map_or("size unknown".to_owned(), client::bytes);
-                let resume = if look.link.resumable {
-                    "can resume"
-                } else {
-                    "cannot resume"
-                };
-                let mut body = vec![
-                    Line::styled(
-                        middle_fit(&name, width, glyphs.more),
-                        Style::new().add_modifier(Modifier::BOLD),
-                    ),
-                    Line::styled(format!("{kind} · {size} · {resume}"), DIM),
-                ];
-                if look.link.kind == LinkKind::WebPage && look.tools_missing {
-                    body.extend(note(
+        CardText {
+            title: format!("Video · {site}"),
+            body,
+            keys: "I set up video tools · Esc cancel".into(),
+        }
+    } else if look.link.kind == LinkKind::MediaPage {
+        CardText {
+            title: format!("Video · {site}"),
+            body: note(
+                &format!(
+                    "This is a video page, but its formats could not be read: {}",
+                    look.media_error.as_deref().unwrap_or("no formats")
+                ),
+                warn,
+                width,
+            ),
+            keys: "Esc close".into(),
+        }
+    } else {
+        let name = card.file_name();
+        let kind = review::kind_label(look.link.content_type.as_deref(), &name);
+        let size = look
+            .link
+            .size_bytes
+            .map_or("size unknown".to_owned(), client::bytes);
+        let resume = if look.link.resumable {
+            "can resume"
+        } else {
+            "cannot resume"
+        };
+        let mut body = vec![
+            Line::styled(
+                middle_fit(&name, width, glyphs.more),
+                Style::new().add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(format!("{kind} · {size} · {resume}"), DIM),
+        ];
+        if look.link.kind == LinkKind::WebPage && look.tools_missing {
+            body.extend(note(
                         "This link is a web page, not a file. If it holds a video, Fetchpath needs its video tools to read it: press I to set them up.",
                         warn,
                         width,
                     ));
-                } else if look.link.kind == LinkKind::WebPage {
-                    body.extend(note(
-                        "This link is a web page, not a file. It holds no video Fetchpath can read.",
-                        warn,
-                        width,
-                    ));
-                }
-                body.push(save(card));
-                let (title, enter) = if look.link.kind == LinkKind::WebPage {
-                    ("Web page", "Enter save the page")
-                } else {
-                    ("File", "Enter download")
-                };
-                let tools = if look.tools_missing {
-                    " · I set up video tools"
-                } else {
-                    ""
-                };
-                CardText {
-                    title: format!("{title} · {site}"),
-                    body,
-                    keys: format!("{enter}{starting}{tools} · Esc cancel"),
-                }
-            }
+        } else if look.link.kind == LinkKind::WebPage {
+            body.extend(note(
+                "This link is a web page, not a file. It holds no video Fetchpath can read.",
+                warn,
+                width,
+            ));
+        }
+        body.push(save(card));
+        let (title, enter) = if look.link.kind == LinkKind::WebPage {
+            ("Web page", "Enter save the page")
+        } else {
+            ("File", "Enter download")
+        };
+        let tools = if look.tools_missing {
+            " · I set up video tools"
+        } else {
+            ""
+        };
+        CardText {
+            title: format!("{title} · {site}"),
+            body,
+            keys: format!("{enter}{starting}{tools} · Esc cancel"),
         }
     }
 }
@@ -1269,6 +1297,7 @@ mod tests {
                 content_type: None,
                 size_bytes: None,
                 resumable: false,
+                rules: None,
             },
             media: Some(MediaInspection {
                 title: "Big Buck Bunny".into(),

@@ -20,7 +20,7 @@ Closing a terminal does not stop downloads.
 ## Downloading
 
 ```powershell
-# Into your Downloads folder, named after the link
+# Where a rule says, else into your Downloads folder, named after the link
 fetchpath download https://example.com/tools/archive.zip
 
 # Into a folder you choose
@@ -102,7 +102,10 @@ fetchpath add https://example.com/a.zip https://example.com/b.zip --to D:\Instal
 # +30m, +2h or +1d
 fetchpath add https://example.com/big.iso --at 23:00
 
-# Video or audio: see the formats, then pick one (or best, or audio)
+# Video or audio: see the formats, then pick one (or best, or audio; a height
+# such as 720p takes the tallest video up to it). Without --quality, a video
+# page gets a rule's quality, else the best up to 1080p; it is never saved as
+# the page itself.
 fetchpath inspect https://video.example/watch/123
 fetchpath add https://video.example/watch/123 --quality 720p
 
@@ -111,9 +114,12 @@ fetchpath batch links.txt --to D:\Downloads\
 Get-Content links.txt | fetchpath batch -
 ```
 
-`--to` works like `download`'s destination; without it, downloads go to the
-default folder from `fetchpath settings default-destination-dir`, or to
-Downloads. `--wait` stays until the downloads end and exits with their code.
+`--to` works like `download`'s destination; without it, a download goes
+where a matching rule says, else to the default folder from `fetchpath
+settings default-destination-dir`, or to Downloads. `add` looks at each link
+first (its headers only), so a rule by size can decide; `batch` does not, so
+only rules by site and type apply to it. `--wait` stays until the downloads
+end and exits with their code.
 
 ```powershell
 fetchpath ls                 # every download, newest first; --active, --failed
@@ -130,6 +136,37 @@ fetchpath history invoice    # finished and failed downloads matching a word
 
 A download is named by its number in `fetchpath ls` (up to four digits) or by
 the start of its id, which must match only one.
+
+### Rules
+
+Rules choose where a new download goes and how, by the site it comes from,
+its file type or its size. They are tried in order and the first that matches
+decides. They apply to every download, whichever program adds it; an agent's
+download that a rule sends outside the agent's folders waits for your
+approval.
+
+```powershell
+# Disc images of 1 GB or more into D:\ISOs, with at most 2 connections
+fetchpath rules add --name "Disc images" --type iso,img --min-size 1GB --folder D:\ISOs --connections 2
+
+# Anything from example.com must come with a checksum
+fetchpath rules add --domain example.com --require-checksum
+
+# Videos from a site at 720p at most
+fetchpath rules add --domain video.example --quality 720p
+
+fetchpath rules                  # list them, in order
+fetchpath rules test LINK        # which rule decides for a link, and why
+fetchpath rules rm 2             # remove rule 2
+```
+
+Conditions: `--domain` (a site also covers its subdomains), `--type`
+(extensions, comma separated), `--min-size` and `--max-size` (`500MB`, `2GB`;
+units count in 1024s, as File Explorer shows sizes). A size rule never matches
+a link whose size is not known. Actions: `--folder`, `--quality` (`best`,
+`audio` or a height), `--require-checksum` (a file without `--sha256` is
+refused), `--connections` (1 to 8). `--position N` puts the rule at place N
+in the order. A rule's folder applies only when you give no `--to`.
 
 ### Settings
 
@@ -174,7 +211,11 @@ line into the window's history saying where the file went or why it stopped.
   type, size and whether it can resume; for a web page, a warning that it is
   not a file. Each card shows where the file will be saved. Press Enter to
   start or Esc to cancel. Add `--to FOLDER`, `--at TIME`, `--sha256 HEX` or
-  `--quality Q` after the link as with `fetchpath add`.
+  `--quality Q` after the link as with `fetchpath add`. When a rule matches,
+  the card names it and says why, and uses its folder and quality; a rule
+  that needs a checksum keeps the card from starting until the link is given
+  again with `--sha256`. `/rules` lists, adds, removes and tests rules with
+  the same words as `fetchpath rules`.
 - Videos need `yt-dlp` and `ffmpeg`, two free programs that are not part of
   Fetchpath. If they are missing, the terminal says so when it opens, and a
   video card offers to set them up: press **I** to see what will be
