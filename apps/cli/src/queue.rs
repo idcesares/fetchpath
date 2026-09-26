@@ -620,7 +620,7 @@ pub(crate) fn job_lines(job: &JobSnapshot) -> Vec<String> {
 
 // ---------------------------------------------------------------- controls
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Control {
     Pause,
     Resume,

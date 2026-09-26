@@ -181,6 +181,17 @@ line into the window's history saying where the file went or why it stopped.
   downloaded (each program's version, publisher and licence, and the folder
   it goes to), then Enter to download and set them up. The video is looked
   at again afterwards. `/tools` shows whether they are ready.
+- Type `/` to see the commands; keep typing to narrow the list, move with
+  the arrow keys or the mouse wheel, and press Enter or click one to run it.
+- `/settings` opens a menu of every setting: Enter or a click switches a
+  setting on or off or cycles a choice, ←/→ change a number, and a folder
+  opens a line to type it (Tab completes). Each change is saved at once.
+- `/queue` lists the downloads; choose one to pause, resume, cancel, retry,
+  remove or show it. `/pause`, `/resume`, `/cancel`, `/retry`, `/rm` and
+  `/show` on their own ask which download.
+- The mouse works in lists, menus and cards: click to choose, wheel to move,
+  right-click to close. At the plain prompt the terminal keeps its own
+  scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
   `/retry`, `/rm`, `/history`, `/settings`, `/engine`, `/help` and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.

@@ -41,6 +41,23 @@ with `--json`, it prints help and exits 2.
   looked at again. `fetchpath tools [install [--yes] | use FOLDER]` does the
   same from the command line and refuses to install without a terminal
   unless `--yes` is given.
+- **Choosing instead of typing.** Typing `/` lists the matching commands
+  under the prompt (eight at a time, following the selection); arrows or the
+  wheel move, Tab completes, Enter or a click runs one (`/add` gets its link
+  typed after it). A generic `menu.rs` list backs `/settings`
+  (`settings_menu.rs`: switches flip, choices cycle, numbers take ←/→ within
+  the engine's limits, folders open an edit line with folder completion,
+  video tools open the setup card; each change is one `UpdateSettings` and
+  the row shows what the engine kept) and `/queue` (`jobs_menu.rs`: jobs in
+  progress then recent finished ones, live progress, then the actions that
+  make sense for the chosen job's state). Job commands given no job open the
+  same list filtered to the jobs they apply to. Plain mode keeps typed
+  commands.
+- **Mouse.** Captured only while a list, menu or card is showing, so the
+  terminal's own scrollback, wheel and text selection work at the prompt.
+  Each frame records which screen row holds which item (`view::Drawn`); a
+  left click chooses, the wheel moves, a right click closes a menu. Video
+  cards take clicks on formats.
 - **Progress.** Each panel row has a bar sized to the window (colored by
   state; a sliding block when the size is unknown), the percent, speed and
   time left, and a spinner while moving. Narrow windows drop the bar first.
@@ -100,6 +117,16 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   1080p preselected, moved with the arrow keys and cancelled. The same run
   on the previous build reproduced the reported bug: the YouTube link saved
   a 1.1 MiB page named `watch`.
+- Menus and mouse: `tui::menu`, `tui::jobs_menu` and `tui::view` tests (key
+  and click selection, headings skipped, a rendered menu and command list with
+  their click targets, the actions offered per state). A headless ConPTY run
+  sending SGR mouse sequences, 26 September 2026: `/` listed the commands and
+  `/se` narrowed them to `/settings`; Enter opened the menu; → raised
+  downloads at the same time to 4 (saved); clicks switched automatic retries
+  off and cycled the appearance after the wheel scrolled to it; `/queue`
+  showed the running job with live progress, a click showed its actions and
+  a click on Pause paused it; `/resume` alone asked which job and Enter
+  resumed it; a click on `/queue` in the command list ran it.
 - Headless ConPTY walkthrough of the tools setup, 26 September 2026, in a
   scratch data folder: the startup note; a YouTube card naming yt-dlp
   2026.08.19 (Unlicense) and ffmpeg 9.0.2 (GPL-3.0-or-later); **I** showed

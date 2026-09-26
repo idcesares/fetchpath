@@ -45,6 +45,16 @@ pub struct Reply {
     pub drafts: Vec<Draft>,
     /// Show the video tools setup card.
     pub set_up_tools: bool,
+    /// A menu to open instead of printing (inline mode only).
+    pub open: Option<Open>,
+}
+
+/// Menus a command can open in the inline view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Open {
+    Settings,
+    /// The job list; with a command name, choosing a job runs it.
+    Jobs(Option<&'static str>),
 }
 
 impl Reply {
@@ -71,6 +81,14 @@ pub struct Spec {
     takes: Takes,
 }
 
+impl Spec {
+    /// Whether the command needs words after it before it can run. Only
+    /// `/add` does; job commands without a job open a picker instead.
+    pub fn needs_words(&self) -> bool {
+        self.takes == Takes::Links
+    }
+}
+
 pub const COMMANDS: &[Spec] = &[
     Spec {
         name: "add",
@@ -83,7 +101,7 @@ pub const COMMANDS: &[Spec] = &[
         name: "queue",
         aliases: &["ls", "list"],
         usage: "/queue [--active | --failed]",
-        summary: "List every download with its number",
+        summary: "Choose a download to pause, resume, retry or remove",
         takes: Takes::Nothing,
     },
     Spec {
@@ -139,7 +157,7 @@ pub const COMMANDS: &[Spec] = &[
         name: "settings",
         aliases: &[],
         usage: "/settings [NAME [VALUE]]",
-        summary: "Show or change engine settings",
+        summary: "Change settings from a menu",
         takes: Takes::Setting,
     },
     Spec {
@@ -244,7 +262,9 @@ const UNKNOWN: Spec = Spec {
 
 /// Runs one line against the engine. Errors become lines, never a crash:
 /// the prompt stays open whatever a command does.
-pub fn run(engine: &Engine, jobs: &[JobSnapshot], line: &str) -> Reply {
+/// `menus` is true in the inline view, where commands that would otherwise
+/// need typed names open a menu to choose from.
+pub fn run(engine: &Engine, jobs: &[JobSnapshot], line: &str, menus: bool) -> Reply {
     let mut reply = Reply::default();
     let Some((spec, args)) = parse(line) else {
         return reply;
@@ -256,10 +276,29 @@ pub fn run(engine: &Engine, jobs: &[JobSnapshot], line: &str) -> Reply {
         );
         return reply;
     }
+    if menus && let Some(open) = menu_for(spec, &args) {
+        reply.open = Some(open);
+        return reply;
+    }
     if let Err(error) = execute(engine, jobs, spec, &args, &mut reply) {
         reply.say(Tone::Bad, error.message);
     }
     reply
+}
+
+/// The menu a command opens when given nothing to act on.
+fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
+    if !args.is_empty() {
+        return None;
+    }
+    match spec.name {
+        "settings" => Some(Open::Settings),
+        "queue" => Some(Open::Jobs(None)),
+        "show" | "pause" | "resume" | "cancel" | "retry" | "rm" => {
+            Some(Open::Jobs(Some(spec.name)))
+        }
+        _ => None,
+    }
 }
 
 fn usage_error(spec: &Spec, message: &str) -> ProtocolError {
@@ -512,7 +551,7 @@ fn help(topic: Option<&str>, reply: &mut Reply) {
     );
     reply.say(
         Tone::Normal,
-        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, Ctrl+C on an empty line leaves.",
+        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
     );
 }
 
@@ -650,7 +689,7 @@ fn jobs(word: &str, jobs: &[JobSnapshot]) -> Vec<Candidate> {
 
 /// Recent download folders matching the typed text, then folders on disk
 /// under the typed path.
-fn folders(word: &str, context: &Context) -> Vec<Candidate> {
+pub fn folders(word: &str, context: &Context) -> Vec<Candidate> {
     let typed = word.to_lowercase();
     let mut found: Vec<String> = context
         .recent_folders()

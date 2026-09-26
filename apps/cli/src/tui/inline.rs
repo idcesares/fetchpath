@@ -3,15 +3,20 @@
 //! above it.
 
 use super::Session;
+use super::jobs_menu::{Effect as JobsEffect, JobsMenu};
+use super::line::Open;
 use super::line::{self, Context, Out, Tone};
 use super::live::Notice;
 use super::prompt::{Action, Prompt};
 use super::review::{self, Answer, Card, Draft, Look};
+use super::settings_menu::{Effect as SettingsEffect, SettingsMenu};
 use super::setup::{Answer as SetupAnswer, Setup};
-use super::view::Overlay;
-use super::view::{self, Frame, Glyphs};
+use super::view::{self, Drawn, Frame, Glyphs, Overlay, Target};
 use crate::client::{self, EXIT_ENGINE, Engine};
-use crossterm::event::{self, Event};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
+    MouseEventKind,
+};
 use crossterm::terminal;
 use fetchpath_protocol::ProtocolError;
 use ratatui::backend::{Backend, ClearType, CrosstermBackend};
@@ -88,16 +93,18 @@ impl Screen {
         })
     }
 
-    fn draw(&mut self, frame: &Frame) -> std::io::Result<()> {
+    fn draw(&mut self, frame: &Frame) -> std::io::Result<Drawn> {
         let width = self.terminal.size()?.width;
         self.set_height(frame.height(width))?;
+        let mut drawn = Drawn::default();
         self.terminal.draw(|target| {
             let area = target.area();
-            if let Some(cursor) = frame.render(area, target.buffer_mut()) {
+            drawn = frame.render(area, target.buffer_mut());
+            if let Some(cursor) = drawn.cursor {
                 target.set_cursor_position(cursor);
             }
         })?;
-        Ok(())
+        Ok(drawn)
     }
 
     /// Clears the viewport so the shell prompt follows the last output.
@@ -293,12 +300,114 @@ pub(super) fn confirmed(session: &Session, card: &Card) -> Out {
     }
 }
 
+/// Commands to offer while a command name is typed: every command whose
+/// name starts with it, as Claude Code lists them.
+fn palette(prompt: &Prompt) -> Vec<(&'static str, &'static str)> {
+    let text = prompt.text();
+    let Some(typed) = text.strip_prefix('/') else {
+        return Vec::new();
+    };
+    if typed.contains(char::is_whitespace) || prompt.cursor() != text.len() {
+        return Vec::new();
+    }
+    let typed = typed.to_ascii_lowercase();
+    line::COMMANDS
+        .iter()
+        .filter(|spec| spec.name.starts_with(&typed))
+        .map(|spec| (spec.name, spec.summary))
+        .collect()
+}
+
+/// Most commands listed under the prompt at once.
+const COMMAND_ROWS: usize = 8;
+
+/// What choosing a command from the list does: one that needs words gets
+/// them typed after it; any other runs at once.
+enum Chosen {
+    Type(String),
+    Run(String),
+}
+
+fn choose_command(name: &str) -> Chosen {
+    match line::find(name) {
+        Some(spec) if spec.needs_words() => Chosen::Type(format!("/{name} ")),
+        _ => Chosen::Run(format!("/{name}")),
+    }
+}
+
+/// Everything below the panel that can hold the keyboard, most urgent
+/// first.
+#[derive(Default)]
+struct Menus {
+    setup: Option<Setup>,
+    settings: Option<SettingsMenu>,
+    jobs: Option<JobsMenu>,
+}
+
+impl Menus {
+    fn any(&self) -> bool {
+        self.setup.is_some() || self.settings.is_some() || self.jobs.is_some()
+    }
+}
+
+/// Runs a typed or chosen line: echoes it, prints what it says, and opens
+/// what it asks for. Returns true to leave.
+fn submit(
+    text: &str,
+    session: &mut Session,
+    screen: &mut Screen,
+    reviews: &mut Reviews,
+    menus: &mut Menus,
+    glyphs: &Glyphs,
+) -> std::io::Result<bool> {
+    screen.print(&[Out::new(Tone::Dim, format!("{} {text}", glyphs.prompt))])?;
+    let reply = session.run_line(text, true);
+    screen.print(&reply.lines)?;
+    if reply.quit {
+        return Ok(true);
+    }
+    reviews.add(reply.drafts);
+    if reply.set_up_tools && menus.setup.is_none() {
+        match Setup::new(None) {
+            Ok(opened) => menus.setup = Some(opened),
+            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+        }
+    }
+    match reply.open {
+        Some(Open::Settings) => match SettingsMenu::open(&session.engine, session.tools_ready) {
+            Ok(menu) => menus.settings = Some(menu),
+            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+        },
+        Some(Open::Jobs(command)) => menus.jobs = Some(JobsMenu::open(&session.live, command)),
+        None => {}
+    }
+    Ok(false)
+}
+
+/// Turns the mouse on while something below the panel takes clicks, and
+/// off otherwise, so the terminal's own scrolling and text selection work
+/// at the prompt.
+fn set_mouse(on: bool, captured: &mut bool) -> std::io::Result<()> {
+    if on != *captured {
+        if on {
+            crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+        } else {
+            crossterm::execute!(std::io::stdout(), DisableMouseCapture)?;
+        }
+        *captured = on;
+    }
+    Ok(())
+}
+
 fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     let raw = RawMode::enable()?;
     let mut prompt = Prompt::default();
     let mut completion: Option<String> = None;
     let mut reviews = Reviews::default();
-    let mut setup: Option<Setup> = None;
+    let mut menus = Menus::default();
+    let mut chosen_command = 0_usize;
+    let mut drawn = Drawn::default();
+    let mut mouse = false;
     let mut rows = max_rows();
     let started = Instant::now();
     let tick = || (started.elapsed().as_millis() / 100) as u64;
@@ -313,48 +422,82 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             max_rows: rows,
             card: None,
             tick: 0,
+            palette: &[],
+            palette_selected: 0,
         };
         Screen::open(frame.height(terminal::size().map_or(80, |(width, _)| width)))?
     };
     let mut code = 0;
     let mut dirty = true;
-    let mut drawn = Instant::now();
+    let mut last_draw = Instant::now();
     'running: loop {
+        let commands = if menus.any() || reviews.card.is_some() {
+            Vec::new()
+        } else {
+            palette(&prompt)
+        };
+        chosen_command = chosen_command.min(commands.len().saturating_sub(1));
+        // The list shows a window of commands that follows the selection.
+        let first_command = chosen_command.saturating_sub(COMMAND_ROWS - 1);
+        set_mouse(
+            menus.any() || reviews.card.is_some() || !commands.is_empty(),
+            &mut mouse,
+        )?;
         // Animate spinners and bars while anything moves.
         let moving = reviews.card.is_some()
-            || setup.is_some()
+            || menus.setup.is_some()
+            || menus.jobs.is_some()
             || session.live.panel().iter().any(|row| row.group == 0);
         let every = Duration::from_millis(if moving { 100 } else { 500 });
-        if dirty || drawn.elapsed() >= every {
+        if dirty || last_draw.elapsed() >= every {
+            if let Some(jobs) = &mut menus.jobs {
+                jobs.refresh(&session.live);
+            }
             let panel = session.live.panel();
             let hint_text = hint(&prompt, completion.as_deref());
-            screen.draw(&Frame {
+            let editing = menus.settings.as_ref().and_then(SettingsMenu::editing);
+            let overlay = if let Some(setup) = &menus.setup {
+                Some(Overlay::Setup(setup))
+            } else if let Some(settings) = &menus.settings {
+                Some(Overlay::Menu(&settings.menu, editing))
+            } else if let Some(jobs) = &menus.jobs {
+                Some(Overlay::Menu(&jobs.menu, None))
+            } else {
+                reviews.card.as_ref().map(Overlay::Link)
+            };
+            drawn = screen.draw(&Frame {
                 panel: &panel,
                 prompt: prompt.text(),
                 cursor: prompt.cursor(),
                 hint: &hint_text,
                 glyphs,
                 max_rows: rows,
-                card: match (&setup, &reviews.card) {
-                    (Some(setup), _) => Some(Overlay::Setup(setup)),
-                    (None, Some(card)) => Some(Overlay::Link(card)),
-                    (None, None) => None,
-                },
+                card: overlay,
                 tick: tick(),
+                palette: &commands
+                    [first_command..(first_command + COMMAND_ROWS).min(commands.len())],
+                palette_selected: chosen_command - first_command,
             })?;
             dirty = false;
-            drawn = Instant::now();
+            last_draw = Instant::now();
         }
         if event::poll(Duration::from_millis(40))? {
-            match event::read()? {
-                Event::Key(key) if setup.is_some() => {
-                    let current = setup.as_mut().expect("checked");
+            let input = event::read()?;
+            dirty = true;
+            let row_of = |row: u16| match drawn.target_at(row) {
+                Some(Target::Item(index)) => Some(index),
+                _ => None,
+            };
+            match input {
+                // The setup card holds the keyboard until it ends.
+                Event::Key(key) if menus.setup.is_some() => {
+                    let current = menus.setup.as_mut().expect("checked");
                     match current.key(key) {
                         SetupAnswer::None => {}
                         SetupAnswer::Start => {
                             if let Err(error) = current.start() {
                                 screen.print(&[Out::new(Tone::Bad, error.message)])?;
-                                setup = None;
+                                menus.setup = None;
                                 reviews.next_if_idle();
                             }
                         }
@@ -363,11 +506,68 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                                 Tone::Dim,
                                 "Video tools not set up; nothing was downloaded.",
                             )])?;
-                            setup = None;
+                            menus.setup = None;
                             reviews.next_if_idle();
                         }
                     }
-                    dirty = true;
+                }
+                Event::Mouse(_) if menus.setup.is_some() => {}
+                Event::Key(key) if menus.settings.is_some() => {
+                    let context = Context {
+                        jobs: session.live.jobs(),
+                        settings: &session.settings,
+                    };
+                    let menu = menus.settings.as_mut().expect("checked");
+                    match menu.key(&session.engine, key, &context) {
+                        SettingsEffect::None => {}
+                        SettingsEffect::Close => menus.settings = None,
+                        SettingsEffect::SetUpTools => match Setup::new(None) {
+                            Ok(opened) => menus.setup = Some(opened),
+                            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+                        },
+                    }
+                }
+                Event::Mouse(event) if menus.settings.is_some() => {
+                    let menu = menus.settings.as_mut().expect("checked");
+                    match menu.mouse(&session.engine, event, row_of) {
+                        SettingsEffect::None => {}
+                        SettingsEffect::Close => menus.settings = None,
+                        SettingsEffect::SetUpTools => match Setup::new(None) {
+                            Ok(opened) => menus.setup = Some(opened),
+                            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+                        },
+                    }
+                }
+                Event::Key(_) | Event::Mouse(_) if menus.jobs.is_some() => {
+                    let menu = menus.jobs.as_mut().expect("checked");
+                    let pick = match input {
+                        Event::Key(key) => menu.menu.key(key),
+                        Event::Mouse(event) => menu.menu.mouse(event, row_of),
+                        _ => unreachable!("only keys and the mouse reach here"),
+                    };
+                    match menu.pick(&session.engine, &session.live, pick) {
+                        JobsEffect::None => {}
+                        JobsEffect::Close => menus.jobs = None,
+                        JobsEffect::Say { lines, close } => {
+                            screen.print(&lines)?;
+                            if close {
+                                menus.jobs = None;
+                            }
+                        }
+                    }
+                }
+                Event::Mouse(event) if reviews.card.is_some() => {
+                    let card = reviews.card.as_mut().expect("checked");
+                    match event.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(Target::Choice(choice)) = drawn.target_at(event.row) {
+                                card.choose(choice);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => card.choose(card.choice.saturating_sub(1)),
+                        MouseEventKind::ScrollDown => card.choose(card.choice + 1),
+                        _ => {}
+                    }
                 }
                 Event::Key(key) if reviews.card.is_some() => {
                     let card = reviews.card.as_mut().expect("checked");
@@ -389,67 +589,113 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                             Ok(opened) => {
                                 // The card waits for the setup's outcome.
                                 reviews.card = None;
-                                setup = Some(opened);
+                                menus.setup = Some(opened);
                             }
                             Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
                         },
                     }
-                    dirty = true;
                 }
-                Event::Key(key) => match prompt.handle(key) {
-                    Action::None => {}
-                    Action::Leave => break 'running,
-                    Action::Edited => {
-                        completion = None;
-                        dirty = true;
-                    }
-                    Action::Complete => {
-                        completion = complete(&mut prompt, session);
-                        dirty = true;
-                    }
-                    Action::Submit(text) => {
-                        completion = None;
-                        dirty = true;
-                        if text.trim().is_empty() {
-                            continue;
-                        }
-                        screen
-                            .print(&[Out::new(Tone::Dim, format!("{} {text}", glyphs.prompt))])?;
-                        let reply = session.run_line(&text);
-                        screen.print(&reply.lines)?;
-                        if reply.quit {
-                            break 'running;
-                        }
-                        reviews.add(reply.drafts);
-                        if reply.set_up_tools && setup.is_none() {
-                            match Setup::new(None) {
-                                Ok(opened) => setup = Some(opened),
-                                Err(error) => {
-                                    screen.print(&[Out::new(Tone::Bad, error.message)])?
+                // The command list under the prompt takes the arrows, Tab,
+                // Enter and clicks while it shows.
+                Event::Mouse(event) if !commands.is_empty() => match event.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if let Some(Target::Command(index)) = drawn.target_at(event.row) {
+                            match choose_command(commands[first_command + index].0) {
+                                Chosen::Type(text) => prompt.set(text),
+                                Chosen::Run(text) => {
+                                    prompt.set(String::new());
+                                    if submit(
+                                        &text,
+                                        session,
+                                        &mut screen,
+                                        &mut reviews,
+                                        &mut menus,
+                                        glyphs,
+                                    )? {
+                                        break 'running;
+                                    }
                                 }
                             }
                         }
                     }
+                    MouseEventKind::ScrollUp => chosen_command = chosen_command.saturating_sub(1),
+                    MouseEventKind::ScrollDown => chosen_command += 1,
+                    _ => {}
                 },
-                Event::Paste(text) if reviews.card.is_none() && setup.is_none() => {
+                Event::Key(key)
+                    if !commands.is_empty()
+                        && key.kind != KeyEventKind::Release
+                        && matches!(
+                            key.code,
+                            KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::Enter
+                        ) =>
+                {
+                    let name = commands[chosen_command].0;
+                    match key.code {
+                        KeyCode::Up => chosen_command = chosen_command.saturating_sub(1),
+                        KeyCode::Down => chosen_command += 1,
+                        KeyCode::Tab => prompt.set(format!("/{name} ")),
+                        _ => match choose_command(name) {
+                            Chosen::Type(text) => prompt.set(text),
+                            Chosen::Run(text) => {
+                                prompt.set(String::new());
+                                if submit(
+                                    &text,
+                                    session,
+                                    &mut screen,
+                                    &mut reviews,
+                                    &mut menus,
+                                    glyphs,
+                                )? {
+                                    break 'running;
+                                }
+                            }
+                        },
+                    }
+                }
+                Event::Key(key) => match prompt.handle(key) {
+                    Action::None => dirty = false,
+                    Action::Leave => break 'running,
+                    Action::Edited => {
+                        completion = None;
+                        chosen_command = 0;
+                    }
+                    Action::Complete => completion = complete(&mut prompt, session),
+                    Action::Submit(text) => {
+                        completion = None;
+                        if !text.trim().is_empty()
+                            && submit(
+                                &text,
+                                session,
+                                &mut screen,
+                                &mut reviews,
+                                &mut menus,
+                                glyphs,
+                            )?
+                        {
+                            break 'running;
+                        }
+                    }
+                },
+                Event::Paste(text) if reviews.card.is_none() && !menus.any() => {
                     prompt.insert(&text);
                     completion = None;
-                    dirty = true;
                 }
-                Event::Resize(..) => {
-                    rows = max_rows();
-                    dirty = true;
-                }
-                _ => {}
+                Event::Resize(..) => rows = max_rows(),
+                _ => dirty = false,
             }
         }
         if reviews.settle() {
             dirty = true;
         }
-        if let Some(outcome) = setup.as_mut().and_then(Setup::poll) {
-            let waiting = setup.take().and_then(|done| done.then);
+        if let Some(outcome) = menus.setup.as_mut().and_then(Setup::poll) {
+            let waiting = menus.setup.take().and_then(|done| done.then);
             match outcome {
                 Ok(ready) => {
+                    session.tools_ready = Some(true);
+                    if let Some(settings) = &mut menus.settings {
+                        settings.set_tools_ready(true);
+                    }
                     let lines: Vec<Out> = ready
                         .into_iter()
                         .map(|line| Out::new(Tone::Good, line))
@@ -466,6 +712,9 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             dirty = true;
         }
         if let Some(lines) = session.tools_notice() {
+            if let Some(settings) = &mut menus.settings {
+                settings.set_tools_ready(session.tools_ready == Some(true));
+            }
             let lines: Vec<Out> = lines
                 .into_iter()
                 .map(|line| Out::new(Tone::Dim, line))
@@ -490,6 +739,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             }
         }
     }
+    set_mouse(false, &mut mouse)?;
     screen.close()?;
     drop(raw);
     std::io::stdout().flush()?;

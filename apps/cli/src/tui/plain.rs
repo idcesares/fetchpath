@@ -231,7 +231,7 @@ pub fn run(mut session: Session) -> i32 {
                 }
             }
             Ok(Ok(text)) => {
-                let reply = session.run_line(&text);
+                let reply = session.run_line(&text, false);
                 say(&reply.lines);
                 if reply.quit {
                     return 0;

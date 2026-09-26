@@ -7,11 +7,14 @@
 //! never stops a download.
 
 mod inline;
+mod jobs_menu;
 mod line;
 pub(crate) mod live;
+mod menu;
 mod plain;
 mod prompt;
 mod review;
+mod settings_menu;
 mod setup;
 mod view;
 
@@ -90,6 +93,8 @@ pub struct Session {
     /// Whether the video tools are ready, checked once in the background
     /// (running the helpers takes a moment).
     tools_check: Option<std::sync::mpsc::Receiver<fetchpath_media::setup::ToolsStatus>>,
+    /// What the check found, once it has.
+    tools_ready: Option<bool>,
 }
 
 impl Session {
@@ -110,6 +115,7 @@ impl Session {
             live,
             settings,
             tools_check: Some(tools_check),
+            tools_ready: None,
         })
     }
 
@@ -219,6 +225,7 @@ impl Session {
         match status {
             Ok(status) => {
                 self.tools_check = None;
+                self.tools_ready = Some(status.ready);
                 (!status.ready).then(|| {
                     vec![
                         "Saving video and audio needs yt-dlp and ffmpeg, free programs that are not part of Fetchpath and are not set up yet.".to_owned(),
@@ -234,7 +241,7 @@ impl Session {
         }
     }
 
-    fn run_line(&self, text: &str) -> line::Reply {
-        line::run(&self.engine, self.live.jobs(), text)
+    fn run_line(&self, text: &str, menus: bool) -> line::Reply {
+        line::run(&self.engine, self.live.jobs(), text, menus)
     }
 }

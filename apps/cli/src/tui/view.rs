@@ -4,6 +4,8 @@
 
 use super::line::{Out, Tone};
 use super::live::Row;
+use super::menu::{Menu, ROWS};
+use super::prompt::Prompt;
 use super::review::{self, Card, Stage};
 use super::setup::Setup;
 use crate::client;
@@ -622,12 +624,164 @@ pub fn setup_text(setup: &Setup, glyphs: &Glyphs, tick: u64, width: usize) -> Ca
 pub enum Overlay<'a> {
     Link(&'a Card),
     Setup(&'a Setup),
+    /// A menu, with a value being typed into one of its rows.
+    Menu(&'a Menu, Option<(&'a str, &'a Prompt)>),
 }
 
-fn overlay_text(overlay: Overlay, glyphs: &Glyphs, tick: u64, width: usize) -> CardText {
+/// Something a click can land on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Target {
+    /// A menu item.
+    Item(usize),
+    /// A format on a video card.
+    Choice(usize),
+    /// A command in the list under the prompt.
+    Command(usize),
+}
+
+/// What a frame drew: where the cursor goes and which rows are clickable.
+#[derive(Debug, Default)]
+pub struct Drawn {
+    pub cursor: Option<Position>,
+    pub targets: Vec<(u16, Target)>,
+}
+
+impl Drawn {
+    pub fn target_at(&self, row: u16) -> Option<Target> {
+        self.targets
+            .iter()
+            .find(|(y, _)| *y == row)
+            .map(|(_, target)| *target)
+    }
+}
+
+/// A card's text plus which body lines are clickable, and where a typing
+/// cursor sits (body line, column).
+struct OverlayText {
+    card: CardText,
+    targets: Vec<(usize, Target)>,
+    cursor: Option<(usize, usize)>,
+}
+
+/// The body lines of a video card that hold formats, with their choice.
+fn choice_lines(card: &Card) -> Vec<(usize, Target)> {
+    let count = card.variants().len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let first = card
+        .choice
+        .saturating_sub(CARD_ROWS - 1)
+        .min(count.saturating_sub(CARD_ROWS));
+    // Line 0 is the title; formats follow.
+    (first..count.min(first + CARD_ROWS))
+        .enumerate()
+        .map(|(line, choice)| (line + 1, Target::Choice(choice)))
+        .collect()
+}
+
+/// A menu as card text: one line per visible item, the selected one marked
+/// and highlighted, then a hint line (or the value being typed).
+fn menu_text(
+    menu: &Menu,
+    editing: Option<(&str, &Prompt)>,
+    glyphs: &Glyphs,
+    width: usize,
+) -> OverlayText {
+    let label_width = menu
+        .items
+        .iter()
+        .filter(|item| !item.inert)
+        .map(|item| item.label.width())
+        .max()
+        .unwrap_or(0)
+        .min(width * 3 / 5);
+    let mut body = Vec::new();
+    let mut targets = Vec::new();
+    for (index, item) in menu.visible() {
+        if item.inert {
+            body.push(Line::styled(
+                item.label.clone(),
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ));
+            continue;
+        }
+        let selected = index == menu.selected;
+        let mark = if selected { glyphs.prompt } else { " " };
+        let label = pad(&item.label, label_width, glyphs.more);
+        let room = width.saturating_sub(label_width + 5);
+        let value = fit(&item.value, room, glyphs.more);
+        let style = if selected {
+            Style::new()
+                .fg(ACCENT)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::new()
+        };
+        targets.push((body.len(), Target::Item(index)));
+        body.push(Line::from(vec![
+            Span::styled(format!("{mark} "), Style::new().fg(ACCENT)),
+            Span::styled(format!("{label}  {value}"), style),
+        ]));
+    }
+    let mut cursor = None;
+    match editing {
+        Some((label, prompt)) => {
+            let lead = format!("{label}: ");
+            let room = width.saturating_sub(lead.width() + 1).max(1);
+            let before = &prompt.text()[..prompt.cursor()];
+            let mut start = 0;
+            while before[start..].width() > room {
+                start += before[start..].chars().next().map_or(1, char::len_utf8);
+            }
+            cursor = Some((body.len(), lead.width() + before[start..].width()));
+            body.push(Line::from(vec![
+                Span::styled(lead, Style::new().fg(ACCENT)),
+                Span::raw(fit(&prompt.text()[start..], room, "")),
+            ]));
+        }
+        None => {
+            let position = if menu.items.len() > ROWS {
+                format!("  ({} of {})", menu.selected + 1, menu.items.len())
+            } else {
+                String::new()
+            };
+            body.extend(note(&format!("{}{position}", menu.hint()), DIM, width));
+        }
+    }
+    let keys = if editing.is_some() {
+        "Enter save · Tab complete · Esc keep".to_owned()
+    } else if glyphs.unicode {
+        menu.keys.clone()
+    } else {
+        menu.keys
+            .replace("↑↓", "Up/Down")
+            .replace("←→", "Left/Right")
+    };
+    OverlayText {
+        card: CardText {
+            title: menu.title.clone(),
+            body,
+            keys,
+        },
+        targets,
+        cursor,
+    }
+}
+
+fn overlay_text(overlay: Overlay, glyphs: &Glyphs, tick: u64, width: usize) -> OverlayText {
     match overlay {
-        Overlay::Link(card) => card_text(card, glyphs, tick, width),
-        Overlay::Setup(setup) => setup_text(setup, glyphs, tick, width),
+        Overlay::Link(card) => OverlayText {
+            card: card_text(card, glyphs, tick, width),
+            targets: choice_lines(card),
+            cursor: None,
+        },
+        Overlay::Setup(setup) => OverlayText {
+            card: setup_text(setup, glyphs, tick, width),
+            targets: Vec::new(),
+            cursor: None,
+        },
+        Overlay::Menu(menu, editing) => menu_text(menu, editing, glyphs, width),
     }
 }
 
@@ -651,6 +805,10 @@ pub struct Frame<'a> {
     pub card: Option<Overlay<'a>>,
     /// Animation step for spinners and sliding bars.
     pub tick: u64,
+    /// Commands matching what is typed after `/`, shown under the prompt:
+    /// name and summary.
+    pub palette: &'a [(&'static str, &'static str)],
+    pub palette_selected: usize,
 }
 
 impl Frame<'_> {
@@ -669,11 +827,12 @@ impl Frame<'_> {
         let below = match self.card {
             Some(card) => {
                 overlay_text(card, self.glyphs, 0, card_room(width))
+                    .card
                     .body
                     .len()
                     + 2
             }
-            None => 2,
+            None => 1 + self.palette.len().max(1),
         };
         (self.panel_rows() + 1 + below) as u16
     }
@@ -768,7 +927,7 @@ impl Frame<'_> {
 
     /// Draws into `area` of `buffer` and returns where the cursor goes, if
     /// anywhere.
-    pub fn render(&self, area: Rect, buffer: &mut Buffer) -> Option<Position> {
+    pub fn render(&self, area: Rect, buffer: &mut Buffer) -> Drawn {
         let width = area.width as usize;
         let mut y = area.y;
         let bottom = area.bottom();
@@ -809,7 +968,11 @@ impl Frame<'_> {
         );
 
         if let Some(card) = self.card {
-            let text = overlay_text(card, self.glyphs, self.tick, card_room(area.width));
+            let OverlayText {
+                card: text,
+                targets,
+                cursor,
+            } = overlay_text(card, self.glyphs, self.tick, card_room(area.width));
             let height = (text.body.len() + 2) as u16;
             let block_area = Rect::new(area.x, y, area.width, height.min(bottom.saturating_sub(y)));
             let block = Block::bordered()
@@ -841,7 +1004,18 @@ impl Frame<'_> {
                     buffer.set_line(inner.x + 1, line_y, line, inner.width.saturating_sub(1));
                 }
             }
-            return None;
+            return Drawn {
+                cursor: cursor.map(|(line, column)| {
+                    Position::new(
+                        (inner.x + 1 + column as u16).min(inner.right().saturating_sub(1)),
+                        inner.y + line as u16,
+                    )
+                }),
+                targets: targets
+                    .into_iter()
+                    .map(|(line, target)| (inner.y + line as u16, target))
+                    .collect(),
+            };
         }
 
         // The prompt scrolls sideways to keep the cursor in view.
@@ -863,15 +1037,52 @@ impl Frame<'_> {
             &mut y,
             buffer,
         );
-        row(
-            Line::styled(fit(self.hint, width, self.glyphs.more), DIM),
-            &mut y,
-            buffer,
-        );
-        Some(Position::new(
+        let mut targets = Vec::new();
+        if self.palette.is_empty() {
+            row(
+                Line::styled(fit(self.hint, width, self.glyphs.more), DIM),
+                &mut y,
+                buffer,
+            );
+        }
+        let name_width = self
+            .palette
+            .iter()
+            .map(|(name, _)| name.width() + 1)
+            .max()
+            .unwrap_or(0);
+        for (index, (name, summary)) in self.palette.iter().enumerate() {
+            let selected = index == self.palette_selected;
+            let style = if selected {
+                Style::new()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::new().fg(ACCENT)
+            };
+            targets.push((y, Target::Command(index)));
+            let name = pad(&format!("/{name}"), name_width, "");
+            let summary = fit(
+                summary,
+                width.saturating_sub(name_width + 6),
+                self.glyphs.more,
+            );
+            row(
+                Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(name, style),
+                    Span::raw("  "),
+                    Span::styled(summary, if selected { Style::new() } else { DIM }),
+                ]),
+                &mut y,
+                buffer,
+            );
+        }
+        let cursor = Some(Position::new(
             cursor_x.min(area.right().saturating_sub(1)),
             prompt_y,
-        ))
+        ));
+        Drawn { cursor, targets }
     }
 }
 
@@ -905,11 +1116,14 @@ mod tests {
             max_rows,
             card: None,
             tick: 0,
+            palette: &[],
+            palette_selected: 0,
         };
         let area = Rect::new(0, 0, width, frame.height(width));
         let mut buffer = Buffer::empty(area);
         let cursor = frame
             .render(area, &mut buffer)
+            .cursor
             .expect("the prompt has a cursor");
         (text(&buffer), cursor)
     }
@@ -1079,10 +1293,12 @@ mod tests {
             max_rows: 4,
             card: Some(Overlay::Link(&card)),
             tick: 0,
+            palette: &[],
+            palette_selected: 0,
         };
         let area = Rect::new(0, 0, 60, frame.height(60));
         let mut buffer = Buffer::empty(area);
-        assert!(frame.render(area, &mut buffer).is_none());
+        assert!(frame.render(area, &mut buffer).cursor.is_none());
         assert_eq!(
             text(&buffer),
             [
@@ -1123,5 +1339,96 @@ mod tests {
         assert!(joined.contains("not part of Fetchpath"), "{joined}");
         assert!(body.iter().all(|line| line.width() <= 76), "{body:#?}");
         assert_eq!(text.keys, "Enter download and set up · Esc cancel");
+    }
+
+    fn draw_with(frame: &Frame, width: u16) -> (Vec<String>, Drawn) {
+        let area = Rect::new(0, 5, width, frame.height(width));
+        let mut buffer = Buffer::empty(area);
+        let drawn = frame.render(area, &mut buffer);
+        (text(&buffer), drawn)
+    }
+
+    #[test]
+    fn a_menu_marks_the_selection_and_every_row_can_be_clicked() {
+        use crate::tui::menu::{Item, Menu};
+        let mut menu = Menu::new(
+            "Settings",
+            vec![
+                Item {
+                    inert: true,
+                    ..Item::new("Downloads", "", "")
+                },
+                Item::new("Downloads at the same time", "3", "Left/Right to change"),
+                Item::new("Retry automatically", "on", "Enter to switch"),
+            ],
+            "↑↓ choose · Esc close",
+        );
+        menu.select(2, 1);
+        let live = Live::default();
+        let panel = live.panel();
+        let frame = Frame {
+            panel: &panel,
+            prompt: "",
+            cursor: 0,
+            hint: "",
+            glyphs: &ASCII,
+            max_rows: 4,
+            card: Some(Overlay::Menu(&menu, None)),
+            tick: 0,
+            palette: &[],
+            palette_selected: 0,
+        };
+        let (rows, drawn) = draw_with(&frame, 50);
+        assert_eq!(
+            rows,
+            [
+                "-- Nothing downloading ---------------------------",
+                "+ Settings --------------------------------------+",
+                "| Downloads                                      |",
+                "|   Downloads at the same time  3                |",
+                "| > Retry automatically         on               |",
+                "| Enter to switch                                |",
+                "+ Up/Down choose · Esc close --------------------+",
+            ]
+        );
+        // Rows are absolute: the viewport starts at row 5.
+        assert_eq!(drawn.target_at(8), Some(Target::Item(1)));
+        assert_eq!(drawn.target_at(9), Some(Target::Item(2)));
+        assert_eq!(drawn.target_at(7), None, "the heading is not a target");
+        assert!(drawn.cursor.is_none());
+    }
+
+    #[test]
+    fn typing_a_slash_lists_matching_commands_to_choose_from() {
+        let live = Live::default();
+        let panel = live.panel();
+        let commands = [
+            ("resume", "Resume paused downloads"),
+            ("retry", "Try failed downloads again"),
+        ];
+        let frame = Frame {
+            panel: &panel,
+            prompt: "/re",
+            cursor: 3,
+            hint: "unused while the list shows",
+            glyphs: &ASCII,
+            max_rows: 4,
+            card: None,
+            tick: 0,
+            palette: &commands,
+            palette_selected: 1,
+        };
+        let (rows, drawn) = draw_with(&frame, 50);
+        assert_eq!(
+            rows,
+            [
+                "-- Nothing downloading ---------------------------",
+                "> /re",
+                "  /resume  Resume paused downloads",
+                "  /retry   Try failed downloads again",
+            ]
+        );
+        assert_eq!(drawn.target_at(8), Some(Target::Command(1)));
+        assert_eq!(drawn.cursor, Some(Position::new(5, 6)));
     }
 }
