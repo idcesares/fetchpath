@@ -70,6 +70,33 @@ with `--json`, it prints help and exits 2.
   per-state list as `/queue` (`p`, `r` resume or retry, `c` twice to cancel,
   `o`, `x`/Delete) and the key map shows only those that apply. Resizing is
   redrawn from scratch by ratatui's full-screen terminal.
+- **Flows (FP-061).** `flows/`, with the card's own additions in
+  `review.rs`. *Checksum:* S on a file card opens an edit line; the text is
+  normalized by `fetchpath_core::normalize_sha256` (case, `sha256:` prefix,
+  spaces) and anything but 64 hex digits is refused with the count found,
+  the line staying open; a rule that requires a checksum now asks for it
+  there. *Name:* N types another file name (`download::safe_file_name`, no
+  folder parts). *No replacement:* the card compares its path with the disk
+  (and, in a batch, with the paths of the marked links before it) and saves
+  as the first free "name (N)", saying so; the engine's
+  `storage.destination_conflict` at publication (a file appearing during a
+  download) is found by scanning the queue each loop, so it asks even when
+  it happened while the dashboard was open, but not for conflicts older than
+  the session. That card sends `ResolveDestination ChooseNewPath` (Enter
+  keeps both, N another name, Esc leaves it stopped); `/rename JOB NAME`,
+  `/rename` alone and a "Save under another name" action in `/queue` reach
+  it later; the receipt points to `/rename`, not `/retry`. The engine does
+  not support replacing, and nothing here asks it to. *Batch:* more than one
+  link at once opens one card; links are looked at one after another on a
+  thread; files and videos (at the quality their card would pick) start
+  marked, pages and failed looks do not; Space, A, Enter, Esc, clicks.
+  *Approvals:* a job in `awaiting_approval` opens a card with the agent,
+  file, source, size, folder and reasons (A, D, Esc for later, remembered
+  until `/approvals`); one answered elsewhere disappears. `Control::Approve`
+  and `Deny` give `fetchpath approve|deny JOB`, `/approve`, `/deny`, the
+  `/queue` actions and dashboard keys `a` and `d`. Plain mode prints each
+  card or question as lines and reads typed answers (`sha256 HEX`, `name X`,
+  numbers, `approve`, `deny`); a line starting with `/` still runs.
 - **Show in folder.** `reveal.rs`: a saved file opens in File Explorer
   selected (`SHOpenFolderAndSelectItems` on the file's ID list, so spaces
   and any characters are safe); a file not written yet, or moved away, opens
@@ -203,6 +230,31 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   found two fixes: the cancel question outlived moving away, and a finished
   job's graph said "now 0 B/s".
 
+- Flows: unit tests for checksum normalization and refusal, typed names,
+  the next free name against disk and batch, the card's S and N keys with
+  Esc, the clash on a card, batch marks, keys, typed numbers, same names
+  and cancelling, the conflict and approval prompts' text and keys, and the
+  new `/queue` actions (`tui::flows`, `tui::review`, `tui::jobs_menu`).
+  `an_agent_request_is_approved_and_denied_from_the_command_line`
+  (`apps/cli/tests/queue.rs`) connects as `agent:helper` to a real engine,
+  asks outside its folder twice, and approves and denies from the command
+  line. Headless ConPTY walkthrough through a real engine, 26 September
+  2026, with a scratch client acting as the agent: a card for a name
+  already in Downloads offered "exists (1).bin"; N renamed it; a wrong
+  checksum was refused and Esc kept the card; a pasted upper-case
+  `SHA256:` checksum was normalized and the file saved after matching; Esc
+  cancelled a card; a batch of two same-named files and a page marked the
+  two files as "a.bin" and "a (1).bin" and left the page unmarked, Space
+  showed the second taking the free name, Enter queued both, Esc cancelled
+  another batch; two 24 MiB downloads had files put at their destinations
+  while running, and the engine's refusals opened the card: N saved one as
+  `late-copy.bin`, Esc left the other, `/rename` listed only it and Enter
+  kept both; an agent's request was approved with A, another put off with
+  Esc, asked again by `/approvals` and denied with D. Plain mode ran the
+  clash with a typed `sha256`, a batch where `3` marked the page, and a
+  typed `deny`. The run found `/rename` alone opening the generic job list
+  and the conflict receipt suggesting `/retry`; both fixed and re-run.
+
 ## Limitations
 
 - `InspectLink` lets an agent read the headers of any HTTP(S) address the
@@ -221,6 +273,10 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   and user info stripped) is FP-063. Batch,
   conflict, checksum and approval prompts are FP-061; themes and keys
   are FP-062.
+- The approval card's size is what the engine knows: before a download
+  starts, the agent's request has no size yet.
+- Speeds of 1 B/s with days left can show for a moment when a download
+  starts; that is the engine's estimate (FP-074), not the terminal.
 - The dashboard's single keys are fixed until keybindings (FP-062). The
   engine reports only ranges in flight, not a map of the whole file, so the
   dashboard shows no piece map. It was walked through in ConPTY, not yet by

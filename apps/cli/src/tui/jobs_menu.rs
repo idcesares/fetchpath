@@ -15,6 +15,8 @@ pub enum Deed {
     Show,
     /// Open File Explorer at the file.
     Reveal,
+    /// Save a download stopped by an existing file under another name.
+    Rename,
 }
 
 fn deed_for(command: &str) -> Deed {
@@ -24,7 +26,10 @@ fn deed_for(command: &str) -> Deed {
         "cancel" => Deed::Control(Control::Cancel),
         "retry" => Deed::Control(Control::Retry),
         "rm" => Deed::Control(Control::Remove),
+        "approve" => Deed::Control(Control::Approve),
+        "deny" => Deed::Control(Control::Deny),
         "folder" => Deed::Reveal,
+        "rename" => Deed::Rename,
         _ => Deed::Show,
     }
 }
@@ -39,6 +44,13 @@ pub fn deeds(job: &JobSnapshot) -> Vec<(Deed, &'static str)> {
     // A saved file is what people most often want next.
     if job.state == Completed && job.destination.is_some() {
         deeds.push((Deed::Reveal, "Show in folder"));
+    }
+    if job.state == AwaitingApproval {
+        deeds.push((Deed::Control(Control::Approve), "Approve"));
+        deeds.push((Deed::Control(Control::Deny), "Deny"));
+    }
+    if super::flows::conflicted(job) {
+        deeds.push((Deed::Rename, "Save under another name"));
     }
     match job.state {
         Running | Probing | Ready | Queued if job.not_before.is_none() => {
@@ -90,6 +102,8 @@ pub enum Effect {
         lines: Vec<Out>,
         close: bool,
     },
+    /// Ask for another name for a download stopped by an existing file.
+    Rename(Box<JobSnapshot>),
 }
 
 impl JobsMenu {
@@ -148,6 +162,9 @@ impl JobsMenu {
             Some("retry") => "Retry which download?",
             Some("rm") => "Remove which download from the list?",
             Some("folder") => "Show which download in File Explorer?",
+            Some("approve") => "Approve which agent request?",
+            Some("rename") => "Save which download under another name?",
+            Some("deny") => "Deny which agent request?",
             Some(_) => "Show which download?",
             None => "Downloads",
         };
@@ -197,6 +214,8 @@ impl JobsMenu {
                 Ok(said) => Out::new(Tone::Normal, said),
                 Err(message) => Out::new(Tone::Bad, message),
             }],
+            // The view opens a prompt for the name instead.
+            Deed::Rename => Vec::new(),
             Deed::Show => queue::job_lines(job)
                 .into_iter()
                 .map(|line| Out::new(Tone::Normal, line))
@@ -236,6 +255,7 @@ impl JobsMenu {
                     return Effect::None;
                 };
                 match self.deed {
+                    Some(Deed::Rename) => Effect::Rename(Box::new(job)),
                     Some(deed) => Effect::Say {
                         lines: Self::act(engine, deed, &job),
                         close: true,
@@ -245,6 +265,11 @@ impl JobsMenu {
                         Effect::None
                     }
                 }
+            }
+            (Stage::Actions(job, deeds), Pick::Choose(index)) if deeds[index] == Deed::Rename => {
+                let job = job.clone();
+                *self = Self::open(live, None);
+                Effect::Rename(job)
             }
             (Stage::Actions(job, deeds), Pick::Choose(index)) => {
                 let lines = Self::act(engine, deeds[index], job);
@@ -318,6 +343,32 @@ mod tests {
         assert_eq!(
             labels(&job("completed", serde_json::json!({}))),
             ["Show details", "Remove from the list"]
+        );
+        assert_eq!(
+            labels(&job(
+                "awaiting_approval",
+                serde_json::json!({"principal": "agent:helper"})
+            )),
+            ["Approve", "Deny", "Cancel", "Show details"]
+        );
+        let clash = job(
+            "failed",
+            serde_json::json!({"error": {
+                "code": "storage.destination_conflict",
+                "message_key": "storage.destination_conflict",
+                "retryable": false,
+                "scope": "job",
+                "message": "A file already exists at this destination.",
+            }}),
+        );
+        assert_eq!(
+            labels(&clash),
+            [
+                "Save under another name",
+                "Retry",
+                "Show details",
+                "Remove from the list"
+            ]
         );
     }
 

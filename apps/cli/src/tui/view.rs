@@ -2,11 +2,13 @@
 //! download, a summary rule, then either the prompt and a hint line or a
 //! confirmation card; plus the one-line receipts printed into scrollback.
 
+use super::flows::Flows;
+use super::flows::batch::Batch;
 use super::line::{Out, Tone};
 use super::live::Row;
 use super::menu::{Menu, ROWS};
 use super::prompt::Prompt;
-use super::review::{self, Card, Stage};
+use super::review::{self, Card, Field, Stage};
 use super::setup::Setup;
 use crate::client;
 use fetchpath_protocol::JobSnapshot;
@@ -126,6 +128,14 @@ pub fn receipt(job: &JobSnapshot, glyphs: &Glyphs) -> Out {
         JobState::Cancelled => {
             Out::new(Tone::Dim, format!("{} {name}  cancelled", glyphs.cancelled))
         }
+        _ if super::flows::conflicted(job) => Out::new(
+            Tone::Bad,
+            format!(
+                "{} {name}  a file with this name is already there; nothing was replaced  (/rename {} NAME)",
+                glyphs.failed,
+                client::short_id(job)
+            ),
+        ),
         _ => {
             let why = job.error.as_ref().map_or_else(
                 || client::state_label(job).to_owned(),
@@ -337,7 +347,7 @@ pub struct CardText {
 
 /// Keeps the start and the end of `text` within `width` columns, which
 /// suits paths: the drive and the file name stay visible.
-fn middle_fit(text: &str, width: usize, more: &str) -> String {
+pub fn middle_fit(text: &str, width: usize, more: &str) -> String {
     if text.width() <= width {
         return text.to_owned();
     }
@@ -359,7 +369,7 @@ fn middle_fit(text: &str, width: usize, more: &str) -> String {
 }
 
 /// A message wrapped to the card's width, one styled line per row.
-fn note(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
+pub fn note(text: &str, style: Style, width: usize) -> Vec<Line<'static>> {
     wrap(text, width)
         .into_iter()
         .map(|row| Line::styled(row, style))
@@ -422,13 +432,34 @@ pub fn card_text(card: &Card, glyphs: &Glyphs, tick: u64, width: usize) -> CardT
             if let Some(line) = crate::rules::card_line(look.link.rules.as_ref()) {
                 text.body.extend(note(&line, DIM, width));
             }
-            if card.needs_checksum() {
+            if let Some(clash) = card.clash() {
                 text.body.extend(note(
-                    "That rule needs a checksum for this file: add the link again with --sha256 and its SHA-256.",
+                    &format!("{clash} is already there, so this one gets the next free name; nothing is replaced."),
                     warn,
                     width,
                 ));
-                text.keys = "Esc cancel".into();
+            }
+            if let Some(hex) = &card.draft.sha256 {
+                text.body.push(Line::from(vec![
+                    Span::styled("SHA-256  ", DIM),
+                    Span::raw(middle_fit(hex, width.saturating_sub(9), glyphs.more)),
+                ]));
+            }
+            if card.needs_checksum() {
+                text.body.extend(note(
+                    "That rule needs a checksum for this file: press S and paste its SHA-256.",
+                    warn,
+                    width,
+                ));
+                text.keys = "S enter checksum · Esc cancel".into();
+            } else if card.takes_checksum() && card.can_confirm() {
+                text.keys = text
+                    .keys
+                    .replace(" · Esc cancel", " · S checksum · N name · Esc cancel");
+            }
+            if let Some(problem) = &card.problem {
+                text.body
+                    .extend(note(problem, Style::new().fg(Color::Red), width));
             }
             text
         }
@@ -668,6 +699,10 @@ pub enum Overlay<'a> {
     Setup(&'a Setup),
     /// A menu, with a value being typed into one of its rows.
     Menu(&'a Menu, Option<(&'a str, &'a Prompt)>),
+    /// Several links previewed together.
+    Batch(&'a Batch),
+    /// A prompt from the queue: an existing file, an agent's request.
+    Flow(&'a Flows),
 }
 
 /// Something a click can land on.
@@ -699,10 +734,30 @@ impl Drawn {
 
 /// A card's text plus which body lines are clickable, and where a typing
 /// cursor sits (body line, column).
-struct OverlayText {
-    card: CardText,
-    targets: Vec<(usize, Target)>,
-    cursor: Option<(usize, usize)>,
+pub struct OverlayText {
+    pub card: CardText,
+    pub targets: Vec<(usize, Target)>,
+    pub cursor: Option<(usize, usize)>,
+}
+
+/// A line being typed on a card, scrolled to keep the cursor in view, and
+/// the cursor's column.
+pub fn edit_line(label: &str, prompt: &Prompt, width: usize) -> (Line<'static>, usize) {
+    let lead = format!("{label}: ");
+    let room = width.saturating_sub(lead.width() + 1).max(1);
+    let before = &prompt.text()[..prompt.cursor()];
+    let mut start = 0;
+    while before[start..].width() > room {
+        start += before[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    let column = lead.width() + before[start..].width();
+    (
+        Line::from(vec![
+            Span::styled(lead, Style::new().fg(ACCENT)),
+            Span::raw(fit(&prompt.text()[start..], room, "")),
+        ]),
+        column,
+    )
 }
 
 /// The body lines of a video card that hold formats, with their choice.
@@ -769,18 +824,9 @@ fn menu_text(
     let mut cursor = None;
     match editing {
         Some((label, prompt)) => {
-            let lead = format!("{label}: ");
-            let room = width.saturating_sub(lead.width() + 1).max(1);
-            let before = &prompt.text()[..prompt.cursor()];
-            let mut start = 0;
-            while before[start..].width() > room {
-                start += before[start..].chars().next().map_or(1, char::len_utf8);
-            }
-            cursor = Some((body.len(), lead.width() + before[start..].width()));
-            body.push(Line::from(vec![
-                Span::styled(lead, Style::new().fg(ACCENT)),
-                Span::raw(fit(&prompt.text()[start..], room, "")),
-            ]));
+            let (line, column) = edit_line(label, prompt, width);
+            cursor = Some((body.len(), column));
+            body.push(line);
         }
         None => {
             let position = if menu.items.len() > ROWS {
@@ -813,11 +859,35 @@ fn menu_text(
 
 fn overlay_text(overlay: Overlay, glyphs: &Glyphs, tick: u64, width: usize) -> OverlayText {
     match overlay {
-        Overlay::Link(card) => OverlayText {
-            card: card_text(card, glyphs, tick, width),
-            targets: choice_lines(card),
+        Overlay::Link(card) => {
+            let mut text = card_text(card, glyphs, tick, width);
+            let mut cursor = None;
+            if let Some((field, prompt)) = &card.editing {
+                let label = match field {
+                    Field::Checksum => "SHA-256",
+                    Field::Name => "Name",
+                };
+                let (line, column) = edit_line(label, prompt, width);
+                cursor = Some((text.body.len(), column));
+                text.body.push(line);
+                text.keys = "Enter save · Esc back".into();
+            }
+            OverlayText {
+                card: text,
+                targets: choice_lines(card),
+                cursor,
+            }
+        }
+        Overlay::Batch(batch) => batch.text(glyphs, tick, width),
+        Overlay::Flow(flows) => flows.text(glyphs, width).unwrap_or(OverlayText {
+            card: CardText {
+                title: String::new(),
+                body: Vec::new(),
+                keys: String::new(),
+            },
+            targets: Vec::new(),
             cursor: None,
-        },
+        }),
         Overlay::Setup(setup) => OverlayText {
             card: setup_text(setup, glyphs, tick, width),
             targets: Vec::new(),

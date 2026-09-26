@@ -7,6 +7,7 @@ installing so it's found.
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
 fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history
+fetchpath approve | deny JOB...
 fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop [--for-update]
 fetchpath --version
 fetchpath --help
@@ -132,6 +133,8 @@ fetchpath rm 4               # remove a finished or failed download from the lis
 fetchpath watch              # follow the queue until Ctrl+C
 fetchpath watch 1            # follow one download to its end
 fetchpath history invoice    # finished and failed downloads matching a word
+fetchpath approve 5          # let an agent's request that waits for you run
+fetchpath deny 5             # refuse it; it ends cancelled
 ```
 
 A download is named by its number in `fetchpath ls` (up to four digits) or by
@@ -237,6 +240,26 @@ line into the window's history saying where the file went or why it stopped.
   named at the bottom: `p` pause, `r` resume or retry, `c` twice to cancel,
   `o` to open the folder, `x` to remove a finished one. Esc, `q` or F2 go
   back to the prompt, where anything that happened meanwhile is printed.
+- Several links at once (pasted together, or `/add` with more than one)
+  show one card listing them all, each with a mark: files and videos start
+  marked, web pages and links that could not be read do not. Space marks or
+  unmarks the chosen one, A marks all, Enter downloads the marked ones and
+  Esc cancels them all.
+- Fetchpath never replaces a file. When one with the same name is already
+  in the folder (or another link in the same batch has that name), the card
+  says so and saves the download as the next free "name (1)". If a file
+  appears while a download runs, the download stops and a card asks: Enter
+  keeps both, N types another name, Esc leaves it stopped; `/rename JOB
+  NAME` (or `/rename` on its own) saves it under another name later.
+- On a file's card, **S** takes a SHA-256 checksum (pasted in any case, with
+  or without a `sha256:` prefix); the file is saved only if it matches. A
+  rule that requires a checksum asks for it here. **N** gives the file
+  another name.
+- When an agent asks for something its access does not cover (a folder
+  outside the ones you allowed, a size over its limit), a card shows which
+  agent, the file, its size, the folder and why: A approves, D denies, Esc
+  decides later. `/approvals` asks again; `/approve` and `/deny` take a
+  download's number, as `fetchpath approve` and `fetchpath deny` do.
 - `/folder` (or **Show in folder** in `/queue`) opens File Explorer at the
   download with the file selected; for a download still in progress it opens
   the folder. `fetchpath folder JOB` does the same from the command line.
@@ -244,7 +267,7 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/dashboard`, `/history`, `/settings`, `/engine`, `/help`
+  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/settings`, `/engine`, `/help`
   and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names and folders; Up and Down
@@ -253,6 +276,9 @@ line into the window's history saying where the file went or why it stopped.
 Leaving never stops a download. `fetchpath --plain` prints plain lines and
 redraws nothing, which suits screen readers; it is chosen automatically when
 `NO_COLOR` is set, `TERM` is `dumb`, or Windows reports a screen reader.
+Its cards and questions are answered by typing: Enter, `no`, a number, or
+on a file's card `sha256 CHECKSUM` and `name NEW-NAME`; a batch takes the
+numbers to mark or unmark; an agent's request takes `approve` or `deny`.
 
 ## Video and audio tools
 

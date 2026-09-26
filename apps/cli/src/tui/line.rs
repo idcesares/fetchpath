@@ -55,6 +55,8 @@ pub enum Open {
     Settings,
     /// The full-screen dashboard.
     Dashboard,
+    /// Cards for agents' requests that wait for the person.
+    Approvals,
     /// The job list; with a command name, choosing a job runs it.
     Jobs(Option<&'static str>),
 }
@@ -146,6 +148,34 @@ pub const COMMANDS: &[Spec] = &[
         aliases: &["remove"],
         usage: "/rm JOB...",
         summary: "Remove finished downloads from the list",
+        takes: Takes::Jobs,
+    },
+    Spec {
+        name: "approvals",
+        aliases: &[],
+        usage: "/approvals",
+        summary: "Answer agents' requests that wait for you",
+        takes: Takes::Nothing,
+    },
+    Spec {
+        name: "approve",
+        aliases: &[],
+        usage: "/approve JOB...",
+        summary: "Let an agent's request download",
+        takes: Takes::Jobs,
+    },
+    Spec {
+        name: "deny",
+        aliases: &[],
+        usage: "/deny JOB...",
+        summary: "Refuse an agent's request",
+        takes: Takes::Jobs,
+    },
+    Spec {
+        name: "rename",
+        aliases: &[],
+        usage: "/rename JOB NAME",
+        summary: "Save a download stopped by an existing file under another name",
         takes: Takes::Jobs,
     },
     Spec {
@@ -317,10 +347,10 @@ fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
     match spec.name {
         "settings" => Some(Open::Settings),
         "dashboard" => Some(Open::Dashboard),
+        "approvals" => Some(Open::Approvals),
         "queue" => Some(Open::Jobs(None)),
-        "show" | "pause" | "resume" | "cancel" | "retry" | "rm" | "folder" => {
-            Some(Open::Jobs(Some(spec.name)))
-        }
+        "show" | "pause" | "resume" | "cancel" | "retry" | "rm" | "folder" | "approve" | "deny"
+        | "rename" => Some(Open::Jobs(Some(spec.name))),
         _ => None,
     }
 }
@@ -441,12 +471,14 @@ fn execute(
             }
             Ok(())
         }
-        "pause" | "resume" | "cancel" | "retry" | "rm" => {
+        "pause" | "resume" | "cancel" | "retry" | "rm" | "approve" | "deny" => {
             let action = match spec.name {
                 "pause" => Control::Pause,
                 "resume" => Control::Resume,
                 "cancel" => Control::Cancel,
                 "retry" => Control::Retry,
+                "approve" => Control::Approve,
+                "deny" => Control::Deny,
                 _ => Control::Remove,
             };
             if parsed.words.is_empty() {
@@ -532,6 +564,33 @@ fn execute(
             }
             _ => Err(usage_error(spec, "Say install, or use and a folder")),
         },
+        "approvals" => {
+            let waiting: Vec<&JobSnapshot> = jobs
+                .iter()
+                .filter(|job| job.state == JobState::AwaitingApproval)
+                .collect();
+            if waiting.is_empty() {
+                reply.say(Tone::Normal, "No agent is waiting for an answer.");
+            }
+            for job in waiting {
+                for line in super::flows::approval::lines(job, client::index_of(jobs, job)) {
+                    reply.say(Tone::Normal, line);
+                }
+            }
+            Ok(())
+        }
+        "rename" => {
+            let [job, name] = parsed.words.as_slice() else {
+                return Err(usage_error(spec, "Name a download and the new file name"));
+            };
+            let job = resolve(jobs, std::slice::from_ref(job))?.remove(0);
+            reply.say(
+                Tone::Normal,
+                super::flows::conflict::rename(engine, &job, name)
+                    .map_err(|message| client::input_error(&message))?,
+            );
+            Ok(())
+        }
         "dashboard" => {
             reply.say(
                 Tone::Normal,
@@ -910,7 +969,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(inserts("/pa"), ["/pause"]);
-        assert_eq!(inserts("/re"), ["/resume", "/retry"]);
+        assert_eq!(inserts("/re"), ["/resume", "/retry", "/rename"]);
         assert_eq!(inserts("/pause ubu"), ["3f1c2a9b"]);
         assert_eq!(inserts("/show 2"), ["9a000000"]);
         // With nothing typed, only jobs still in the panel are offered.

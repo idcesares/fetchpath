@@ -594,3 +594,93 @@ fn rules_place_downloads_explain_themselves_and_can_require_a_checksum() {
     let removed = home.run(&["rules", "rm", "1"]);
     assert!(!text(&removed.stdout).contains("Archives"));
 }
+
+/// FP-061: an agent's requests outside its folders wait for the person, who
+/// answers them from the command line (the terminal's `/approve` and
+/// `/deny` and its approval card send the same commands).
+#[test]
+fn an_agent_request_is_approved_and_denied_from_the_command_line() {
+    use fetchpath_protocol::command::{
+        Command as Wire, ConflictPolicy, DestinationIntent, JobInput, JobRequest,
+    };
+    use fetchpath_protocol::launch::{self, EngineHome};
+    use fetchpath_protocol::message::CommandResult;
+    use fetchpath_protocol::model::JobState;
+    use fetchpath_protocol::pipe::Limits;
+    use fetchpath_protocol::principal::{AgentName, AgentPolicy, Principal};
+    use fetchpath_protocol::{ClientId, EngineClient, SensitiveUrl, Timestamp};
+
+    let home = Home::new();
+    let data = EngineHome::at(home.dir.path().join("data"));
+    let granted = home.dir.path().join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    let person = launch::attach(&data, Limits::default()).unwrap();
+    person
+        .send(
+            &ClientId::random(),
+            Wire::SetAgentPolicy {
+                agent: AgentName::try_from("helper").unwrap(),
+                policy: Some(AgentPolicy {
+                    folders: vec![granted.display().to_string()],
+                    ..AgentPolicy::default()
+                }),
+            },
+        )
+        .unwrap();
+    let agent = launch::attach(&data, Limits::default())
+        .unwrap()
+        .with_principal(Principal::try_from("agent:helper").unwrap());
+    // Scheduled an hour ahead, so an approved request waits instead of
+    // reaching for a server.
+    let later = Some(Timestamp::from_unix_ms(
+        Timestamp::now().unix_ms() + 3_600_000,
+    ));
+    let ask = |name: &str| {
+        let request = JobRequest::File {
+            input: JobInput::Url {
+                url: SensitiveUrl::try_from(format!("http://127.0.0.1:9/{name}")).unwrap(),
+            },
+            destination: DestinationIntent {
+                path: home.out().join(name).display().to_string(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: later,
+            expected_sha256: None,
+        };
+        match agent
+            .send(&ClientId::random(), Wire::CreateJob { request })
+            .unwrap()
+        {
+            CommandResult::Job { job } => job,
+            other => panic!("not a job: {other:?}"),
+        }
+    };
+    let approved = ask("approve-me.bin");
+    let denied = ask("deny-me.bin");
+    assert_eq!(approved.state, JobState::AwaitingApproval);
+    let id = |job: &fetchpath_protocol::JobSnapshot| job.job_id.as_str()[..8].to_owned();
+
+    let output = home.run(&["approve", &id(&approved)]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).starts_with("Approved "), "{}", text(&output.stdout));
+    let output = home.run(&["deny", &id(&denied)]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("it will not download"), "{}", text(&output.stdout));
+
+    let states: Vec<(String, String)> = home
+        .jobs()
+        .iter()
+        .map(|job| {
+            (
+                job["job_id"].as_str().unwrap()[..8].to_owned(),
+                job["state"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(states.contains(&(id(&approved), "queued".to_owned())), "{states:?}");
+    assert!(states.contains(&(id(&denied), "cancelled".to_owned())), "{states:?}");
+
+    // Nothing is waiting any more, so answering again is refused.
+    let again = home.run(&["approve", &id(&approved)]);
+    assert_ne!(code(&again), 0);
+}

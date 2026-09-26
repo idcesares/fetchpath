@@ -1836,7 +1836,7 @@
         "FP-054",
         "FP-058"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": null,
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -1851,7 +1851,11 @@
       ],
       "acceptance": "The link card already picks a media quality and confirms a file before it starts (FP-059). Inline prompts preview and confirm a batch of links, resolve a destination conflict without silent replacement, enter and normalize a checksum, and approve or deny an agent request with its principal, size and folder shown; every prompt can be cancelled by Esc and has a plain-mode form.",
       "verification": "Flow tests against a real engine for each prompt, including cancelling each one; an agent request approved and denied from the terminal.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/TERMINAL.md",
+        "apps/cli/src/tui/flows/mod.rs",
+        "apps/cli/tests/queue.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -2214,6 +2218,29 @@
         "crates/fetchpath-http/src/link.rs",
         "adapters/media/src/setup.rs"
       ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-074",
+      "title": "Stop showing a near-zero speed and days left as a download starts",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-051"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session/src/lib.rs"
+      ],
+      "acceptanceIds": [
+        "A04"
+      ],
+      "acceptance": "A download that has just started never reports a rate that does not describe its transfer, so no client shows \"1 B/s\" with thousands of hours left (seen in the terminal on 26 September 2026 for about a second at the start of each 24 MiB test download from a local server; the cause is not yet confirmed, and RateEstimate in the session is where the rate is computed).",
+      "verification": "A unit test reproducing the start-of-download figure, then passing; the terminal walkthrough shows no such figure.",
+      "evidence": [],
       "blockedReason": null
     }
   ]

@@ -656,6 +656,10 @@ pub enum Control {
     Cancel,
     Retry,
     Remove,
+    /// Lets an agent's request that waits for the person run.
+    Approve,
+    /// Refuses an agent's request; it ends cancelled.
+    Deny,
 }
 
 pub fn control(action: Control, args: &[String]) -> i32 {
@@ -709,6 +713,8 @@ pub(crate) fn control_command(action: Control, job: &JobSnapshot) -> Command {
             expected_sha256: None,
         },
         Control::Remove => Command::RemoveJob { job_id },
+        Control::Approve => Command::ApproveJob { job_id },
+        Control::Deny => Command::DenyJob { job_id },
     }
 }
 
@@ -731,6 +737,8 @@ pub(crate) fn describe(action: Control, job: &JobSnapshot, result: &CommandResul
         (Control::Cancel, _) => format!("Cancelling {who}."),
         (Control::Retry, _) => format!("Retrying {who}."),
         (Control::Remove, _) => format!("Removed {who} from the list."),
+        (Control::Approve, _) => format!("Approved {who}."),
+        (Control::Deny, _) => format!("Denied {who}; it will not download."),
     }
 }
 

@@ -25,6 +25,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...
+  fetchpath approve | deny JOB...             answer an agent's request that waits for you
   fetchpath watch [JOB]                       fetchpath inspect LINK
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
@@ -89,6 +90,8 @@ fn main() {
         Some("cancel") => queue::control(queue::Control::Cancel, &args[1..]),
         Some("retry") => queue::control(queue::Control::Retry, &args[1..]),
         Some("rm" | "remove") => queue::control(queue::Control::Remove, &args[1..]),
+        Some("approve") => queue::control(queue::Control::Approve, &args[1..]),
+        Some("deny") => queue::control(queue::Control::Deny, &args[1..]),
         Some("watch") => queue::watch(&args[1..]),
         Some("inspect") => queue::inspect(&args[1..]),
         Some("history") => queue::history(&args[1..]),

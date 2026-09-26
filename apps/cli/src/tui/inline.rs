@@ -4,6 +4,8 @@
 
 use super::Session;
 use super::dashboard;
+use super::flows::Flows;
+use super::flows::batch::{Answer as BatchAnswer, Batch};
 use super::jobs_menu::{Effect as JobsEffect, JobsMenu};
 use super::line::Open;
 use super::line::{self, Context, Out, Tone};
@@ -214,11 +216,13 @@ pub fn run(mut session: Session) -> i32 {
     }
 }
 
-/// Links waiting to be looked at and confirmed, one card at a time.
+/// Links waiting to be looked at and confirmed: one card at a time, or
+/// one batch card for links given together.
 #[derive(Default)]
 struct Reviews {
-    waiting: VecDeque<Draft>,
+    waiting: VecDeque<Vec<Draft>>,
     card: Option<Card>,
+    batch: Option<Batch>,
     answer: Option<Receiver<Result<Look, ProtocolError>>>,
 }
 
@@ -227,9 +231,17 @@ impl Reviews {
     /// view keeps moving while a media page is inspected.
     fn next(&mut self) {
         self.card = None;
+        self.batch = None;
         self.answer = None;
-        let Some(draft) = self.waiting.pop_front() else {
+        let Some(mut drafts) = self.waiting.pop_front() else {
             return;
+        };
+        if drafts.len() > 1 {
+            self.batch = Some(Batch::start(drafts));
+            return;
+        }
+        let Some(draft) = drafts.pop() else {
+            return self.next();
         };
         let (send, receive) = mpsc::channel();
         let asked = draft.clone();
@@ -241,22 +253,30 @@ impl Reviews {
         self.answer = Some(receive);
     }
 
+    fn showing(&self) -> bool {
+        self.card.is_some() || self.batch.is_some()
+    }
+
     /// Shows the next waiting card if none is showing.
     fn next_if_idle(&mut self) {
-        if self.card.is_none() {
+        if !self.showing() {
             self.next();
         }
     }
 
     fn add(&mut self, drafts: Vec<Draft>) {
-        self.waiting.extend(drafts);
-        if self.card.is_none() {
-            self.next();
+        if drafts.is_empty() {
+            return;
         }
+        self.waiting.push_back(drafts);
+        self.next_if_idle();
     }
 
     /// Takes the engine's answer when it has come; true if the card changed.
     fn settle(&mut self) -> bool {
+        if let Some(batch) = &mut self.batch {
+            return batch.poll();
+        }
         let (Some(card), Some(answer)) = (&mut self.card, &self.answer) else {
             return false;
         };
@@ -346,6 +366,8 @@ struct Menus {
     jobs: Option<JobsMenu>,
     /// Asked for; opened by the loop, which owns the screen.
     dashboard: bool,
+    /// Prompts from the queue: existing files and agents' requests.
+    flows: Flows,
 }
 
 impl Menus {
@@ -384,6 +406,13 @@ fn submit(
         },
         Some(Open::Jobs(command)) => menus.jobs = Some(JobsMenu::open(&session.live, command)),
         Some(Open::Dashboard) => menus.dashboard = true,
+        Some(Open::Approvals) => {
+            menus.flows.ask_again();
+            menus.flows.watch(&session.live);
+            if !menus.flows.active() {
+                screen.print(&[Out::new(Tone::Normal, "No agent is waiting for an answer.")])?;
+            }
+        }
         None => {}
     }
     Ok(false)
@@ -436,7 +465,9 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     let mut dirty = true;
     let mut last_draw = Instant::now();
     'running: loop {
-        let commands = if menus.any() || reviews.card.is_some() {
+        menus.flows.watch(&session.live);
+        let prompting = reviews.showing() || menus.flows.active();
+        let commands = if menus.any() || prompting {
             Vec::new()
         } else {
             palette(&prompt)
@@ -444,12 +475,9 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
         chosen_command = chosen_command.min(commands.len().saturating_sub(1));
         // The list shows a window of commands that follows the selection.
         let first_command = chosen_command.saturating_sub(COMMAND_ROWS - 1);
-        set_mouse(
-            menus.any() || reviews.card.is_some() || !commands.is_empty(),
-            &mut mouse,
-        )?;
+        set_mouse(menus.any() || prompting || !commands.is_empty(), &mut mouse)?;
         // Animate spinners and bars while anything moves.
-        let moving = reviews.card.is_some()
+        let moving = prompting
             || menus.setup.is_some()
             || menus.jobs.is_some()
             || session.live.panel().iter().any(|row| row.group == 0);
@@ -468,7 +496,13 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             } else if let Some(jobs) = &menus.jobs {
                 Some(Overlay::Menu(&jobs.menu, None))
             } else {
-                reviews.card.as_ref().map(Overlay::Link)
+                if menus.flows.active() {
+                    Some(Overlay::Flow(&menus.flows))
+                } else if let Some(batch) = &reviews.batch {
+                    Some(Overlay::Batch(batch))
+                } else {
+                    reviews.card.as_ref().map(Overlay::Link)
+                }
             };
             drawn = screen.draw(&Frame {
                 panel: &panel,
@@ -553,12 +587,62 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                     match menu.pick(&session.engine, &session.live, pick) {
                         JobsEffect::None => {}
                         JobsEffect::Close => menus.jobs = None,
+                        JobsEffect::Rename(job) => {
+                            menus.jobs = None;
+                            menus.flows.ask_rename(&job);
+                        }
                         JobsEffect::Say { lines, close } => {
                             screen.print(&lines)?;
                             if close {
                                 menus.jobs = None;
                             }
                         }
+                    }
+                }
+                // A prompt from the queue holds the keyboard until answered
+                // or put off.
+                Event::Key(key) if menus.flows.active() => {
+                    let lines = menus.flows.key(&session.engine, key);
+                    screen.print(&lines)?;
+                }
+                Event::Mouse(_) if menus.flows.active() => {}
+                Event::Key(key) if reviews.batch.is_some() => {
+                    let batch = reviews.batch.as_mut().expect("checked");
+                    match batch.key(key) {
+                        BatchAnswer::None => {}
+                        BatchAnswer::Confirm => {
+                            let lines: Vec<Out> = batch
+                                .chosen()
+                                .map(|card| confirmed(session, card))
+                                .collect();
+                            screen.print(&lines)?;
+                            reviews.next();
+                        }
+                        BatchAnswer::Cancel => {
+                            screen.print(&[Out::new(
+                                Tone::Dim,
+                                format!("Not downloaded: {} links", batch.cards.len()),
+                            )])?;
+                            reviews.next();
+                        }
+                    }
+                }
+                Event::Mouse(event) if reviews.batch.is_some() => {
+                    let batch = reviews.batch.as_mut().expect("checked");
+                    match event.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(Target::Choice(row)) = drawn.target_at(event.row) {
+                                batch.selected = row;
+                                batch.toggle(row);
+                            }
+                        }
+                        MouseEventKind::ScrollUp => {
+                            batch.selected = batch.selected.saturating_sub(1);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            batch.selected = (batch.selected + 1).min(batch.cards.len() - 1);
+                        }
+                        _ => {}
                     }
                 }
                 Event::Mouse(event) if reviews.card.is_some() => {
@@ -687,7 +771,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                         }
                     }
                 },
-                Event::Paste(text) if reviews.card.is_none() && !menus.any() => {
+                Event::Paste(text) if !prompting && !menus.any() => {
                     prompt.insert(&text);
                     completion = None;
                 }
@@ -735,7 +819,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                     screen.print(&lines)?;
                     // Look at the video that asked for the tools again.
                     if let Some(draft) = waiting {
-                        reviews.waiting.push_front(draft);
+                        reviews.waiting.push_front(vec![draft]);
                     }
                 }
                 Err(message) => screen.print(&[Out::new(Tone::Bad, message)])?,

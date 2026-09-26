@@ -143,6 +143,10 @@ pub fn keys(job: &JobSnapshot) -> Vec<Key> {
                 Deed::Control(Control::Retry) => ('r', "retry"),
                 Deed::Control(Control::Cancel) => ('c', "cancel"),
                 Deed::Control(Control::Remove) => ('x', "remove"),
+                Deed::Control(Control::Approve) => ('a', "approve"),
+                Deed::Control(Control::Deny) => ('d', "deny"),
+                // Typing a name belongs to the prompt's own card.
+                Deed::Rename => return None,
                 Deed::Reveal => ('o', "folder"),
                 // The dashboard already shows the details.
                 Deed::Show => return None,

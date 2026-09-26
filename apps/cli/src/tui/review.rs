@@ -3,6 +3,8 @@
 //! saved (quality, type, size, folder) and nothing starts until the person
 //! confirms.
 
+use super::flows;
+use super::prompt::{Action, Prompt};
 use crate::client::{self, Engine};
 use crate::download;
 use crate::queue;
@@ -113,6 +115,13 @@ pub enum Answer {
     SetUpTools,
 }
 
+/// A value being typed on the card.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Field {
+    Checksum,
+    Name,
+}
+
 pub struct Card {
     pub draft: Draft,
     pub stage: Stage,
@@ -120,6 +129,14 @@ pub struct Card {
     order: Vec<usize>,
     /// The chosen row in `order`.
     pub choice: usize,
+    /// A file name the person typed instead of the suggested one.
+    pub name: Option<String>,
+    /// Paths other cards in the same batch will save to, so two links
+    /// with the same name do not clash.
+    pub taken: Vec<PathBuf>,
+    /// A value being typed, and what was wrong with the last one.
+    pub editing: Option<(Field, Prompt)>,
+    pub problem: Option<String>,
 }
 
 impl Card {
@@ -129,6 +146,10 @@ impl Card {
             stage: Stage::Looking,
             order: Vec::new(),
             choice: 0,
+            name: None,
+            taken: Vec::new(),
+            editing: None,
+            problem: None,
         }
     }
 
@@ -227,12 +248,77 @@ impl Card {
         }
     }
 
+    /// Whether a checksum can be given: a file or a page, not a video.
+    pub fn takes_checksum(&self) -> bool {
+        !matches!(self.stage, Stage::Looking) && !self.is_media()
+    }
+
+    /// Starts typing a value on the card, prefilled with the current one.
+    pub fn edit(&mut self, field: Field) {
+        let mut prompt = Prompt::default();
+        prompt.set(match field {
+            Field::Checksum => self.draft.sha256.clone().unwrap_or_default(),
+            Field::Name => self.file_name(),
+        });
+        self.problem = None;
+        self.editing = Some((field, prompt));
+    }
+
+    /// Takes a typed checksum or name; `false` with a problem set when it
+    /// cannot be used.
+    pub fn apply(&mut self, field: Field, text: &str) -> bool {
+        let text = text.trim();
+        let outcome = match field {
+            Field::Checksum if text.is_empty() => {
+                self.draft.sha256 = None;
+                Ok(())
+            }
+            Field::Checksum => flows::checksum(text).map(|hex| self.draft.sha256 = Some(hex)),
+            Field::Name => flows::file_name(text).map(|name| self.name = Some(name)),
+        };
+        match outcome {
+            Ok(()) => {
+                self.problem = None;
+                true
+            }
+            Err(problem) => {
+                self.problem = Some(problem);
+                false
+            }
+        }
+    }
+
     pub fn key(&mut self, key: crossterm::event::KeyEvent) -> Answer {
         use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
         if key.kind == KeyEventKind::Release {
             return Answer::None;
         }
+        if let Some((field, prompt)) = &mut self.editing {
+            let field = *field;
+            match key.code {
+                KeyCode::Esc => {
+                    self.editing = None;
+                    self.problem = None;
+                }
+                _ => {
+                    if let Action::Submit(text) = prompt.handle(key)
+                        && self.apply(field, &text)
+                    {
+                        self.editing = None;
+                    }
+                }
+            }
+            return Answer::None;
+        }
         match key.code {
+            KeyCode::Char('s' | 'S') if self.takes_checksum() => {
+                self.edit(Field::Checksum);
+                Answer::None
+            }
+            KeyCode::Char('n' | 'N') if !matches!(self.stage, Stage::Looking) => {
+                self.edit(Field::Name);
+                Answer::None
+            }
             KeyCode::Esc => Answer::Cancel,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Answer::Cancel,
             KeyCode::Enter if self.can_confirm() => Answer::Confirm,
@@ -261,9 +347,13 @@ impl Card {
         }
     }
 
-    /// The file name that will be used, before the engine resolves any
-    /// clash with an existing file.
+    /// The file name asked for: typed by the person, else suggested.
     pub fn file_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.suggested_name())
+    }
+
+    /// The name the link suggests.
+    fn suggested_name(&self) -> String {
         let fallback = download::file_name_from_url(&self.draft.link);
         let Some(look) = self.look() else {
             return fallback;
@@ -288,14 +378,35 @@ impl Card {
         }
     }
 
-    /// The full path the download will be saved as.
+    /// The path asked for, before any clash is avoided.
+    fn wanted(&self, folder: Option<&std::path::Path>) -> Result<PathBuf, String> {
+        let path = queue::destination_path(self.draft.to.as_deref(), folder, &self.file_name())?;
+        Ok(match &self.name {
+            // `--to` may name a file; a typed name replaces its name.
+            Some(name) => path.with_file_name(name),
+            None => path,
+        })
+    }
+
+    /// The name of a file already where this download would go (or taken
+    /// by another link in the batch), which it will not replace.
+    pub fn clash(&self) -> Option<String> {
+        let folder = self.look().and_then(|look| look.folder.clone());
+        let wanted = self.wanted(folder.as_deref()).ok()?;
+        flows::occupied(&wanted, &self.taken).then(|| {
+            wanted
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        })
+    }
+
+    /// The full path the download will be saved as: the one asked for, or
+    /// when a file is already there, the first free "name (N)" beside it.
     pub fn destination(&self) -> Result<PathBuf, String> {
         let folder = self.look().and_then(|look| look.folder.clone());
-        queue::destination_path(
-            self.draft.to.as_deref(),
-            folder.as_deref(),
-            &self.file_name(),
-        )
+        self.wanted(folder.as_deref())
+            .map(|wanted| flows::beside(&wanted, &self.taken))
     }
 
     /// Queues the download as shown.
@@ -305,12 +416,10 @@ impl Card {
             // Looking failed, so the default folder was never fetched.
             None => queue::default_folder(engine)?,
         };
-        let destination = queue::destination_path(
-            self.draft.to.as_deref(),
-            folder.as_deref(),
-            &self.file_name(),
-        )
-        .map_err(|message| client::input_error(&message))?;
+        let destination = self
+            .wanted(folder.as_deref())
+            .map(|wanted| flows::beside(&wanted, &self.taken))
+            .map_err(|message| client::input_error(&message))?;
         let media = self
             .variants()
             .get(self.choice)
@@ -566,5 +675,96 @@ mod tests {
         assert_eq!(kind_label(Some("video/mp4"), "watch"), "Video");
         assert_eq!(kind_label(None, "x"), "File");
         assert_eq!(host("https://www.youtube.com/watch?v=1"), "youtube.com");
+    }
+
+    fn file_look(folder: &std::path::Path, require_checksum: bool) -> Look {
+        let rules = require_checksum.then(|| {
+            serde_json::from_value(serde_json::json!({
+                "matched": {
+                    "id": 1,
+                    "when": { "file_types": ["iso"] },
+                    "then": { "require_checksum": true },
+                },
+                "checks": [],
+            }))
+            .unwrap()
+        });
+        Look {
+            link: LinkInspection {
+                kind: LinkKind::File,
+                file_name: Some("disc.iso".into()),
+                content_type: None,
+                size_bytes: Some(2048),
+                resumable: true,
+                rules,
+            },
+            media: None,
+            media_error: None,
+            tools_missing: false,
+            folder: Some(folder.to_path_buf()),
+        }
+    }
+
+    fn typed(card: &mut Card, text: &str) {
+        use crossterm::event::{KeyCode, KeyEvent};
+        for c in text.chars() {
+            card.key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        card.key(KeyEvent::from(KeyCode::Enter));
+    }
+
+    #[test]
+    fn a_checksum_is_typed_on_the_card_normalized_and_unlocks_a_rule() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let dir = tempfile::tempdir().unwrap();
+        let mut card = Card::new(Draft {
+            to: None,
+            ..draft("https://a.test/disc.iso", None)
+        });
+        card.set(Ok(file_look(dir.path(), true)));
+        assert!(card.needs_checksum() && !card.can_confirm());
+        assert_eq!(card.key(KeyEvent::from(KeyCode::Char('s'))), Answer::None);
+        typed(&mut card, "12ab");
+        assert!(
+            card.editing.is_some(),
+            "a wrong checksum keeps the line open"
+        );
+        assert_eq!(
+            card.problem.as_deref(),
+            Some("That is not a SHA-256: it needs 64 hexadecimal digits (4 found).")
+        );
+        card.key(KeyEvent::from(KeyCode::Esc));
+        assert!(card.editing.is_none() && card.draft.sha256.is_none());
+        card.key(KeyEvent::from(KeyCode::Char('S')));
+        // The prompt starts with what is there; clear it first.
+        card.editing.as_mut().unwrap().1.set(String::new());
+        typed(&mut card, &format!("SHA256:{}", "AB".repeat(32)));
+        assert_eq!(card.draft.sha256, Some("ab".repeat(32)));
+        assert!(card.editing.is_none() && card.can_confirm());
+    }
+
+    #[test]
+    fn an_existing_file_is_never_replaced_and_a_typed_name_is_used() {
+        use crossterm::event::{KeyCode, KeyEvent};
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("disc.iso"), b"x").unwrap();
+        let mut card = Card::new(Draft {
+            to: None,
+            ..draft("https://a.test/disc.iso", None)
+        });
+        card.set(Ok(file_look(dir.path(), false)));
+        assert_eq!(card.clash().as_deref(), Some("disc.iso"));
+        assert_eq!(card.destination().unwrap(), dir.path().join("disc (1).iso"));
+        card.key(KeyEvent::from(KeyCode::Char('n')));
+        card.editing.as_mut().unwrap().1.set(String::new());
+        typed(&mut card, r"a\b.iso");
+        assert_eq!(
+            card.problem.as_deref(),
+            Some("Type a file name only; the folder stays as shown.")
+        );
+        card.editing.as_mut().unwrap().1.set(String::new());
+        typed(&mut card, "backup.iso");
+        assert_eq!(card.clash(), None);
+        assert_eq!(card.destination().unwrap(), dir.path().join("backup.iso"));
     }
 }

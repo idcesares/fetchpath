@@ -7,6 +7,7 @@
 //! never stops a download.
 
 mod dashboard;
+mod flows;
 mod inline;
 mod jobs_menu;
 mod line;

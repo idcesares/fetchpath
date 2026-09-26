@@ -3,9 +3,11 @@
 //! editing, so its history and screen-reader support apply.
 
 use super::Session;
+use super::flows::Flows;
+use super::flows::batch::{Batch, PlainReply};
 use super::line::Out;
 use super::live::{Notice, Row};
-use super::review::{self, Card, Draft};
+use super::review::{self, Card, Draft, Field};
 use super::view::{self, ASCII};
 use crate::client::{self, EXIT_ENGINE};
 use std::collections::VecDeque;
@@ -53,10 +55,13 @@ pub fn card_lines(card: &Card) -> Vec<String> {
     } else if !card.can_confirm() {
         "Press Enter to close.".to_owned()
     } else if card.is_media() {
-        "Press Enter for the chosen format, type its number for another, or no to cancel."
+        "Press Enter for the chosen format, type its number for another, name and a file name to rename it, or no to cancel."
             .to_owned()
+    } else if card.needs_checksum() {
+        "Type sha256 and the file's checksum, or no to cancel.".to_owned()
     } else {
-        "Press Enter to download, or type no to cancel.".to_owned()
+        "Press Enter to download; type sha256 and a checksum to check it, name and a file name to rename it, or no to cancel."
+            .to_owned()
     });
     lines
 }
@@ -68,10 +73,32 @@ pub enum Reply {
     Cancel,
     Unclear,
     SetUpTools,
+    /// A checksum or name was taken, or refused with a problem on the card;
+    /// print the card again.
+    Changed,
 }
 
 pub fn answer(card: &mut Card, text: &str) -> Reply {
-    let text = text.trim().to_ascii_lowercase();
+    let typed = text.trim();
+    let lower = typed.to_ascii_lowercase();
+    if let Some(rest) = lower
+        .strip_prefix("sha256 ")
+        .or_else(|| lower.strip_prefix("checksum "))
+        .filter(|_| card.takes_checksum())
+    {
+        card.apply(Field::Checksum, rest);
+        return Reply::Changed;
+    }
+    if card.takes_checksum() && fetchpath_core::normalize_sha256(typed).is_some() {
+        card.apply(Field::Checksum, typed);
+        return Reply::Changed;
+    }
+    if lower.starts_with("name ") {
+        // The name keeps its case.
+        card.apply(Field::Name, &typed[5..]);
+        return Reply::Changed;
+    }
+    let text = lower;
     if card.tools_missing() && text == "i" {
         return Reply::SetUpTools;
     }
@@ -204,6 +231,8 @@ pub fn run(mut session: Session) -> i32 {
     });
     let mut waiting = VecDeque::new();
     let mut card: Option<Card> = None;
+    let mut batch: Option<Batch> = None;
+    let mut flows = Flows::default();
     // Waiting for yes or no to the video tools setup, with the video link
     // that asked for it, if one did.
     let mut asking: Option<Option<Draft>> = None;
@@ -242,6 +271,11 @@ pub fn run(mut session: Session) -> i32 {
                     Reply::Unclear => {
                         println!("Type a number from the list, press Enter, or type no.");
                     }
+                    Reply::Changed => {
+                        for line in card_lines(current) {
+                            println!("{line}");
+                        }
+                    }
                     Reply::SetUpTools => {
                         let draft = current.draft.clone();
                         card = None;
@@ -251,11 +285,50 @@ pub fn run(mut session: Session) -> i32 {
                     }
                 }
             }
+            Ok(Ok(text)) if batch.is_some() => {
+                let current = batch.as_mut().expect("checked");
+                match current.plain_answer(&text) {
+                    PlainReply::Confirm => {
+                        let lines: Vec<Out> = current
+                            .chosen()
+                            .map(|card| super::inline::confirmed(&session, card))
+                            .collect();
+                        say(&lines);
+                        batch = None;
+                    }
+                    PlainReply::Cancel => {
+                        println!("Not downloaded: {} links", current.cards.len());
+                        batch = None;
+                    }
+                    PlainReply::Changed => {
+                        for line in current.plain_lines() {
+                            println!("{line}");
+                        }
+                    }
+                    PlainReply::Unclear => println!(
+                        "Press Enter to download the marked links, type numbers to mark or unmark, or no."
+                    ),
+                }
+            }
+            // A command still runs while a question waits.
+            Ok(Ok(text)) if flows.active() && !text.trim_start().starts_with('/') => {
+                if let Some(lines) = flows.plain_answer(&session.engine, &text) {
+                    say(&lines);
+                }
+            }
             Ok(Ok(text)) => {
                 let reply = session.run_line(&text, false);
                 say(&reply.lines);
                 if reply.quit {
                     return 0;
+                }
+                if reply.drafts.len() > 1 {
+                    let started = Batch::look_now(&session.engine, reply.drafts);
+                    for line in started.plain_lines() {
+                        println!("{line}");
+                    }
+                    batch = Some(started);
+                    continue;
                 }
                 waiting.extend(reply.drafts);
                 card = next_card(&session, &mut waiting);
@@ -276,6 +349,16 @@ pub fn run(mut session: Session) -> i32 {
             Ok(notices) => {
                 for notice in &notices {
                     println!("{}", notice_line(notice));
+                }
+                flows.watch(&session.live);
+                if asking.is_none()
+                    && card.is_none()
+                    && batch.is_none()
+                    && let Some(lines) = flows.plain_question()
+                {
+                    for line in lines {
+                        println!("{line}");
+                    }
                 }
             }
             Err(error) => {
