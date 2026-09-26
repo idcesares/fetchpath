@@ -90,15 +90,30 @@ pub fn show(path: &Path, saved: bool) -> Result<String, String> {
 #[cfg(windows)]
 fn open(target: &Path) -> Result<(), String> {
     if target.is_dir() {
-        // Explorer reports failure in its exit code even when it opens the
-        // folder, so only starting it is checked.
-        return std::process::Command::new("explorer.exe")
-            .arg(target)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| format!("File Explorer could not be started: {error}"));
+        return explore(target);
     }
-    select(target)
+    match (select(target), target.parent()) {
+        // The shell could not name the file (a path it cannot parse, such
+        // as a very long one): its folder is still worth opening.
+        (Err(_), Some(folder)) if folder.is_dir() => explore(folder),
+        (result, _) => result,
+    }
+}
+
+/// Opens a folder with the system's own File Explorer.
+#[cfg(windows)]
+fn explore(folder: &Path) -> Result<(), String> {
+    let explorer = std::env::var_os("SystemRoot")
+        .map(|root| Path::new(&root).join("explorer.exe"))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("explorer.exe"));
+    // Explorer reports failure in its exit code even when it opens the
+    // folder, so only starting it is checked.
+    std::process::Command::new(explorer)
+        .arg(folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("File Explorer could not be started: {error}"))
 }
 
 /// Asks the shell to open the file's folder with the file selected.
@@ -110,11 +125,12 @@ fn select(file: &Path) -> Result<(), String> {
     };
     use windows_sys::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
 
-    let wide: Vec<u16> = file
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let mut wide: Vec<u16> = file.as_os_str().encode_wide().collect();
+    // An embedded NUL would silently name a shorter path.
+    if wide.contains(&0) {
+        return Err(format!("Windows could not find {}.", file.display()));
+    }
+    wide.push(0);
     // SAFETY: `wide` is NUL-terminated and outlives ILCreateFromPathW, which
     // copies it into a new ID list; that list is read by the shell call and
     // then freed exactly once. COM is released only if this call started it.
