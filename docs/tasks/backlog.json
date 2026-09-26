@@ -1755,8 +1755,8 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "blocked",
-      "owner": "interactive_terminal",
+      "status": "done",
+      "owner": null,
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "standard",
@@ -1794,9 +1794,10 @@
       "verification": "Render snapshot tests against recorded event streams; plain-mode output tests; keyboard-only walkthrough in Windows Terminal and conhost recorded; without a terminal it prints help and exits 2.",
       "evidence": [
         "docs/development/TERMINAL.md",
-        "apps/cli/tests/fixtures/queue-stream.jsonl"
+        "apps/cli/tests/fixtures/queue-stream.jsonl",
+        "apps/cli/tests/queue.rs"
       ],
-      "blockedReason": "Built and verified by tests and a headless ConPTY keyboard walkthrough (docs/development/TERMINAL.md). Owed: a person runs the keyboard-only walkthrough in a Windows Terminal window and a classic console host window and records the result there; then mark done."
+      "blockedReason": null
     },
     {
       "id": "FP-060",
@@ -2168,6 +2169,35 @@
       ],
       "acceptance": "a_subscriber_that_never_reads_cannot_hold_up_the_queue passes reliably on the development machine: either the 600 durable create/remove commands are made cheaper, or the test measures what it guards (the stalled subscriber cannot slow the queue) without a wall-clock budget that disk speed decides.",
       "verification": "The test passes in five consecutive workspace runs, including while another build runs; the reason for the slowdown is recorded (26 September 2026: about 92 s against 60 s in three runs, the same on e42bde5, and 42 s in a later run on a quieter machine).",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-073",
+      "title": "Independent strong review of the terminal additions: link inspection, tools installer, show in folder",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-059"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-http/src/link.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/policy.rs",
+        "adapters/media/src/setup.rs",
+        "apps/cli/src/tools.rs",
+        "apps/cli/src/reveal.rs",
+        "apps/cli/src/tui/review.rs"
+      ],
+      "acceptanceIds": [
+        "A04"
+      ],
+      "acceptance": "A strong model that did not write them reviews commits 2b8dfff, 9779b2a and 07e7d49: InspectLink (requests made for any principal, user info refused for agents, headers only, timeouts, no body kept), the guided installer run from the terminal (pinned digests checked before install, cancellation, nothing installed without consent, --yes only for scripts), and the unsafe SHOpenFolderAndSelectItems call (COM pairing, ID list lifetime, path encoding). Findings are fixed or recorded with reasons.",
+      "verification": "Findings and their resolution in the commit messages of the fixes; the touched crates’ tests and clippy pass; TERMINAL.md limitations updated if anything remains.",
       "evidence": [],
       "blockedReason": null
     }

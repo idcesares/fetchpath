@@ -153,11 +153,18 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   walkthrough found and fixed a real bug: the pipe treats a zero read wait as
   "do not read", so the view now polls with at least 1 ms.
 
+- Keyboard and mouse walkthrough by the person, 26 September 2026, in
+  Windows Terminal and in the classic console host (`conhost`), release
+  build at 07e7d49: a file link carded and downloaded with a moving bar;
+  `/` then `/settings` chosen with the arrows, a setting changed, Esc; `/queue`
+  then Show in folder opened File Explorer on the file; a YouTube link set up
+  the video tools with I and offered its qualities; menus answered the
+  mouse; Ctrl+C left. Everything worked in both hosts, with nothing garbled.
+
 ## Limitations
 
-- A walkthrough by a person in Windows Terminal and the classic console host
-  windows is still owed (the task's recorded manual check); the headless run
-  exercises the same console layer but not either host's rendering or fonts.
+- The link inspection, the terminal's tools installer and the show-in-folder
+  shell call await an independent strong review (FP-073).
 - Narrowing the window clears the visible screen (ratatui's inline behavior on
   a horizontal shrink); scrollback above it is kept.
 - Commands other than looking at links run synchronously; none of them
