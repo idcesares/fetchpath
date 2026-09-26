@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-24",
+  "updated": "2026-09-25",
   "tasks": [
     {
       "id": "FP-001",
@@ -1683,22 +1683,31 @@
       "dependsOn": [
         "FP-055"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "priority": "P0",
       "modelTier": "astra-high",
       "review": "strong",
       "files": [
-        "apps/desktop/src-tauri/tauri.conf.json",
-        "apps/desktop/src-tauri/tools",
-        "tests/installer"
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "apps/cli/src/engine",
+        "crates/fetchpath-protocol/src/launch.rs",
+        "tests/installer",
+        "tests/compatibility/windows"
       ],
       "acceptanceIds": [
         "A12"
       ],
       "acceptance": "The installer asks a running engine to stop and waits for it to release its files before replacing them; upgrading from 0.1.0 keeps the persisted queue, history and settings; uninstall stops the engine first and keeps downloads; no engine outlives an uninstall.",
       "verification": "Upgrade over a running engine mid-download and from a 0.1.0 install with a persisted queue; uninstall with the engine running; installer tests pass; strong-model review.",
-      "evidence": [],
+      "evidence": [
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "apps/cli/tests/engine.rs",
+        "tests/installer/engine-stop.test.mjs",
+        "tests/compatibility/windows/engine-lifecycle.ps1",
+        "docs/development/evidence/windows/engine-lifecycle.json",
+        "docs/development/ENGINE-HOST.md"
+      ],
       "blockedReason": null
     },
     {
@@ -2044,8 +2053,8 @@
       "dependsOn": [
         "FP-049"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "lead",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2097,6 +2106,29 @@
         "docs/development/WORKFLOW.md",
         "AGENTS.md"
       ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-072",
+      "title": "Make the slow-subscriber session test fit its budget again",
+      "milestone": "M10",
+      "dependsOn": [
+        "FP-051"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session/tests/engine.rs"
+      ],
+      "acceptanceIds": [
+        "A04"
+      ],
+      "acceptance": "a_subscriber_that_never_reads_cannot_hold_up_the_queue passes reliably on the development machine: either the 600 durable create/remove commands are made cheaper, or the test measures what it guards (the stalled subscriber cannot slow the queue) without a wall-clock budget that disk speed decides.",
+      "verification": "The test passes in five consecutive workspace runs, including while another build runs; the reason for the slowdown is recorded (26 September 2026: about 92 s against 60 s in three runs, the same on e42bde5, and 42 s in a later run on a quieter machine).",
+      "evidence": [],
       "blockedReason": null
     }
   ]

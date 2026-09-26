@@ -1,0 +1,88 @@
+{
+  "task": "FP-057",
+  "recordedAt": "2026-09-26T01:23:56.0690315Z",
+  "machine": {
+    "os": "Microsoft Windows 11 Pro",
+    "build": "10.0.26200.0"
+  },
+  "fromVersion010": {
+    "install010": {
+      "installer": "Fetchpath_0.1.0_x64-setup.exe",
+      "sha256": "1fc5c99aafa309251eb6eb6873352166e1fade4906d5226a9ade55d0db3c9298",
+      "exitCode": 0,
+      "seconds": 2.3
+    },
+    "window010RunningDuringUpgrade": true,
+    "jobsBefore": 14,
+    "upgrade": {
+      "installer": "Fetchpath_0.1.1_x64-setup.exe",
+      "sha256": "ea3aab2d3177c1ec1123134f04a714f9b2e8e8398d4aa0bdc4c741a518343f9b",
+      "exitCode": 0,
+      "seconds": 4.1
+    },
+    "window010StoppedBySetup": true,
+    "queueFileUntouchedBySetup": true,
+    "settingsFileUntouchedBySetup": true,
+    "jobsServedByEngine": 14,
+    "completedKept": "2 of 2",
+    "historyKeepsCompleted": true,
+    "settingsKept": true
+  },
+  "overRunningEngine": {
+    "markedBeforeUpgrade": true,
+    "enginePidBefore": 62576,
+    "bytesBeforeUpgrade": 1048577,
+    "stillDownloadingWhenSetupStarted": true,
+    "watchAliveWhenSetupStarted": true,
+    "upgrade": {
+      "installer": "Fetchpath_0.1.2_x64-setup.exe",
+      "sha256": "b7b6028298602b83be858efd4d2ffb59fffdf6dc7ee49efad978c700b3b3c64d",
+      "exitCode": 0,
+      "seconds": 3.3
+    },
+    "displayVersion": "0.1.2",
+    "cliSha256": {
+      "marked": "3f596d1697c77c320dc2404eb27225a7132d65d6f9884b0d6e06bced34a4a850",
+      "carried": "a2800522761d0d2664b7b7aa0300916b30f6cc21fc33dff5f1d0f881af527bd3",
+      "afterUpgrade": "a2800522761d0d2664b7b7aa0300916b30f6cc21fc33dff5f1d0f881af527bd3"
+    },
+    "cliReplaced": true,
+    "oldEngineGone": true,
+    "watchClientEnded": true,
+    "watchClientExitCode": 1,
+    "watchClientSaid": "fetchpath: Fetchpath is being updated or removed. Try again when setup has finished.",
+    "holdLifted": true,
+    "processesRightAfterSetup": [],
+    "completedAfterUpgrade": true,
+    "fileMatches": true,
+    "bytesServedAfterUpgrade": 24117247,
+    "rangedRequestsAfterUpgrade": 1
+  },
+  "uninstallWithEngineRunning": {
+    "signInValueSet": "\"C:\\Users\\idces\\AppData\\Local\\Fetchpath\\fetchpath.exe\" engine",
+    "enginePidBefore": 50852,
+    "seconds": 25.6,
+    "engineGone": true,
+    "stuckCommandInInstallEnded": true,
+    "sameCommandElsewhereSpared": true,
+    "fetchpathProcessesAfter15s": [],
+    "completedDownloadKept": true,
+    "queueKept": true,
+    "interruptedJobSaved": [
+      {
+        "state": "queued",
+        "bytesReceived": 1048577
+      }
+    ],
+    "signInValueRemoved": true,
+    "holdLifted": true,
+    "userPathRestored": true
+  },
+  "machineRestored": {
+    "appDataRestored": true,
+    "installPresentAtExit": false,
+    "userPathAsBefore": true
+  },
+  "failures": [],
+  "passed": true
+}

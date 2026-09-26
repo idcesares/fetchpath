@@ -80,7 +80,18 @@ pub fn follow(
             }
         };
         if refresh {
-            job = engine.job(&job.job_id)?;
+            job = match engine.job(&job.job_id) {
+                Ok(current) => current,
+                // Stopping or gone between two events: the same as a broken
+                // stream, so the wait carries on with the next engine.
+                Err(error) if engine_went_away(&error) => {
+                    *engine = Engine::connect()?;
+                    let current = engine.job(&job.job_id)?;
+                    events = subscribe(engine, &current)?;
+                    current
+                }
+                Err(error) => return Err(error),
+            };
             checked = Instant::now();
             match job.state {
                 JobState::Running => line.show(&client::progress_line(&job.progress)),
@@ -98,6 +109,17 @@ pub fn follow(
             }
         }
     }
+}
+
+/// The engine stopped or the connection to it broke; a new one may be
+/// reached (or refuses with a reason of its own, such as an update).
+fn engine_went_away(error: &ProtocolError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "contract.engine_unavailable"
+            | "contract.connection_lost"
+            | "contract.connection_timed_out"
+    )
 }
 
 fn subscribe(engine: &Engine, job: &JobSnapshot) -> Result<Box<dyn EventStream>, ProtocolError> {

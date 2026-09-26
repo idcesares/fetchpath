@@ -554,3 +554,124 @@ fn an_agent_over_the_pipe_is_held_to_its_policy_and_cannot_restart_the_engine() 
         Some(0)
     );
 }
+
+/// What setup relies on (FP-057): `engine stop --for-update` returns only
+/// once the engine has saved and let go of its lock, and until setup lifts
+/// the hold no client or direct start brings an engine back.
+#[test]
+fn stopping_for_an_update_waits_for_the_engine_and_holds_new_ones_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    let body: Vec<u8> = (0..6 * 1024 * 1024).map(|i| (i * 17 % 251) as u8).collect();
+    let (url, resumed) = resumable(body.clone());
+    let destination = dir.path().join("update.bin");
+    // Its own copy, as installed, so "free to replace" is about this engine
+    // and not the other tests' engines.
+    let installed = dir.path().join("fetchpath.exe");
+    std::fs::copy(EXE, &installed).unwrap();
+
+    let mut running = Process::new(&installed)
+        .args(["engine", "--idle-grace-ms", "30000"])
+        .env("FETCHPATH_APP_DATA_DIR", home.dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let client = attached(&home);
+    client
+        .execute(&CommandEnvelope::new(
+            ClientId::random(),
+            create(&url, destination.clone(), None),
+        ))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let job = jobs(&client).remove(0);
+        if job.state == JobState::Running && job.progress.bytes_received > 1024 * 1024 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{job:?}");
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let stop = Process::new(&installed)
+        .args(["engine", "stop", "--for-update"])
+        .env("FETCHPATH_APP_DATA_DIR", home.dir())
+        .output()
+        .unwrap();
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    // It returned after the engine let go of the queue, not merely after
+    // asking: the single-owner lock is free the moment it returns.
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(home.lock_path())
+            .expect("no engine holds the queue when the stop returns");
+    }
+    assert_eq!(exited_within(&mut running, Duration::from_secs(2)), Some(0));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&installed)
+        .expect("the executable is free to replace");
+    drop(client);
+
+    // Held: a client is told why at once and starts nothing; an engine
+    // started directly leaves without claiming the queue.
+    let started = Instant::now();
+    let refused = launch::attach_or_launch(
+        &home,
+        Path::new(EXE),
+        Limits::default(),
+        launch::LAUNCH_WAIT,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(refused.code.as_str(), "contract.engine_unavailable");
+    assert!(refused.message.contains("being updated"), "{refused:?}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let mut direct = engine(&home, 30_000);
+    assert_eq!(exited_within(&mut direct, Duration::from_secs(10)), Some(0));
+    assert!(endpoint::read(&home.endpoint_path()).is_err());
+
+    // Setup finished: the next client starts the new engine, which finishes
+    // the download from the checkpoint the old one saved.
+    std::fs::remove_file(home.update_hold_path()).unwrap();
+    let client =
+        launch::attach_or_launch(&home, &installed, Limits::default(), launch::LAUNCH_WAIT)
+            .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let job = jobs(&client).remove(0);
+        if job.state == JobState::Completed {
+            break;
+        }
+        assert!(
+            matches!(job.state, JobState::Queued | JobState::Running),
+            "{job:?}"
+        );
+        assert!(Instant::now() < deadline, "{job:?}");
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(std::fs::read(&destination).unwrap(), body);
+    assert!(resumed.load(Ordering::SeqCst) > 0, "resumed, not restarted");
+    client
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+}
+
+#[test]
+fn stopping_for_an_update_with_no_engine_leaves_no_trace_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("never-used");
+    let stop = Process::new(EXE)
+        .args(["engine", "stop", "--for-update"])
+        .env("FETCHPATH_APP_DATA_DIR", &missing)
+        .output()
+        .unwrap();
+    assert_eq!(stop.status.code(), Some(0), "{stop:?}");
+    assert!(!missing.exists(), "uninstall must not create a data folder");
+}

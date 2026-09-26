@@ -43,7 +43,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | `tools/bench` / `tests/bench` | Local fixture server, baseline runner, protocol matrix, fixture tests |
 | `tools/licenses` | Third-party notice generation from `Cargo.lock` |
 | `tools/media-tools` | Pinning media helpers against their publishers' checksums |
-| `tests/installer` | Installer PATH and runtime-import checks |
+| `tests/installer` | Installer PATH, runtime-import and engine-stop checks |
 | `tests/compatibility` | On-machine browser/media/protocol/Windows harnesses with explicit supported/partial/unsupported/untested states |
 | `.github` | CI (`node tools/tasks.mjs check` and `node --test`) and the pull request template |
 

@@ -45,6 +45,22 @@ impl EngineHome {
         Self { dir }
     }
 
+    /// Whether this is the person's own folder, `%APPDATA%\app.fetchpath.desktop`,
+    /// however it was named. A client names it explicitly to the engine it
+    /// starts, so the variable being set says nothing about which folder it is.
+    pub fn is_default(&self) -> bool {
+        std::env::var_os("APPDATA").is_some_and(|roaming| {
+            let default = PathBuf::from(roaming).join("app.fetchpath.desktop");
+            let normal = |path: &Path| {
+                path.to_string_lossy()
+                    .trim_end_matches(['\\', '/'])
+                    .replace('/', "\\")
+                    .to_lowercase()
+            };
+            normal(&default) == normal(&self.dir)
+        })
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -66,6 +82,44 @@ impl EngineHome {
     pub fn lock_path(&self) -> PathBuf {
         self.dir.join("instance.lock")
     }
+
+    /// Present while setup replaces or removes Fetchpath's files (FP-057).
+    /// The installer deletes it when it finishes; the name is repeated in
+    /// `installer-hooks.nsh`.
+    pub fn update_hold_path(&self) -> PathBuf {
+        self.dir.join("engine-update-hold-v1")
+    }
+
+    /// Whether setup is holding engines off. A hold older than
+    /// [`UPDATE_HOLD_LIMIT`] is ignored, so an interrupted setup cannot keep
+    /// Fetchpath from starting for long.
+    pub fn update_held(&self) -> bool {
+        std::fs::metadata(self.update_hold_path())
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|written| match written.elapsed() {
+                Ok(age) => age < UPDATE_HOLD_LIMIT,
+                // Written "in the future": the clock moved back. Honored only
+                // as far as the limit, so a large step cannot block for hours.
+                Err(ahead) => ahead.duration() < UPDATE_HOLD_LIMIT,
+            })
+    }
+
+    /// Starts holding engines off. Written, not just created, so that a
+    /// second setup refreshes the time.
+    pub fn hold_for_update(&self) -> std::io::Result<()> {
+        std::fs::write(self.update_hold_path(), b"setup is replacing Fetchpath\n")
+    }
+}
+
+/// How long an update hold is honored after it was written.
+pub const UPDATE_HOLD_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+fn updating() -> ProtocolError {
+    ProtocolError::new(
+        ErrorCode::ENGINE_UNAVAILABLE,
+        ErrorScope::Engine,
+        "Fetchpath is being updated or removed. Try again when setup has finished.",
+    )
 }
 
 /// Connects to a running engine, or reports `contract.engine_unavailable`.
@@ -126,6 +180,8 @@ pub fn attach_or_launch(
                 std::thread::sleep(Duration::from_millis(50));
                 continue;
             }
+            // Setup is replacing the files an engine would run from.
+            Err(error) if absent(&error) && home.update_held() => return Err(updating()),
             Err(error) if absent(&error) && Instant::now() < deadline => {
                 if launched.is_none_or(|at| at.elapsed() >= RELAUNCH_EVERY) {
                     start_engine(home, engine_exe)?;
@@ -288,4 +344,24 @@ fn environment_block(dir: &Path) -> Vec<u16> {
     }
     block.push(0);
     block
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A client always names the folder to the engine it starts, so the
+    /// default folder must be recognized by path, however it is spelled
+    /// (FP-057: sign-in start was never written for a launched engine).
+    #[test]
+    fn the_default_folder_is_recognized_by_path() {
+        let roaming = PathBuf::from(std::env::var_os("APPDATA").expect("APPDATA is set"));
+        let spelled = format!(
+            r"{}\APP.fetchpath.Desktop\",
+            roaming.display().to_string().to_uppercase()
+        );
+        assert!(EngineHome::at(PathBuf::from(spelled)).is_default());
+        assert!(!EngineHome::at(roaming.join("app.fetchpath.desktop").join("other")).is_default());
+        assert!(!EngineHome::at(std::env::temp_dir().join("app.fetchpath.desktop")).is_default());
+    }
 }

@@ -65,9 +65,8 @@ running is restored as queued and resumed anyway.
 
 ### Limitations
 
-- Since FP-055 the desktop is a client and holds only its own window lock.
-  The installer does not yet stop a running engine before replacing files
-  (FP-057).
+- Since FP-055 the desktop is a client and holds only its own window lock;
+  since FP-057 setup stops a running engine before replacing files.
 - The engine takes in browser captures on every tick, but only while it
   runs; the browser host still wakes the desktop window, which starts the
   engine, rather than the engine itself (FP-056).
@@ -147,9 +146,9 @@ tests `apps/cli/tests/queue.rs`. User guide: [CLI](../user/CLI.md).
 
 ### Limitations
 
-- An engine left running by a 0.1.0 desktop (which held `instance.lock`
-  itself) keeps a new engine from starting until it exits; upgrade handling
-  is FP-057.
+- A 0.1.0 desktop still running (it held `instance.lock` itself) keeps a
+  new engine from starting until it exits. Setup closes it on upgrade
+  (FP-057); only a 0.1.0 window left running from another folder would do this.
 - Ctrl+C itself is not exercised by a test (a console control event cannot
   be sent to a child without a shared console); the 130 path is covered by a
   cancellation from another client, which ends the wait the same way.
@@ -160,3 +159,98 @@ tests `apps/cli/tests/queue.rs`. User guide: [CLI](../user/CLI.md).
 - A batch is one `CreateJob` per line, so a bad line does not stop the others
   (unlike the desktop's all-or-nothing batch).
 - `lan`, `cache` and `fetch-verified` are unchanged (FP-032/FP-033).
+
+## FP-057: setup with a running engine
+
+Recorded 25 September 2026 on Windows 11 Pro 26200 x64. Code:
+`apps/desktop/src-tauri/installer-hooks.nsh`, `apps/cli/src/engine/mod.rs`
+(`stop_for_update`), `crates/fetchpath-protocol/src/launch.rs` (update hold,
+`is_default`), `apps/cli/src/wait.rs`. Tests: `apps/cli/tests/engine.rs`,
+`tests/installer/engine-stop.test.mjs`,
+`tests/compatibility/windows/engine-lifecycle.ps1`.
+
+| Part | What it does |
+|---|---|
+| Stopping for setup | Before the bundler replaces or deletes any file, the install and uninstall hooks run the installed `fetchpath.exe engine stop --for-update`. It writes `engine-update-hold-v1` in the data folder, asks the engine to stop through the restart handshake (any protocol version), and returns once the single-owner lock is free. The engine keeps that lock until it has saved the queue, so the save is done by then. With no data folder it does nothing and creates nothing |
+| The hold | While the file is younger than ten minutes (a future time counts only as far as ten minutes), `attach_or_launch` answers at once with `contract.engine_unavailable` "Fetchpath is being updated or removed", and an engine started directly leaves without serving. Setup deletes it when it finishes, fails or is cancelled (`.onInstFailed`, `un.onUninstFailed` and Modern UI's cancel functions) |
+| Other holders of the file | The hooks then wait up to 20 seconds for `fetchpath.exe` to open for writing. A terminal command such as `watch` also runs from it; under the hold it exits 1 with the explanation. After that, only the `fetchpath.exe` processes whose image is `$INSTDIR\fetchpath.exe` are ended. Setup is 32-bit, so they are found by WMI's `ExecutablePath`, not `Get-Process`. Ending one is a crash the engine recovers from |
+| 0.1.0 | Its `fetchpath.exe` does not know the command (exit 2, ignored) and had no engine; the bundler closes its window, which held the queue lock |
+| Uninstall | Also removes the `Fetchpath engine` Run value when it points at this install. Downloads, the queue, history and settings stay, as before |
+| Sign-in start (fix) | FP-053 wrote the Run value only when `FETCHPATH_APP_DATA_DIR` was unset, but a client always sets it for the engine it starts, so the value was never written. The engine now compares its folder with `%APPDATA%\app.fetchpath.desktop` |
+| `watch` (fix) | A refresh that met a stopping engine ended the wait with "The Fetchpath engine is stopping" instead of reconnecting as a broken event stream does (an FP-058 race found by the lifecycle run) |
+
+### Commands and results
+
+- `tests/compatibility/windows/engine-lifecycle.ps1`, with real per-user
+  installs of a 0.1.0 installer built from `ce6615a` and of this tree as
+  0.1.1 and 0.1.2 (`tauri build --config src-tauri/tauri.release.conf.json
+  --config '{"version":"0.1.1"}'`), passed; see the
+  [evidence](evidence/windows/engine-lifecycle.json).
+  - From 0.1.0, with its window running and the FP-048 queue and settings,
+    setup closed the window and left both files byte-identical. The engine
+    served all 14 jobs, both completed ones with their hashes, plus history
+    and settings.
+  - Over a running engine 1 MiB into a 24 MiB download, with `watch`
+    attached, setup took 3.3 s (the clean path; the fallback would take more
+    than 20 s). The old engine was gone, and `watch` had exited 1 with the
+    update message. The installed `fetchpath.exe` was the one the installer
+    carried. After setup the server sent only the remaining 24,117,247 bytes,
+    in one ranged request, and the file matched.
+  - Uninstall ran with the engine mid-download, sign-in start on, and
+    `fetchpath batch -` blocked on input both from the install folder and
+    from a copy elsewhere. It took 25.6 s. The blocked command in the install
+    folder was ended and the copy was not. Nothing from the install folder
+    ran 15 s later. The finished download, the queue (the interrupted job
+    saved as queued with its bytes) and PATH were as expected, and the Run
+    value and the hold were gone.
+- `cargo test -p fetchpath --test engine`: 9 passed, three runs.
+  `cargo test -p fetchpath-protocol --lib launch`: the default-folder test.
+  `node --test tests/installer`: the hook guards. The generated installer
+  script compiles with `makensis -WX`.
+- In three workspace runs,
+  `a_subscriber_that_never_reads_cannot_hold_up_the_queue` failed the same
+  way on `e42bde5` without these changes: about 92 s against its 60 s budget.
+  A later run took 42 s. Tracked as FP-072.
+
+| Temporary change | Failing test |
+|---|---|
+| Clients ignore the hold | `stopping_for_an_update_waits_for_the_engine_and_holds_new_ones_off` |
+| `stop --for-update` returns without waiting for the lock | None reliably. The engine drops its listening pipe before it saves the queue, so the lock wait is what guarantees the save before setup continues; the test only catches the change when the save loses the race, and the hooks' executable wait is the second guard |
+| The fallback matches `Get-Process` `Path` (the first version) | The lifecycle run's uninstall timed out with the blocked command still running |
+
+### Limitations
+
+- `fetchpath-browser-host.exe` is not waited for, so a browser keeping it
+  open during setup can still leave a file busy (FP-056 changes the host).
+- Clients older than this build do not know the hold. The loop stops an
+  engine one of them starts during setup, and the hook ends it if it keeps
+  the file busy.
+- If policy blocks PowerShell or WMI, the fallback ends nothing. The bundler's
+  file copy then fails on the busy `fetchpath.exe`: interactively with a retry
+  dialog, silently by aborting, which lifts the hold.
+- An upgrade that uninstalls the old version first removes the Run value
+  until the engine next starts and adds it back.
+- With `FETCHPATH_APP_DATA_DIR` set in the user's environment (development
+  only), the hold is written there and setup deletes a different file, so it
+  lapses after ten minutes.
+- Only the silent path ran. The interactive installer, whose reinstall page
+  runs the old uninstaller first, a clean machine, and a 0.1.0 window with a
+  download running were not exercised.
+
+### Independent review
+
+Strong-model review, 25 September 2026: **approve with nits**. It confirmed
+that files are never replaced while the engine runs, the queue is saved
+first, no two engines own it, the lock probe is harmless, 0.1.0's unknown
+subcommand is handled, and the NSIS mechanics hold. Findings and fixes:
+
+| Finding | Fix |
+|---|---|
+| Medium: a cancelled or failed setup left the hold for ten minutes | Deleted in the failure and cancel callbacks; a future time is honored only up to the limit |
+| Medium-low: the fallback ended every `fetchpath.exe` by name | Ended by path; the lifecycle run proves the copy elsewhere is spared |
+| Low: the record misexplained the surviving mutation | Corrected above |
+| Low: the script could not tell a clean stop from the fallback | Phase B asserts under 20 s; phase C exercises the fallback |
+| Nits: a stray control byte in the record, the development-only hold location | Fixed; listed above |
+
+The run that exercised the fallback found it ended nothing (32-bit
+PowerShell), and a later run found the `watch` race; both are fixed.

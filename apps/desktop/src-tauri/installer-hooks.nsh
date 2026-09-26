@@ -42,11 +42,95 @@
   SendMessage 0xFFFF 0x001A 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
+; The engine (FP-057). `fetchpath engine` may be running from $INSTDIR with
+; downloads in progress, and a running executable cannot be replaced or
+; deleted. Before either, the installed fetchpath.exe is asked to stop it:
+; `engine stop --for-update` writes an update hold that keeps clients and a
+; direct start from bringing an engine back, asks the engine to stop (it saves
+; each download at its checkpoint), and returns once the engine has let go of
+; its lock. The hooks then wait for fetchpath.exe itself to be free, since a
+; command still running in a terminal also holds it, and only after 20 seconds
+; end the fetchpath.exe processes still running from $INSTDIR, as the bundler
+; does for the app window. Ending one is a crash the engine already recovers
+; from. A 0.1.0
+; fetchpath.exe does not know the command and had no engine. The hold is
+; removed when setup finishes, and ignored after ten minutes if it never does.
+; Its name matches EngineHome::update_hold_path.
+!define FETCHPATH_UPDATE_HOLD "$APPDATA\app.fetchpath.desktop\engine-update-hold-v1"
+
+!macro FETCHPATH_STOP_ENGINE
+  Push $R8
+  Push $R9
+  ${If} ${FileExists} "$INSTDIR\fetchpath.exe"
+    DetailPrint "Stopping the Fetchpath engine; downloads resume where they stopped."
+    nsExec::ExecToLog '"$INSTDIR\fetchpath.exe" engine stop --for-update'
+    Pop $R9
+    StrCpy $R8 0
+    fetchpath_engine_wait:
+      ClearErrors
+      FileOpen $R9 "$INSTDIR\fetchpath.exe" a
+      ${IfNot} ${Errors}
+        FileClose $R9
+        Goto fetchpath_engine_free
+      ${EndIf}
+      IntOp $R8 $R8 + 1
+      ${If} $R8 < 40
+        Sleep 500
+        Goto fetchpath_engine_wait
+      ${EndIf}
+    ; Only the copies running from this install: a fetchpath.exe elsewhere,
+    ; such as a portable or development copy, is left alone. The path goes
+    ; through the environment so no character in it needs quoting. Setup is
+    ; a 32-bit process, so this is the 32-bit PowerShell, which cannot read
+    ; a 64-bit process's Path; WMI's ExecutablePath works from either.
+    DetailPrint "A fetchpath command was still running; closing it."
+    System::Call 'Kernel32::SetEnvironmentVariable(t "FETCHPATH_SETUP_EXE", t "$INSTDIR\fetchpath.exe") i'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -eq $$env:FETCHPATH_SETUP_EXE } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"'
+    Pop $R9
+    Sleep 1000
+    fetchpath_engine_free:
+  ${EndIf}
+  Pop $R9
+  Pop $R8
+!macroend
+
+; A setup that stops early (Cancel, or a file it could not write) lifts the
+; hold at once, rather than keep Fetchpath from starting for ten minutes. The
+; bundler's template defines neither failure callback; Cancel goes through
+; Modern UI, which owns .onUserAbort and calls the custom functions named here.
+Function .onInstFailed
+  Delete "${FETCHPATH_UPDATE_HOLD}"
+FunctionEnd
+Function un.onUninstFailed
+  Delete "${FETCHPATH_UPDATE_HOLD}"
+FunctionEnd
+!define MUI_CUSTOMFUNCTION_ABORT FetchpathSetupCancelled
+Function FetchpathSetupCancelled
+  Delete "${FETCHPATH_UPDATE_HOLD}"
+FunctionEnd
+!define MUI_CUSTOMFUNCTION_UNABORT un.FetchpathSetupCancelled
+Function un.FetchpathSetupCancelled
+  Delete "${FETCHPATH_UPDATE_HOLD}"
+FunctionEnd
+
+; An uninstalled engine must not start at sign-in. The engine writes this
+; value only when the person turned the setting on, and adds it again at its
+; next start, so an upgrade that uninstalls first loses nothing for good.
+!macro FETCHPATH_REMOVE_SIGN_IN
+  Push $R9
+  ReadRegStr $R9 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Fetchpath engine"
+  ${If} $R9 == '"$INSTDIR\fetchpath.exe" engine'
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Fetchpath engine"
+  ${EndIf}
+  Pop $R9
+!macroend
+
 ; The finish page says the command line came with the app (FP-044). This file is
 ; included before the bundler's pages, and the bundler leaves this text unset.
 !define MUI_FINISHPAGE_TEXT "Fetchpath is installed.$\r$\n$\r$\nThe fetchpath command is installed too. Open a new terminal and type fetchpath --help to get started.$\r$\n$\r$\nClick Finish to close Setup."
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro FETCHPATH_STOP_ENGINE
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -56,10 +140,13 @@
   DetailPrint "Registered the Fetchpath browser bridge for Chrome, Edge and Firefox."
 
   !insertmacro FETCHPATH_USER_PATH Add
+  Delete "${FETCHPATH_UPDATE_HOLD}"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; Before the files go, while tools\user-path.ps1 is still installed.
+  ; Before the files go, while fetchpath.exe and tools\user-path.ps1 are
+  ; still installed.
+  !insertmacro FETCHPATH_STOP_ENGINE
   !insertmacro FETCHPATH_USER_PATH Remove
 !macroend
 
@@ -67,4 +154,6 @@
   DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}"
   DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}"
   DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
+  !insertmacro FETCHPATH_REMOVE_SIGN_IN
+  Delete "${FETCHPATH_UPDATE_HOLD}"
 !macroend

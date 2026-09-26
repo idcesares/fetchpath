@@ -47,6 +47,11 @@ Snapdragon laptops aren't supported in this version.
 4. Open Fetchpath from the Start menu. A short welcome banner appears the
    first time; choose **Got it** when you've read it.
 
+**Updating.** Run the new installer over the old one. Your download list,
+history and settings are kept. If downloads are running, the installer stops
+Fetchpath first; each download keeps what it has received and carries on from
+there the next time Fetchpath starts.
+
 **"Windows protected your PC."** Fetchpath 0.1.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
 it and warns when you run the installer. If you downloaded it from the
@@ -279,9 +284,10 @@ settings and media tools removed. Leave it unticked, as it starts, if you're
 reinstalling.
 
 **Files you downloaded are never removed**, wherever you saved them.
+If downloads are still running, the uninstaller stops Fetchpath first.
 
-The uninstaller also removes the browser connection and the `fetchpath`
-command from your PATH. Remove the extension from your browser yourself on its
+The uninstaller also removes the browser connection, the `fetchpath`
+command from your PATH and, if you turned it on, starting at sign-in. Remove the extension from your browser yourself on its
 extensions page.
 
 ## When something goes wrong

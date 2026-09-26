@@ -7,7 +7,7 @@ installing so it's found.
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
 fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history
-fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop
+fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop [--for-update]
 fetchpath --version
 fetchpath --help
 ```
@@ -143,6 +143,11 @@ value it applied. The desktop app shows the same settings.
 `fetchpath engine status` says whether it is running; `fetchpath engine stop`
 stops it after saving every download's progress, and the next command starts
 it again and carries on.
+
+`fetchpath engine stop --for-update` is what the installer and uninstaller
+run: it also keeps a new engine from starting until setup finishes (for at most
+ten minutes) and returns only once the engine has exited. While it holds,
+commands answer that Fetchpath is being updated.
 
 The desktop app is a client of the same engine, so a download added here
 shows in the app, and the other way round.

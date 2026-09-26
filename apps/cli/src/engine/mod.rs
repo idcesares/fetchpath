@@ -27,7 +27,11 @@ use std::time::{Duration, Instant};
 /// How long the engine stays with no client and nothing of its own to do.
 pub const IDLE_GRACE: Duration = Duration::from_secs(60);
 
-pub const USAGE: &str = "usage: fetchpath engine [status [--json] | stop]";
+pub const USAGE: &str = "usage: fetchpath engine [status [--json] | stop [--for-update]]";
+
+/// How long `engine stop --for-update` waits for the engine to let go of
+/// its files before setup falls back to ending the process.
+const UPDATE_STOP_WAIT: Duration = Duration::from_secs(60);
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -41,7 +45,11 @@ pub fn run(args: &[String]) -> i32 {
             [flag] if flag == "--json" => crate::queue::engine_status(true),
             _ => usage(),
         },
-        Some("stop") => stop(),
+        Some("stop") => match &args[1..] {
+            [] => stop(),
+            [flag] if flag == "--for-update" => stop_for_update(UPDATE_STOP_WAIT),
+            _ => usage(),
+        },
         Some(_) => usage(),
     }
 }
@@ -72,6 +80,61 @@ fn stop() -> i32 {
             eprintln!("fetchpath: {}", error.message);
             1
         }
+    }
+}
+
+/// Used by setup before it replaces or removes Fetchpath's files (FP-057).
+/// Holds new engines off, asks the running one to stop whatever version it
+/// is, and returns once the single-owner lock is free: the engine has saved
+/// the queue and exited, so its executable is no longer in use.
+fn stop_for_update(wait: Duration) -> i32 {
+    let home = match home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("fetchpath: {}", error.message);
+            return 1;
+        }
+    };
+    if !home.dir().is_dir() {
+        // No engine has ever run for this person; nothing to stop or hold.
+        return 0;
+    }
+    if let Err(error) = home.hold_for_update() {
+        eprintln!("fetchpath: the engine could not be held off during setup: {error}");
+        return 1;
+    }
+    let deadline = Instant::now() + wait;
+    loop {
+        // Again each time round: an engine a client started just before the
+        // hold was written may have taken the lock since.
+        let _ = launch::request_restart(&home, Limits::default(), Duration::from_secs(5));
+        match lock_free(&home) {
+            Ok(true) => {
+                println!("The Fetchpath engine is stopped.");
+                return 0;
+            }
+            Ok(false) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(200))
+            }
+            Ok(false) => {
+                eprintln!("fetchpath: the engine did not stop in time.");
+                return 1;
+            }
+            Err(message) => {
+                eprintln!("fetchpath: {message}");
+                return 1;
+            }
+        }
+    }
+}
+
+/// Whether no engine holds the single-owner lock. The probe opens it
+/// exactly as an engine would and lets go at once.
+fn lock_free(home: &EngineHome) -> Result<bool, String> {
+    match claim(home) {
+        Ok(Some(_probe)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(message) => Err(message),
     }
 }
 
@@ -184,6 +247,12 @@ fn serve(grace: Duration) -> Result<i32, String> {
         eprintln!("The Fetchpath engine is already running.");
         return Ok(0);
     };
+    // Checked holding the lock, so setup's own lock probe cannot miss an
+    // engine that started just before the hold was written.
+    if home.update_held() {
+        eprintln!("Fetchpath is being updated or removed; the engine will not start now.");
+        return Ok(0);
+    }
 
     // Restart recovery happens as the session loads, before any pipe exists.
     // Browser captures are taken in from the inbox beside the queue and
@@ -218,7 +287,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
         stop: AtomicBool::new(false),
         connections: AtomicUsize::new(0),
         settings: Mutex::new(()),
-        default_home: std::env::var_os("FETCHPATH_APP_DATA_DIR").is_none(),
+        default_home: home.is_default(),
         endpoint: home.endpoint_path(),
     });
     if host.engine.session().settings().start_engine_at_sign_in {
