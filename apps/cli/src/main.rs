@@ -3,14 +3,16 @@ mod download;
 mod engine;
 mod lan;
 mod queue;
+mod tui;
 mod wait;
 mod when;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const HELP: &str = "Fetchpath — download files from the command line.
 
 Usage:
+  fetchpath [--plain]        Open the interactive terminal (in a terminal only)
   fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
   fetchpath --version
   fetchpath --help
@@ -55,10 +57,8 @@ The full guide is docs\\CLI.md in the Fetchpath install folder.";
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        None => {
-            eprintln!("{HELP}");
-            download::EXIT_USAGE
-        }
+        None => tui::run(&[], HELP),
+        Some("--plain" | "--json") => tui::run(&args, HELP),
         Some("-h" | "--help" | "help") => {
             println!("{HELP}");
             0

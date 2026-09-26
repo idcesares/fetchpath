@@ -20,25 +20,25 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Flags and positional words, parsed the same way for every command.
-struct Args {
-    words: Vec<String>,
+pub(crate) struct Args {
+    pub words: Vec<String>,
     json: bool,
     quiet: bool,
     all: bool,
-    active: bool,
-    failed: bool,
+    pub active: bool,
+    pub failed: bool,
     wait: bool,
-    to: Option<String>,
-    sha256: Option<String>,
-    quality: Option<String>,
-    at: Option<String>,
-    limit: Option<u32>,
+    pub to: Option<String>,
+    pub sha256: Option<String>,
+    pub quality: Option<String>,
+    pub at: Option<String>,
+    pub limit: Option<u32>,
 }
 
 /// Which flags a command accepts; anything else is refused.
 const VALUE_FLAGS: &[&str] = &["--to", "--sha256", "--quality", "--at", "--limit"];
 
-fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
+pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
     let mut parsed = Args {
         words: Vec::new(),
         json: false,
@@ -294,7 +294,7 @@ fn report_settled(job: &JobSnapshot, json: bool) {
 
 /// Where a job goes without `--to`: the engine's default folder when one is
 /// set, otherwise Downloads.
-fn default_folder(engine: &Engine) -> Result<Option<PathBuf>, ProtocolError> {
+pub(crate) fn default_folder(engine: &Engine) -> Result<Option<PathBuf>, ProtocolError> {
     let view = match engine.send(Command::GetSettings)? {
         CommandResult::Settings { view } => view,
         other => return Err(client::unexpected(&other)),
@@ -308,7 +308,7 @@ fn default_folder(engine: &Engine) -> Result<Option<PathBuf>, ProtocolError> {
         }))
 }
 
-fn add_one(
+pub(crate) fn add_one(
     engine: &Engine,
     parsed: &Args,
     link: &str,
@@ -497,10 +497,18 @@ pub fn history(args: &[String]) -> i32 {
 }
 
 fn print_table(all: &[JobSnapshot], shown: &[&JobSnapshot]) {
-    println!(
+    for line in table_lines(all, shown) {
+        println!("{line}");
+    }
+}
+
+/// The `ls` table: a header, then one row per shown job with its index in
+/// `all`.
+pub(crate) fn table_lines(all: &[JobSnapshot], shown: &[&JobSnapshot]) -> Vec<String> {
+    let mut lines = vec![format!(
         "{:>4}  {:<8}  {:<14}  {:<22}  NAME",
         "#", "ID", "STATE", "PROGRESS"
-    );
+    )];
     for job in shown {
         let index = client::index_of(all, job).map_or(String::new(), |index| index.to_string());
         let mut amount = client::amount(&job.progress);
@@ -509,13 +517,14 @@ fn print_table(all: &[JobSnapshot], shown: &[&JobSnapshot]) {
         {
             amount = format!("{amount}  {}/s", client::bytes(rate));
         }
-        println!(
+        lines.push(format!(
             "{index:>4}  {:<8}  {:<14}  {amount:<22}  {}",
             client::short_id(job),
             client::state_label(job),
             client::name(job)
-        );
+        ));
     }
+    lines
 }
 
 pub fn show(args: &[String]) -> i32 {
@@ -538,7 +547,16 @@ pub fn show(args: &[String]) -> i32 {
 }
 
 fn print_job(job: &JobSnapshot) {
-    let line = |key: &str, value: &str| println!("{key:<12} {value}");
+    for line in job_lines(job) {
+        println!("{line}");
+    }
+    println!();
+}
+
+/// `show`'s description of one job, one field per line.
+pub(crate) fn job_lines(job: &JobSnapshot) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = |key: &str, value: &str| lines.push(format!("{key:<12} {value}"));
     line("Id", job.job_id.as_str());
     line("State", client::state_label(job));
     line("Link", &job.source_display);
@@ -577,7 +595,7 @@ fn print_job(job: &JobSnapshot) {
             &format!("{} (attempt {})", when::local(at), job.attempt + 1),
         );
     }
-    println!();
+    lines
 }
 
 // ---------------------------------------------------------------- controls
@@ -601,21 +619,7 @@ pub fn control(action: Control, args: &[String]) -> i32 {
         let jobs = engine.resolve(&parsed.words)?;
         let mut worst = 0;
         for job in jobs {
-            let job_id = job.job_id.clone();
-            let command = match action {
-                Control::Pause => Command::Pause { job_id },
-                Control::Resume => Command::Resume { job_id },
-                Control::Cancel => Command::Cancel {
-                    job_id,
-                    retain_partial: false,
-                },
-                Control::Retry => Command::Retry {
-                    job_id,
-                    expected_sha256: None,
-                },
-                Control::Remove => Command::RemoveJob { job_id },
-            };
-            match engine.send(command) {
+            match engine.send(control_command(action, &job)) {
                 Ok(result) => {
                     if parsed.json {
                         client::print_json(&result);
@@ -642,7 +646,24 @@ pub fn control(action: Control, args: &[String]) -> i32 {
     })
 }
 
-fn describe(action: Control, job: &JobSnapshot, result: &CommandResult) -> String {
+pub(crate) fn control_command(action: Control, job: &JobSnapshot) -> Command {
+    let job_id = job.job_id.clone();
+    match action {
+        Control::Pause => Command::Pause { job_id },
+        Control::Resume => Command::Resume { job_id },
+        Control::Cancel => Command::Cancel {
+            job_id,
+            retain_partial: false,
+        },
+        Control::Retry => Command::Retry {
+            job_id,
+            expected_sha256: None,
+        },
+        Control::Remove => Command::RemoveJob { job_id },
+    }
+}
+
+pub(crate) fn describe(action: Control, job: &JobSnapshot, result: &CommandResult) -> String {
     let who = format!("{} {}", client::short_id(job), client::name(job));
     let outcome = match result {
         CommandResult::Control { outcome, .. } => Some(*outcome),
@@ -767,7 +788,7 @@ fn watch_queue(engine: &Engine, json: bool) -> Result<i32, ProtocolError> {
     Ok(EXIT_CANCELLED)
 }
 
-fn event_text(payload: &EventPayload) -> Option<String> {
+pub(crate) fn event_text(payload: &EventPayload) -> Option<String> {
     Some(match payload {
         EventPayload::JobCreated { .. } => "added".into(),
         EventPayload::StateChanged { state, .. } => client::state_name(*state).into(),
@@ -830,55 +851,81 @@ pub fn inspect(args: &[String]) -> i32 {
 
 pub fn settings(args: &[String]) -> i32 {
     with_engine(args, &["--json"], |engine, parsed| {
-        let view = match engine.send(Command::GetSettings)? {
-            CommandResult::Settings { view } => view,
-            other => return Err(client::unexpected(&other)),
-        };
-        let current = settings_map(&view.settings);
-        match parsed.words.as_slice() {
-            [] => {
-                if parsed.json {
-                    client::print_json(&CommandResult::Settings { view });
-                } else {
-                    for (key, value) in &current {
-                        println!("{} = {}", key.replace('_', "-"), plain(value));
-                    }
-                }
-                Ok(0)
-            }
-            [key] => {
-                let key = setting_key(key, &current)?;
-                if parsed.json {
-                    client::print_json(&serde_json::json!({ key.clone(): current[&key] }));
-                } else {
-                    println!("{}", plain(&current[&key]));
-                }
-                Ok(0)
-            }
-            [key, value] => {
-                let key = setting_key(key, &current)?;
-                let mut next = current.clone();
-                next.insert(key.clone(), setting_value(&key, &current[&key], value)?);
-                let settings: EngineSettings =
-                    serde_json::from_value(serde_json::Value::Object(next)).map_err(|error| {
-                        client::input_error(&format!("{value:?} does not suit {key}: {error}"))
-                    })?;
-                let result = engine.send(Command::UpdateSettings { settings })?;
-                let CommandResult::Settings { view } = &result else {
-                    return Err(client::unexpected(&result));
-                };
-                if parsed.json {
-                    client::print_json(&result);
-                } else {
-                    // The engine clamps values into range; show what it kept.
-                    let applied = settings_map(&view.settings);
-                    println!("{} = {}", key.replace('_', "-"), plain(&applied[&key]));
-                }
-                Ok(0)
-            }
-            _ => Ok(usage("settings takes at most a name and a value")),
+        if parsed.words.len() > 2 {
+            return Ok(usage("settings takes at most a name and a value"));
         }
+        let (json, lines) = settings_outcome(engine, &parsed.words)?;
+        if parsed.json {
+            client::print_json(&json);
+        } else {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+        Ok(0)
     })
+}
+
+/// Shows every setting, one, or changes one: the engine's reply for
+/// `--json`, and the lines a person reads.
+pub(crate) fn settings_outcome(
+    engine: &Engine,
+    words: &[String],
+) -> Result<(serde_json::Value, Vec<String>), ProtocolError> {
+    let view = match engine.send(Command::GetSettings)? {
+        CommandResult::Settings { view } => view,
+        other => return Err(client::unexpected(&other)),
+    };
+    let current = settings_map(&view.settings);
+    let json =
+        |result: &CommandResult| serde_json::to_value(result).expect("protocol types serialize");
+    match words {
+        [] => Ok((
+            json(&CommandResult::Settings { view }),
+            current
+                .iter()
+                .map(|(key, value)| format!("{} = {}", key.replace('_', "-"), plain(value)))
+                .collect(),
+        )),
+        [key] => {
+            let key = setting_key(key, &current)?;
+            Ok((
+                serde_json::json!({ key.clone(): current[&key] }),
+                vec![plain(&current[&key])],
+            ))
+        }
+        [key, value] => {
+            let key = setting_key(key, &current)?;
+            let mut next = current.clone();
+            next.insert(key.clone(), setting_value(&key, &current[&key], value)?);
+            let settings: EngineSettings = serde_json::from_value(serde_json::Value::Object(next))
+                .map_err(|error| {
+                    client::input_error(&format!("{value:?} does not suit {key}: {error}"))
+                })?;
+            let result = engine.send(Command::UpdateSettings { settings })?;
+            let CommandResult::Settings { view } = &result else {
+                return Err(client::unexpected(&result));
+            };
+            // The engine clamps values into range; show what it kept.
+            let applied = settings_map(&view.settings);
+            let line = format!("{} = {}", key.replace('_', "-"), plain(&applied[&key]));
+            Ok((json(&result), vec![line]))
+        }
+        _ => Err(client::input_error(
+            "settings takes at most a name and a value",
+        )),
+    }
+}
+
+/// Every setting's name as the command line spells it, for completion.
+pub(crate) fn setting_names(engine: &Engine) -> Result<Vec<String>, ProtocolError> {
+    match engine.send(Command::GetSettings)? {
+        CommandResult::Settings { view } => Ok(settings_map(&view.settings)
+            .keys()
+            .map(|key| key.replace('_', "-"))
+            .collect()),
+        other => Err(client::unexpected(&other)),
+    }
 }
 
 fn settings_map(settings: &EngineSettings) -> serde_json::Map<String, serde_json::Value> {

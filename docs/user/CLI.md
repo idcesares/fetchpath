@@ -162,6 +162,24 @@ each event and progress sample as the engine sends it. A failure prints
 `{"error":{"code":"…","message":"…",…}}`. Decide from `code`, never from
 `message`.
 
+## The interactive terminal
+
+Run `fetchpath` on its own in a terminal. Downloads in progress, paused,
+queued or scheduled appear in a panel above a prompt; finished ones print a
+line into the window's history saying where the file went or why it stopped.
+
+- Paste or type a link and press Enter to download it. Add `--to FOLDER`,
+  `--at TIME`, `--sha256 HEX` or `--quality Q` as with `fetchpath add`.
+- Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
+  `/retry`, `/rm`, `/history`, `/settings`, `/engine`, `/help` and `/quit`.
+  A download is its number in the panel or `/queue`, or the start of its id.
+- Tab completes commands, downloads, setting names and folders; Up and Down
+  recall earlier lines; Esc clears the line; Ctrl+C on an empty line leaves.
+
+Leaving never stops a download. `fetchpath --plain` prints plain lines and
+redraws nothing, which suits screen readers; it is chosen automatically when
+`NO_COLOR` is set, `TERM` is `dumb`, or Windows reports a screen reader.
+
 ## Paired devices (advanced)
 
 Two of your own computers can share files they have already downloaded and

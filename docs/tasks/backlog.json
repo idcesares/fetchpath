@@ -1755,23 +1755,31 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "blocked",
+      "owner": "interactive_terminal",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "standard",
       "files": [
         "apps/cli/src/tui",
+        "apps/cli/src/main.rs",
+        "apps/cli/src/queue.rs",
+        "apps/cli/tests",
         "apps/cli/Cargo.toml",
-        "Cargo.lock"
+        "Cargo.lock",
+        "docs/development/TERMINAL.md",
+        "docs/user/CLI.md"
       ],
       "acceptanceIds": [
         "A01"
       ],
       "acceptance": "fetchpath with no arguments in a terminal opens inline mode: finished jobs print as receipts into scrollback, a live panel shows active, paused, queued, scheduled and awaiting-approval jobs, and a prompt accepts links and / commands with completion; --plain (automatic under NO_COLOR or a dumb terminal) prints append-only lines; works in Windows Terminal and the classic console host; line-editor choice recorded after a short console probe.",
       "verification": "Render snapshot tests against recorded event streams; plain-mode output tests; keyboard-only walkthrough in Windows Terminal and conhost recorded; without a terminal it prints help and exits 2.",
-      "evidence": [],
-      "blockedReason": null
+      "evidence": [
+        "docs/development/TERMINAL.md",
+        "apps/cli/tests/fixtures/queue-stream.jsonl"
+      ],
+      "blockedReason": "Built and verified by tests and a headless ConPTY keyboard walkthrough (docs/development/TERMINAL.md). Owed: a person runs the keyboard-only walkthrough in a Windows Terminal window and a classic console host window and records the result there; then mark done."
     },
     {
       "id": "FP-060",

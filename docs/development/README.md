@@ -14,6 +14,7 @@ one your task names.
 - [Engine session](ENGINE-SESSION.md) — FP-048/049/051: the queue in `fetchpath-session`, its characterization and open findings.
 - [Engine protocol](ENGINE-PROTOCOL.md) — FP-050/052: protocol v1, `EngineClient`, the pipe.
 - [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit; FP-058: the command line through the engine.
+- [Interactive terminal](TERMINAL.md) — FP-059: inline panel, prompt and `/` commands, plain mode.
 
 ## Features
 

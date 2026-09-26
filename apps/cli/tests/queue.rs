@@ -503,3 +503,21 @@ fn a_command_that_starts_the_engine_returns_at_once_to_a_script_reading_its_outp
     );
     assert_eq!(code(&stopped), 0);
 }
+
+#[test]
+fn without_a_terminal_the_interactive_mode_prints_help_and_exits_2() {
+    let data = tempfile::tempdir().unwrap();
+    for args in [&[][..], &["--plain"][..], &["--json"][..]] {
+        let output = Command::new(EXE)
+            .args(args)
+            .env("FETCHPATH_APP_DATA_DIR", data.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 2, "{args:?}");
+        assert!(output.stdout.is_empty());
+        assert!(text(&output.stderr).contains("Usage:"), "{args:?}");
+    }
+    // It never reached for the engine, so it made no data folder.
+    assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+}
