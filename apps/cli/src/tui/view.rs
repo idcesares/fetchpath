@@ -34,6 +34,8 @@ pub struct Glyphs {
     pub bar_full: &'static str,
     pub bar_empty: &'static str,
     pub rule: &'static str,
+    /// The line between the dashboard's queue and details.
+    pub divider: &'static str,
     pub prompt: &'static str,
     pub more: &'static str,
     pub chosen: &'static str,
@@ -52,6 +54,7 @@ pub const UNICODE: Glyphs = Glyphs {
     bar_full: "█",
     bar_empty: "░",
     rule: "─",
+    divider: "│",
     prompt: "›",
     more: "…",
     chosen: "●",
@@ -70,6 +73,7 @@ pub const ASCII: Glyphs = Glyphs {
     bar_full: "#",
     bar_empty: "-",
     rule: "-",
+    divider: "|",
     prompt: ">",
     more: "...",
     chosen: "(*)",
@@ -88,10 +92,10 @@ pub fn glyphs_for_terminal() -> Glyphs {
     }
 }
 
-const DIM: Style = Style::new().fg(Color::DarkGray);
-const ACCENT: Color = Color::Cyan;
+pub const DIM: Style = Style::new().fg(Color::DarkGray);
+pub const ACCENT: Color = Color::Cyan;
 
-fn tone_style(tone: Tone) -> Style {
+pub fn tone_style(tone: Tone) -> Style {
     match tone {
         Tone::Normal => Style::new(),
         Tone::Dim => DIM,
@@ -139,6 +143,10 @@ pub fn receipt(job: &JobSnapshot, glyphs: &Glyphs) -> Out {
     }
 }
 
+/// The group of a finished job listed beside the panel's (the dashboard
+/// lists recent finished ones too).
+pub const FINISHED: u8 = 6;
+
 /// The glyph and color for a panel row. A moving download spins.
 fn state_glyph(job: &JobSnapshot, group: u8, glyphs: &Glyphs, tick: u64) -> (&'static str, Color) {
     match group {
@@ -152,6 +160,11 @@ fn state_glyph(job: &JobSnapshot, group: u8, glyphs: &Glyphs, tick: u64) -> (&'s
         }
         1 => (glyphs.attention, Color::Yellow),
         2 => (glyphs.paused, Color::Yellow),
+        FINISHED => match job.state {
+            JobState::Completed => (glyphs.saved, Color::Green),
+            JobState::Cancelled => (glyphs.cancelled, Color::DarkGray),
+            _ => (glyphs.failed, Color::Red),
+        },
         _ => (glyphs.waiting, Color::DarkGray),
     }
 }
@@ -232,6 +245,7 @@ fn bar(
         (0, _) => ACCENT,
         (1, _) => Color::Yellow,
         (2, _) => Color::Yellow,
+        (FINISHED, JobState::Completed) => Color::Green,
         _ => Color::DarkGray,
     };
     let (start, filled) = match fraction(job) {
@@ -274,7 +288,7 @@ pub fn fit(text: &str, width: usize, more: &str) -> String {
 }
 
 /// `text` cut or padded to exactly `width` columns.
-fn pad(text: &str, width: usize, more: &str) -> String {
+pub fn pad(text: &str, width: usize, more: &str) -> String {
     let cut = fit(text, width, more);
     let used = cut.width();
     format!("{cut}{}", " ".repeat(width.saturating_sub(used)))
@@ -819,6 +833,94 @@ fn card_room(width: u16) -> usize {
     (width as usize).saturating_sub(4).max(10)
 }
 
+/// The rule's words: how many downloads are in each group, with the
+/// combined speed.
+pub fn summary(panel: &[Row]) -> String {
+    let count = |wanted: u8| panel.iter().filter(|row| row.group == wanted).count();
+    let mut parts = Vec::new();
+    let active = count(0);
+    if active > 0 {
+        let rate: u64 = panel
+            .iter()
+            .filter(|row| row.job.state == JobState::Running)
+            .filter_map(|row| row.job.progress.rate_bytes_per_second)
+            .sum();
+        let rate = if rate > 0 {
+            format!(" at {}/s", client::bytes(rate))
+        } else {
+            String::new()
+        };
+        parts.push(format!("{active} downloading{rate}"));
+    }
+    for (group, word) in [
+        (1, "to check"),
+        (2, "paused"),
+        (3, "queued"),
+        (4, "scheduled"),
+    ] {
+        let n = count(group);
+        if n > 0 {
+            parts.push(format!("{n} {word}"));
+        }
+    }
+    if parts.is_empty() {
+        "Nothing downloading".to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// One panel row: number, glyph, name, bar, percent and tail. Narrow
+/// windows drop the bar first.
+pub fn job_line(row: &Row, width: usize, glyphs: &Glyphs, tick: u64) -> Line<'static> {
+    let Row { index, group, job } = *row;
+    let (glyph, color) = state_glyph(job, group, glyphs, tick);
+    let number = format!("{index:>3} ");
+    let percent = fraction(job).map_or(String::new(), |done| format!("{:.0}%", done * 100.0));
+    let tail = tail(job);
+    let lead = number.width() + glyph.width() + 1;
+    // Wide windows align every row's tail; narrow ones spend no spare room.
+    let tail_width = if width >= 60 {
+        18.max(tail.width()).min(width / 3)
+    } else {
+        tail.width().min(width / 3)
+    };
+    let mut spans = vec![
+        Span::styled(number, DIM),
+        Span::styled(glyph, Style::new().fg(color)),
+        Span::raw(" "),
+    ];
+    let room = width.saturating_sub(lead + 5 + tail_width + 2);
+    let name_style = if group == 0 {
+        Style::new().add_modifier(Modifier::BOLD)
+    } else {
+        Style::new()
+    };
+    if room >= 24 {
+        let bar_width = (room * 2 / 5).clamp(8, 32);
+        let name_width = room - bar_width - 1;
+        spans.push(Span::styled(
+            pad(&client::name(job), name_width, glyphs.more),
+            name_style,
+        ));
+        spans.push(Span::raw(" "));
+        spans.extend(bar(job, group, bar_width, glyphs, tick));
+    } else {
+        let name_width = width.saturating_sub(lead + 5 + tail_width + 2).max(6);
+        spans.push(Span::styled(
+            pad(&client::name(job), name_width, glyphs.more),
+            name_style,
+        ));
+    }
+    spans.push(Span::styled(
+        format!(" {percent:>4}"),
+        Style::new().fg(color),
+    ));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(fit(&tail, tail_width, glyphs.more), DIM));
+    Line::from(spans)
+}
+
 pub struct Frame<'a> {
     /// The panel's jobs, each with its queue index.
     pub panel: &'a [Row<'a>],
@@ -865,94 +967,6 @@ impl Frame<'_> {
         (self.panel_rows() + 1 + below) as u16
     }
 
-    fn summary(&self) -> String {
-        let count = |wanted: u8| self.panel.iter().filter(|row| row.group == wanted).count();
-        let mut parts = Vec::new();
-        let active = count(0);
-        if active > 0 {
-            let rate: u64 = self
-                .panel
-                .iter()
-                .filter(|row| row.job.state == JobState::Running)
-                .filter_map(|row| row.job.progress.rate_bytes_per_second)
-                .sum();
-            let rate = if rate > 0 {
-                format!(" at {}/s", client::bytes(rate))
-            } else {
-                String::new()
-            };
-            parts.push(format!("{active} downloading{rate}"));
-        }
-        for (group, word) in [
-            (1, "to check"),
-            (2, "paused"),
-            (3, "queued"),
-            (4, "scheduled"),
-        ] {
-            let n = count(group);
-            if n > 0 {
-                parts.push(format!("{n} {word}"));
-            }
-        }
-        if parts.is_empty() {
-            "Nothing downloading".to_owned()
-        } else {
-            parts.join(" · ")
-        }
-    }
-
-    /// One panel row: number, glyph, name, bar, percent and tail. Narrow
-    /// windows drop the bar first.
-    fn job_line(&self, row: &Row, width: usize) -> Line<'static> {
-        let Row { index, group, job } = *row;
-        let glyphs = self.glyphs;
-        let (glyph, color) = state_glyph(job, group, glyphs, self.tick);
-        let number = format!("{index:>3} ");
-        let percent = fraction(job).map_or(String::new(), |done| format!("{:.0}%", done * 100.0));
-        let tail = tail(job);
-        let lead = number.width() + glyph.width() + 1;
-        // Wide windows align every row's tail; narrow ones spend no spare room.
-        let tail_width = if width >= 60 {
-            18.max(tail.width()).min(width / 3)
-        } else {
-            tail.width().min(width / 3)
-        };
-        let mut spans = vec![
-            Span::styled(number, DIM),
-            Span::styled(glyph, Style::new().fg(color)),
-            Span::raw(" "),
-        ];
-        let room = width.saturating_sub(lead + 5 + tail_width + 2);
-        let name_style = if group == 0 {
-            Style::new().add_modifier(Modifier::BOLD)
-        } else {
-            Style::new()
-        };
-        if room >= 24 {
-            let bar_width = (room * 2 / 5).clamp(8, 32);
-            let name_width = room - bar_width - 1;
-            spans.push(Span::styled(
-                pad(&client::name(job), name_width, glyphs.more),
-                name_style,
-            ));
-            spans.push(Span::raw(" "));
-            spans.extend(bar(job, group, bar_width, glyphs, self.tick));
-        } else {
-            let name_width = width.saturating_sub(lead + 5 + tail_width + 2).max(6);
-            spans.push(Span::styled(
-                pad(&client::name(job), name_width, glyphs.more),
-                name_style,
-            ));
-        }
-        spans.push(Span::styled(
-            format!(" {percent:>4}"),
-            Style::new().fg(color),
-        ));
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(fit(&tail, tail_width, glyphs.more), DIM));
-        Line::from(spans)
-    }
-
     /// Draws into `area` of `buffer` and returns where the cursor goes, if
     /// anywhere.
     pub fn render(&self, area: Rect, buffer: &mut Buffer) -> Drawn {
@@ -972,7 +986,11 @@ impl Frame<'_> {
             (self.panel.len(), 0)
         };
         for job_row in &self.panel[..shown] {
-            row(self.job_line(job_row, width), &mut y, buffer);
+            row(
+                job_line(job_row, width, self.glyphs, self.tick),
+                &mut y,
+                buffer,
+            );
         }
         if hidden > 0 {
             let text = format!("    {} {hidden} more; /queue lists all", self.glyphs.more);
@@ -982,7 +1000,7 @@ impl Frame<'_> {
                 buffer,
             );
         }
-        let summary = format!(" {} ", self.summary());
+        let summary = format!(" {} ", summary(self.panel));
         let lead = self.glyphs.rule.repeat(2);
         let rest = width.saturating_sub(lead.width() + summary.width());
         row(

@@ -230,6 +230,13 @@ line into the window's history saying where the file went or why it stopped.
 - `/queue` lists the downloads; choose one to pause, resume, cancel, retry,
   remove or show it. `/pause`, `/resume`, `/cancel`, `/retry`, `/rm` and
   `/show` on their own ask which download.
+- **F2** (or `/dashboard`) fills the window with the queue and, beside or
+  below it, the chosen download's details: its speed over the last minute
+  as a graph, and each connection with how much of its range has arrived.
+  Move with the arrow keys, `j`/`k` or the mouse, and act with the keys
+  named at the bottom: `p` pause, `r` resume or retry, `c` twice to cancel,
+  `o` to open the folder, `x` to remove a finished one. Esc, `q` or F2 go
+  back to the prompt, where anything that happened meanwhile is printed.
 - `/folder` (or **Show in folder** in `/queue`) opens File Explorer at the
   download with the file selected; for a download still in progress it opens
   the folder. `fetchpath folder JOB` does the same from the command line.
@@ -237,7 +244,8 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/history`, `/settings`, `/engine`, `/help` and `/quit`.
+  `/retry`, `/rm`, `/dashboard`, `/history`, `/settings`, `/engine`, `/help`
+  and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names and folders; Up and Down
   recall earlier lines; Esc clears the line; Ctrl+C on an empty line leaves.

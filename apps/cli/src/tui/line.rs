@@ -53,6 +53,8 @@ pub struct Reply {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Open {
     Settings,
+    /// The full-screen dashboard.
+    Dashboard,
     /// The job list; with a command name, choosing a job runs it.
     Jobs(Option<&'static str>),
 }
@@ -152,6 +154,13 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/folder [JOB]",
         summary: "Show a download's file in File Explorer",
         takes: Takes::Jobs,
+    },
+    Spec {
+        name: "dashboard",
+        aliases: &["dash"],
+        usage: "/dashboard",
+        summary: "Full screen: the queue with speed and connections (F2)",
+        takes: Takes::Nothing,
     },
     Spec {
         name: "history",
@@ -307,6 +316,7 @@ fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
     }
     match spec.name {
         "settings" => Some(Open::Settings),
+        "dashboard" => Some(Open::Dashboard),
         "queue" => Some(Open::Jobs(None)),
         "show" | "pause" | "resume" | "cancel" | "retry" | "rm" | "folder" => {
             Some(Open::Jobs(Some(spec.name)))
@@ -522,6 +532,13 @@ fn execute(
             }
             _ => Err(usage_error(spec, "Say install, or use and a folder")),
         },
+        "dashboard" => {
+            reply.say(
+                Tone::Normal,
+                "The dashboard needs the full-screen view; plain mode lists the queue with /queue.",
+            );
+            Ok(())
+        }
         "engine" => {
             let status = match engine.send(Command::EngineStatus)? {
                 CommandResult::EngineStatus { status } => status,
@@ -624,7 +641,7 @@ fn help(topic: Option<&str>, reply: &mut Reply) {
     );
     reply.say(
         Tone::Normal,
-        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
+        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, F2 opens the dashboard, Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
     );
 }
 

@@ -1807,7 +1807,7 @@
         "FP-059",
         "FP-058"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": null,
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -1820,7 +1820,11 @@
       ],
       "acceptance": "The inline panel already draws a bar per download and /queue lists jobs with their actions (FP-059). A key toggles a full-screen view with the queue, a details pane for the selected job (speed graph, segments and connections from the engine details data) and single-key actions with an on-screen key map; leaving restores the inline view and scrollback; resizing never corrupts the screen.",
       "verification": "Render snapshot tests at several sizes; walkthrough through the real engine including resize and toggling during a download.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/TERMINAL.md",
+        "apps/cli/src/tui/dashboard/draw.rs",
+        "apps/cli/src/tui/dashboard/mod.rs"
+      ],
       "blockedReason": null
     },
     {

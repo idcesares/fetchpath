@@ -3,6 +3,7 @@
 //! above it.
 
 use super::Session;
+use super::dashboard;
 use super::jobs_menu::{Effect as JobsEffect, JobsMenu};
 use super::line::Open;
 use super::line::{self, Context, Out, Tone};
@@ -133,7 +134,8 @@ fn hint(prompt: &Prompt, completion: Option<&str>) -> String {
     }
     let text = prompt.text();
     if text.is_empty() {
-        return "Paste a link to download it · /help for commands · Ctrl+C to leave".into();
+        return "Paste a link to download it · /help for commands · F2 dashboard · Ctrl+C to leave"
+            .into();
     }
     if let Some(name) = text.strip_prefix('/')
         && !name.contains(' ')
@@ -185,7 +187,7 @@ fn complete(prompt: &mut Prompt, session: &Session) -> Option<String> {
     }
 }
 
-fn notice_lines(notices: Vec<Notice>, glyphs: &Glyphs) -> Vec<Out> {
+pub(super) fn notice_lines(notices: Vec<Notice>, glyphs: &Glyphs) -> Vec<Out> {
     notices
         .into_iter()
         .filter_map(|notice| match notice {
@@ -342,6 +344,8 @@ struct Menus {
     setup: Option<Setup>,
     settings: Option<SettingsMenu>,
     jobs: Option<JobsMenu>,
+    /// Asked for; opened by the loop, which owns the screen.
+    dashboard: bool,
 }
 
 impl Menus {
@@ -379,6 +383,7 @@ fn submit(
             Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
         },
         Some(Open::Jobs(command)) => menus.jobs = Some(JobsMenu::open(&session.live, command)),
+        Some(Open::Dashboard) => menus.dashboard = true,
         None => {}
     }
     Ok(false)
@@ -653,6 +658,11 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                         },
                     }
                 }
+                Event::Key(key)
+                    if key.code == KeyCode::F(2) && key.kind != KeyEventKind::Release =>
+                {
+                    menus.dashboard = true;
+                }
                 Event::Key(key) => match prompt.handle(key) {
                     Action::None => dirty = false,
                     Action::Leave => break 'running,
@@ -683,6 +693,28 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                 }
                 Event::Resize(..) => rows = max_rows(),
                 _ => dirty = false,
+            }
+        }
+        if std::mem::take(&mut menus.dashboard) {
+            // The dashboard has the alternate screen to itself; the inline
+            // viewport is cleared first and opened again where it was, and
+            // what happened meanwhile goes into scrollback.
+            set_mouse(false, &mut mouse)?;
+            let height = screen.height;
+            screen.close()?;
+            let left = dashboard::run(session, glyphs);
+            screen = Screen::open(height)?;
+            let left = left?;
+            screen.print(&left.lines)?;
+            rows = max_rows();
+            dirty = true;
+            if let Some(error) = left.lost {
+                screen.print(&[Out::new(
+                    Tone::Bad,
+                    format!("Lost the engine: {}", error.message),
+                )])?;
+                code = EXIT_ENGINE;
+                break 'running;
             }
         }
         if reviews.settle() {

@@ -6,6 +6,7 @@
 //! prints append-only lines instead. Both are clients of the engine; leaving
 //! never stops a download.
 
+mod dashboard;
 mod inline;
 mod jobs_menu;
 mod line;
@@ -95,6 +96,8 @@ pub struct Session {
     tools_check: Option<std::sync::mpsc::Receiver<fetchpath_media::setup::ToolsStatus>>,
     /// What the check found, once it has.
     tools_ready: Option<bool>,
+    /// Recent speeds per download, for the dashboard's graph.
+    speeds: dashboard::Speeds,
 }
 
 impl Session {
@@ -116,6 +119,7 @@ impl Session {
             settings,
             tools_check: Some(tools_check),
             tools_ready: None,
+            speeds: dashboard::Speeds::default(),
         })
     }
 
@@ -187,7 +191,14 @@ impl Session {
             wait = LEAST;
             match item {
                 None => break,
-                Some(StreamItem::Progress(sample)) => self.live.progress(&sample),
+                Some(StreamItem::Progress(sample)) => {
+                    self.speeds.record(
+                        &sample.job_id,
+                        Instant::now(),
+                        sample.public_payload.rate_bytes_per_second,
+                    );
+                    self.live.progress(&sample);
+                }
                 Some(StreamItem::Event(event)) => {
                     let (new, found) = self.live.apply(&event);
                     notices.extend(found);

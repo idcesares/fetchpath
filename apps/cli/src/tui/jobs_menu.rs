@@ -191,7 +191,7 @@ impl JobsMenu {
         );
     }
 
-    fn act(engine: &Engine, deed: Deed, job: &JobSnapshot) -> Vec<Out> {
+    pub(super) fn act(engine: &Engine, deed: Deed, job: &JobSnapshot) -> Vec<Out> {
         match deed {
             Deed::Reveal => vec![match crate::reveal::show_job(job) {
                 Ok(said) => Out::new(Tone::Normal, said),

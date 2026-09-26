@@ -53,6 +53,23 @@ with `--json`, it prints help and exits 2.
   make sense for the chosen job's state). Job commands given no job open the
   same list filtered to the jobs they apply to. Plain mode keeps typed
   commands.
+- **Dashboard (FP-060).** `dashboard/`: F2 or `/dashboard` (not in plain
+  mode) opens the alternate screen, so leaving it (Esc, `q`, F2, Ctrl+C)
+  restores the inline view and scrollback as they were; receipts, warnings
+  and what actions said while it was open are printed into scrollback then.
+  The queue lists the panel's jobs then 30 recent finished ones; the choice
+  follows its job by id as the list reorders. The details pane (beside the
+  queue from 100 columns, below it otherwise; a "make the window larger"
+  line under 30×8) shows state, progress, source, destination and problem;
+  a speed graph with a column a second for the last minute (`Speeds`,
+  recorded from every progress sample whether or not the dashboard is open,
+  as the desktop does, so it has history at once; a gap over 3 s draws as
+  zero); and the ranges in flight from `JobDetails`, asked every 500 ms for
+  a running file download, one per connection with how much has arrived.
+  Media jobs report no ranges and say so. Single keys come from the same
+  per-state list as `/queue` (`p`, `r` resume or retry, `c` twice to cancel,
+  `o`, `x`/Delete) and the key map shows only those that apply. Resizing is
+  redrawn from scratch by ratatui's full-screen terminal.
 - **Show in folder.** `reveal.rs`: a saved file opens in File Explorer
   selected (`SHOpenFolderAndSelectItems` on the file's ID list, so spaces
   and any characters are safe); a file not written yet, or moved away, opens
@@ -168,6 +185,24 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   the video tools with I and offered its qualities; menus answered the
   mouse; Ctrl+C left. Everything worked in both hosts, with nothing garbled.
 
+- Dashboard: render snapshots at 120×24 (side by side, recorded stream,
+  three ranges, a speed series), 60×20 (stacked), a sweep of sizes from 1×1
+  to 200×60 in both glyph sets with nothing drawn outside the window and the
+  too-small line, scrolling to the choice, the waiting-job notes, and the
+  speed series' seconds, gaps and window (`tui::dashboard`). Headless ConPTY
+  walkthrough through a real engine, 26 September 2026, with a throttled
+  range server (24 MiB files) and an emulator taught the alternate screen:
+  two downloads carded and started; F2 opened the dashboard with a growing
+  graph and one, then two, three and four connections; `j` chose the other;
+  `p` paused and `r` resumed it (the keys offered changed with the state);
+  resizes to 70×24 (stacked), 50×14, 40×6 (too small) and 140×40 while
+  downloads ran; `c` asked again and moving away withdrew the question; Esc
+  restored the inline view with the pause and resume lines in scrollback;
+  `/dashboard` reopened it; a download finished while open and its receipt
+  printed on Ctrl+C, which went back to the prompt rather than out. That run
+  found two fixes: the cancel question outlived moving away, and a finished
+  job's graph said "now 0 B/s".
+
 ## Limitations
 
 - `InspectLink` lets an agent read the headers of any HTTP(S) address the
@@ -185,4 +220,8 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
 - Prompt history is kept for the session only; saving it (with query strings
   and user info stripped) is FP-063. Batch,
   conflict, checksum and approval prompts are FP-061; themes and keys
-  are FP-062; the dashboard is FP-060.
+  are FP-062.
+- The dashboard's single keys are fixed until keybindings (FP-062). The
+  engine reports only ranges in flight, not a map of the whole file, so the
+  dashboard shows no piece map. It was walked through in ConPTY, not yet by
+  a person in Windows Terminal and the classic console.
