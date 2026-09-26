@@ -295,6 +295,7 @@ extensions page.
 | What you see | What to do |
 | --- | --- |
 | **SmartScreen warning** when installing | See [Install](#install). |
+| **"saved by a newer version of Fetchpath"** | You opened an older Fetchpath after a newer one. Your list is shown but not changed, and nothing downloads. Install the newer version again to carry on. |
 | **"already exists"** | Fetchpath never overwrites. Choose **Choose new path**, or rename or move the old file. |
 | **"Edit link" / "Refresh source"** | The link has expired or stopped working. Get a fresh link from the website and paste it. |
 | **"Send again from browser"** | The download needed your browser sign-in, and it has expired. Send the link from your browser again. |

@@ -81,6 +81,16 @@ fn unsupported(what: &str) -> ProtocolError {
     .with_action(Action::UpdateSoftware)
 }
 
+/// Why nothing can change: the queue belongs to a newer Fetchpath (FP-070).
+fn newer_queue(reason: &str) -> ProtocolError {
+    error(
+        "storage.queue_from_newer_version",
+        ErrorScope::Engine,
+        reason,
+    )
+    .with_action(Action::UpdateSoftware)
+}
+
 fn persistence(message: String) -> ProtocolError {
     let mut failure = error("internal.persistence_failed", ErrorScope::Engine, message);
     // The change is kept in memory with its ledger entry; resending the same
@@ -211,6 +221,16 @@ impl Engine {
         policy::authorize(principal, &envelope.payload)?;
         if !envelope.payload.is_mutating() {
             return self.query(principal, &envelope.payload);
+        }
+        if self.session.read_only().is_some() {
+            // Nothing is ledgered either: that would write the engine file.
+            return match envelope.payload {
+                Command::EngineShutdown => {
+                    self.session.cancel_all_and_join();
+                    Ok(CommandResult::ShuttingDown)
+                }
+                _ => Err(self.read_only_error().expect("read-only")),
+            };
         }
         let _serial = self
             .commands
@@ -731,6 +751,11 @@ impl Engine {
         }
     }
 
+    /// The refusal every change gets while the queue is a newer build's.
+    fn read_only_error(&self) -> Option<ProtocolError> {
+        self.session.read_only().map(newer_queue)
+    }
+
     fn cancel(&self, job_id: &str) -> Result<Outcome, ProtocolError> {
         let response = self.session.cancel(job_id).map_err(transition)?;
         let control = match response.outcome {
@@ -924,11 +949,16 @@ impl Engine {
                             .iter()
                             .filter(|subscriber| !subscriber.is_closed())
                             .count() as u32,
-                        active_jobs: jobs
-                            .iter()
-                            .filter(|job| !job.state.is_terminal() && job.state != S::Failed)
-                            .count() as u32,
+                        // Nothing runs from a newer build's queue.
+                        active_jobs: if self.session.read_only().is_some() {
+                            0
+                        } else {
+                            jobs.iter()
+                                .filter(|job| !job.state.is_terminal() && job.state != S::Failed)
+                                .count() as u32
+                        },
                         queue_cursor: durable.engine.cursor,
+                        queue_read_only: self.read_only_error(),
                     },
                 })
             }
@@ -1072,7 +1102,8 @@ impl Engine {
         durable
             .subscribers
             .retain(|subscriber| !subscriber.is_closed());
-        if durable.subscribers.is_empty() {
+        // Nothing moves in a newer build's queue, whatever it saved as running.
+        if durable.subscribers.is_empty() || self.session.read_only().is_some() {
             return;
         }
         let occurred_at = Timestamp::now();

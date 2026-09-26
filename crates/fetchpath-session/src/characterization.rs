@@ -66,7 +66,10 @@ fn a_non_ascii_destination_survives_a_save_and_load() {
         link_reviews: Vec::new(),
     };
     save_persisted(&path, &state).unwrap();
-    let reloaded = load_persisted(&path).unwrap().expect("queue reloads");
+    let reloaded = load_persisted(&path)
+        .unwrap()
+        .current()
+        .expect("queue reloads");
     assert_eq!(
         reloaded.records[0].destination,
         dir.path().join("résumé ✓.pdf").display().to_string()
@@ -344,7 +347,10 @@ fn a_corrupt_queue_file_falls_back_to_its_backup() {
     let path = dir.path().join("queue.json");
     fs::write(&path, b"{\"schemaVersion\":1,\"records\":[").unwrap();
     fs::write(path.with_extension("json.bak"), queue_fixture(dir.path())).unwrap();
-    let loaded = load_persisted(&path).unwrap().expect("backup loads");
+    let loaded = load_persisted(&path)
+        .unwrap()
+        .current()
+        .expect("backup loads");
     assert_eq!(loaded.records.len(), 14);
 }
 
@@ -354,7 +360,7 @@ fn a_corrupt_queue_and_backup_start_an_empty_queue_without_an_error() {
     let path = dir.path().join("queue.json");
     fs::write(&path, b"not json").unwrap();
     fs::write(path.with_extension("json.bak"), b"also not json").unwrap();
-    assert!(load_persisted(&path).unwrap().is_none());
+    assert!(load_persisted(&path).unwrap().current().is_none());
 }
 
 #[test]
@@ -366,7 +372,7 @@ fn unknown_fields_from_a_newer_build_are_ignored_and_known_ones_kept() {
     value["records"][0]["futureRecordField"] = Value::from("x");
     value["records"][0]["view"]["futureViewField"] = Value::from(7);
     write_queue(&path, &value);
-    let loaded = load_persisted(&path).unwrap().expect("loads");
+    let loaded = load_persisted(&path).unwrap().current().expect("loads");
     assert_eq!(loaded.records.len(), 14);
     assert_eq!(loaded.records[0].view.state, "completed");
 }
@@ -385,7 +391,7 @@ fn fields_added_after_the_first_queue_format_default_when_missing() {
         view.remove(key);
     }
     write_queue(&path, &value);
-    let loaded = load_persisted(&path).unwrap().expect("loads");
+    let loaded = load_persisted(&path).unwrap().current().expect("loads");
     let record = &loaded.records[11];
     assert_eq!(record.id, id(12));
     assert_eq!(record.credential_ref, None);
@@ -399,31 +405,148 @@ fn fields_added_after_the_first_queue_format_default_when_missing() {
     assert_eq!(record.view.quality_label, None);
 }
 
-/// Finding F1: a queue written by a newer schema version is treated as no
-/// queue at all. The first save moves it to the backup and the second save
-/// deletes it, so opening an older build after a newer one loses the queue.
+/// Finding F1, fixed by FP-070: a queue written by a newer schema version
+/// used to be treated as no queue at all, moved to the backup by the first
+/// save and deleted by the second. Now it is shown without being changed,
+/// nothing starts, and no save touches the file or its backup.
 #[test]
-fn finding_f1_a_queue_from_a_newer_schema_is_lost_after_two_saves() {
+fn finding_f1_a_queue_from_a_newer_schema_is_kept_byte_for_byte() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue.json");
+    let backup = path.with_extension("json.bak");
     let mut value = fixture_value(dir.path());
     value["schemaVersion"] = Value::from(QUEUE_SCHEMA_VERSION + 1);
     write_queue(&path, &value);
+    fs::write(&backup, b"an older save, also kept").unwrap();
+    let original = fs::read(&path).unwrap();
 
-    let jobs = Session::load(path.clone(), 1).unwrap();
-    assert!(jobs.list().unwrap().is_empty(), "newer queue is not shown");
-    let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
+    let saved_states: std::collections::BTreeMap<String, String> = value["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            (
+                record["id"].as_str().unwrap().to_owned(),
+                record["view"]["state"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    for _ in 0..3 {
+        let jobs = Session::load(path.clone(), 4).unwrap();
+        assert!(jobs.read_only().unwrap().contains("newer version"));
+        let shown = jobs.list().unwrap();
+        assert_eq!(shown.len(), 14, "the newer build's jobs are shown");
+        let shown_states: std::collections::BTreeMap<String, String> = shown
+            .iter()
+            .map(|job| (job.job_id.clone(), job.state.clone()))
+            .collect();
+        assert_eq!(
+            shown_states, saved_states,
+            "states as the newer build saved them"
+        );
+        assert!(
+            shown.iter().all(|job| job.bytes_per_second.is_none()),
+            "nothing is running"
+        );
+        assert!(!jobs.has_own_work(), "the engine may leave when idle");
+        let mut state = jobs.inner.lock().unwrap();
+        assert!(
+            jobs.save_locked(&mut state).is_ok(),
+            "a routine save is a no-op"
+        );
+        let mut durable = jobs.durable.lock().unwrap();
+        assert!(
+            jobs.write_locked(&state, &mut durable).is_err(),
+            "a write is refused outright"
+        );
+    }
+    assert_eq!(fs::read(&path).unwrap(), original, "queue untouched");
+    assert_eq!(fs::read(&backup).unwrap(), b"an older save, also kept");
+    assert!(!path.with_extension("json.new").exists());
     assert!(
-        backup.contains("\"schemaVersion\": 2"),
-        "first save keeps it as the backup"
+        !dir.path().join(ENGINE_FILE).exists(),
+        "no engine journal written"
     );
+}
 
+/// A queue whose newer format cannot be read at all is still not replaced,
+/// and a newer backup is not passed over for nothing.
+#[test]
+fn an_unreadable_newer_queue_and_a_newer_backup_are_kept_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let unreadable = format!(
+        "{{\"schemaVersion\": {}, \"jobs\": \"a shape this build does not know\"}}",
+        QUEUE_SCHEMA_VERSION + 1
+    );
+    fs::write(&path, &unreadable).unwrap();
+    let jobs = Session::load(path.clone(), 4).unwrap();
+    assert!(jobs.read_only().is_some());
+    assert!(jobs.list().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(&path).unwrap(), unreadable);
+
+    // Main file lost, newer backup left: still read-only, still kept.
+    fs::remove_file(&path).unwrap();
+    let backup = path.with_extension("json.bak");
+    fs::write(&backup, &unreadable).unwrap();
+    let jobs = Session::load(path.clone(), 4).unwrap();
+    assert!(jobs.read_only().is_some());
     jobs.list().unwrap();
-    let backup = fs::read_to_string(path.with_extension("json.bak")).unwrap();
-    assert!(
-        !backup.contains("\"schemaVersion\": 2"),
-        "second save has deleted it"
-    );
+    assert!(!path.exists(), "no new queue written in its place");
+    assert_eq!(fs::read_to_string(&backup).unwrap(), unreadable);
+}
+
+/// Review finding: a build from before FP-070 could leave the newer list as
+/// the backup under a queue of its own. The newer backup still decides, so
+/// the next save cannot delete it.
+#[test]
+fn a_newer_backup_behind_a_current_queue_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue.json");
+    let backup = path.with_extension("json.bak");
+    let mut newer = fixture_value(dir.path());
+    newer["schemaVersion"] = Value::from(QUEUE_SCHEMA_VERSION + 1);
+    write_queue(&backup, &newer);
+    fs::write(&path, b"{\"schemaVersion\": 1, \"records\": []}").unwrap();
+    let (main_before, backup_before) = (fs::read(&path).unwrap(), fs::read(&backup).unwrap());
+
+    let jobs = Session::load(path.clone(), 4).unwrap();
+    assert!(jobs.read_only().is_some());
+    assert_eq!(jobs.list().unwrap().len(), 14, "the newer list is shown");
+    assert_eq!(fs::read(&path).unwrap(), main_before);
+    assert_eq!(fs::read(&backup).unwrap(), backup_before);
+}
+
+/// A version written in a form this build never uses can only come from a
+/// later build; it is kept rather than read as a corrupt file and replaced.
+#[test]
+fn a_version_this_build_cannot_read_is_treated_as_newer() {
+    for version in ["\"2\"", "2.5", "18446744073709551616", "-1"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("queue.json");
+        let text = format!("{{\"schemaVersion\": {version}, \"records\": []}}");
+        fs::write(&path, &text).unwrap();
+        let jobs = Session::load(path.clone(), 4).unwrap();
+        let reason = jobs.read_only().unwrap_or_else(|| panic!("{version}"));
+        assert!(!reason.contains("format"), "no number to show: {reason}");
+        jobs.list().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), text, "{version}");
+        assert!(!path.with_extension("json.bak").exists(), "{version}");
+    }
+    // Missing, null or 0 is a damaged file, as before: started empty.
+    for version in ["null", "0"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("queue.json");
+        fs::write(
+            &path,
+            format!("{{\"schemaVersion\": {version}, \"records\": []}}"),
+        )
+        .unwrap();
+        assert!(
+            Session::load(path, 4).unwrap().read_only().is_none(),
+            "{version}"
+        );
+    }
 }
 
 #[test]

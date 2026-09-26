@@ -456,6 +456,12 @@ pub fn ls(args: &[String]) -> i32 {
                 });
                 return Ok(0);
             }
+            // A queue from a newer Fetchpath is listed, but say why nothing moves.
+            if let Ok(CommandResult::EngineStatus { status }) = engine.send(Command::EngineStatus)
+                && let Some(reason) = status.queue_read_only
+            {
+                eprintln!("{}", reason.message);
+            }
             if shown.is_empty() {
                 println!("No downloads.");
                 return Ok(0);
@@ -969,6 +975,9 @@ pub fn engine_status(json: bool) -> i32 {
                 status.active_jobs,
                 if status.active_jobs == 1 { "" } else { "s" },
             );
+            if let Some(reason) = &status.queue_read_only {
+                println!("{}", reason.message);
+            }
             0
         }
         Ok(other) => client::fail(&client::unexpected(&other), false),

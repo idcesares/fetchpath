@@ -386,6 +386,25 @@ fn every_result() -> Vec<CommandResult> {
                 connected_clients: 2,
                 active_jobs: 1,
                 queue_cursor: 120,
+                queue_read_only: None,
+            },
+        },
+        CommandResult::EngineStatus {
+            status: EngineStatus {
+                engine_version: "0.2.0".into(),
+                schema_version: SCHEMA_VERSION,
+                started_at: at("2026-09-20T11:00:00Z"),
+                connected_clients: 0,
+                active_jobs: 0,
+                queue_cursor: 0,
+                queue_read_only: Some(
+                    ProtocolError::new(
+                        ErrorCode::try_from("storage.queue_from_newer_version".to_owned()).unwrap(),
+                        ErrorScope::Engine,
+                        "Your download list was saved by a newer version of Fetchpath.",
+                    )
+                    .with_action(Action::UpdateSoftware),
+                ),
             },
         },
         CommandResult::AgentPolicies {

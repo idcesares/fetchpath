@@ -913,3 +913,82 @@ fn a_media_page_from_the_browser_is_offered_for_review_once() {
     assert_eq!(first[0].expose(), page);
     assert!(take().is_empty());
 }
+
+/// A queue written by a newer Fetchpath (FP-070): clients see its jobs and a
+/// stable reason, every change is refused with it, and the engine can still
+/// be stopped, all without the file changing.
+#[test]
+fn a_queue_from_a_newer_build_is_served_read_only_and_never_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let saved = format!(
+        concat!(
+            "{{\"schemaVersion\": 2, \"records\": [{{\"id\": \"00000000-0000-4000-8000-0000000000aa\", ",
+            "\"restartUrl\": \"https://example.test/a.bin\", \"displayUrl\": \"https://example.test/a.bin\", ",
+            "\"destination\": {dest}, \"createdAtMs\": 1790000000000, \"futureField\": [1, 2], ",
+            "\"view\": {{\"jobId\": \"00000000-0000-4000-8000-0000000000aa\", \"source\": \"https://example.test/a.bin\", ",
+            "\"state\": \"queued\", \"bytesReceived\": 5, \"totalBytes\": 10, \"attempt\": 0, ",
+            "\"destination\": {dest}, \"cleanupPending\": false, \"retryable\": false, \"createdAtMs\": 1790000000000}}}}]}}\n"
+        ),
+        dest = serde_json::to_string(&dir.path().join("a.bin").display().to_string()).unwrap()
+    );
+    std::fs::write(&path, &saved).unwrap();
+    let engine = open(&path);
+
+    let listed = jobs(&engine);
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].progress.bytes_received, 5);
+
+    let refused = engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            create("https://example.test/b.bin", dir.path().join("b.bin")),
+        ))
+        .unwrap_err();
+    assert_eq!(refused.code.as_str(), "storage.queue_from_newer_version");
+    assert_eq!(
+        refused.action,
+        Some(fetchpath_protocol::error::Action::UpdateSoftware)
+    );
+    assert!(refused.message.contains("newer version"));
+    let job_id = listed[0].job_id.clone();
+    for command in [
+        Command::Resume {
+            job_id: job_id.clone(),
+        },
+        Command::RemoveJob { job_id },
+    ] {
+        let refused = engine
+            .execute(&CommandEnvelope::new(client(), command))
+            .unwrap_err();
+        assert_eq!(refused.code.as_str(), "storage.queue_from_newer_version");
+    }
+
+    let status = match engine
+        .execute(&CommandEnvelope::new(client(), Command::EngineStatus))
+        .unwrap()
+    {
+        CommandResult::EngineStatus { status } => status,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        status
+            .queue_read_only
+            .map(|reason| reason.code.as_str().to_owned()),
+        Some("storage.queue_from_newer_version".to_owned())
+    );
+    assert!(matches!(
+        engine
+            .execute(&CommandEnvelope::new(client(), Command::EngineShutdown))
+            .unwrap(),
+        CommandResult::ShuttingDown
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    assert!(!dir.path().join("engine-v1.json").exists());
+    // Nothing was prepared for the saved job: no destination or partial file.
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(files, ["queue-v1.json"], "{files:?}");
+}

@@ -49,7 +49,7 @@ Tests named `finding_…` pin behavior that is believed wrong, so the move
 cannot change it silently. Each fix is its own task and updates its test on
 purpose.
 
-- **F1: a newer queue is lost.** A queue written by a newer schema version is treated as no queue; the first save moves it to the backup and the second deletes it. Once an engine and clients from different builds coexist, opening an older build loses the queue. Fix: FP-070.
+- **F1: a newer queue is lost.** A queue written by a newer schema version was treated as no queue; the first save moved it to the backup and the second deleted it. Fixed by FP-070 (below); the characterization test now pins the fixed behavior.
 - **F2: unknown errors are retried.** Unrecognized and `internal.*` errors map to `retry` and are retried automatically, contrary to [the job contract](../architecture/JOB-CONTRACT.md) §9. Fixed in FP-051.
 - **F3: actions come from message text.** Failure actions are derived by reading error message text; the contract says clients act on the error's code and `action`. Fixed in FP-051.
 - **F4: a failed batch was half queued** (found while planning FP-051). A batch that failed validation on one link had already queued the links before it. Fixed in FP-051: every link is checked first.
@@ -291,8 +291,74 @@ only after every check passes, and a second re-review found no blockers.
   has no checkpoint.
 - The hourly rate is counted in memory and restarts empty with the engine.
 - A build from before D1 reading this queue would not know the approval gate
-  and could start a waiting job; downgrades are not supported (see FP-070).
+  and could start a waiting job; downgrades are not supported. FP-070 guards
+  only a queue with a higher schema version, and D1 did not raise it.
 - `EngineStatus` shows an agent queue-wide counts, not jobs.
 - Approval surfaces in the terminal and desktop, and the agent-access page,
   are FP-066.
+
+## FP-070: a queue from a newer build is kept
+
+Recorded 25 September 2026 on Windows 11 Pro 26200 x64. Code:
+`crates/fetchpath-session/src/lib.rs` (`load_persisted`, `QueueRecord::shown`,
+the read-only guards), `crates/fetchpath-session/src/engine.rs`,
+`EngineStatus.queue_read_only` in `crates/fetchpath-protocol`, the CLI's `ls`
+and `engine status`, and the desktop's engine notice.
+
+| Part | What it does |
+|---|---|
+| Loading | Both the queue and its backup are read by their `schemaVersion` first. If either is newer (queue first), the session starts read-only and shows that file; only otherwise is the queue, or the backup when the queue is missing or unreadable, loaded as before. A version present in a form this build never writes (a string, a fraction, beyond 64 bits, negative) counts as newer; a missing, null or 0 version is a damaged file, as before |
+| What is shown | The newer build's records as it saved them, when they can still be parsed (unknown fields ignored); otherwise none. No download is prepared and no browser secret is opened |
+| Never written | Routine saves do nothing and the write itself refuses while read-only, so the queue, its backup and the engine journal are never touched. Reconcile does nothing, no progress is sampled, captures stay in the browser inbox, and nothing counts as the engine's own work, so it still leaves when idle |
+| Clients | Every change except `EngineShutdown` is refused with `storage.queue_from_newer_version` (action `update_software`), which the CLI maps to exit 6. `EngineStatus.queue_read_only` carries the explanation and `active_jobs` is 0. `engine status` prints it, `ls` prints it on standard error, and the desktop shows it in its engine notice |
+
+### Checks
+
+- `finding_f1_a_queue_from_a_newer_schema_is_kept_byte_for_byte` replaces the
+  F1 pin. It opens, lists and tries to save three times; the queue and its
+  backup stay byte-identical, and no journal or temporary file appears.
+  Every listed state equals the saved one. Also
+  `an_unreadable_newer_queue_and_a_newer_backup_are_kept_too`,
+  `a_newer_backup_behind_a_current_queue_is_kept` and
+  `a_version_this_build_cannot_read_is_treated_as_newer`. The engine test
+  `a_queue_from_a_newer_build_is_served_read_only_and_never_written` covers
+  listing, refusals for create, resume and remove with the stable code and
+  action, the status field, shutdown, an unchanged file, and no destination
+  or partial file.
+- By hand against the dev build: `ls`, `engine status` and `add` (exit 6)
+  explain; the queue file's hash is unchanged, and no backup or journal is
+  written.
+- `cargo test` for `fetchpath-session`, `fetchpath-protocol` (schema
+  regenerated with one additive optional field), `fetchpath` and
+  `fetchpath-desktop`, plus clippy and fmt: clean.
+
+| Temporary change | Failing test |
+|---|---|
+| A newer queue treated as missing (the old behavior) | `finding_f1_…` and `an_unreadable_newer_queue_…` |
+
+### Limitations
+
+- The desktop shows the explanation, but its buttons stay enabled; pressing
+  one shows the refusal.
+- Settings and agent grants are separate files with their own versions and
+  are not covered.
+- A queue with the same schema version written by a later build (as with D1)
+  is still read as current.
+- `QueueStats` counts the shown records by their saved states, so a record the
+  newer build saved as running is counted as running while nothing runs.
+- A newer backup outranks a current queue. After a downgrade to a build from
+  before FP-070, work saved there stays hidden behind the older newer-format
+  list until the newer build is installed again; nothing is lost.
+
+### Independent review
+
+Strong-model review, 25 September 2026: **approve with nits**. Every writer
+was confirmed guarded (queue, backup, temporary, journal, settings, agent
+grants, browser inbox and secrets, downloads), along with shutdown, idle exit,
+subscription replay and the backup cases. Fixed: a newer backup behind a queue
+an older build wrote is now kept (it was deleted by the next save); a version
+in a form this build does not write is treated as newer rather than as
+damage; no progress is sampled for records saved as running; tests pin the
+saved states and the absence of download files; the record date. Left as a
+limitation: `QueueStats` counts.
 

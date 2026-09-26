@@ -1308,6 +1308,8 @@ interface EngineConnection {
   /** Stopped on purpose, or would not start: the window waits for the person. */
   stopped?: boolean;
   message?: string;
+  /** Connected to a queue saved by a newer Fetchpath: shown, never changed. */
+  readOnly?: string;
 }
 
 const ENGINE_LOST =
@@ -1330,6 +1332,13 @@ function revealEngineNotice(text: string, canStart: boolean): void {
 }
 
 function showEngineState(state: EngineConnection): void {
+  if (state.connected && state.readOnly) {
+    window.clearTimeout(engineNoticeTimer);
+    engineNoticeTimer = 0;
+    revealEngineNotice(state.readOnly, false);
+    void refreshQueue();
+    return;
+  }
   if (state.connected) {
     window.clearTimeout(engineNoticeTimer);
     engineNoticeTimer = 0;

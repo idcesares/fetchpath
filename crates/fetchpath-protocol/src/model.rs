@@ -389,4 +389,8 @@ pub struct EngineStatus {
     pub active_jobs: u32,
     /// The latest queue-wide event cursor.
     pub queue_cursor: u64,
+    /// Present when the queue was saved by a newer Fetchpath: it is shown
+    /// unchanged and every change is refused with this error (FP-070).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_read_only: Option<crate::error::ProtocolError>,
 }

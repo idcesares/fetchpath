@@ -2053,13 +2053,17 @@
       "dependsOn": [
         "FP-049"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
       "files": [
-        "crates/fetchpath-session"
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol/src/model.rs",
+        "apps/cli/src/queue.rs",
+        "apps/desktop/src-tauri/src/engine_link.rs",
+        "apps/desktop/src/main.ts"
       ],
       "acceptanceIds": [
         "A04",
@@ -2067,7 +2071,11 @@
       ],
       "acceptance": "Loading a queue whose schema is newer than this build leaves the file and its backup untouched, starts read-only with a plain explanation, and never writes over it; finding F1's characterization test is updated deliberately to the new behavior.",
       "verification": "A test writes a newer-schema queue, opens and saves repeatedly, and finds the original bytes intact; strong-model review.",
-      "evidence": [],
+      "evidence": [
+        "crates/fetchpath-session/src/characterization.rs",
+        "crates/fetchpath-session/tests/engine.rs",
+        "docs/development/ENGINE-SESSION.md"
+      ],
       "blockedReason": null
     },
     {

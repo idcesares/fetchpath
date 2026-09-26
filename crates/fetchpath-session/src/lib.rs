@@ -50,6 +50,10 @@ pub struct Session {
     durable: Mutex<Durable>,
     /// Set when the engine stops: no job starts any more (FP-053).
     halted: std::sync::atomic::AtomicBool,
+    /// Set when the queue was written by a newer Fetchpath (FP-070): the
+    /// saved list is shown as it is, nothing starts, and nothing is written
+    /// over it. Holds the explanation.
+    read_only: Option<String>,
     /// What each configured agent may do without asking (contract D1).
     agents: Mutex<BTreeMap<AgentName, AgentPolicy>>,
     agents_path: Option<PathBuf>,
@@ -455,7 +459,11 @@ impl Session {
         max_active: usize,
         browser_download_dir: Option<PathBuf>,
     ) -> io::Result<Self> {
-        let persisted = load_persisted(&state_path)?;
+        let (persisted, newer) = match load_persisted(&state_path)? {
+            Loaded::Current(queue) => (Some(queue), None),
+            Loaded::Newer { version, queue } => (None, Some((version, queue))),
+            Loaded::Missing => (None, None),
+        };
         let (generation, cursor) = persisted.as_ref().map_or((0, 0), |queue| {
             (queue.engine_generation, queue.engine_cursor)
         });
@@ -493,6 +501,14 @@ impl Session {
             })
             .unwrap_or_default();
         let mut records = records;
+        let read_only = newer.map(|(version, queue)| {
+            // Shown as the newer build saved them: no download is prepared
+            // and no browser secret is opened for them.
+            records = queue
+                .map(|queue| queue.records.into_iter().map(QueueRecord::shown).collect())
+                .unwrap_or_default();
+            newer_queue_explanation(version)
+        });
         for record in &mut records {
             seen.advance(record);
         }
@@ -515,7 +531,8 @@ impl Session {
                 committed: generation,
                 ..Durable::default()
             }),
-            halted: std::sync::atomic::AtomicBool::new(false),
+            halted: std::sync::atomic::AtomicBool::new(read_only.is_some()),
+            read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
         })
@@ -539,6 +556,7 @@ impl Session {
             media_tools: Mutex::new(None),
             durable: Mutex::new(Durable::default()),
             halted: std::sync::atomic::AtomicBool::new(false),
+            read_only: None,
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
         }
@@ -559,6 +577,12 @@ impl Session {
     /// were substituted.
     pub fn settings_repaired(&self) -> bool {
         self.settings_repaired
+    }
+
+    /// Why the queue cannot be changed, when it was written by a newer
+    /// Fetchpath (FP-070).
+    pub fn read_only(&self) -> Option<&str> {
+        self.read_only.as_deref()
     }
 
     /// Media pages sent from the browser, each handed out once.
@@ -1475,6 +1499,10 @@ impl Session {
     }
 
     fn reconcile_locked(&self, state: &mut QueueState) {
+        if self.read_only.is_some() {
+            // Nothing runs, is retried, or has its secrets removed.
+            return;
+        }
         let settings = self.settings();
         let max_active = settings.max_active_downloads;
         for record in &mut state.records {
@@ -1613,6 +1641,10 @@ impl Session {
     /// or running: work that happens without a person. The engine stays up
     /// for it (FP-053).
     pub fn has_own_work(&self) -> bool {
+        // A newer build's queue is only shown; nothing in it is waiting on us.
+        if self.read_only.is_some() {
+            return false;
+        }
         let stats = self.stats();
         stats.running + stats.queued + stats.scheduled > 0
     }
@@ -1654,6 +1686,10 @@ impl Session {
     /// While a ledgered command runs it only marks the state dirty, and the
     /// command's own commit writes everything (see [`engine`]).
     fn save_locked(&self, state: &mut QueueState) -> Result<(), String> {
+        if self.read_only.is_some() {
+            // Nothing changed that is ours to save.
+            return Ok(());
+        }
         let mut durable = self.durable.lock().expect("engine state poisoned");
         if durable.defer {
             durable.dirty = true;
@@ -1672,6 +1708,11 @@ impl Session {
     /// generation, second. The queue file's rename is the commit point: until
     /// it happens, a load discards the new generation's entries.
     fn write_locked(&self, state: &QueueState, durable: &mut Durable) -> Result<(), String> {
+        // The last line of defense: a newer build's queue is never written
+        // over, whatever path got here.
+        if let Some(reason) = &self.read_only {
+            return Err(reason.clone());
+        }
         if let Some(path) = self.state_path.as_ref() {
             if durable.engine_changed {
                 let mut engine = durable.engine.clone();
@@ -1713,10 +1754,12 @@ impl Session {
         &self,
         state: &mut QueueState,
     ) -> Result<Vec<(String, String)>, String> {
-        let (Some(store), Some(download_dir)) = (
+        let (Some(store), Some(download_dir), None) = (
             self.browser_store.as_ref(),
             self.browser_download_dir.as_ref(),
+            self.read_only.as_ref(),
         ) else {
+            // Read-only: captures stay in the inbox for the newer build.
             return Ok(Vec::new());
         };
         let pending = store
@@ -2197,6 +2240,46 @@ impl QueueRecord {
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
             job,
+            rate: RateEstimate::default(),
+            attempt: view.attempt,
+            retry_at_ms: None,
+            durable,
+            principal: saved.principal,
+            approval: saved.approval,
+            size_approved: saved.size_approved,
+            view,
+        }
+    }
+
+    /// A record from a newer build's queue, only to be shown (FP-070): no
+    /// download is prepared, no browser secret opened, and its saved state
+    /// is kept as that build wrote it.
+    fn shown(saved: PersistedRecord) -> Self {
+        let mut view = saved.view;
+        view.bytes_per_second = None;
+        view.eta_seconds = None;
+        view.error_code = failure_code(&view);
+        let mut durable = saved.durable;
+        if durable.reported.is_none() {
+            durable.reported = Some(Reported {
+                state: view.state.clone(),
+                not_before_ms: saved.not_before_ms,
+            });
+        }
+        Self {
+            id: saved.id,
+            live_url: None,
+            live_context: RequestContext::default(),
+            credential_ref: saved.credential_ref,
+            restart_url: saved.restart_url,
+            display_url: saved.display_url,
+            destination: PathBuf::from(saved.destination),
+            not_before_ms: saved.not_before_ms,
+            created_at_ms: saved.created_at_ms,
+            finished_at_ms: saved.finished_at_ms,
+            media_variant_id: saved.media_variant_id,
+            media_quality: saved.media_quality,
+            job: None,
             rate: RateEstimate::default(),
             attempt: view.attempt,
             retry_at_ms: None,
@@ -2747,23 +2830,92 @@ fn write_queue(
     Ok(())
 }
 
-fn load_persisted(path: &Path) -> io::Result<Option<PersistedQueue>> {
-    let backup = path.with_extension("json.bak");
-    for candidate in [path, backup.as_path()] {
-        let file = match File::open(candidate) {
-            Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        let queue: PersistedQueue = match serde_json::from_reader(file) {
-            Ok(queue) => queue,
-            Err(_) => continue,
-        };
-        if queue.schema_version == QUEUE_SCHEMA_VERSION {
-            return Ok(Some(queue));
+/// What the queue file holds.
+enum Loaded {
+    Current(PersistedQueue),
+    /// Written by a newer Fetchpath. Its records, when they can still be
+    /// read, are only shown.
+    Newer {
+        version: Option<u64>,
+        queue: Option<PersistedQueue>,
+    },
+    Missing,
+}
+
+#[cfg(test)]
+impl Loaded {
+    fn current(self) -> Option<PersistedQueue> {
+        match self {
+            Self::Current(queue) => Some(queue),
+            _ => None,
         }
     }
-    Ok(None)
+}
+
+/// What a queue file says about its format.
+enum Version {
+    Current,
+    /// Newer than this build; the number when it is one this build can read.
+    Newer(Option<u64>),
+    /// Not a queue this build or a later one wrote: missing, corrupt, or 0.
+    Unreadable,
+}
+
+fn version_of(text: &[u8]) -> Version {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(text) else {
+        return Version::Unreadable;
+    };
+    match value.get("schemaVersion") {
+        None | Some(serde_json::Value::Null) => Version::Unreadable,
+        Some(version) => match version.as_u64() {
+            Some(number) if number == u64::from(QUEUE_SCHEMA_VERSION) => Version::Current,
+            Some(number) if number > u64::from(QUEUE_SCHEMA_VERSION) => {
+                Version::Newer(Some(number))
+            }
+            Some(_) => Version::Unreadable,
+            // A version written in a form this build does not use ("2", 2.5,
+            // or beyond u64) can only come from a later build.
+            None => Version::Newer(None),
+        },
+    }
+}
+
+/// Reads the queue, falling back to the backup when the queue is missing or
+/// unreadable. A file from a newer build, in either place, decides (finding
+/// F1): the session is then read-only, so neither file is ever replaced,
+/// including a newer backup behind a queue an older build wrote over it.
+fn load_persisted(path: &Path) -> io::Result<Loaded> {
+    let read = |candidate: &Path| match fs::read(candidate) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    let files = [read(path)?, read(&path.with_extension("json.bak"))?];
+    for text in files.iter().flatten() {
+        if let Version::Newer(version) = version_of(text) {
+            return Ok(Loaded::Newer {
+                version,
+                queue: serde_json::from_slice::<PersistedQueue>(text).ok(),
+            });
+        }
+    }
+    for text in files.iter().flatten() {
+        if let Version::Current = version_of(text)
+            && let Ok(queue) = serde_json::from_slice::<PersistedQueue>(text)
+        {
+            return Ok(Loaded::Current(queue));
+        }
+    }
+    Ok(Loaded::Missing)
+}
+
+fn newer_queue_explanation(version: Option<u64>) -> String {
+    let format = version.map_or(String::new(), |version| format!(" (format {version})"));
+    format!(
+        "Your download list was saved by a newer version of Fetchpath{format}. \
+         This version shows it without changing it and starts nothing. \
+         Install the newer version to keep using it; the list is kept as it is."
+    )
 }
 
 #[cfg(test)]

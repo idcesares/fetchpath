@@ -730,6 +730,9 @@ pub fn run() {
                         return;
                     }
                     Signal::Connected => serde_json::json!({ "connected": true }),
+                    Signal::ReadOnly(reason) => {
+                        serde_json::json!({ "connected": true, "readOnly": reason })
+                    }
                     Signal::Disconnected { message, stopped } => {
                         serde_json::json!({ "connected": false, "stopped": stopped, "message": message })
                     }

@@ -180,6 +180,9 @@ pub enum Signal {
     /// start it by itself: it waits for the person, or for another client
     /// to start it. Otherwise it keeps trying.
     Disconnected { message: String, stopped: bool },
+    /// Connected, but the queue was saved by a newer Fetchpath: it is shown
+    /// and nothing can change (FP-070). Holds the engine's explanation.
+    ReadOnly(String),
 }
 
 /// How often at most the window is told the queue changed.
@@ -218,10 +221,14 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
             }
         };
         while !stopped.load(Ordering::SeqCst) {
+            let mut read_only = None;
             let opened = link
                 .send(Command::EngineStatus)
                 .and_then(|result| match result {
-                    CommandResult::EngineStatus { status } => Ok(status.queue_cursor),
+                    CommandResult::EngineStatus { status } => {
+                        read_only = status.queue_read_only.map(|reason| reason.message);
+                        Ok(status.queue_cursor)
+                    }
                     _ => Err(ProtocolError::malformed(
                         "unexpected answer to EngineStatus",
                     )),
@@ -251,6 +258,9 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
             // window starts the next one.
             link.allow_start();
             tell(true, false, String::new());
+            if let Some(reason) = read_only {
+                notify(Signal::ReadOnly(reason));
+            }
             // Whatever happened while it was away is on screen at once.
             notify(Signal::Queue);
             let mut pending = false;
