@@ -9,6 +9,7 @@
 mod config;
 mod dashboard;
 mod flows;
+mod history;
 mod inline;
 mod jobs_menu;
 mod line;
@@ -109,6 +110,11 @@ pub struct Session {
     config_problems: Vec<line::Out>,
     /// Alias names, for completion.
     alias_names: Vec<String>,
+    /// Lines typed in earlier sessions, links stripped (FP-063).
+    history: history::History,
+    /// What finished or failed since the terminal was last open, to print
+    /// once at start.
+    away: Vec<line::Out>,
 }
 
 impl Session {
@@ -126,6 +132,22 @@ impl Session {
         let (config, problems) = config::Config::load(config::default_path());
         let config_problems = config::problem_lines(&config, &problems);
         let alias_names = config.aliases.names().map(str::to_owned).collect();
+        let dir = fetchpath_protocol::launch::EngineHome::from_env()
+            .ok()
+            .map(|home| home.dir().to_path_buf());
+        let history = history::History::load(dir.as_deref());
+        let away = match history::take_last_seen(dir.as_deref()) {
+            Some(since) => match engine.send(fetchpath_protocol::command::Command::History {
+                query: None,
+                limit: Some(1_000),
+            }) {
+                Ok(fetchpath_protocol::message::CommandResult::Jobs { jobs }) => {
+                    history::away_summary(&jobs, since, &config.glyphs())
+                }
+                _ => Vec::new(),
+            },
+            None => Vec::new(),
+        };
         Ok(Self {
             engine,
             events,
@@ -137,6 +159,8 @@ impl Session {
             config,
             config_problems,
             alias_names,
+            history,
+            away,
         })
     }
 
@@ -274,6 +298,7 @@ impl Session {
     /// other line goes to `line::run`. A custom command's replies are joined
     /// in order; it stops at the first line that asks to leave.
     fn run_line(&mut self, text: &str, menus: bool) -> line::Reply {
+        self.history.record(text);
         let lines = match self.config.aliases.expand(text) {
             Ok(lines) => lines,
             Err(message) => {
@@ -291,6 +316,7 @@ impl Session {
                     .push(line::Out::new(line::Tone::Dim, format!("  = {expanded}")));
             }
             let reply = match line::parse(&expanded) {
+                Some((spec, _)) if spec.name == "forget" => Some(self.forget()),
                 Some((spec, args)) => config::command(&mut self.config, spec.name, &args),
                 None => None,
             };
@@ -311,5 +337,21 @@ impl Session {
             }
         }
         joined
+    }
+
+    /// `/forget`: the lines typed at this prompt, here and on disk. Engine
+    /// history stays; `/rm` removes a finished download from it.
+    fn forget(&mut self) -> line::Reply {
+        let mut reply = line::Reply::default();
+        let (tone, text) = match self.history.clear() {
+            Ok(()) => (
+                line::Tone::Normal,
+                "Forgot the lines typed at this prompt. Finished downloads stay in /history."
+                    .to_owned(),
+            ),
+            Err(message) => (line::Tone::Bad, message),
+        };
+        reply.lines.push(line::Out::new(tone, text));
+        reply
     }
 }

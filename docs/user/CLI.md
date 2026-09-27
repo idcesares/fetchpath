@@ -273,11 +273,19 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/settings`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
+  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
   and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.
-- Tab completes commands, downloads, setting names and folders; Up and Down
-  recall earlier lines; Esc clears the line; Ctrl+C on an empty line leaves.
+- Tab completes commands, downloads, setting names, folders (the ones
+  recent downloads went to first) and links you downloaded before; Up and
+  Down recall earlier lines, including ones from earlier sessions; Esc clears
+  the line; Ctrl+C on an empty line leaves.
+- Opening the terminal says what finished or failed since it was last open,
+  failures first; `/history` shows the rest.
+- The lines you type are kept in `cli-history`, beside `cli.toml`, with every
+  link cut to its site and path: sign-ins, `?` queries and `#` fragments are
+  never written. The last 500 are kept. `/forget` deletes them; your
+  finished downloads stay in `/history` until you remove them.
 
 ### Making the terminal yours
 

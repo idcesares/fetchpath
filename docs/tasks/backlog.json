@@ -1894,13 +1894,19 @@
       "dependsOn": [
         "FP-062"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
-        "apps/cli/src/tui/history"
+        "apps/cli/src/tui/history.rs",
+        "apps/cli/src/tui/mod.rs",
+        "apps/cli/src/tui/line.rs",
+        "apps/cli/src/tui/prompt.rs",
+        "apps/cli/src/tui/inline.rs",
+        "apps/cli/src/tui/plain.rs",
+        "docs/user/CLI.md"
       ],
       "acceptanceIds": [
         "A01",
@@ -1908,7 +1914,10 @@
       ],
       "acceptance": "Prompt history and completion persist across sessions with query strings and user info stripped from links by default; recent destinations and past links feed completion; opening the terminal summarizes jobs that finished or failed since it was last open, from engine history; history can be cleared with one command. CLI.md documents the history file, what is stripped and how to clear it.",
       "verification": "Tests that a signed link never reaches the history file; completion tests; summary test against engine history.",
-      "evidence": [],
+      "evidence": [
+        "apps/cli/src/tui/history.rs",
+        "docs/development/TERMINAL.md"
+      ],
       "blockedReason": null
     },
     {

@@ -14,7 +14,7 @@ one your task names.
 - [Engine session](ENGINE-SESSION.md) — FP-048/049/051/070: the queue in `fetchpath-session`, its characterization, a newer build's queue kept, and open findings.
 - [Engine protocol](ENGINE-PROTOCOL.md) — FP-050/052: protocol v1, `EngineClient`, the pipe.
 - [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit; FP-056/057: browser host and installer lifecycle; FP-058: the command line through the engine.
-- [Interactive terminal](TERMINAL.md) — FP-059 to FP-062 and FP-073: inline panel, prompt and `/` commands, dashboard, flows, personalization, plain mode, and the review of its additions.
+- [Interactive terminal](TERMINAL.md) — FP-059 to FP-063 and FP-073: inline panel, prompt and `/` commands, dashboard, flows, personalization, remembered context, plain mode, and the review of its additions.
 - [Smart rules](RULES.md) — FP-064: rules by site, type or size, applied by the engine to protocol jobs; FP-075 extends them to the desktop and browser captures.
 - [Agents through MCP](MCP.md) — FP-065/066/067: `fetchpath mcp`, what an agent is shown, the person's access and approval surfaces, and the boundary review with its residual risks.
 

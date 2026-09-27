@@ -323,8 +323,15 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   waits on a site.
 - The media card lists formats without sizes: the helper's inspection does
   not report them.
-- Prompt history is kept for the session only; saving it (with query strings
-  and user info stripped) is FP-063.
+- Remembered context (FP-063, `tui/history.rs`): prompt lines go to
+  `cli-history` with user info, query and fragment cut from every link
+  (`url` parses it; an unparseable one is cut at `?`/`#` and after `@`),
+  appended, kept to 500 lines and compacted at 1,000; `/forget` deletes it.
+  `cli-seen` holds when the terminal last opened; the start-up summary is
+  engine `History` filtered by `finished_at`. Two terminals share the file
+  by appending; the summary is shown by whichever opens first. Past-link
+  completion offers the engine's display links, so a signed link completes
+  without its signature and has to be pasted again.
 - `cli.toml` edits are read, changed and written whole: two terminals
   changing it at the same moment keep the last write. Card keys (S, N, I, A,
   D) and the menus' keys are not bindable. The default and plain themes use

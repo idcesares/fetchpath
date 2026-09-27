@@ -30,6 +30,20 @@ pub struct Prompt {
 }
 
 impl Prompt {
+    /// A prompt whose Up recalls lines from earlier sessions.
+    pub fn with_history(history: &[String]) -> Self {
+        Self {
+            history: history.to_vec(),
+            ..Self::default()
+        }
+    }
+
+    /// Forgets recalled lines, after `/forget`.
+    pub fn forget(&mut self) {
+        self.history.clear();
+        self.recall = None;
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }

@@ -215,6 +215,7 @@ pub fn run(mut session: Session) -> i32 {
     );
     // What in cli.toml could not be used, once.
     say(&std::mem::take(&mut session.config_problems));
+    say(&std::mem::take(&mut session.away));
     let panel = session.live.panel();
     if !panel.is_empty() {
         println!("In the queue:");

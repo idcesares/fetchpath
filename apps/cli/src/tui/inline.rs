@@ -480,7 +480,7 @@ fn set_mouse(on: bool, captured: &mut bool) -> std::io::Result<()> {
 
 fn run_view(session: &mut Session) -> std::io::Result<i32> {
     let raw = RawMode::enable()?;
-    let mut prompt = Prompt::default();
+    let mut prompt = Prompt::with_history(session.history.lines());
     let mut completion: Option<String> = None;
     let mut reviews = Reviews::default();
     let mut menus = Menus::default();
@@ -511,6 +511,7 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
     };
     // What in cli.toml could not be used, once.
     screen.print(&std::mem::take(&mut session.config_problems))?;
+    screen.print(&std::mem::take(&mut session.away))?;
     let mut code = 0;
     let mut dirty = true;
     let mut last_draw = Instant::now();
@@ -814,6 +815,9 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
                     Action::Complete => completion = complete(&mut prompt, session),
                     Action::Submit(text) => {
                         completion = None;
+                        if matches!(line::parse(&text), Some((spec, _)) if spec.name == "forget") {
+                            prompt.forget();
+                        }
                         if !text.trim().is_empty()
                             && submit(
                                 &text,

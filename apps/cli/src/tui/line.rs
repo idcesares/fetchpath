@@ -200,6 +200,13 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Text,
     },
     Spec {
+        name: "forget",
+        aliases: &[],
+        usage: "/forget",
+        summary: "Forget the lines typed at this prompt",
+        takes: Takes::Nothing,
+    },
+    Spec {
         name: "settings",
         aliases: &[],
         usage: "/settings [NAME [VALUE]]",
@@ -649,7 +656,7 @@ fn execute(
         }
         // The terminal's own settings; the session runs these before a line
         // reaches the engine.
-        "theme" | "keys" | "alias" => Err(client::input_error(&format!(
+        "theme" | "keys" | "alias" | "forget" => Err(client::input_error(&format!(
             "/{} works only at the interactive prompt.",
             spec.name
         ))),
@@ -826,6 +833,9 @@ pub fn complete(before_cursor: &str, context: &Context) -> Completion {
                     finished: true,
                 })
                 .collect(),
+            Takes::Links if word.starts_with("http") || word.contains("://") => {
+                past_links(word, context.jobs)
+            }
             _ => Vec::new(),
         }
     };
@@ -869,6 +879,23 @@ fn jobs(word: &str, jobs: &[JobSnapshot]) -> Vec<Candidate> {
             finished: true,
         })
         .collect()
+}
+
+/// Links of earlier downloads that start with the typed text, as the engine
+/// shows them: without user info, query or fragment.
+fn past_links(word: &str, jobs: &[JobSnapshot]) -> Vec<Candidate> {
+    let mut found: Vec<Candidate> = Vec::new();
+    for job in jobs {
+        let link = &job.source_display;
+        if link.starts_with(word) && !found.iter().any(|seen| &seen.insert == link) {
+            found.push(Candidate {
+                insert: link.clone(),
+                label: link.clone(),
+                finished: true,
+            });
+        }
+    }
+    found
 }
 
 /// Recent download folders matching the typed text, then folders on disk
@@ -1019,6 +1046,9 @@ mod tests {
             inserts(r"https://a.test/x --to C:\Users\person\Dow"),
             [r"C:\Users\person\Downloads\"]
         );
+        // Past links, once each, as the engine shows them.
+        assert_eq!(inserts("https://a.t"), ["https://a.test/x"]);
+        assert_eq!(inserts("https://b."), Vec::<String>::new());
         let completion = complete("/pause 1 ubu", &context);
         assert_eq!(completion.start, "/pause 1 ".len());
     }
