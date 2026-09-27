@@ -16,7 +16,7 @@ one your task names.
 - [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit; FP-058: the command line through the engine.
 - [Interactive terminal](TERMINAL.md) — FP-059: inline panel, prompt and `/` commands, plain mode.
 - [Smart rules](RULES.md) — FP-064: rules by site, type or size, applied by the engine for every client.
-- [Agents through MCP](MCP.md) — FP-065/066: `fetchpath mcp`, what an agent is shown, and the person's access and approval surfaces.
+- [Agents through MCP](MCP.md) — FP-065/066/067: `fetchpath mcp`, what an agent is shown, the person's access and approval surfaces, and the boundary review with its residual risks.
 
 ## Features
 

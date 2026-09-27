@@ -1053,19 +1053,26 @@ impl Engine {
                 },
             }),
             Command::EngineStatus => {
-                // An agent's count covers its own jobs only.
+                // An agent's count covers its own jobs only, and it sees neither
+                // the queue's event cursor nor the connected clients: both would
+                // let it watch the person's and other agents' activity (FP-067).
                 let jobs: Vec<_> = self.snapshots()?.into_iter().filter(visible).collect();
+                let person = principal.is_user();
                 let durable = self.session.durable.lock().expect("engine state poisoned");
                 Ok(CommandResult::EngineStatus {
                     status: EngineStatus {
                         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
                         schema_version: SCHEMA_VERSION,
                         started_at: self.started_at,
-                        connected_clients: durable
-                            .subscribers
-                            .iter()
-                            .filter(|subscriber| !subscriber.is_closed())
-                            .count() as u32,
+                        connected_clients: if person {
+                            durable
+                                .subscribers
+                                .iter()
+                                .filter(|subscriber| !subscriber.is_closed())
+                                .count() as u32
+                        } else {
+                            0
+                        },
                         // Nothing runs from a newer build's queue.
                         active_jobs: if self.session.read_only().is_some() {
                             0
@@ -1074,7 +1081,7 @@ impl Engine {
                                 .filter(|job| !job.state.is_terminal() && job.state != S::Failed)
                                 .count() as u32
                         },
-                        queue_cursor: durable.engine.cursor,
+                        queue_cursor: if person { durable.engine.cursor } else { 0 },
                         queue_read_only: self.read_only_error(),
                     },
                 })
@@ -1140,7 +1147,8 @@ impl Engine {
                 let Some(last) = last else {
                     return Err(unknown_job());
                 };
-                let subscriber = Arc::new(Subscriber::new(Some(job_id.as_str().to_owned())));
+                let subscriber =
+                    Arc::new(Subscriber::new(Some(job_id.as_str().to_owned()), principal));
                 if *after_seq == last || (*after_seq < last && contiguous) {
                     let replay: Vec<JobEvent> = retained.into_iter().cloned().collect();
                     let start = CommandResult::Subscribed {
@@ -1175,7 +1183,7 @@ impl Engine {
                 let contiguous = retained
                     .first()
                     .is_some_and(|event| event.cursor == after_cursor + 1);
-                let subscriber = Arc::new(Subscriber::new(None));
+                let subscriber = Arc::new(Subscriber::new(None, principal));
                 if *after_cursor == last || (*after_cursor < last && contiguous) {
                     let start = CommandResult::Subscribed {
                         position: StreamPosition::Queue {
@@ -1255,6 +1263,9 @@ pub(crate) struct Subscriber {
     job: Option<String>,
     queue: Mutex<Pending>,
     ready: Condvar,
+    /// For an agent: event and sample cursors count this stream's own items,
+    /// since the engine's would show everyone else's activity (FP-067).
+    own_count: Option<(AtomicU64, AtomicU64)>,
 }
 
 #[derive(Default)]
@@ -1267,11 +1278,12 @@ struct Pending {
 }
 
 impl Subscriber {
-    fn new(job: Option<String>) -> Self {
+    fn new(job: Option<String>, principal: &Principal) -> Self {
         Self {
             job,
             queue: Mutex::new(Pending::default()),
             ready: Condvar::new(),
+            own_count: (!principal.is_user()).then(|| (AtomicU64::new(0), AtomicU64::new(0))),
         }
     }
 
@@ -1313,7 +1325,11 @@ impl Subscriber {
                 .with_action(Action::RefreshClient),
             );
         } else {
-            pending.events.push_back(event.clone());
+            let mut event = event.clone();
+            if let Some((events, _)) = &self.own_count {
+                event.cursor = events.fetch_add(1, Ordering::SeqCst) + 1;
+            }
+            pending.events.push_back(event);
         }
         drop(pending);
         self.ready.notify_all();
@@ -1328,11 +1344,11 @@ impl Subscriber {
             return;
         }
         let key = sample.job_id.as_str().to_owned();
-        if pending
-            .progress
-            .insert(key.clone(), sample.clone())
-            .is_none()
-        {
+        let mut sample = sample.clone();
+        if let Some((_, samples)) = &self.own_count {
+            sample.sample_cursor = samples.fetch_add(1, Ordering::SeqCst) + 1;
+        }
+        if pending.progress.insert(key.clone(), sample).is_none() {
             pending.progress_order.push_back(key);
         }
         drop(pending);

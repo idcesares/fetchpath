@@ -22,7 +22,7 @@ use settings::Settings;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1521,6 +1521,20 @@ impl Session {
             let Principal::Agent(agent) = &record.principal else {
                 continue;
             };
+            // A media download stopped by its byte cap has failed in the
+            // adapter; for the person it is a size stop like any other.
+            if record.approval.is_none()
+                && record.view.state == "failed"
+                && record
+                    .view
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("size_limit"))
+            {
+                record.retry_at_ms = None;
+                record.hold(vec![ApprovalReason::SizeLimit]);
+                continue;
+            }
             if record.size_approved || record.approval.is_some() || record.view.state != "running" {
                 continue;
             }
@@ -1766,6 +1780,20 @@ impl Session {
             let Some(job) = record.job.as_ref() else {
                 continue;
             };
+            // An agent's video or audio download is capped at its size limit
+            // inside the adapter, since a helper can write faster than the
+            // engine samples (FP-067). The person's approval lifts it.
+            if let (JobHandle::Media(media), Principal::Agent(agent)) = (job, &record.principal)
+                && !record.size_approved
+            {
+                let limit = self
+                    .agents
+                    .lock()
+                    .expect("agents poisoned")
+                    .get(agent)
+                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+                media.limit_bytes(limit);
+            }
             if let JobHandle::File(file) = job {
                 // A rule may cap the connections, decided as the job starts.
                 let url = record.live_url.as_deref().unwrap_or(&record.display_url);
@@ -2936,54 +2964,113 @@ fn validated_destination(raw: &str) -> Result<PathBuf, String> {
         return Err("That destination path contains characters Windows cannot use.".into());
     }
     let path = PathBuf::from(trimmed);
+    if path.file_name().and_then(|name| name.to_str()).is_none() {
+        return Err("Every queued download needs a destination filename.".into());
+    }
+    plain_path(&path)?;
+    Ok(path)
+}
+
+/// Whether `path` is an ordinary full path Windows applies its name rules
+/// to, with every folder and name a plain one. Shared by destinations, rule
+/// folders and the default folder, so a folder accepted there is never one a
+/// download into it would be refused for (FP-067).
+pub(crate) fn plain_path(path: &Path) -> Result<(), String> {
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
         return Err("A destination path cannot contain \"..\".".into());
     }
-    if !path.is_absolute()
-        || path
-            .components()
-            .next()
-            .is_none_or(|component| !matches!(component, Component::Prefix(_)))
-    {
+    // A drive path or a network share. Device (`\\.\`) and verbatim
+    // (`\\?\`) paths skip the rules Windows applies to ordinary names, and a
+    // folder part such as `CON` or `a:stream` would then reach a device or a
+    // hidden stream (FP-067).
+    let ordinary = match path.components().next() {
+        Some(Component::Prefix(prefix)) => {
+            matches!(prefix.kind(), Prefix::Disk(_) | Prefix::UNC(..))
+        }
+        _ => false,
+    };
+    if !path.is_absolute() || !ordinary {
         return Err("Choose a full destination path, including its drive.".into());
     }
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Err("Every queued download needs a destination filename.".into());
-    };
-    if name != name.trim_end_matches(['.', ' ']) {
-        return Err("A destination filename cannot end with a dot or a space.".into());
+    // Every folder and the file name must be a plain name. A colon names an
+    // NTFS alternate data stream, so `notes.txt:hidden` would attach bytes to
+    // a file the person never chose while still satisfying the create-only
+    // publication fence. The drive letter's colon lives in the prefix.
+    for component in path.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        let Some(part) = part.to_str() else {
+            return Err("That destination path contains characters Windows cannot use.".into());
+        };
+        if part != part.trim_end_matches(['.', ' ']) {
+            return Err(format!(
+                "{part:?}: a destination filename or folder cannot end with a dot or a space."
+            ));
+        }
+        if let Some(offending) = part.chars().find(|character| {
+            matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            )
+        }) {
+            return Err(format!(
+                "A destination filename or folder cannot contain {offending}."
+            ));
+        }
+        // A name must read as what it is on the person's approval card:
+        // embeddings, overrides and isolates reorder what follows (a name
+        // ending `\u{202E}txt.exe` looks like a text file), and line or
+        // paragraph separators break the line. Joiners and marks that do
+        // neither stay allowed: Persian, Indic and emoji names need them
+        // (FP-067).
+        if part.chars().any(|character| {
+            matches!(
+                character,
+                '\u{2028}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+            )
+        }) {
+            return Err(
+                "A destination name cannot contain characters that reorder or break its text."
+                    .into(),
+            );
+        }
+        if is_reserved_device_name(part) {
+            return Err(format!(
+                "{part:?} is reserved by Windows; choose another name."
+            ));
+        }
     }
-    // A colon in the leaf names an NTFS alternate data stream, so
-    // `notes.txt:hidden` would attach bytes to a file the user never chose while
-    // still satisfying the create-only publication fence. The drive letter's
-    // colon lives in the prefix component, not here, so it is unaffected.
-    if let Some(offending) = name.chars().find(|character| {
-        matches!(
-            character,
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-        )
-    }) {
-        return Err(format!(
-            "A destination filename cannot contain {offending}."
-        ));
-    }
-    if is_reserved_device_name(name) {
-        return Err("That destination filename is reserved by Windows.".into());
-    }
-    Ok(path)
+    Ok(())
 }
 
-/// Windows refuses these names in any directory and with any extension.
+/// Names Windows keeps for devices, with or without an extension: `CON`,
+/// `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, and `COM` or `LPT` followed by
+/// 1 to 9 or a superscript 1 to 3.
 fn is_reserved_device_name(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.as_bytes()[3].is_ascii_digit()
-            && stem.as_bytes()[3] != b'0')
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let mut chars = stem.chars();
+    let head: String = chars.by_ref().take(3).collect();
+    let rest: Vec<char> = chars.collect();
+    (head == "COM" || head == "LPT")
+        && matches!(
+            rest.as_slice(),
+            ['1'..='9'] | ['\u{b9}' | '\u{b2}' | '\u{b3}']
+        )
 }
 
 fn restartable_url(url: &str) -> Option<String> {
@@ -4041,6 +4128,164 @@ mod tests {
         assert!(!is_media_page("https://example.com/watch?v=abc"));
         assert!(!is_media_page("https://notyoutube.com/watch"));
         assert!(!is_media_page("not a url"));
+    }
+
+    /// An agent's video download stops at the agent's size limit and waits
+    /// for the person, as a file download does (FP-067): the media helper's
+    /// bytes are measured while it writes.
+    #[cfg(windows)]
+    #[test]
+    fn an_agent_media_download_stops_at_its_size_limit() {
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../adapters/media/tests/fixtures");
+        let tools = MediaTools::new(
+            fixtures.join("growing-helper.cmd"),
+            &fixtures,
+            fixtures.join("fake-ffprobe.cmd"),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let destination = output.path().join("video.mp4");
+        let jobs = Session::in_memory_with_media(1, tools.clone());
+        let agent = AgentName::try_from("helper").unwrap();
+        jobs.set_agent_policy(
+            agent.clone(),
+            Some(AgentPolicy {
+                folders: vec![output.path().display().to_string()],
+                max_bytes: 256 * 1024,
+                max_new_jobs_per_hour: 20,
+            }),
+        )
+        .unwrap();
+        let mut record = QueueRecord::new_media(
+            "https://example.test/watch?v=1".into(),
+            destination.clone(),
+            None,
+            "video-18".into(),
+            "360p".into(),
+            tools,
+        );
+        record.principal = Principal::Agent(agent);
+        let job_id = record.id.clone();
+        jobs.inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .records
+            .push(record);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let snapshot = jobs.snapshot(&job_id).unwrap();
+            if snapshot.state == "awaiting_approval" {
+                break;
+            }
+            assert!(
+                !is_terminal(&snapshot.state),
+                "finished instead: {snapshot:?}"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never stopped: {snapshot:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        let reasons = {
+            let state = jobs.inner.lock().expect("desktop jobs poisoned");
+            find_record(&state, &job_id)
+                .unwrap()
+                .approval
+                .as_ref()
+                .map(|approval| approval.reasons.clone())
+        };
+        assert_eq!(reasons, Some(vec![ApprovalReason::SizeLimit]));
+        thread::sleep(Duration::from_secs(1));
+        assert!(!destination.exists(), "nothing is published while it waits");
+    }
+
+    /// A helper that writes everything at once still cannot get past the
+    /// agent's limit (FP-067 review): the adapter's cap refuses to publish,
+    /// and the stop waits for the person as a size stop. Approving it lifts
+    /// the cap and the download is saved.
+    #[cfg(windows)]
+    #[test]
+    fn an_agent_media_burst_past_its_limit_waits_and_approval_lifts_it() {
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../adapters/media/tests/fixtures");
+        let tools = MediaTools::new(
+            fixtures.join("burst-helper.cmd"),
+            &fixtures,
+            fixtures.join("fake-ffprobe-video.cmd"),
+        )
+        .unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let destination = output.path().join("video.mp4");
+        let jobs = Session::in_memory_with_media(1, tools.clone());
+        let agent = AgentName::try_from("helper").unwrap();
+        jobs.set_agent_policy(
+            agent.clone(),
+            Some(AgentPolicy {
+                folders: vec![output.path().display().to_string()],
+                max_bytes: 256 * 1024,
+                max_new_jobs_per_hour: 20,
+            }),
+        )
+        .unwrap();
+        let mut record = QueueRecord::new_media(
+            "https://example.test/watch?v=2".into(),
+            destination.clone(),
+            None,
+            "video-18".into(),
+            "360p".into(),
+            tools,
+        );
+        record.principal = Principal::Agent(agent);
+        let job_id = record.id.clone();
+        jobs.inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .records
+            .push(record);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let snapshot = jobs.snapshot(&job_id).unwrap();
+            if snapshot.state == "awaiting_approval" {
+                break;
+            }
+            assert!(
+                !is_terminal(&snapshot.state),
+                "finished instead: {snapshot:?}"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never stopped: {snapshot:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !destination.exists(),
+            "a burst past the limit was published"
+        );
+
+        jobs.approve(&job_id).unwrap();
+        // The helpers are PowerShell scripts, slow to start under load.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let finished = loop {
+            let snapshot = jobs.snapshot(&job_id).unwrap();
+            if is_terminal(&snapshot.state) {
+                break snapshot;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never finished: {snapshot:?}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(finished.state, "completed", "{finished:?}");
+        assert_eq!(
+            std::fs::metadata(&destination).unwrap().len(),
+            2 * 1024 * 1024
+        );
     }
 
     #[cfg(windows)]

@@ -430,3 +430,26 @@ Extends D1. Source: `crates/fetchpath-session/src/lib.rs` (`set_agent_policy`).
 - **Left alone:** finished, cancelled and denied downloads, requests already
   waiting, and downloads still inside the remaining folders. A download that
   published before the stop took effect reports its completion on approval.
+
+### D5 · What the agent-boundary review changed (FP-067, 27 September 2026)
+
+Source: `crates/fetchpath-session/src/lib.rs` (`plain_path`), `engine.rs`,
+`adapters/media/src/lib.rs`.
+
+- **Every part of a destination is a plain name, for every principal.** Only
+  drive and network-share paths are accepted (not `\?\` or `\.\`); no
+  folder or file name may hold `< > : " / \ | ? *`, end in a dot or a space,
+  be a device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM`
+  and `LPT` with 1 to 9 or a superscript 1 to 3, any extension), or contain
+  text-reordering or line-breaking characters (U+2028 to U+202E, U+2066 to
+  U+2069). Rule folders and the default folder meet the same check. Queues
+  saved before load unchanged; the check applies when a download is made or
+  retried.
+- **An agent's media download has a hard size cap.** The engine sets the
+  agent's limit on the media job as it starts; the adapter stops the helper
+  once its work passes it and never publishes an output over it. The stop is
+  held as `awaiting_approval` (`size_limit`) like a file's, and approval
+  lifts the cap for that download.
+- **An agent sees no engine-wide counters.** `EngineStatus` gives it
+  `queue_cursor` and `connected_clients` of 0, and its job streams number
+  their events and progress samples from 1 for that stream alone.

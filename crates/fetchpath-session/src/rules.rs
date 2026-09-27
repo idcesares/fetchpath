@@ -280,8 +280,15 @@ fn folder_path(raw: &str) -> Result<String, String> {
         && !path.components().any(|part| part == Component::ParentDir)
         && !folder.chars().any(char::is_control)
         && folder.len() <= crate::MAX_DESTINATION_LENGTH;
-    full.then(|| folder.to_owned())
-        .ok_or_else(|| format!("{folder:?} is not a full folder path, such as D:\\ISOs."))
+    if !full {
+        return Err(format!(
+            "{folder:?} is not a full folder path, such as D:\\ISOs."
+        ));
+    }
+    // The same rules a download's path meets, so a rule can never send
+    // downloads to a folder they would be refused in.
+    crate::plain_path(path).map_err(|message| format!("{folder:?}: {message}"))?;
+    Ok(folder.to_owned())
 }
 
 /// Keeps the rules that are still valid, with unique ids, at most
@@ -475,5 +482,22 @@ mod tests {
             sanitized(vec![good.clone(), duplicate, invalid]),
             vec![good]
         );
+    }
+
+    /// A rule's folder meets the same rules as a download's path, so a rule
+    /// can never send downloads where they would be refused (FP-067).
+    #[test]
+    fn a_rule_folder_must_be_one_downloads_can_be_saved_in() {
+        assert!(folder_path(r"D:\ISOs").is_ok());
+        assert!(folder_path(r"\\server\share\ISOs").is_ok());
+        for folder in [
+            r"\\?\D:\ISOs",
+            r"\\.\D:\ISOs",
+            r"D:\CON",
+            r"D:\ISOs.",
+            r"D:\a:b",
+        ] {
+            assert!(folder_path(folder).is_err(), "{folder}");
+        }
     }
 }

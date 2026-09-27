@@ -1379,3 +1379,206 @@ fn smart_rules_place_and_check_new_jobs_for_every_principal_and_an_agent_stays_i
         "input.invalid_request"
     );
 }
+
+// ------------------------------------------------------------------ FP-067
+// Attacks on the agent boundary, derived from the platform design (§6, §8)
+// and contract D1 to D4. Each is a way an agent could break an invariant; the
+// test proves it holds. Findings and residual risks: docs/development/MCP.md.
+
+fn status(client: &InProcessClient) -> fetchpath_protocol::model::EngineStatus {
+    match send(client, Command::EngineStatus).unwrap() {
+        CommandResult::EngineStatus { status } => status,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The engine's status shows an agent nothing of other principals' activity:
+/// not the queue's event cursor, not how many clients are connected.
+#[test]
+fn engine_status_tells_an_agent_nothing_about_others() {
+    let s = setup(granting);
+    job(send(&s.user, later(&s.outside.join("persons.bin"))).unwrap());
+    job(send(&s.user, later(&s.outside.join("persons-2.bin"))).unwrap());
+    assert!(status(&s.user).queue_cursor > 0);
+    let seen = status(&s.agent);
+    assert_eq!(seen.queue_cursor, 0);
+    assert_eq!(seen.connected_clients, 0);
+    assert_eq!(seen.active_jobs, 0);
+}
+
+/// Every part of a destination is a name Windows can hold as a plain file or
+/// folder: no reserved device names, alternate data streams or trailing dots
+/// in a folder, and no device or verbatim paths that skip Windows' own path
+/// rules. These are refused for everyone, before any grant is considered.
+#[test]
+fn destinations_are_refused_when_any_part_is_not_a_plain_name() {
+    let s = setup(granting);
+    let granted = s.granted.display().to_string();
+    let refused = [
+        format!(r"{granted}\CON\a.bin"),
+        format!(r"{granted}\nul.txt\a.bin"),
+        format!(r"{granted}\sub.\a.bin"),
+        format!(r"{granted}\sub \a.bin"),
+        format!(r"{granted}\notes.txt:stream\a.bin"),
+        format!(r"{granted}\CONIN$"),
+        format!(r"{granted}\CONOUT$.txt"),
+        format!("{granted}\\COM\u{b9}.txt"),
+        format!("{granted}\\LPT\u{b3}"),
+        format!(r"\\?\{granted}\a.bin"),
+        format!(r"\\.\{granted}\a.bin"),
+    ];
+    for destination in &refused {
+        for client in [&s.agent, &s.user] {
+            let result = send(client, later(Path::new(destination)));
+            assert!(result.is_err(), "{destination} was accepted: {result:?}");
+        }
+    }
+    // A plain name still works, in the grant and without asking.
+    let fine = job(send(&s.agent, later(&s.granted.join("sub").join("a.bin"))).unwrap());
+    assert_eq!(fine.state, JobState::Queued);
+}
+
+/// User info smuggled in other spellings is still user info: percent-encoded,
+/// upper-case schemes, IPv6 hosts, a bare token, or behind a backslash that
+/// URL parsing treats as a slash. None of it downloads or is looked at.
+#[test]
+fn credentials_in_any_spelling_are_refused_for_an_agent() {
+    let s = setup(granting);
+    let target = s.granted.join("smuggled.bin");
+    let mut tried = 0;
+    for link in [
+        "http://u%40x:p%3Aw@example.test/a.bin",
+        "HTTPS://User:Secret@Example.test/a.bin",
+        "http://token@[::1]:8080/a.bin",
+        "http://:secret@example.test/a.bin",
+        "http:\\\\user:secret@example.test\\a.bin",
+    ] {
+        // A link the protocol cannot even carry is refused before the engine.
+        let Ok(url) = SensitiveUrl::try_from(link.to_owned()) else {
+            continue;
+        };
+        tried += 1;
+        let request = JobRequest::File {
+            input: JobInput::Url { url: url.clone() },
+            destination: DestinationIntent {
+                path: target.display().to_string(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: None,
+            expected_sha256: None,
+        };
+        let created = send(&s.agent, Command::CreateJob { request });
+        assert!(created.is_err(), "{link} was accepted: {created:?}");
+        let looked = send(&s.agent, Command::InspectLink { url });
+        assert!(looked.is_err(), "{link} was looked at: {looked:?}");
+    }
+    assert!(tried >= 4, "only {tried} spellings reached the engine");
+    assert!(list(&s.agent, JobFilter::All).is_empty());
+}
+
+/// Withdrawing requests does not give back the hourly rate: an agent that
+/// cancels and asks again still waits for the person once past it.
+#[test]
+fn cancelling_and_asking_again_does_not_reset_the_rate() {
+    let s = setup(|granted| AgentPolicy {
+        max_new_jobs_per_hour: 2,
+        ..granting(granted)
+    });
+    for name in ["a.bin", "b.bin"] {
+        let queued = job(send(&s.agent, later(&s.granted.join(name))).unwrap());
+        send(
+            &s.agent,
+            Command::Cancel {
+                job_id: queued.job_id.clone(),
+                retain_partial: false,
+            },
+        )
+        .unwrap();
+        send(
+            &s.agent,
+            Command::RemoveJob {
+                job_id: queued.job_id,
+            },
+        )
+        .unwrap();
+    }
+    let again = job(send(&s.agent, later(&s.granted.join("c.bin"))).unwrap());
+    assert_eq!(again.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&again), [ApprovalReason::RateLimit]);
+}
+
+/// A name that reads differently from what it is cannot reach the person's
+/// approval card: direction overrides (`invoice\u{202E}txt.exe` shows as
+/// "invoiceexe.txt"), isolates, and line or paragraph separators are refused
+/// in every part of a destination. Joiners that languages and emoji need are
+/// not (FP-067 review).
+#[test]
+fn a_destination_cannot_disguise_itself_on_the_approval_card() {
+    let s = setup(granting);
+    // Persian with a zero-width non-joiner, and an emoji family with joiners.
+    for name in [
+        "\u{06AF}\u{0632}\u{0627}\u{0631}\u{0634}\u{200C}\u{0647}\u{0627}.pdf",
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}.jpg",
+    ] {
+        let fine = job(send(&s.agent, later(&s.granted.join(name))).unwrap());
+        assert_eq!(fine.state, JobState::Queued, "{name}");
+    }
+    for name in [
+        "invoice\u{202E}txt.exe",
+        "report\u{2066}.pdf\u{2069}.exe",
+        "embedded\u{202B}.exe",
+        "two\u{2028}lines.bin",
+        "two\u{2029}paragraphs.bin",
+    ] {
+        let destination = s.outside.join(name);
+        let result = send(&s.agent, later(&destination));
+        assert!(result.is_err(), "{name:?} was accepted: {result:?}");
+        let folder = s.outside.join(name).join("a.bin");
+        assert!(
+            send(&s.agent, later(&folder)).is_err(),
+            "{name:?} as a folder"
+        );
+    }
+}
+
+/// An agent following its own download learns nothing of others from the
+/// stream: its events' cursors count its own stream, not the engine's queue
+/// (FP-067 review).
+#[test]
+fn an_agent_job_stream_counts_only_its_own_events() {
+    let s = setup(granting);
+    for index in 0..5 {
+        job(send(
+            &s.user,
+            later(&s.outside.join(format!("persons-{index}.bin"))),
+        )
+        .unwrap());
+    }
+    let mine = job(send(&s.agent, later(&s.granted.join("mine.bin"))).unwrap());
+    let stream = CommandEnvelope::new(
+        ClientId::random(),
+        Command::SubscribeJob {
+            job_id: mine.job_id.clone(),
+            after_seq: 0,
+        },
+    );
+    let mut subscription = s.agent.subscribe(&stream).unwrap();
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: mine.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    s.engine.tick();
+    let mut cursors = Vec::new();
+    while let Ok(Some(item)) = subscription.events.next_item(Duration::from_millis(300)) {
+        if let fetchpath_protocol::StreamItem::Event(event) = item {
+            cursors.push(event.cursor);
+        }
+    }
+    assert!(!cursors.is_empty());
+    let expected: Vec<u64> = (1..=cursors.len() as u64).collect();
+    assert_eq!(cursors, expected, "the person's five jobs show through");
+}

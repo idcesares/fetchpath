@@ -12,7 +12,7 @@ use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -90,6 +90,8 @@ pub enum MediaError {
     Cancelled,
     TimedOut,
     InvalidOutput,
+    /// More arrived than the job's byte cap allows.
+    SizeLimit,
     Io(io::Error),
 }
 
@@ -99,6 +101,9 @@ impl std::fmt::Display for MediaError {
             Self::InvalidSource => "invalid_source: Enter an HTTP or HTTPS media address.",
             Self::HelperUnavailable => {
                 "helper_unavailable: Media tools are unavailable. Configure the Fetchpath media tool directory."
+            }
+            Self::SizeLimit => {
+                "size_limit: The download passed the size allowed without asking, so it stopped."
             }
             Self::HelperCrash => {
                 "helper_crash: The media helper stopped unexpectedly. Retry this download."
@@ -244,6 +249,10 @@ pub struct MediaJob {
 struct JobInner {
     snapshot: Mutex<MediaJobSnapshot>,
     cancel: AtomicBool,
+    /// Most bytes this job may write; 0 for no cap.
+    byte_cap: AtomicU64,
+    /// Set when the cap stopped the helper, so the stop reads as that.
+    over_cap: AtomicBool,
     active_pid: AtomicU32,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -270,6 +279,8 @@ impl MediaJob {
                     action: None,
                 }),
                 cancel: AtomicBool::new(false),
+                byte_cap: AtomicU64::new(0),
+                over_cap: AtomicBool::new(false),
                 active_pid: AtomicU32::new(0),
                 worker: Mutex::new(None),
             }),
@@ -315,6 +326,17 @@ impl MediaJob {
             job.inner.active_pid.store(0, Ordering::Release);
         }));
         Ok(())
+    }
+
+    /// Caps what this job may write, for an agent's download (FP-067): the
+    /// helper is stopped once its work passes `bytes`, and an output over it
+    /// is never published. Set before `start`.
+    pub fn limit_bytes(&self, bytes: u64) {
+        self.inner.byte_cap.store(bytes, Ordering::Release);
+    }
+
+    fn cap(&self) -> Option<u64> {
+        Some(self.inner.byte_cap.load(Ordering::Acquire)).filter(|cap| *cap > 0)
     }
 
     pub fn cancel(&self) {
@@ -429,13 +451,45 @@ impl MediaJob {
             ]),
         }
         args.push(self.source.clone());
-        let output = run_helper(
-            &self.tools.yt_dlp,
-            &args,
-            &self.inner.cancel,
-            &self.inner.active_pid,
-            DOWNLOAD_TIMEOUT,
-        )?;
+        // What has arrived is the size of the work folder, measured while the
+        // helper runs. The engine reads it as progress and stops an agent's
+        // download at its size limit, as it does for files (FP-067).
+        // Over a cap, the helper is stopped as a cancellation would stop it,
+        // and the stop is reported as the cap.
+        let done = AtomicBool::new(false);
+        let output = thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(Ordering::Acquire) {
+                    let arrived = folder_bytes(work);
+                    self.update(|snapshot| snapshot.bytes_received = arrived);
+                    if self.cap().is_some_and(|cap| arrived > cap) {
+                        self.inner.over_cap.store(true, Ordering::Release);
+                        self.inner.cancel.store(true, Ordering::Release);
+                    }
+                    thread::sleep(PROGRESS_EVERY);
+                }
+            });
+            // Set however the helper call ends, a panic included, so the
+            // watcher always stops and the scope can finish.
+            struct Done<'a>(&'a AtomicBool);
+            impl Drop for Done<'_> {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+            let _done = Done(&done);
+            run_helper(
+                &self.tools.yt_dlp,
+                &args,
+                &self.inner.cancel,
+                &self.inner.active_pid,
+                DOWNLOAD_TIMEOUT,
+            )
+        });
+        if self.inner.over_cap.load(Ordering::Acquire) {
+            return Err(MediaError::SizeLimit);
+        }
+        let output = output?;
         if !output.status.success() {
             return Err(classify_helper_failure(&output.stderr));
         }
@@ -489,6 +543,12 @@ impl MediaJob {
             return Err(MediaError::Cancelled);
         }
         let bytes = fs::metadata(output)?.len();
+        // Measured again here: a helper that wrote everything at once was
+        // faster than the sampling (FP-067 review).
+        if self.cap().is_some_and(|cap| bytes > cap) {
+            self.update(|snapshot| snapshot.bytes_received = bytes);
+            return Err(MediaError::SizeLimit);
+        }
         let hash = sha256_file(output)?;
         match fs::hard_link(output, &self.destination) {
             Ok(()) => {}
@@ -669,6 +729,26 @@ struct CapturedOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+}
+
+/// How often the bytes a helper has written are measured.
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+
+/// The bytes in the files under `folder`, which only the helper writes.
+fn folder_bytes(folder: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => folder_bytes(&entry.path()),
+            // Read through the file itself: a directory listing's size for a
+            // file still being written lags on Windows.
+            Ok(kind) if kind.is_file() => fs::metadata(entry.path()).map_or(0, |data| data.len()),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn run_helper(
@@ -933,6 +1013,104 @@ mod tests {
         assert_eq!(job.snapshot().state, MediaJobState::Cancelled);
         assert!(!destination.exists());
         assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+    }
+
+    /// Bytes are reported while the helper writes, so the engine can stop an
+    /// agent's download at its size limit (FP-067), and a stop part way
+    /// publishes nothing.
+    #[cfg(windows)]
+    #[test]
+    fn bytes_are_reported_while_the_helper_writes() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("growing.mp4");
+        let job = MediaJob::create(
+            "https://example.test/media".into(),
+            "video-18".into(),
+            destination.clone(),
+            fixture_tools("growing-helper.cmd"),
+        );
+        job.start().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let seen = loop {
+            let snapshot = job.snapshot();
+            assert_eq!(snapshot.state, MediaJobState::Running, "{snapshot:?}");
+            if snapshot.bytes_received >= 256 * 1024 {
+                break snapshot.bytes_received;
+            }
+            assert!(Instant::now() < deadline, "no bytes reported while running");
+            thread::sleep(Duration::from_millis(50));
+        };
+        assert!(seen < 60 * 64 * 1024, "reported before the helper finished");
+        job.cancel();
+        job.join();
+        assert_eq!(job.snapshot().state, MediaJobState::Cancelled);
+        assert!(!destination.exists());
+        assert!(fs::read_dir(temporary.path()).unwrap().next().is_none());
+    }
+
+    /// A helper that writes its whole output at once is faster than any
+    /// sampling (FP-067 review): with a byte cap set, the output is measured
+    /// again before publication and a file over the cap is never published.
+    /// Without a cap the same helper's file is published, so the fixture
+    /// really would get past a sampled limit.
+    #[cfg(windows)]
+    #[test]
+    fn a_burst_past_the_byte_cap_is_never_published() {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let tools = || {
+            MediaTools::new(
+                fixtures.join("burst-helper.cmd"),
+                &fixtures,
+                fixtures.join("fake-ffprobe-video.cmd"),
+            )
+            .unwrap()
+        };
+        let temporary = tempfile::tempdir().unwrap();
+
+        let open = temporary.path().join("uncapped.mp4");
+        let job = MediaJob::create(
+            "https://example.test/v".into(),
+            "video-18".into(),
+            open.clone(),
+            tools(),
+        );
+        job.start().unwrap();
+        job.join();
+        assert_eq!(
+            job.snapshot().state,
+            MediaJobState::Completed,
+            "{:?}",
+            job.snapshot()
+        );
+        assert_eq!(fs::metadata(&open).unwrap().len(), 2 * 1024 * 1024);
+
+        let capped = temporary.path().join("capped.mp4");
+        let job = MediaJob::create(
+            "https://example.test/v".into(),
+            "video-18".into(),
+            capped.clone(),
+            tools(),
+        );
+        job.limit_bytes(256 * 1024);
+        job.start().unwrap();
+        job.join();
+        let snapshot = job.snapshot();
+        assert_eq!(snapshot.state, MediaJobState::Failed, "{snapshot:?}");
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("size_limit"),
+            "{snapshot:?}"
+        );
+        assert!(!capped.exists(), "a capped download was published");
+        // Only the uncapped file is left; the capped job's work folder is gone.
+        let left: Vec<_> = fs::read_dir(temporary.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(left.len(), 1);
     }
 
     /// The real regression: a YouTube talk whose full metadata is over 800 KiB

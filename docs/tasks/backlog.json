@@ -2014,8 +2014,8 @@
         "FP-065",
         "FP-066"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2030,7 +2030,11 @@
       ],
       "acceptance": "An independent reviewer derives attacks from the spec: prompt-injected titles and file names, traversal and symlinks out of grants, size-limit games, credential and cookie smuggling, self-approval, reading other principals jobs, enabling sharing or LAN, and flooding; every finding is fixed or recorded as a residual risk with a reason.",
       "verification": "Adversarial test suite added and passing; review record in docs/development with findings, fixes and residual risks.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/MCP.md",
+        "crates/fetchpath-session/tests/policy.rs",
+        "apps/cli/tests/mcp.rs"
+      ],
       "blockedReason": null
     },
     {

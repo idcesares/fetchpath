@@ -222,23 +222,51 @@ pub fn safe_file_name(text: &str) -> Option<String> {
         .chars()
         .filter(|c| !is_invisible_format(*c))
         .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            // Line and paragraph separators would start a new line on the
+            // person's approval card (FP-067).
+            if c.is_control()
+                || matches!(c, '\u{2028}' | '\u{2029}')
+                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            {
                 '_'
             } else {
                 c
             }
         })
         .collect();
-    let cleaned = cleaned.trim().trim_end_matches(['.', ' ']).to_owned();
-    let stem = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.as_bytes()[3].is_ascii_digit());
-    if cleaned.is_empty() || reserved {
+    // Cut first, then trim, so a name cut at a dot or space still ends well.
+    let cut: String = cleaned.trim().chars().take(200).collect();
+    let cleaned = cut.trim().trim_end_matches(['.', ' ']).to_owned();
+    if cleaned.is_empty() || reserved_device_name(&cleaned) {
         return None;
     }
-    Some(cleaned.chars().take(200).collect())
+    Some(cleaned)
+}
+
+/// Names Windows keeps for devices, with or without an extension, as the
+/// engine refuses them: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, and
+/// `COM` or `LPT` followed by 1 to 9 or a superscript 1 to 3.
+fn reserved_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) {
+        return true;
+    }
+    let mut chars = stem.chars();
+    let head: String = chars.by_ref().take(3).collect();
+    let rest: Vec<char> = chars.collect();
+    (head == "COM" || head == "LPT")
+        && matches!(
+            rest.as_slice(),
+            ['1'..='9'] | ['\u{b9}' | '\u{b2}' | '\u{b3}']
+        )
 }
 
 /// Bidirectional overrides, isolates and marks, zero-width characters and
@@ -432,5 +460,32 @@ mod tests {
         assert_eq!(options.destination.as_deref(), Some("out.bin"));
         assert_eq!(options.sha256.as_deref(), Some("ab"));
         assert!(parse(&["--bogus".to_owned()]).is_err());
+    }
+
+    /// A name from a server or page (FP-067): device names Windows reserves
+    /// are refused, line and paragraph separators cannot break the line a
+    /// card shows, and a long name is cut before its trailing dots go.
+    #[test]
+    fn server_names_cannot_be_devices_break_lines_or_end_in_a_dot() {
+        for name in [
+            "CONIN$",
+            "conout$.txt",
+            "COM\u{b9}.bin",
+            "LPT\u{b3}",
+            "com9.txt",
+            "Nul",
+        ] {
+            assert_eq!(safe_file_name(name), None, "{name}");
+        }
+        assert_eq!(safe_file_name("COM0.txt").as_deref(), Some("COM0.txt"));
+        assert_eq!(
+            safe_file_name("report\u{2028}Approved by you\u{2029}.pdf").as_deref(),
+            Some("report_Approved by you_.pdf")
+        );
+        assert_eq!(safe_file_name("a\u{85}b").as_deref(), Some("a_b"));
+        let long = format!("{}. . .txt", "x".repeat(198));
+        let cut = safe_file_name(&long).unwrap();
+        assert!(cut.chars().count() <= 200, "{cut}");
+        assert!(!cut.ends_with(['.', ' ']), "{cut:?}");
     }
 }

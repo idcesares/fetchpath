@@ -1,8 +1,9 @@
 # Agents through MCP
 
-FP-065 (the server) and FP-066 (access and approvals). Source:
-`apps/cli/src/mcp`, `apps/cli/src/agents.rs`, the desktop's queue and
-Settings. FP-067 attacks the boundary.
+FP-065 (the server), FP-066 (access and approvals) and FP-067 (the attack
+on the boundary). Source: `apps/cli/src/mcp`, `apps/cli/src/agents.rs`, the
+desktop's queue and Settings; the boundary itself is the engine's
+(`crates/fetchpath-session`).
 
 ## What exists
 
@@ -141,6 +142,59 @@ already). Standard output carries only protocol messages.
   could restart a stopped engine, history `total`, a double link probe)
   were fixed; tool errors quoting servers are now labelled untrusted.
 
+## Boundary review (FP-067)
+
+27 September 2026. An independent Opus reviewer derived attacks from the
+design (section 6 and 8) and contract D1 to D4: injected names and titles,
+traversal and links out of grants, size-limit games, credential and cookie
+smuggling, self-approval, reading other principals' jobs, sharing and LAN,
+flooding, and the D4 re-hold. The lead turned each into a test in the FP-067
+section of `crates/fetchpath-session/tests/policy.rs` (with media tests in
+`adapters/media` and the session, and a flood test in
+`apps/cli/tests/mcp.rs`), confirmed the findings fail before their fix, and
+fixed them. A second independent Opus review of the fixes found more, fixed
+the same way. Contract D5 records what changed.
+
+| Finding | Severity | Fix | Test |
+|---|---|---|---|
+| An agent's media download ignored its size limit: the helper's bytes were unknown until it finished | medium | The adapter measures the work folder while the helper runs, which the size stop reads | `an_agent_media_download_stops_at_its_size_limit` |
+| A helper writing everything at once got past that sampling (10 of 10 runs in the second review) | medium | A hard byte cap in the adapter, set by the engine as an agent's media job starts: the helper is stopped past it and an output over it is never published; the failure becomes a `size_limit` hold | `a_burst_past_the_byte_cap_is_never_published`, `an_agent_media_burst_past_its_limit_waits_and_approval_lifts_it` |
+| A folder part of a destination was unchecked: `CON`, `a:stream`, trailing dots, `\\?\` and `\\.\` paths passed, even inside a grant | low | Every part checked, only drive and share paths (`plain_path`), shared with rule folders and the default folder | `destinations_are_refused_when_any_part_is_not_a_plain_name`, `a_rule_folder_must_be_one_downloads_can_be_saved_in` |
+| An agent could name a download so the approval card showed another name (`invoice` + right-to-left override + `txt.exe` read as a text file) | medium | Reordering and line-breaking characters refused in every part; joiners Persian, Indic and emoji names need are kept (the first fix refused them; the second review caught it) | `a_destination_cannot_disguise_itself_on_the_approval_card` |
+| `CONIN$`, `CONOUT$` and superscript `COM`/`LPT` names were not reserved; line separators passed through names; a name cut at 200 characters could end in a dot | low | Engine, `safe_file_name` and the browser inbox share the list; separators become `_`; cut before trimming | `server_names_cannot_be_devices_break_lines_or_end_in_a_dot`, `page_chosen_names_cannot_be_devices_or_disguised` |
+| `EngineStatus` showed an agent the queue's event cursor and connected clients; its job streams carried the engine-wide cursors | low | Zero for agents; an agent's stream numbers its own items | `engine_status_tells_an_agent_nothing_about_others`, `an_agent_job_stream_counts_only_its_own_events` |
+| The media watcher could spin forever if the helper call panicked | low | A drop guard ends it | (code) |
+
+Attacks that held, now regression tests: credentials in other spellings
+(percent-encoded, upper-case scheme, IPv6, bare token) refused to create
+and to look at; cancelling and asking again does not reset the hourly rate;
+seventeen waits at once refuse one and finish sixteen, and a megabyte of
+link is an error while the server carries on. Already covered by earlier
+tests and confirmed by reading: the allow-list (settings, rules, access,
+approvals, batches, queue streams, shutdown refused), ownership answering
+`unknown_job`, the ledger keyed by principal, holds that retry and new links
+cannot shed, the D4 re-hold's states and serialization, traversal and
+canonical grants, create-only publication, and no HTML sinks in the desktop.
+
+Residual risks, with reasons:
+
+- A link or junction made inside a granted folder after a download is
+  queued can carry its write outside the grant: grants are checked at
+  creation, retry and access changes, not again at publication. Doing so
+  needs a filesystem write as the same user, which the design places out of
+  scope (an agent host with a shell already has it). Re-checking at start
+  would need a persisted marker so a download the person approved outside
+  the grant is not held again.
+- The approval card's From line shows the link as the agent sent it (query
+  and user info removed); its labels, the agent's name and the reasons are
+  Fetchpath's own, so it cannot pose as an approval.
+- During a video's merge the parts and the output are all in the work
+  folder, so the measured size can reach about twice the file's and stop a
+  video over half the limit; approval restarts it. This errs toward asking.
+- Agent names are not authenticated between agent hosts (same-user scope).
+- Three copies of the reserved-name list (engine, command line, browser
+  inbox) agree now but are separate.
+
 ## Limitations
 
 - The harness grants a folder from the command line rather than through
@@ -150,12 +204,6 @@ already). Standard output carries only protocol messages.
 - Settings reads agents when it opens; a change made elsewhere meanwhile
   shows the next time.
 - Each tool call other than a wait opens its own pipe connection.
-- Residual, for FP-067: the engine checks `:`, reserved names and trailing
-  dots only in a destination's file name, not in its folder components (a
-  folder component named `CON` inside a grant counts as inside it; creating
-  it fails), and neither it nor `safe_file_name` treats `CONIN$` or
-  `CONOUT$` as reserved. Agent names are not authenticated between agent
-  hosts, which is within the same-user scope the design excludes.
 - Setup for Claude Desktop, Codex and VS Code is documented from their
   configuration formats; only Claude Code was run.
 - A media format label from the helper is untrusted yet is also what the

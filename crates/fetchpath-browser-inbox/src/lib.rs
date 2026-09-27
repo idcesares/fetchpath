@@ -269,16 +269,25 @@ fn validate_id(value: &str) -> Result<(), String> {
 
 fn safe_filename(value: &str) -> Result<String, String> {
     let trimmed = value.trim().trim_end_matches(['.', ' ']);
+    // The engine's list (FP-067): CONIN$, CONOUT$ and the superscript
+    // COM and LPT ports too.
     let stem = trimmed
         .split('.')
         .next()
         .unwrap_or(trimmed)
-        .to_ascii_uppercase();
-    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem.as_bytes()[3].is_ascii_digit()
-            && stem.as_bytes()[3] != b'0');
+        .trim_end()
+        .to_uppercase();
+    let mut chars = stem.chars();
+    let head: String = chars.by_ref().take(3).collect();
+    let rest: Vec<char> = chars.collect();
+    let reserved = matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ((head == "COM" || head == "LPT")
+        && matches!(
+            rest.as_slice(),
+            ['1'..='9'] | ['\u{b9}' | '\u{b2}' | '\u{b3}']
+        ));
     if trimmed.is_empty()
         || trimmed.len() > 240
         || trimmed == "."
@@ -286,6 +295,9 @@ fn safe_filename(value: &str) -> Result<String, String> {
         || reserved
         || trimmed.chars().any(|character| {
             character.is_control()
+                // A page cannot name a file so it reads as another on the
+                // person's screen: no overrides, isolates or line breaks.
+                || matches!(character, '\u{2028}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
                 || matches!(
                     character,
                     '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
@@ -597,5 +609,23 @@ mod tests {
 
         assert!(!store.accept(&capture).unwrap());
         assert_eq!(store.pending().unwrap().len(), 1);
+    }
+
+    /// A page-chosen name cannot be a device or disguise itself (FP-067).
+    #[test]
+    fn page_chosen_names_cannot_be_devices_or_disguised() {
+        for name in [
+            "CONIN$",
+            "conout$.txt",
+            "COM\u{b9}.bin",
+            "invoice\u{202E}txt.exe",
+            "a\u{2066}b\u{2069}.exe",
+            "two\u{2028}lines.bin",
+        ] {
+            assert!(safe_filename(name).is_err(), "{name:?}");
+        }
+        assert_eq!(safe_filename("COM0.txt").as_deref(), Ok("COM0.txt"));
+        let persian = "\u{06AF}\u{0632}\u{0627}\u{0631}\u{0634}\u{200C}\u{0647}\u{0627}.pdf";
+        assert!(safe_filename(persian).is_ok());
     }
 }

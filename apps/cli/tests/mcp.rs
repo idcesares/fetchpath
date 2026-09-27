@@ -320,3 +320,80 @@ fn a_bad_agent_name_is_refused_before_serving() {
     assert_eq!(code(&output), 2);
     assert!(output.stdout.is_empty());
 }
+
+/// Flooding the server (FP-067): more waits than it runs at once are refused
+/// at once rather than queued, a huge argument is an error rather than a
+/// crash, and the server keeps answering afterwards.
+#[test]
+fn a_flood_of_waits_and_a_huge_argument_are_refused_and_the_server_carries_on() {
+    let home = Home::new();
+    let granted = home.dir.path().join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    grant(&home, "helper", &granted);
+    // About ten seconds of transfer, so the waits overlap.
+    let base = server(body(1024 * 1024), Duration::from_millis(150));
+    let mut client = Client::start(&home, "helper");
+    client.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "fetchpath-test", "version": "1"}
+        }),
+    );
+    client.write(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    let started = client.call("download", json!({"url": format!("{base}/slow.bin")}));
+    let id = started["structuredContent"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Seventeen waits sent together; one more than the server runs at once.
+    let first = client.next_id;
+    for offset in 0..17 {
+        client.write(&json!({
+            "jsonrpc": "2.0",
+            "id": first + offset,
+            "method": "tools/call",
+            "params": {"name": "wait_for_download", "arguments": {"id": id, "timeout_seconds": 60}}
+        }));
+    }
+    client.next_id += 17;
+    let mut refused = 0;
+    let mut settled = 0;
+    while refused + settled < 17 {
+        let line = client
+            .lines
+            .recv_timeout(Duration::from_secs(90))
+            .expect("every wait answers");
+        let message: Value = serde_json::from_str(&line).unwrap();
+        if message.get("id").is_none() {
+            continue;
+        }
+        let result = &message["result"];
+        if result["isError"] == true {
+            assert!(
+                result["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("At most 16 waits"),
+                "{message}"
+            );
+            refused += 1;
+        } else {
+            assert_eq!(
+                result["structuredContent"]["state"], "completed",
+                "{message}"
+            );
+            settled += 1;
+        }
+    }
+    assert_eq!((refused, settled), (1, 16));
+
+    // A megabyte of link is an error, and the server still answers.
+    let huge = format!("{base}/{}", "a".repeat(1024 * 1024));
+    let refused = client.call("download", json!({"url": huge}));
+    assert_eq!(refused["isError"], true);
+    let listed = client.call("list_downloads", json!({}));
+    assert_eq!(listed["structuredContent"]["total"], 1, "{listed}");
+}

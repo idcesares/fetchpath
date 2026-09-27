@@ -159,7 +159,8 @@ fn clamp_directory(value: Option<String>) -> Option<String> {
         return None;
     }
     let path = PathBuf::from(&value);
-    path.is_absolute().then_some(value)
+    // A folder downloads could not be saved in is no default at all.
+    (path.is_absolute() && crate::plain_path(&path).is_ok()).then_some(value)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
