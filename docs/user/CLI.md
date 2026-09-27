@@ -348,10 +348,10 @@ optionally waiting, with progress), `inspect_link`, `list_downloads`,
 
 - Downloads into folders you granted to that agent start at once. Anything
   else (another folder, a file over its size limit, more than its number of
-  downloads an hour) waits for you: the terminal shows a card, and
-  `fetchpath approve JOB` or `fetchpath deny JOB` answers from the command
-  line. Until you grant folders (`fetchpath agents`, coming next), every
-  request waits for you.
+  downloads an hour) waits for you: the desktop queue and the terminal show
+  it with Approve and Deny, `fetchpath approvals` lists what waits, and
+  `fetchpath approve JOB` or `fetchpath deny JOB` answers. An agent you have
+  not granted anything asks for everything.
 - An agent can never send a password or cookies, replace an existing file,
   or change settings, rules, sharing or paired devices; it sees and controls
   only the downloads it asked for.
@@ -360,6 +360,20 @@ optionally waiting, with progress), `inspect_link`, `list_downloads`,
   a web page cannot pass itself off as instructions from Fetchpath. A
   SHA-256 Fetchpath computes is described as what arrived, never as proof of
   who published the file.
+
+Grant access in the desktop (Settings, AI agents) or from the command line:
+
+```powershell
+fetchpath agents                                  # who has access, where, and how much
+fetchpath agents grant claude-code D:\AgentDownloads
+fetchpath agents limit claude-code --size 500MB --per-hour 10
+fetchpath agents revoke claude-code D:\AgentDownloads   # take one folder away
+fetchpath agents revoke claude-code                     # take all of its access away
+```
+
+Taking a folder away, or revoking an agent, stops what it has not finished
+there: those downloads wait for your approval again, a running one paused
+at the point it reached.
 
 These rules defend against an agent that a web page misleads. They do not
 defend against a malicious program already running as you, which could read

@@ -46,6 +46,20 @@ interface JobSnapshot {
   finishedAtMs: number | null;
   kind: "file" | "media";
   qualityLabel: string | null;
+  /** The agent that asked for it, when an agent did. */
+  agent: string | null;
+  /** Why it waits for the person's approval. */
+  approvalReasons: ApprovalReason[];
+}
+
+type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "unknown";
+
+/** One agent's access, as the engine keeps it. */
+interface AgentView {
+  name: string;
+  folders: string[];
+  maxBytes: number;
+  maxNewJobsPerHour: number;
 }
 
 interface JobDraft {
@@ -362,8 +376,230 @@ settingsForm.addEventListener("submit", (event) => event.preventDefault());
 async function showSettings(): Promise<void> {
   clearError(settingsError);
   openDialog(settingsDialog, settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents()]);
 }
+
+/* AI agents (FP-066) ---------------------------------------------------------
+   The engine keeps each agent's folders and limits and enforces them; this
+   only edits them. Taking a folder away, or revoking an agent, makes its
+   unfinished downloads outside the remaining folders wait for approval. */
+
+const agentsList = required<HTMLDivElement>("agents-list");
+const agentNewName = required<HTMLInputElement>("agent-new-name");
+const agentAdd = required<HTMLButtonElement>("agent-add");
+const DEFAULT_AGENT_BYTES = 1024 * 1024 * 1024;
+const DEFAULT_AGENT_PER_HOUR = 20;
+const MIB = 1024 * 1024;
+let agents: AgentView[] = [];
+
+async function refreshAgents(): Promise<void> {
+  try {
+    agents = await invoke<AgentView[]>("list_agents");
+    renderAgents();
+  } catch (error) {
+    showError(settingsError, error);
+  }
+}
+
+function agentStatus(message: string): void {
+  settingsStatus.textContent = message;
+  settingsStatus.hidden = false;
+  announce(message);
+}
+
+/** Saves one agent and redraws, putting focus back where the person was. */
+async function saveAgent(agent: AgentView, message: string, focus: string): Promise<void> {
+  clearError(settingsError);
+  try {
+    agents = await invoke<AgentView[]>("set_agent", {
+      name: agent.name,
+      folders: agent.folders,
+      maxBytes: agent.maxBytes,
+      maxNewJobsPerHour: agent.maxNewJobsPerHour,
+    });
+    renderAgents();
+    agentStatus(message);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+  agentsList.querySelector<HTMLElement>(focus)?.focus();
+}
+
+function agentButton(label: string, name: string, action: string, accessible: string, danger = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "secondary danger" : "secondary";
+  button.textContent = label;
+  button.dataset.agent = name;
+  button.dataset.agentAction = action;
+  button.setAttribute("aria-label", accessible);
+  return button;
+}
+
+function renderAgents(): void {
+  agentsList.replaceChildren();
+  if (!agents.length) {
+    const empty = document.createElement("p");
+    empty.className = "field-note";
+    empty.textContent = "No agent has access yet. Every request from an agent waits for you.";
+    agentsList.append(empty);
+    return;
+  }
+  for (const agent of agents) {
+    const card = document.createElement("section");
+    card.className = "agent-card";
+    card.setAttribute("aria-labelledby", `agent-${agent.name}`);
+    const heading = document.createElement("h3");
+    heading.id = `agent-${agent.name}`;
+    heading.textContent = agent.name;
+    const summary = document.createElement("p");
+    summary.className = "hint field-note";
+    summary.textContent = agent.folders.length
+      ? `Saves into ${agent.folders.length === 1 ? "this folder" : "these folders"} without asking, up to ${formatBytes(agent.maxBytes)} a download and ${agent.maxNewJobsPerHour} downloads an hour.`
+      : "No folders yet: everything it asks for waits for you.";
+    card.append(heading, summary);
+
+    if (agent.folders.length) {
+      const list = document.createElement("ul");
+      list.className = "agent-folders";
+      list.setAttribute("aria-label", `Folders for ${agent.name}`);
+      agent.folders.forEach((folder, index) => {
+        const item = document.createElement("li");
+        const path = document.createElement("code");
+        path.textContent = folder;
+        const remove = agentButton("Remove", agent.name, "remove-folder", `Remove ${folder} from ${agent.name}`);
+        remove.dataset.index = String(index);
+        item.append(path, remove);
+        list.append(item);
+      });
+      card.append(list);
+    }
+
+    const limits = document.createElement("div");
+    limits.className = "agent-limits";
+    const sizeLabel = document.createElement("label");
+    sizeLabel.textContent = "Largest download (MB)";
+    const size = document.createElement("input");
+    size.type = "number";
+    size.min = "1";
+    size.value = String(Math.max(1, Math.round(agent.maxBytes / MIB)));
+    size.id = `agent-size-${agent.name}`;
+    sizeLabel.htmlFor = size.id;
+    const sizeWrap = document.createElement("div");
+    sizeWrap.append(sizeLabel, size);
+    const rateLabel = document.createElement("label");
+    rateLabel.textContent = "Downloads an hour";
+    const rate = document.createElement("input");
+    rate.type = "number";
+    rate.min = "1";
+    rate.max = "1000";
+    rate.value = String(agent.maxNewJobsPerHour);
+    rate.id = `agent-rate-${agent.name}`;
+    rateLabel.htmlFor = rate.id;
+    const rateWrap = document.createElement("div");
+    rateWrap.append(rateLabel, rate);
+    limits.append(sizeWrap, rateWrap, agentButton("Save limits", agent.name, "save-limits", `Save limits for ${agent.name}`));
+    card.append(limits);
+
+    const actions = document.createElement("div");
+    actions.className = "agent-actions";
+    actions.append(
+      agentButton("Add folder…", agent.name, "add-folder", `Add a folder for ${agent.name}`),
+      agentButton("Revoke access", agent.name, "revoke", `Revoke access for ${agent.name}`, true),
+    );
+    card.append(actions);
+    agentsList.append(card);
+  }
+}
+
+agentsList.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-agent-action]");
+  if (!button) return;
+  const name = button.dataset.agent!;
+  const agent = agents.find((candidate) => candidate.name === name);
+  if (!agent) return;
+  const here = (action: string) => `button[data-agent="${CSS.escape(name)}"][data-agent-action="${action}"]`;
+  switch (button.dataset.agentAction) {
+    case "add-folder": {
+      clearError(settingsError);
+      try {
+        const selected = await open({ directory: true, title: `Choose a folder ${name} may save into` });
+        if (typeof selected !== "string") return;
+        if (agent.folders.some((folder) => folder.toLowerCase() === selected.toLowerCase())) {
+          agentStatus(`${name} can already save into ${selected}.`);
+          return;
+        }
+        await saveAgent({ ...agent, folders: [...agent.folders, selected] }, `${name} can now save into ${selected}.`, here("add-folder"));
+      } catch (error) {
+        showError(settingsError, error);
+      }
+      return;
+    }
+    case "remove-folder": {
+      const index = Number(button.dataset.index);
+      const removed = agent.folders[index];
+      const folders = agent.folders.filter((_, position) => position !== index);
+      await saveAgent(
+        { ...agent, folders },
+        `${name} can no longer save into ${removed}. Its downloads there wait for your approval.`,
+        here("add-folder"),
+      );
+      return;
+    }
+    case "save-limits": {
+      const size = Number(required<HTMLInputElement>(`agent-size-${name}`).value);
+      const rate = Number(required<HTMLInputElement>(`agent-rate-${name}`).value);
+      if (!(size >= 1) || !(rate >= 1) || !Number.isInteger(rate)) {
+        showError(settingsError, "Give a size of at least 1 MB and a whole number of downloads an hour.");
+        return;
+      }
+      await saveAgent(
+        { ...agent, maxBytes: Math.round(size * MIB), maxNewJobsPerHour: Math.min(rate, 1000) },
+        `Limits for ${name} saved.`,
+        here("save-limits"),
+      );
+      return;
+    }
+    case "revoke": {
+      clearError(settingsError);
+      try {
+        agents = await invoke<AgentView[]>("revoke_agent", { name });
+        renderAgents();
+        agentStatus(`${name} no longer has access. Anything it had not finished waits for your approval.`);
+        agentNewName.focus();
+      } catch (error) {
+        showError(settingsError, error);
+      }
+      return;
+    }
+  }
+});
+
+agentAdd.addEventListener("click", async () => {
+  const name = agentNewName.value.trim();
+  if (!name) {
+    showError(settingsError, "Type the agent's name, as given to fetchpath mcp --agent.");
+    agentNewName.focus();
+    return;
+  }
+  if (agents.some((agent) => agent.name === name)) {
+    agentStatus(`${name} is already listed.`);
+    return;
+  }
+  agentNewName.value = "";
+  await saveAgent(
+    { name, folders: [], maxBytes: DEFAULT_AGENT_BYTES, maxNewJobsPerHour: DEFAULT_AGENT_PER_HOUR },
+    `${name} added. Give it a folder so its downloads there start without asking.`,
+    `button[data-agent="${CSS.escape(name)}"][data-agent-action="add-folder"]`,
+  );
+});
+
+agentNewName.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    agentAdd.click();
+  }
+});
 
 const cliState = required<HTMLParagraphElement>("cli-state");
 const cliDetail = required<HTMLParagraphElement>("cli-detail");
@@ -1141,6 +1377,14 @@ jobList.addEventListener("click", async (event) => {
       case "pause":
         await invoke("pause_download", { jobId });
         break;
+      case "approve":
+        await invoke("approve_download", { jobId });
+        announce(`${filename(job.destination) || "The download"} was approved.`);
+        break;
+      case "deny":
+        await invoke("deny_download", { jobId });
+        announce(`${filename(job.destination) || "The download"} was denied.`);
+        break;
       case "resume":
         await invoke("resume_download", { jobId });
         break;
@@ -1510,6 +1754,8 @@ function queueRowSignature(job: JobSnapshot): string {
     job.notBeforeMs ?? "",
     job.qualityLabel ?? "",
     job.attempt,
+    job.agent ?? "",
+    job.approvalReasons.join(","),
   ].join("\u0001");
 }
 
@@ -1564,6 +1810,20 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
     schedule.className = "schedule-note";
     schedule.textContent = `Scheduled for ${new Date(job.notBeforeMs).toLocaleString()}`;
     article.append(schedule);
+  }
+
+  if (job.state === "awaiting_approval") {
+    const note = document.createElement("p");
+    note.className = "approval-note";
+    note.id = `job-approval-${job.jobId}`;
+    note.textContent = approvalText(job);
+    article.setAttribute("aria-describedby", note.id);
+    article.append(note);
+  } else if (job.agent) {
+    const note = document.createElement("p");
+    note.className = "schedule-note";
+    note.textContent = `Requested by the agent ${job.agent}`;
+    article.append(note);
   }
 
   const progress = document.createElement("progress");
@@ -1982,6 +2242,10 @@ function diagnostics(job: JobSnapshot): HTMLElement {
 
 function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; danger?: boolean }> {
   const actions: Array<{ action: string; label: string; danger?: boolean }> = [];
+  if (job.state === "awaiting_approval") {
+    actions.push({ action: "approve", label: "Approve" });
+    actions.push({ action: "deny", label: "Deny", danger: true });
+  }
   if (job.state === "scheduled") actions.push({ action: "start-now", label: "Start now" });
   // Media downloads have no checkpoint to come back to, so pause is not offered
   // for them rather than offered and then refused.
@@ -2029,6 +2293,16 @@ function actionButton(job: JobSnapshot, spec: { action: string; label: string; d
 /** Announces only terminal transitions, once each, through the right live region. */
 function announceStateChanges(): void {
   const next = new Map<string, JobState>();
+  // An agent's request waits on the person, so it is announced when this
+  // window first sees it too, not only when it changes while open.
+  const asking = jobs.filter(
+    (job) => job.state === "awaiting_approval" && observedStates.get(job.jobId) !== "awaiting_approval",
+  );
+  if (asking.length === 1) {
+    announceProblem(`${approvalText(asking[0])} Approve or deny it in the queue.`);
+  } else if (asking.length > 1) {
+    announceProblem(`${asking.length} agent requests wait for your approval. Approve or deny them in the queue.`);
+  }
   for (const job of jobs) {
     next.set(job.jobId, job.state);
     const previous = observedStates.get(job.jobId);
@@ -2159,12 +2433,26 @@ function matchesFilter(job: JobSnapshot, filter: QueueFilter): boolean {
   if (filter === "paused") return job.state === "paused";
   if (filter === "scheduled") return job.state === "scheduled" || job.state === "queued";
   if (filter === "completed") return job.state === "completed";
-  return job.state === "failed" || job.state === "needs_source";
+  return job.state === "failed" || job.state === "needs_source" || job.state === "awaiting_approval";
+}
+
+/** Who asks and why, in the words the terminal's card uses. */
+function approvalText(job: JobSnapshot): string {
+  const who = job.agent ? `The agent ${job.agent}` : "An agent";
+  const why = job.approvalReasons.map((reason) => ({
+    outside_granted_folders: "it would save outside the folders you let it use",
+    size_limit: "it passed the size you let it download and stopped",
+    rate_limit: "it asked for more downloads this hour than you allow",
+    unknown: "it asked for something its access does not cover",
+  })[reason]);
+  return why.length
+    ? `${who} asks to download this: ${why.join("; ")}.`
+    : `${who} asks to download this.`;
 }
 
 function matchesSearch(job: JobSnapshot, query: string): boolean {
   if (!query) return true;
-  return [job.source, job.destination, filename(job.destination), job.error, job.qualityLabel]
+  return [job.source, job.destination, filename(job.destination), job.error, job.qualityLabel, job.agent]
     .filter((value): value is string => Boolean(value))
     .some((value) => value.toLocaleLowerCase().includes(query));
 }

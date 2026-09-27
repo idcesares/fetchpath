@@ -21,6 +21,9 @@ mod settings_menu;
 mod setup;
 mod view;
 
+/// An agent's request as lines, shared with `fetchpath approvals`.
+pub(crate) use flows::approval::lines as approval_lines;
+
 use crate::client::{self, Engine};
 use crate::download::EXIT_USAGE;
 use fetchpath_protocol::command::{Command, JobFilter};

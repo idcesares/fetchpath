@@ -7,6 +7,7 @@ use fetchpath_protocol::error::Action;
 use fetchpath_protocol::model::{
     self, EngineSettings, JobKind, JobState, MediaInspection, MediaVariantKind, Theme,
 };
+use fetchpath_protocol::principal::{AgentAccess, ApprovalReason};
 use fetchpath_protocol::{JobSnapshot, SensitiveUrl, Timestamp};
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,11 @@ pub struct JobView {
     pub finished_at_ms: Option<u64>,
     pub kind: &'static str,
     pub quality_label: Option<String>,
+    /// The agent that asked for it, when an agent did (FP-066).
+    pub agent: Option<String>,
+    /// Why it waits for the person: `outside_granted_folders`, `size_limit`
+    /// or `rate_limit`.
+    pub approval_reasons: Vec<&'static str>,
 }
 
 fn ms(at: Timestamp) -> u64 {
@@ -106,7 +112,46 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
             _ => "file",
         },
         quality_label: job.quality_label.clone(),
+        agent: job.principal.agent().map(ToString::to_string),
+        approval_reasons: job
+            .approval
+            .as_ref()
+            .map(|approval| {
+                approval
+                    .reasons
+                    .iter()
+                    .map(|reason| match reason {
+                        ApprovalReason::OutsideGrantedFolders => "outside_granted_folders",
+                        ApprovalReason::SizeLimit => "size_limit",
+                        ApprovalReason::RateLimit => "rate_limit",
+                        ApprovalReason::Unknown => "unknown",
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
+}
+
+/// One agent's access, as Settings shows it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentView {
+    pub name: String,
+    pub folders: Vec<String>,
+    pub max_bytes: u64,
+    pub max_new_jobs_per_hour: u32,
+}
+
+pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
+    policies
+        .iter()
+        .map(|access| AgentView {
+            name: access.agent.to_string(),
+            folders: access.policy.folders.clone(),
+            max_bytes: access.policy.max_bytes,
+            max_new_jobs_per_hour: access.policy.max_new_jobs_per_hour,
+        })
+        .collect()
 }
 
 pub fn jobs(jobs: &[JobSnapshot]) -> Vec<JobView> {
@@ -432,7 +477,27 @@ mod tests {
                 "finishedAtMs": null,
                 "kind": "file",
                 "qualityLabel": null,
+                "agent": null,
+                "approvalReasons": [],
             })
+        );
+    }
+
+    #[test]
+    fn an_agent_request_names_its_agent_and_reasons() {
+        let shown = view(
+            json!({
+                "state": "awaiting_approval",
+                "principal": "agent:claude-code",
+                "approval": { "reasons": ["outside_granted_folders", "size_limit"] },
+            }),
+            "2026-09-25T10:00:01Z",
+        );
+        assert_eq!(shown["state"], "awaiting_approval");
+        assert_eq!(shown["agent"], "claude-code");
+        assert_eq!(
+            shown["approvalReasons"],
+            json!(["outside_granted_folders", "size_limit"])
         );
     }
 

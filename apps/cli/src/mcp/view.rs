@@ -155,7 +155,7 @@ pub fn approval_text(reasons: &[ApprovalReason]) -> String {
     parts.dedup();
     format!(
         "Waiting for the person's approval: {}. Nothing more is downloaded until they approve \
-         or deny it in Fetchpath (its terminal, or `fetchpath approve`).",
+         or deny it in Fetchpath (the desktop app, the terminal, or `fetchpath approve`).",
         parts.join("; ")
     )
 }

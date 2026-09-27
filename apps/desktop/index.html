@@ -396,6 +396,22 @@
           </div>
         </fieldset>
 
+        <fieldset class="settings-group" id="agents-group">
+          <legend>AI agents</legend>
+          <p class="hint field-note">
+            Agents such as Claude Code download through <code>fetchpath mcp --agent NAME</code>. What an agent saves
+            into the folders you give it starts at once; anything else waits for you in the queue.
+          </p>
+          <div id="agents-list" class="agents-list"></div>
+          <label for="agent-new-name">Add an agent by the name it uses</label>
+          <div class="destination-row">
+            <input id="agent-new-name" autocomplete="off" spellcheck="false" placeholder="claude-code"
+                   aria-describedby="agent-new-name-hint" />
+            <button id="agent-add" class="secondary" type="button">Add agent</button>
+          </div>
+          <p id="agent-new-name-hint" class="hint field-note">Lowercase letters, digits, dots, dashes or underscores.</p>
+        </fieldset>
+
         <fieldset class="settings-group">
           <legend>Command line</legend>
           <p id="cli-state"></p>

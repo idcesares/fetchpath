@@ -1,7 +1,8 @@
 # Agents through MCP
 
-FP-065. Source: `apps/cli/src/mcp`. FP-066 adds the approval surfaces and
-agent access; FP-067 attacks the boundary.
+FP-065 (the server) and FP-066 (access and approvals). Source:
+`apps/cli/src/mcp`, `apps/cli/src/agents.rs`, the desktop's queue and
+Settings. FP-067 attacks the boundary.
 
 ## What exists
 
@@ -57,6 +58,26 @@ already). Standard output carries only protocol messages.
   (engine, `Command::History`), so searching cannot spell out a hidden
   path.
 
+## Access and approvals (FP-066)
+
+- **Engine.** Changing or removing an agent's access re-checks its
+  unfinished downloads (queued, scheduled, running, paused, waiting for a
+  source, failed with a retry due): any whose destination is outside the
+  new folders waits for approval again, a running one stopped at its
+  checkpoint as a size stop is (contract D4). Revoking removes all folders.
+- **Command line.** `fetchpath agents [list | grant NAME FOLDER... | revoke
+  NAME [FOLDER...] | limit NAME --size S --per-hour N]` (folders must exist
+  and are stored absolute; `--json` prints `AgentPolicies`), and `fetchpath
+  approvals [--json]`, worded as the terminal's approval card.
+- **Desktop.** A waiting request's card names its agent and why it asks,
+  offers Approve and Deny (named for the download), counts under Needs
+  attention, and is announced in the assertive region, also when the window
+  first sees it (several at once as a count). Other agent downloads say who
+  requested them. Settings has an AI agents section: add an agent by name,
+  folders with Remove, Add folder (the Windows folder picker), largest
+  download and downloads an hour with Save limits, and Revoke access; focus
+  stays where the person was after each change.
+
 ## Verification
 
 - `mcp::view` unit tests: paths only inside a grant, outside text only under
@@ -90,6 +111,29 @@ already). Standard output carries only protocol messages.
   hostile `Content-Disposition` name never reached the agent: like
   `fetchpath add`, `download` names a file from its link. Re-run after the
   review fixes: same outcome, no schema warnings.
+- FP-066: `revoking_an_agent_stops_its_downloads_until_the_person_approves_them`
+  (narrowing holds only the removed folder's download; revoking stops a
+  running 2 MiB download with nothing published; approval finishes it from
+  there with the right bytes); `agents_are_granted_limited_and_revoked_from_the_command_line`
+  and the `approvals` listing in
+  `an_agent_request_is_approved_and_denied_from_the_command_line`
+  (`apps/cli/tests/queue.rs`); the desktop view names the agent and reasons
+  (`fetchpath-desktop` view tests). `tests/compatibility/windows/ui-agents.ps1`
+  on the release build, 27 September 2026, in its own data folder: two
+  requests made through `fetchpath mcp` waited; the queue showed "The agent
+  harness asks to download this: it would save outside the folders you let
+  it use." with Approve and Deny buttons named for each file; the assertive
+  region said "2 agent requests wait for your approval"; Approve pressed
+  from the keyboard saved all 524,288 bytes and Deny left the other
+  cancelled with nothing saved; in Settings the agent name field was named,
+  an agent added from the keyboard left focus on its Add folder button, a
+  folder granted from the command line appeared with a named Remove, no
+  focusable control in the section was unnamed, Save limits stored 5 MiB,
+  Remove and Revoke access reached the engine and focus returned to the name
+  field. `ui-accessibility.ps1` passed again from an empty data folder (it
+  also names every control in Settings); run against a data folder with
+  downloads it fails on tab order by design, since it expects the empty
+  state.
 - Strong review, 27 September 2026, by an independent Opus reviewer that
   derived attacks from the spec (findings and fixes in the commit message):
   no high findings; two medium path leaks (problem text, history search)
@@ -99,8 +143,12 @@ already). Standard output carries only protocol messages.
 
 ## Limitations
 
-- Granting folders has no command yet (FP-066); until then every request
-  from an agent the person has not configured waits for approval.
+- The harness grants a folder from the command line rather than through
+  the Windows folder picker, which UI Automation of the webview cannot
+  drive. The terminal has `/approvals`, `/approve` and `/deny` but no
+  `/agents`; access is changed in Settings or with `fetchpath agents`.
+- Settings reads agents when it opens; a change made elsewhere meanwhile
+  shows the next time.
 - Each tool call other than a wait opens its own pipe connection.
 - Residual, for FP-067: the engine checks `:`, reserved names and trailing
   dots only in a destination's file name, not in its folder components (a

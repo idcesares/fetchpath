@@ -1984,8 +1984,8 @@
         "FP-055",
         "FP-065"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -1999,7 +1999,11 @@
       ],
       "acceptance": "The desktop queue shows awaiting-approval jobs with approve and deny; Settings lists agents with their folders and limits and can grant, change and revoke them; fetchpath agents and fetchpath approvals do the same from the command line; revoking an agent stops its running jobs from continuing without approval.",
       "verification": "Desktop walkthrough and accessibility harness for the approval card and agent settings; CLI tests for grant, limit, revoke and approvals.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/MCP.md",
+        "tests/compatibility/windows/ui-agents.ps1",
+        "crates/fetchpath-session/tests/policy.rs"
+      ],
       "blockedReason": null
     },
     {

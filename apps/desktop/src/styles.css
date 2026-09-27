@@ -453,3 +453,15 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
   #media-tools-state[data-ready="true"]::before,
   #media-tools-state[data-ready="false"]::before { color: CanvasText; }
 }
+
+/* Agents in Settings and their requests in the queue (FP-066). */
+.agents-list { display: grid; gap: 12px; margin: 8px 0 12px; }
+.agent-card { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.agent-card h3 { margin: 0 0 4px; font-size: 1rem; }
+.agent-folders { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.agent-folders li { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.agent-folders code { overflow-wrap: anywhere; }
+.agent-limits { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; margin-top: 8px; }
+.agent-limits input { width: 100%; padding: 8px 10px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: inherit; }
+.agent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.approval-note { margin: 6px 0; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--inset); }

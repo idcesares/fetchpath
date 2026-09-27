@@ -494,6 +494,19 @@ fn an_agent_request_is_approved_and_denied_from_the_command_line() {
     assert_eq!(approved.state, JobState::AwaitingApproval);
     let id = |job: &fetchpath_protocol::JobSnapshot| job.job_id.as_str()[..8].to_owned();
 
+    // `fetchpath approvals` lists both requests as the terminal's card does.
+    let output = home.run(&["approvals"]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    let listed = text(&output.stdout);
+    assert_eq!(listed.matches("the agent helper").count(), 2, "{listed}");
+    assert!(
+        listed.contains("outside the folders you let it use"),
+        "{listed}"
+    );
+    let (exit, lines) = home.json(&["approvals", "--json"]);
+    assert_eq!(exit, 0);
+    assert_eq!(lines[0]["jobs"].as_array().unwrap().len(), 2);
+
     let output = home.run(&["approve", &id(&approved)]);
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert!(
@@ -531,4 +544,66 @@ fn an_agent_request_is_approved_and_denied_from_the_command_line() {
     // Nothing is waiting any more, so answering again is refused.
     let again = home.run(&["approve", &id(&approved)]);
     assert_ne!(code(&again), 0);
+}
+
+/// `fetchpath agents` grants, limits and revokes an agent's access, which
+/// the engine then applies (FP-066).
+#[test]
+fn agents_are_granted_limited_and_revoked_from_the_command_line() {
+    let home = Home::new();
+    let granted = home.dir.path().join("granted");
+    let second = home.dir.path().join("second");
+    std::fs::create_dir_all(&granted).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let granted_arg = granted.display().to_string();
+    let second_arg = second.display().to_string();
+
+    let output = home.run(&["agents"]);
+    assert_eq!(code(&output), 0);
+    assert!(text(&output.stdout).contains("No agent has access yet"));
+
+    let output = home.run(&["agents", "grant", "helper", &granted_arg, &second_arg]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains(&granted_arg));
+
+    // A missing folder and a bad name are refused.
+    let missing = home.dir.path().join("missing").display().to_string();
+    assert_eq!(code(&home.run(&["agents", "grant", "helper", &missing])), 2);
+    assert_eq!(
+        code(&home.run(&["agents", "grant", "Bad Name", &granted_arg])),
+        2
+    );
+
+    let (exit, lines) = home.json(&[
+        "agents",
+        "limit",
+        "helper",
+        "--size",
+        "10MB",
+        "--per-hour",
+        "5",
+        "--json",
+    ]);
+    assert_eq!(exit, 0);
+    let policy = &lines[0]["policies"][0]["policy"];
+    assert_eq!(lines[0]["policies"][0]["agent"], "helper");
+    assert_eq!(policy["max_bytes"], 10 * 1024 * 1024);
+    assert_eq!(policy["max_new_jobs_per_hour"], 5);
+    assert_eq!(policy["folders"].as_array().unwrap().len(), 2);
+
+    // Taking one folder away keeps the other and the limits.
+    let (exit, lines) = home.json(&["agents", "revoke", "helper", &second_arg, "--json"]);
+    assert_eq!(exit, 0);
+    let policy = &lines[0]["policies"][0]["policy"];
+    assert_eq!(policy["folders"], serde_json::json!([granted_arg]));
+    assert_eq!(policy["max_new_jobs_per_hour"], 5);
+    assert_eq!(
+        code(&home.run(&["agents", "revoke", "helper", &second_arg])),
+        2
+    );
+
+    // Revoking the agent removes it.
+    let output = home.run(&["agents", "revoke", "helper"]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("No agent has access yet"));
 }

@@ -263,6 +263,7 @@ Changes save straight away.
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
+| AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
@@ -270,6 +271,17 @@ Changes save straight away.
 
 Everything works with the keyboard alone. Press **Keyboard help** for the
 shortcuts.
+
+## Requests from AI agents
+
+An AI agent connected through `fetchpath mcp` (see [CLI.md](CLI.md#ai-agents-mcp))
+downloads into the folders you give it in Settings without asking. Anything
+else it asks for appears in the list as **Waiting for approval**, with the
+agent's name and why it asks; Fetchpath announces it, and it shows under
+**Needs attention**. **Approve** lets it download; **Deny** cancels it and the
+agent is told. Nothing is downloaded while it waits. Taking a folder away or
+revoking an agent in Settings sends its unfinished downloads there back to
+waiting.
 
 ## The command line
 

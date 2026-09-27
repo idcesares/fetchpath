@@ -1,3 +1,4 @@
+mod agents;
 mod client;
 mod download;
 mod engine;
@@ -26,7 +27,9 @@ The download queue, kept by the Fetchpath engine:
   fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...
+  fetchpath approvals                         agents' requests that wait for you
   fetchpath approve | deny JOB...             answer an agent's request that waits for you
+  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N]
   fetchpath watch [JOB]                       fetchpath inspect LINK
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
@@ -103,6 +106,8 @@ fn main() {
         Some("folder") => reveal::run(&args[1..]),
         Some("rules") => rules::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
+        Some("agents") => agents::run(&args[1..]),
+        Some("approvals") => agents::approvals(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

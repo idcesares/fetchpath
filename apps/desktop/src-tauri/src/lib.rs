@@ -8,6 +8,7 @@ use engine_link::{EngineLink, Signal};
 use fetchpath_protocol::command::{Command, DestinationDecision, JobFilter, JobInput};
 use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
+use fetchpath_protocol::principal::{AgentName, AgentPolicy};
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, Timestamp};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -581,6 +582,96 @@ async fn remove_download(job_id: String, engine: Engine<'_>) -> Result<(), Strin
     .await
 }
 
+/// Lets an agent's waiting request download (FP-066). Only the person's
+/// own clients can; the engine refuses it from an agent.
+#[tauri::command]
+async fn approve_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::ApproveJob {
+                job_id: self::job_id(&job_id)?,
+            },
+        )
+    })
+    .await
+}
+
+/// Refuses an agent's waiting request; it ends cancelled with a reason the
+/// agent can relay.
+#[tauri::command]
+async fn deny_download(job_id: String, engine: Engine<'_>) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::DenyJob {
+                job_id: self::job_id(&job_id)?,
+            },
+        )
+    })
+    .await
+}
+
+fn agent_views(result: CommandResult) -> Result<Vec<view::AgentView>, String> {
+    match result {
+        CommandResult::AgentPolicies { policies } => Ok(view::agents(&policies)),
+        other => Err(unexpected(&other)),
+    }
+}
+
+fn agent_name(name: &str) -> Result<AgentName, String> {
+    AgentName::try_from(name.trim())
+        .map_err(|message| format!("That name cannot be used: {message}."))
+}
+
+#[tauri::command]
+async fn list_agents(engine: Engine<'_>) -> Result<Vec<view::AgentView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || agent_views(engine.send(Command::GetAgentPolicies).map_err(text)?)).await
+}
+
+/// Sets one agent's folders and limits. Its unfinished downloads outside
+/// the new folders wait for approval again (engine, D4).
+#[tauri::command]
+async fn set_agent(
+    name: String,
+    folders: Vec<String>,
+    max_bytes: u64,
+    max_new_jobs_per_hour: u32,
+    engine: Engine<'_>,
+) -> Result<Vec<view::AgentView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let command = Command::SetAgentPolicy {
+            agent: agent_name(&name)?,
+            policy: Some(AgentPolicy {
+                folders,
+                max_bytes,
+                max_new_jobs_per_hour,
+            }),
+        };
+        agent_views(engine.send(command).map_err(text)?)
+    })
+    .await
+}
+
+/// Removes an agent's access; everything it has not finished waits for the
+/// person again.
+#[tauri::command]
+async fn revoke_agent(name: String, engine: Engine<'_>) -> Result<Vec<view::AgentView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let command = Command::SetAgentPolicy {
+            agent: agent_name(&name)?,
+            policy: None,
+        };
+        agent_views(engine.send(command).map_err(text)?)
+    })
+    .await
+}
+
 /// One Fetchpath window per Windows user account.
 ///
 /// The queue belongs to the engine, which holds its own single-owner lock; this
@@ -710,7 +801,12 @@ pub fn run() {
             use_media_tools_dir,
             browser_setup_status,
             cli_path,
-            reveal_extension_folder
+            reveal_extension_folder,
+            approve_download,
+            deny_download,
+            list_agents,
+            set_agent,
+            revoke_agent
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is

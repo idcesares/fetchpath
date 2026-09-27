@@ -1582,25 +1582,69 @@ impl Session {
             .collect()
     }
 
-    /// Sets or removes one agent's access and saves every agent's.
+    /// Sets or removes one agent's access and saves every agent's. Its
+    /// unfinished downloads that now fall outside its folders wait for the
+    /// person again, a running one stopped at its checkpoint; so revoking an
+    /// agent stops everything it started from continuing unapproved.
     pub fn set_agent_policy(
         &self,
         agent: AgentName,
         next: Option<AgentPolicy>,
     ) -> Result<(), String> {
         let next = next.map(policy::validated).transpose()?;
-        let mut agents = self.agents.lock().expect("agents poisoned");
-        let mut updated = agents.clone();
-        match next {
-            Some(policy) => updated.insert(agent, policy),
-            None => updated.remove(&agent),
-        };
-        if let Some(path) = self.agents_path.as_ref() {
-            write_json_atomically(path, &policy::AgentsFile::new(updated.clone())).map_err(
-                |error| format!("Could not save agent access at {}: {error}", path.display()),
-            )?;
+        let folders = next
+            .as_ref()
+            .map(|policy| policy.folders.clone())
+            .unwrap_or_default();
+        {
+            let mut agents = self.agents.lock().expect("agents poisoned");
+            let mut updated = agents.clone();
+            match next {
+                Some(policy) => updated.insert(agent.clone(), policy),
+                None => updated.remove(&agent),
+            };
+            if let Some(path) = self.agents_path.as_ref() {
+                write_json_atomically(path, &policy::AgentsFile::new(updated.clone())).map_err(
+                    |error| format!("Could not save agent access at {}: {error}", path.display()),
+                )?;
+            }
+            *agents = updated;
         }
-        *agents = updated;
+        self.hold_outside_grants(&agent, &folders)
+    }
+
+    /// Holds `agent`'s unfinished downloads whose destination is outside
+    /// `folders`. The stop of a running one is requested here and joined on
+    /// approval, as a size stop is, so the queue lock never waits on it; a
+    /// download that published first reports its completion then.
+    fn hold_outside_grants(&self, agent: &AgentName, folders: &[String]) -> Result<(), String> {
+        let principal = Principal::Agent(agent.clone());
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let mut held = false;
+        for record in &mut state.records {
+            // A failed one counts while an automatic retry would start it.
+            let unfinished = match record.view.state.as_str() {
+                "queued" | "scheduled" | "running" | "paused" | "needs_source" => true,
+                "failed" => record.retry_at_ms.is_some(),
+                _ => false,
+            };
+            if record.principal != principal
+                || record.approval.is_some()
+                || !unfinished
+                || policy::inside_grants(&record.destination, folders)
+            {
+                continue;
+            }
+            if let Some(job) = record.job.as_ref() {
+                job.cancel();
+            }
+            record.retry_at_ms = None;
+            record.hold(vec![ApprovalReason::OutsideGrantedFolders]);
+            held = true;
+        }
+        if held {
+            self.save_locked(&mut state)?;
+        }
         Ok(())
     }
 

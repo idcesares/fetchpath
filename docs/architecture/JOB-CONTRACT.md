@@ -412,3 +412,21 @@ Source: `crates/fetchpath-session/src/engine.rs`, `policy.rs`.
   folders only when that destination lies inside the agent's grant, and
   otherwise against the file name alone, so repeated searches cannot spell
   out a folder the agent is not shown (found by the FP-065 review).
+
+### D4 · Changing an agent's access re-checks what it started (FP-066, 27 September 2026)
+
+Extends D1. Source: `crates/fetchpath-session/src/lib.rs` (`set_agent_policy`).
+
+- **Access changes apply to unfinished downloads.** When the person changes
+  or removes an agent's access, each of that agent's downloads that is
+  queued, scheduled, running, paused, waiting for a new source, or failed
+  with an automatic retry due, and whose destination is no longer inside the
+  agent's folders, moves to `awaiting_approval` (`outside_granted_folders`).
+  A running one is stopped at its checkpoint, as a size stop is, and
+  continues from there if approved. Revoking an agent removes all its
+  folders, so everything it has not finished waits for the person. This
+  includes downloads the person approved before: an approval was for the
+  access the agent had then.
+- **Left alone:** finished, cancelled and denied downloads, requests already
+  waiting, and downloads still inside the remaining folders. A download that
+  published before the stop took effect reports its completion on approval.

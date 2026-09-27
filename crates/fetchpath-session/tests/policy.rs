@@ -637,9 +637,96 @@ fn an_agent_history_search_matches_hidden_folders_by_file_name_only() {
     assert_eq!(search(&s.agent, "acmecorp"), 0);
     assert_eq!(search(&s.agent, "report.bin"), 1);
     // Inside the grant the folder matches, and the person matches anything.
-    let granted_name = s.granted.file_name().unwrap().to_string_lossy().into_owned();
+    let granted_name = s
+        .granted
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(search(&s.agent, &format!("{granted_name}\\inside")), 1);
     assert_eq!(search(&s.user, "acmecorp"), 1);
+}
+
+/// Changing an agent's access re-checks what it started (FP-066): a folder
+/// taken away holds that folder's downloads, and revoking the agent stops a
+/// running one at its checkpoint until the person approves it.
+#[test]
+fn revoking_an_agent_stops_its_downloads_until_the_person_approves_them() {
+    let body: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let link = serve(body.clone(), true);
+    let s = setup(granting);
+    let kept = s.root.join("kept");
+    std::fs::create_dir_all(&kept).unwrap();
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(AgentPolicy {
+                folders: vec![s.granted.display().to_string(), kept.display().to_string()],
+                ..AgentPolicy::default()
+            }),
+        },
+    )
+    .unwrap();
+    let in_granted = job(send(&s.agent, later(&s.granted.join("a.bin"))).unwrap());
+    let in_kept = job(send(&s.agent, later(&kept.join("b.bin"))).unwrap());
+
+    // Narrowing: only the folder taken away is held.
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&kept)),
+        },
+    )
+    .unwrap();
+    let held = get(&s.agent, &in_granted.job_id);
+    assert_eq!(held.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&held), [ApprovalReason::OutsideGrantedFolders]);
+    assert_eq!(get(&s.agent, &in_kept.job_id).state, JobState::Queued);
+
+    // Revoking: a running download stops and nothing is published.
+    let destination = kept.join("big.bin");
+    let running = job(send(&s.agent, file(&link, &destination)).unwrap());
+    wait_for(&s.engine, &s.agent, &running.job_id, |job| {
+        job.state == JobState::Running && job.progress.bytes_received > 0
+    });
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: None,
+        },
+    )
+    .unwrap();
+    let stopped = get(&s.agent, &running.job_id);
+    assert_eq!(stopped.state, JobState::AwaitingApproval, "{stopped:?}");
+    assert_eq!(reasons(&stopped), [ApprovalReason::OutsideGrantedFolders]);
+    assert_eq!(
+        get(&s.agent, &in_kept.job_id).state,
+        JobState::AwaitingApproval
+    );
+    thread::sleep(Duration::from_millis(300));
+    s.engine.tick();
+    assert_eq!(
+        get(&s.agent, &running.job_id).state,
+        JobState::AwaitingApproval
+    );
+    assert!(!destination.exists(), "nothing is published while it waits");
+
+    // The person approves it, and it finishes from where it stopped.
+    send(
+        &s.user,
+        Command::ApproveJob {
+            job_id: running.job_id.clone(),
+        },
+    )
+    .unwrap();
+    let finished = wait_for(&s.engine, &s.agent, &running.job_id, |job| {
+        job.state.is_terminal() || job.state == JobState::Failed
+    });
+    assert_eq!(finished.state, JobState::Completed, "{finished:?}");
+    assert_eq!(std::fs::read(&destination).unwrap(), body);
 }
 
 #[test]
