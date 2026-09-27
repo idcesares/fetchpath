@@ -221,6 +221,27 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Nothing,
     },
     Spec {
+        name: "theme",
+        aliases: &[],
+        usage: "/theme [NAME | glyphs auto|unicode|ascii | density comfortable|compact]",
+        summary: "Colors, symbols and density of this terminal",
+        takes: Takes::Nothing,
+    },
+    Spec {
+        name: "keys",
+        aliases: &[],
+        usage: "/keys [ACTION KEY | ACTION default]",
+        summary: "Keys for the dashboard and its actions",
+        takes: Takes::Nothing,
+    },
+    Spec {
+        name: "alias",
+        aliases: &[],
+        usage: "/alias [NAME COMMAND... | remove NAME]",
+        summary: "Your own names for Fetchpath commands",
+        takes: Takes::Nothing,
+    },
+    Spec {
         name: "engine",
         aliases: &[],
         usage: "/engine",
@@ -626,6 +647,12 @@ fn execute(
             reply.quit = true;
             Ok(())
         }
+        // The terminal's own settings; the session runs these before a line
+        // reaches the engine.
+        "theme" | "keys" | "alias" => Err(client::input_error(&format!(
+            "/{} works only at the interactive prompt.",
+            spec.name
+        ))),
         _ => unreachable!("every command in the table runs"),
     }
 }
@@ -700,7 +727,11 @@ fn help(topic: Option<&str>, reply: &mut Reply) {
     );
     reply.say(
         Tone::Normal,
-        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, F2 opens the dashboard, Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
+        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, F2 opens the dashboard (/keys changes it), Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
+    );
+    reply.say(
+        Tone::Normal,
+        "/alias lists your own commands; /theme and /keys change how this terminal looks and which keys it takes (kept in cli.toml in the data folder).",
     );
 }
 
@@ -727,6 +758,8 @@ pub struct Completion {
 pub struct Context<'a> {
     pub jobs: &'a [JobSnapshot],
     pub settings: &'a [String],
+    /// The person's alias names, completed with the commands.
+    pub aliases: &'a [String],
 }
 
 impl Context<'_> {
@@ -760,10 +793,12 @@ pub fn complete(before_cursor: &str, context: &Context) -> Completion {
         let typed = word.trim_start_matches('/').to_ascii_lowercase();
         COMMANDS
             .iter()
-            .filter(|spec| spec.name.starts_with(&typed))
-            .map(|spec| Candidate {
-                insert: format!("/{}", spec.name),
-                label: format!("/{}", spec.name),
+            .map(|spec| spec.name)
+            .chain(context.aliases.iter().map(String::as_str))
+            .filter(|name| name.starts_with(&typed))
+            .map(|name| Candidate {
+                insert: format!("/{name}"),
+                label: format!("/{name}"),
                 finished: true,
             })
             .collect()
@@ -960,6 +995,7 @@ mod tests {
         let context = Context {
             jobs: &jobs,
             settings: &settings,
+            aliases: &[],
         };
         let inserts = |line: &str| -> Vec<String> {
             complete(line, &context)

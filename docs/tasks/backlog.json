@@ -1865,8 +1865,8 @@
       "dependsOn": [
         "FP-059"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -1880,7 +1880,11 @@
       ],
       "acceptance": "The /settings menu already edits the engine settings (FP-059); this is the terminal's own configuration. cli.toml in the data folder holds theme, glyph set, density, keybindings and aliases; built-in themes include high-contrast and plain; /theme, /keys and /alias edit it live; aliases and custom commands expand only to Fetchpath commands and can never run a shell or external program; invalid entries are reported with their line and ignored, never fatal.",
       "verification": "Config parse and error-report tests; alias expansion tests including recursion limits and a refused shell escape; theme contrast check for built-ins.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/TERMINAL.md",
+        "apps/cli/src/tui/config/mod.rs",
+        "docs/user/CLI.md"
+      ],
       "blockedReason": null
     },
     {

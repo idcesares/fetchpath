@@ -454,6 +454,7 @@ impl Board<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::config::keys::Keys;
     use crate::tui::dashboard::{entries, keys};
     use crate::tui::live::{Live, tests::recorded};
     use crate::tui::view::{ASCII, UNICODE};
@@ -527,7 +528,7 @@ mod tests {
 
     fn draw(live: &Live, glyphs: &Glyphs, width: u16, height: u16) -> (Vec<String>, Drawn) {
         let rows = entries(live);
-        let offered = keys(rows[0].job);
+        let offered = keys(rows[0].job, &Keys::default());
         let speeds = speeds();
         let board = Board {
             rows: &rows,
@@ -666,7 +667,7 @@ mod tests {
             glyphs: &ASCII,
             tick: 0,
             status: None,
-            keys: &keys(rows[1].job),
+            keys: &keys(rows[1].job, &Keys::default()),
         };
         let area = Rect::new(0, 0, 120, 24);
         let mut buffer = Buffer::empty(area);

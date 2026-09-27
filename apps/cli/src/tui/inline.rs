@@ -3,6 +3,10 @@
 //! above it.
 
 use super::Session;
+use super::config::alias::Aliases;
+use super::config::keys::Act;
+use super::config::theme::Theme;
+use super::config::{Config, Density};
 use super::dashboard;
 use super::flows::Flows;
 use super::flows::batch::{Answer as BatchAnswer, Batch};
@@ -52,17 +56,23 @@ impl Drop for RawMode {
 struct Screen {
     terminal: Term,
     height: u16,
+    /// Recolors each frame and each printed line.
+    theme: Theme,
 }
 
 impl Screen {
-    fn open(height: u16) -> std::io::Result<Self> {
+    fn open(height: u16, theme: Theme) -> std::io::Result<Self> {
         let terminal = Terminal::with_options(
             CrosstermBackend::new(std::io::stdout()),
             TerminalOptions {
                 viewport: Viewport::Inline(height),
             },
         )?;
-        Ok(Self { terminal, height })
+        Ok(Self {
+            terminal,
+            height,
+            theme,
+        })
     }
 
     /// Ratatui's inline viewport has a fixed height, so a new height means
@@ -77,7 +87,7 @@ impl Screen {
         backend.set_cursor_position(Position::new(0, top))?;
         backend.clear_region(ClearType::AfterCursor)?;
         Backend::flush(backend)?;
-        *self = Self::open(height)?;
+        *self = Self::open(height, self.theme)?;
         Ok(())
     }
 
@@ -89,10 +99,12 @@ impl Screen {
         let width = self.terminal.size()?.width;
         let rows = view::scrollback(lines, width);
         let height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
+        let theme = self.theme;
         self.terminal.insert_before(height, |buffer| {
             for (y, row) in rows.iter().enumerate() {
                 buffer.set_line(0, y as u16, row, width);
             }
+            theme.apply(buffer);
         })
     }
 
@@ -103,6 +115,7 @@ impl Screen {
         self.terminal.draw(|target| {
             let area = target.area();
             drawn = frame.render(area, target.buffer_mut());
+            self.theme.apply(target.buffer_mut());
             if let Some(cursor) = drawn.cursor {
                 target.set_cursor_position(cursor);
             }
@@ -121,23 +134,33 @@ impl Screen {
     }
 }
 
-/// The panel's row limit: at most eight, and never more than a third of
-/// the window, so scrollback stays visible.
-fn max_rows() -> usize {
-    let height = terminal::size().map_or(24, |(_, height)| height) as usize;
-    (height / 3).clamp(1, 8)
+/// The panel's row limit for the window as it is now, so scrollback stays
+/// visible.
+fn max_rows(config: &Config) -> usize {
+    config.max_rows(terminal::size().map_or(24, |(_, height)| height))
 }
 
 /// The hint line: live command suggestions while a command name is typed,
-/// the last completion list, or what the prompt accepts.
-fn hint(prompt: &Prompt, completion: Option<&str>) -> String {
+/// the last completion list, or what the prompt accepts. A compact
+/// terminal leaves out what the prompt accepts.
+fn hint(prompt: &Prompt, completion: Option<&str>, config: &Config) -> String {
     if let Some(text) = completion {
         return text.to_owned();
     }
     let text = prompt.text();
+    let compact = config.density == Density::Compact;
     if text.is_empty() {
-        return "Paste a link to download it · /help for commands · F2 dashboard · Ctrl+C to leave"
-            .into();
+        if compact {
+            return String::new();
+        }
+        let dashboard = config
+            .keys
+            .label(Act::Dashboard)
+            .map(|key| format!(" · {key} dashboard"))
+            .unwrap_or_default();
+        return format!(
+            "Paste a link to download it · /help for commands{dashboard} · Ctrl+C to leave"
+        );
     }
     if let Some(name) = text.strip_prefix('/')
         && !name.contains(' ')
@@ -156,6 +179,9 @@ fn hint(prompt: &Prompt, completion: Option<&str>) -> String {
                 .join("  "),
         };
     }
+    if compact {
+        return String::new();
+    }
     "Enter runs it · Tab completes · Esc clears".into()
 }
 
@@ -165,6 +191,7 @@ fn complete(prompt: &mut Prompt, session: &Session) -> Option<String> {
     let context = Context {
         jobs: session.live.jobs(),
         settings: &session.settings,
+        aliases: &session.alias_names,
     };
     let completion = line::complete(prompt.before_cursor(), &context);
     match completion.candidates.as_slice() {
@@ -203,8 +230,7 @@ pub(super) fn notice_lines(notices: Vec<Notice>, glyphs: &Glyphs) -> Vec<Out> {
 }
 
 pub fn run(mut session: Session) -> i32 {
-    let glyphs = view::glyphs_for_terminal();
-    match run_view(&mut session, &glyphs) {
+    match run_view(&mut session) {
         Ok(code) => {
             println!("Downloads carry on in the background. Run fetchpath to come back.");
             code
@@ -323,8 +349,10 @@ pub(super) fn confirmed(session: &Session, card: &Card) -> Out {
 }
 
 /// Commands to offer while a command name is typed: every command whose
-/// name starts with it, as Claude Code lists them.
-fn palette(prompt: &Prompt) -> Vec<(&'static str, &'static str)> {
+/// name starts with it, as Claude Code lists them, then the person's
+/// aliases with what they run. The command or alias the name spells out
+/// comes first, so Enter runs `/d` rather than `/dashboard`.
+fn palette(prompt: &Prompt, config: &Config) -> Vec<(String, String)> {
     let text = prompt.text();
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
@@ -333,11 +361,22 @@ fn palette(prompt: &Prompt) -> Vec<(&'static str, &'static str)> {
         return Vec::new();
     }
     let typed = typed.to_ascii_lowercase();
-    line::COMMANDS
+    // `/q` is quit's short name, so quit goes first for it.
+    let spelled = line::find(&typed).map_or(typed.as_str(), |spec| spec.name);
+    let mut found: Vec<(String, String)> = line::COMMANDS
         .iter()
-        .filter(|spec| spec.name.starts_with(&typed))
-        .map(|spec| (spec.name, spec.summary))
-        .collect()
+        .filter(|spec| spec.name.starts_with(&typed) || spec.name == spelled)
+        .map(|spec| (spec.name.to_owned(), spec.summary.to_owned()))
+        .chain(
+            config
+                .aliases
+                .iter()
+                .filter(|(name, _)| name.starts_with(&typed))
+                .map(|(name, lines)| (name.to_owned(), format!("= {}", Aliases::describe(lines)))),
+        )
+        .collect();
+    found.sort_by_key(|(name, _)| *name != typed && *name != spelled);
+    found
 }
 
 /// Most commands listed under the prompt at once.
@@ -350,8 +389,14 @@ enum Chosen {
     Run(String),
 }
 
-fn choose_command(name: &str) -> Chosen {
-    match line::find(name) {
+fn choose_command(name: &str, config: &Config) -> Chosen {
+    // An alias for one command wants words when that command does.
+    let target = match config.aliases.get(name) {
+        Some([only]) => only.split_whitespace().next().unwrap_or(""),
+        Some(_) => "",
+        None => name,
+    };
+    match line::find(target) {
         Some(spec) if spec.needs_words() => Chosen::Type(format!("/{name} ")),
         _ => Chosen::Run(format!("/{name}")),
     }
@@ -433,7 +478,7 @@ fn set_mouse(on: bool, captured: &mut bool) -> std::io::Result<()> {
     Ok(())
 }
 
-fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
+fn run_view(session: &mut Session) -> std::io::Result<i32> {
     let raw = RawMode::enable()?;
     let mut prompt = Prompt::default();
     let mut completion: Option<String> = None;
@@ -442,7 +487,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     let mut chosen_command = 0_usize;
     let mut drawn = Drawn::default();
     let mut mouse = false;
-    let mut rows = max_rows();
+    let mut rows = max_rows(&session.config);
     let started = Instant::now();
     let tick = || (started.elapsed().as_millis() / 100) as u64;
     let mut screen = {
@@ -452,25 +497,33 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             prompt: "",
             cursor: 0,
             hint: "",
-            glyphs,
+            glyphs: &session.config.glyphs(),
             max_rows: rows,
             card: None,
             tick: 0,
             palette: &[],
             palette_selected: 0,
         };
-        Screen::open(frame.height(terminal::size().map_or(80, |(width, _)| width)))?
+        Screen::open(
+            frame.height(terminal::size().map_or(80, |(width, _)| width)),
+            session.config.theme,
+        )?
     };
+    // What in cli.toml could not be used, once.
+    screen.print(&std::mem::take(&mut session.config_problems))?;
     let mut code = 0;
     let mut dirty = true;
     let mut last_draw = Instant::now();
     'running: loop {
+        // `/theme`, `/keys` and `/alias` apply from the next frame.
+        let glyphs = &session.config.glyphs();
+        screen.theme = session.config.theme;
         menus.flows.watch(&session.live);
         let prompting = reviews.showing() || menus.flows.active();
         let commands = if menus.any() || prompting {
             Vec::new()
         } else {
-            palette(&prompt)
+            palette(&prompt, &session.config)
         };
         chosen_command = chosen_command.min(commands.len().saturating_sub(1));
         // The list shows a window of commands that follows the selection.
@@ -486,8 +539,9 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             if let Some(jobs) = &mut menus.jobs {
                 jobs.refresh(&session.live);
             }
+            rows = max_rows(&session.config);
             let panel = session.live.panel();
-            let hint_text = hint(&prompt, completion.as_deref());
+            let hint_text = hint(&prompt, completion.as_deref(), &session.config);
             let editing = menus.settings.as_ref().and_then(SettingsMenu::editing);
             let overlay = if let Some(setup) = &menus.setup {
                 Some(Overlay::Setup(setup))
@@ -555,6 +609,7 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                     let context = Context {
                         jobs: session.live.jobs(),
                         settings: &session.settings,
+                        aliases: &session.alias_names,
                     };
                     let menu = menus.settings.as_mut().expect("checked");
                     match menu.key(&session.engine, key, &context) {
@@ -689,7 +744,8 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                 Event::Mouse(event) if !commands.is_empty() => match event.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         if let Some(Target::Command(index)) = drawn.target_at(event.row) {
-                            match choose_command(commands[first_command + index].0) {
+                            let name = commands[first_command + index].0.clone();
+                            match choose_command(&name, &session.config) {
                                 Chosen::Type(text) => prompt.set(text),
                                 Chosen::Run(text) => {
                                     prompt.set(String::new());
@@ -719,12 +775,12 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                             KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::Enter
                         ) =>
                 {
-                    let name = commands[chosen_command].0;
+                    let name = commands[chosen_command].0.clone();
                     match key.code {
                         KeyCode::Up => chosen_command = chosen_command.saturating_sub(1),
                         KeyCode::Down => chosen_command += 1,
                         KeyCode::Tab => prompt.set(format!("/{name} ")),
-                        _ => match choose_command(name) {
+                        _ => match choose_command(&name, &session.config) {
                             Chosen::Type(text) => prompt.set(text),
                             Chosen::Run(text) => {
                                 prompt.set(String::new());
@@ -743,7 +799,8 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                     }
                 }
                 Event::Key(key)
-                    if key.code == KeyCode::F(2) && key.kind != KeyEventKind::Release =>
+                    if key.kind != KeyEventKind::Release
+                        && session.config.keys.is(Act::Dashboard, &key) =>
                 {
                     menus.dashboard = true;
                 }
@@ -775,7 +832,8 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
                     prompt.insert(&text);
                     completion = None;
                 }
-                Event::Resize(..) => rows = max_rows(),
+                // The next draw takes the panel's rows from the new size.
+                Event::Resize(..) => {}
                 _ => dirty = false,
             }
         }
@@ -786,11 +844,10 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
             set_mouse(false, &mut mouse)?;
             let height = screen.height;
             screen.close()?;
-            let left = dashboard::run(session, glyphs);
-            screen = Screen::open(height)?;
+            let left = dashboard::run(session);
+            screen = Screen::open(height, session.config.theme)?;
             let left = left?;
             screen.print(&left.lines)?;
-            rows = max_rows();
             dirty = true;
             if let Some(error) = left.lost {
                 screen.print(&[Out::new(
@@ -860,4 +917,27 @@ fn run_view(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<i32> {
     drop(raw);
     std::io::stdout().flush()?;
     Ok(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listed(typed: &str, config: &Config) -> Vec<String> {
+        let mut prompt = Prompt::default();
+        prompt.set(typed.to_owned());
+        palette(&prompt, config)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn the_name_typed_in_full_is_listed_first_so_enter_runs_it() {
+        let (config, problems) = Config::from_text("[aliases]\nd = \"dashboard\"\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(listed("/d", &config), vec!["d", "deny", "dashboard"]);
+        assert_eq!(listed("/q", &config)[0], "quit");
+        assert_eq!(listed("/de", &config), vec!["deny"]);
+    }
 }

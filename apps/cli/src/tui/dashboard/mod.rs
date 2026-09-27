@@ -1,6 +1,6 @@
 //! The dashboard (FP-060): a full-screen view toggled from the inline view
-//! with F2 or `/dashboard`. It lists the queue, shows the chosen download's
-//! details (speed over the last minute, and its ranges in flight, one per
+//! with F2 (or the key `/keys` gives it) or `/dashboard`. It lists the
+//! queue, shows the chosen download's details (speed over the last minute, and its ranges in flight, one per
 //! connection, from the engine's `JobDetails`) and acts on it with single
 //! keys named on screen. It uses the alternate screen, so leaving it puts
 //! the inline view and scrollback back as they were; what happened while it
@@ -9,10 +9,11 @@
 mod draw;
 
 use super::Session;
+use super::config::keys::{Act, Bind, Keys};
 use super::jobs_menu::{self, Deed, JobsMenu};
 use super::line::{Out, Tone};
 use super::live::{Live, Row};
-use super::view::{FINISHED, Glyphs};
+use super::view::FINISHED;
 use crate::queue::Control;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -127,31 +128,42 @@ pub fn entries(live: &Live) -> Vec<Row<'_>> {
 /// A single-key action on the chosen download.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Key {
-    pub key: char,
+    pub key: Bind,
     pub label: &'static str,
     pub deed: Deed,
 }
 
-/// The keys that make sense for a job, from the same list `/queue` offers.
-pub fn keys(job: &JobSnapshot) -> Vec<Key> {
+/// The action a key does for a deed, and its label; `None` for deeds the
+/// dashboard does not offer.
+fn act_of(deed: Deed) -> Option<(Act, &'static str)> {
+    Some(match deed {
+        Deed::Control(Control::Pause) => (Act::Pause, "pause"),
+        Deed::Control(Control::Resume) => (Act::Resume, "resume"),
+        Deed::Control(Control::Retry) => (Act::Resume, "retry"),
+        Deed::Control(Control::Cancel) => (Act::Cancel, "cancel"),
+        Deed::Control(Control::Remove) => (Act::Remove, "remove"),
+        Deed::Control(Control::Approve) => (Act::Approve, "approve"),
+        Deed::Control(Control::Deny) => (Act::Deny, "deny"),
+        // Typing a name belongs to the prompt's own card.
+        Deed::Rename => return None,
+        Deed::Reveal => (Act::Folder, "folder"),
+        // The dashboard already shows the details.
+        Deed::Show => return None,
+    })
+}
+
+/// The keys that make sense for a job, from the same list `/queue` offers,
+/// as bound in `cli.toml`. An action left without a key is not offered.
+pub fn keys(job: &JobSnapshot, bound: &Keys) -> Vec<Key> {
     jobs_menu::deeds(job)
         .into_iter()
         .filter_map(|(deed, _)| {
-            let (key, label) = match deed {
-                Deed::Control(Control::Pause) => ('p', "pause"),
-                Deed::Control(Control::Resume) => ('r', "resume"),
-                Deed::Control(Control::Retry) => ('r', "retry"),
-                Deed::Control(Control::Cancel) => ('c', "cancel"),
-                Deed::Control(Control::Remove) => ('x', "remove"),
-                Deed::Control(Control::Approve) => ('a', "approve"),
-                Deed::Control(Control::Deny) => ('d', "deny"),
-                // Typing a name belongs to the prompt's own card.
-                Deed::Rename => return None,
-                Deed::Reveal => ('o', "folder"),
-                // The dashboard already shows the details.
-                Deed::Show => return None,
-            };
-            Some(Key { key, label, deed })
+            let (act, label) = act_of(deed)?;
+            Some(Key {
+                key: bound.get(act)?,
+                label,
+                deed,
+            })
         })
         .collect()
 }
@@ -258,27 +270,35 @@ impl Dashboard {
         };
     }
 
-    fn act(&mut self, session: &Session, key: char) {
+    /// Does `act` to the chosen download, if it applies to it. Delete
+    /// removes whatever key `remove` has, so this takes the action.
+    fn act(&mut self, session: &Session, act: Act) {
         let rows = entries(&session.live);
         let position = self.position(&rows);
         let Some(job) = rows.get(position).map(|row| row.job.clone()) else {
             return;
         };
-        let Some(chosen) = keys(&job).into_iter().find(|offered| offered.key == key) else {
+        let bound = &session.config.keys;
+        let deed = jobs_menu::deeds(&job)
+            .into_iter()
+            .map(|(deed, _)| deed)
+            .find(|deed| act_of(*deed).is_some_and(|(offered, _)| offered == act));
+        let Some(deed) = deed else {
             self.disarm();
             return;
         };
-        if chosen.deed == Deed::Control(Control::Cancel) && self.armed.as_ref() != Some(&job.job_id)
-        {
+        if deed == Deed::Control(Control::Cancel) && self.armed.as_ref() != Some(&job.job_id) {
             self.armed = Some(job.job_id.clone());
+            // Only the cancel key reaches here, so it has one.
+            let key = bound.label(Act::Cancel).unwrap_or_default();
             self.status = Some(Out::new(
                 Tone::Bad,
-                format!("Press c again to cancel {}", crate::client::name(&job)),
+                format!("Press {key} again to cancel {}", crate::client::name(&job)),
             ));
             return;
         }
         self.armed = None;
-        let lines = JobsMenu::act(&session.engine, chosen.deed, &job);
+        let lines = JobsMenu::act(&session.engine, deed, &job);
         self.say(lines);
     }
 }
@@ -317,7 +337,7 @@ pub struct Leave {
     pub lost: Option<ProtocolError>,
 }
 
-pub fn run(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<Leave> {
+pub fn run(session: &mut Session) -> std::io::Result<Leave> {
     let screen = FullScreen::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     terminal.clear()?;
@@ -327,6 +347,8 @@ pub fn run(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<Leave> {
     let mut last_draw = Instant::now();
     let mut lost = None;
     'open: loop {
+        let glyphs = &session.config.glyphs();
+        let theme = session.config.theme;
         let moving = session.live.panel().iter().any(|row| row.group == 0);
         let every = Duration::from_millis(if moving { 100 } else { 500 });
         if dirty || last_draw.elapsed() >= every {
@@ -340,7 +362,7 @@ pub fn run(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<Leave> {
                 .unwrap_or_default();
             let offered = rows
                 .get(selected)
-                .map(|row| keys(row.job))
+                .map(|row| keys(row.job, &session.config.keys))
                 .unwrap_or_default();
             let segments = board.details.as_ref().and_then(|details| {
                 rows.get(selected)
@@ -362,6 +384,7 @@ pub fn run(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<Leave> {
                     keys: &offered,
                 }
                 .render(area, frame.buffer_mut());
+                theme.apply(frame.buffer_mut());
             })?;
             board.first = drawn.first;
             board.rows = drawn.rows;
@@ -375,27 +398,25 @@ pub fn run(session: &mut Session, glyphs: &Glyphs) -> std::io::Result<Leave> {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Release => dirty = false,
                 Event::Key(key) => match key.code {
-                    KeyCode::Esc | KeyCode::F(2) | KeyCode::Char('q') => break 'open,
+                    // These keys keep their meaning whatever is bound.
+                    KeyCode::Esc => break 'open,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         break 'open;
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        board.select(&rows, position.saturating_sub(1));
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => board.select(&rows, position + 1),
+                    KeyCode::Up => board.select(&rows, position.saturating_sub(1)),
+                    KeyCode::Down => board.select(&rows, position + 1),
                     KeyCode::PageUp => board.select(&rows, position.saturating_sub(10)),
                     KeyCode::PageDown => board.select(&rows, position + 10),
                     KeyCode::Home => board.select(&rows, 0),
                     KeyCode::End => board.select(&rows, rows.len().saturating_sub(1)),
-                    KeyCode::Delete => board.act(session, 'x'),
-                    KeyCode::Char(typed)
-                        if !key
-                            .modifiers
-                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                    {
-                        board.act(session, typed.to_ascii_lowercase());
-                    }
-                    _ => board.disarm(),
+                    KeyCode::Delete => board.act(session, Act::Remove),
+                    _ => match session.config.keys.act(&key) {
+                        Some(Act::Close | Act::Dashboard) => break 'open,
+                        Some(Act::Up) => board.select(&rows, position.saturating_sub(1)),
+                        Some(Act::Down) => board.select(&rows, position + 1),
+                        Some(act) => board.act(session, act),
+                        None => board.disarm(),
+                    },
                 },
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {

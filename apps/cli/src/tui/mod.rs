@@ -6,6 +6,7 @@
 //! prints append-only lines instead. Both are clients of the engine; leaving
 //! never stops a download.
 
+mod config;
 mod dashboard;
 mod flows;
 mod inline;
@@ -99,6 +100,12 @@ pub struct Session {
     tools_ready: Option<bool>,
     /// Recent speeds per download, for the dashboard's graph.
     speeds: dashboard::Speeds,
+    /// The terminal's own configuration, `cli.toml`.
+    config: config::Config,
+    /// What in `cli.toml` could not be used, to print once at start.
+    config_problems: Vec<line::Out>,
+    /// Alias names, for completion.
+    alias_names: Vec<String>,
 }
 
 impl Session {
@@ -113,6 +120,9 @@ impl Session {
                 let _ = found.send(status);
             }
         });
+        let (config, problems) = config::Config::load(config::default_path());
+        let config_problems = config::problem_lines(&config, &problems);
+        let alias_names = config.aliases.names().map(str::to_owned).collect();
         Ok(Self {
             engine,
             events,
@@ -121,6 +131,9 @@ impl Session {
             tools_check: Some(tools_check),
             tools_ready: None,
             speeds: dashboard::Speeds::default(),
+            config,
+            config_problems,
+            alias_names,
         })
     }
 
@@ -253,7 +266,47 @@ impl Session {
         }
     }
 
-    fn run_line(&self, text: &str, menus: bool) -> line::Reply {
-        line::run(&self.engine, self.live.jobs(), text, menus)
+    /// Runs a typed line: aliases are expanded first, the terminal's own
+    /// commands (`/theme`, `/keys`, `/alias`) change `cli.toml`, and every
+    /// other line goes to `line::run`. A custom command's replies are joined
+    /// in order; it stops at the first line that asks to leave.
+    fn run_line(&mut self, text: &str, menus: bool) -> line::Reply {
+        let lines = match self.config.aliases.expand(text) {
+            Ok(lines) => lines,
+            Err(message) => {
+                let mut reply = line::Reply::default();
+                reply.lines.push(line::Out::new(line::Tone::Bad, message));
+                return reply;
+            }
+        };
+        let shown = lines.len() > 1 || lines.first().is_some_and(|line| line != text);
+        let mut joined = line::Reply::default();
+        for expanded in lines {
+            if shown {
+                joined
+                    .lines
+                    .push(line::Out::new(line::Tone::Dim, format!("  = {expanded}")));
+            }
+            let reply = match line::parse(&expanded) {
+                Some((spec, args)) => config::command(&mut self.config, spec.name, &args),
+                None => None,
+            };
+            let reply = match reply {
+                Some(reply) => {
+                    self.alias_names = self.config.aliases.names().map(str::to_owned).collect();
+                    reply
+                }
+                None => line::run(&self.engine, self.live.jobs(), &expanded, menus),
+            };
+            joined.lines.extend(reply.lines);
+            joined.drafts.extend(reply.drafts);
+            joined.set_up_tools |= reply.set_up_tools;
+            joined.open = reply.open.or(joined.open);
+            if reply.quit {
+                joined.quit = true;
+                break;
+            }
+        }
+        joined
     }
 }

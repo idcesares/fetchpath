@@ -127,7 +127,32 @@ with `--json`, it prints help and exits 2.
   finish.
 - **Glyphs.** Unicode under Windows Terminal (`WT_SESSION`) or a terminal that
   sets `TERM_PROGRAM`; ASCII elsewhere, because the classic console's default
-  fonts lack most symbols.
+  fonts lack most symbols. `cli.toml` can force either.
+- **Personal configuration (FP-062).** `config/`: `cli.toml` in the engine's
+  data folder (`EngineHome`) holds `theme`, `glyphs`, `density`, `[colors]`,
+  `[keys]` and `[aliases]`. It is read with a line-based subset of TOML
+  (`config/file.rs`) so each bad line is reported with its number and
+  skipped while the rest apply; `/theme`, `/keys` and `/alias` rewrite only
+  the line they change (comments and order kept), write the file beside
+  itself and rename it, reload it, and report only problems the change
+  brought. *Themes:* the views draw with six named colors, one per role;
+  `Theme::apply` maps them once per freshly drawn buffer (inline frames,
+  scrollback lines, the dashboard), so drawing code is theme-free. Built-ins:
+  default (the terminal's palette), high-contrast and light (RGB), plain (no
+  color; bold and reverse still mark choices). *Density:* compact caps the
+  panel at four rows and drops the hint line under an empty prompt. *Keys:*
+  the dashboard key (F1–F12 only, since letters type at the prompt) and the
+  dashboard's action, move and close keys; a key taken twice is refused, and
+  an action whose default another took is left without one and reported.
+  Arrows, Enter, Esc, Delete and Ctrl+C are fixed. *Aliases:* a text is one
+  command with the typed words appended; a list is a custom command run line
+  by line (taking no words), each expansion echoed as `= /…`. Every line must
+  start with a Fetchpath command or another alias; `/tools` (which chooses
+  helper programs) is refused, as are control characters, names of existing
+  commands, loops (more than 8 aliases deep) and more than 32 commands.
+  Expansion only produces prompt lines, which go through `line::run` like
+  typed ones. Aliases join the `/` list and completion; a name typed in full
+  is listed first, so Enter runs `/d` rather than `/dashboard`.
 
 The queue view (`live.rs`) subscribes at the engine's current cursor, then
 merges a full listing; each job's `seq` against a snapshot's `last_seq` skips
@@ -255,6 +280,35 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   typed `deny`. The run found `/rename` alone opening the generic job list
   and the conflict receipt suggesting `/retry`; both fixed and re-run.
 
+- Personal configuration: unit tests for the file subset (sections, both
+  quotings, lists, escapes and their round trip, bad lines by number with the
+  rest kept, a broken section header skipping its entries, in-place edits
+  keeping comments), the whole file with bad entries by line, `/theme`,
+  `/keys` and `/alias` saving and reloading (refusals never reach the file;
+  a change repeats no old problem), an unreadable file giving the defaults,
+  key parsing, swaps, clashes and displaced defaults, alias expansion with
+  typed words, custom commands, refused shells and programs (`cmd`,
+  `powershell`, `calc.exe`, `!`, `/tools`, line breaks, stranded chains),
+  loops and the depth and size limits, a theme recoloring only its roles,
+  WCAG contrast of every high-contrast role (at least 7:1 on #0c0c0c and
+  black) and light role (4.5:1 on white), and the `/` list putting a name
+  typed in full first (`tui::config`, `tui::inline`). Headless ConPTY
+  walkthrough through a real engine in a scratch data folder, 26 September
+  2026, read back with a VT emulator: a `cli.toml` with a bad density, a
+  clashing key, a `cmd` alias and a self-naming alias printed those four
+  lines by number at start and applied the rest (F5 in the hint); the
+  prompt's color read back as #00ffff, and #005f87 after `/theme light`;
+  `/tidy` ran `/engine` then `/history`; refused `/keys` and `/alias`
+  changes left the file alone; `/alias get dl` chained to `/add --to`, whose
+  card saved the file into the alias's folder; F2 stayed inline, F5 opened
+  the dashboard offering `e remove`, and `e` removed the job; `/d` opened
+  the dashboard through its alias rather than `/deny`'s list; compact
+  dropped the hint line; the file kept its comment and had only the changed
+  lines rewritten. The run found every change reprinting the file's old
+  problems (fixed); `/sh`, refused at load, running the listed `/show` on
+  Enter showed that an alias named as a prefix of commands would lose Enter
+  to the first of them (fixed by listing a full name first).
+
 ## Limitations
 
 - `InspectLink` lets an agent read the headers of any HTTP(S) address the
@@ -270,14 +324,19 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
 - The media card lists formats without sizes: the helper's inspection does
   not report them.
 - Prompt history is kept for the session only; saving it (with query strings
-  and user info stripped) is FP-063. Batch,
-  conflict, checksum and approval prompts are FP-061; themes and keys
-  are FP-062.
+  and user info stripped) is FP-063.
+- `cli.toml` edits are read, changed and written whole: two terminals
+  changing it at the same moment keep the last write. Card keys (S, N, I, A,
+  D) and the menus' keys are not bindable. The default and plain themes use
+  the terminal's own palette, so their contrast is the terminal's (Campbell's
+  dark gray is 4.3:1); high-contrast and light make the promise.
+- An alias runs what a typed command could; its lines are the person's own
+  file, and same-user tampering is out of scope as for the rest of the data
+  folder.
 - The approval card's size is what the engine knows: before a download
   starts, the agent's request has no size yet.
 - Speeds of 1 B/s with days left can show for a moment when a download
   starts; that is the engine's estimate (FP-074), not the terminal.
-- The dashboard's single keys are fixed until keybindings (FP-062). The
-  engine reports only ranges in flight, not a map of the whole file, so the
+- The engine reports only ranges in flight, not a map of the whole file, so the
   dashboard shows no piece map. It was walked through in ConPTY, not yet by
   a person in Windows Terminal and the classic console.

@@ -1007,7 +1007,7 @@ pub struct Frame<'a> {
     pub tick: u64,
     /// Commands matching what is typed after `/`, shown under the prompt:
     /// name and summary.
-    pub palette: &'a [(&'static str, &'static str)],
+    pub palette: &'a [(String, String)],
     pub palette_selected: usize,
 }
 
@@ -1032,7 +1032,8 @@ impl Frame<'_> {
                     .len()
                     + 2
             }
-            None => 1 + self.palette.len().max(1),
+            // A compact terminal gives no hint line to an empty prompt.
+            None => 1 + self.palette.len().max(usize::from(!self.hint.is_empty())),
         };
         (self.panel_rows() + 1 + below) as u16
     }
@@ -1154,7 +1155,7 @@ impl Frame<'_> {
             buffer,
         );
         let mut targets = Vec::new();
-        if self.palette.is_empty() {
+        if self.palette.is_empty() && !self.hint.is_empty() {
             row(
                 Line::styled(fit(self.hint, width, self.glyphs.more), DIM),
                 &mut y,
@@ -1532,7 +1533,7 @@ mod tests {
             max_rows: 4,
             card: None,
             tick: 0,
-            palette: &commands,
+            palette: &commands.map(|(name, summary)| (name.to_owned(), summary.to_owned())),
             palette_selected: 1,
         };
         let (rows, drawn) = draw_with(&frame, 50);

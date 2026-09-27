@@ -240,6 +240,7 @@ line into the window's history saying where the file went or why it stopped.
   named at the bottom: `p` pause, `r` resume or retry, `c` twice to cancel,
   `o` to open the folder, `x` to remove a finished one. Esc, `q` or F2 go
   back to the prompt, where anything that happened meanwhile is printed.
+  `/keys` changes these keys (see below).
 - Several links at once (pasted together, or `/add` with more than one)
   show one card listing them all, each with a mark: files and videos start
   marked, web pages and links that could not be read do not. Space marks or
@@ -267,11 +268,52 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/settings`, `/engine`, `/help`
+  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/settings`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
   and `/quit`.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names and folders; Up and Down
   recall earlier lines; Esc clears the line; Ctrl+C on an empty line leaves.
+
+### Making the terminal yours
+
+The terminal keeps its own settings in `cli.toml`, beside the engine's data
+in `%APPDATA%\app.fetchpath.desktop` (or the folder `FETCHPATH_APP_DATA_DIR`
+names). You can edit the file, or change it from the prompt:
+
+- `/theme` lists the themes; `/theme high-contrast` (bright colors, at least
+  7:1 on a dark background), `/theme light` (for a light background),
+  `/theme plain` (no colors) or `/theme default` (your terminal's colors)
+  switches at once. `/theme glyphs ascii` (or `unicode`, or `auto`) picks the
+  symbols; `/theme density compact` shows fewer rows and no hint line.
+- `/keys` lists the keys; `/keys pause z` rebinds one, `/keys pause default`
+  puts it back. The dashboard's key must be F1 to F12, since letters type at
+  the prompt. Arrows, Enter, Esc, Delete and Ctrl+C always keep their
+  meaning.
+- `/alias dl add --to D:\Media` makes `/dl LINK` run `/add --to D:\Media
+  LINK`; `/alias dl` shows it and `/alias remove dl` deletes it. Aliases
+  appear in the `/` list and complete with Tab.
+
+```toml
+theme = "high-contrast"     # default, high-contrast, light or plain
+glyphs = "auto"             # auto, unicode or ascii
+density = "comfortable"     # or compact
+
+[colors]                    # optional: accent, dim, good, bad, warn, check
+accent = "#00afff"          # a name such as light-cyan, #rrggbb, or default
+
+[keys]                      # dashboard, pause, resume, cancel, remove,
+dashboard = "F5"            # approve, deny, folder, up, down, close
+pause = "z"
+
+[aliases]
+dl = 'add --to "D:\My Media"'           # single quotes keep backslashes
+tidy = ["rm 3", "history --limit 5"]     # a list runs each command in turn
+```
+
+An alias only ever runs Fetchpath's own `/` commands (not `/tools`, which
+sets up outside programs); a line naming anything else, such as `cmd` or
+`powershell`, is refused. A line that cannot be used is reported with its
+number when the terminal opens and is skipped; the rest still apply.
 
 Leaving never stops a download. `fetchpath --plain` prints plain lines and
 redraws nothing, which suits screen readers; it is chosen automatically when

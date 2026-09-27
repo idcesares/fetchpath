@@ -213,6 +213,8 @@ pub fn run(mut session: Session) -> i32 {
         "Fetchpath {}. Type a link to download it, /help for commands, /quit to leave.",
         crate::VERSION
     );
+    // What in cli.toml could not be used, once.
+    say(&std::mem::take(&mut session.config_problems));
     let panel = session.live.panel();
     if !panel.is_empty() {
         println!("In the queue:");
