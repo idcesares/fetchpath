@@ -157,6 +157,7 @@ impl RateEstimate {
     /// After this long with no progress the rate is no longer describing
     /// anything that is happening, so it is withdrawn rather than left frozen.
     const STALE_AFTER_MS: u64 = 5_000;
+    const FIRST_ESTIMATE_BYTES: u64 = 64 * 1024;
 
     fn observe(&mut self, bytes: u64, now_ms: u64) {
         if !self.started || bytes < self.last_bytes {
@@ -175,6 +176,16 @@ impl RateEstimate {
             return;
         }
         let delta = bytes - self.last_bytes;
+        // The first estimate waits for the transfer proper: a transfer opens
+        // with a one-byte range probe, and 1 byte over a second read as
+        // "1 B/s, thousands of hours left" (FP-074). The baseline stays put,
+        // so a genuinely slow link is averaged from its start.
+        if self.smoothed_bytes_per_second.is_none()
+            && delta < Self::FIRST_ESTIMATE_BYTES
+            && elapsed_ms < Self::STALE_AFTER_MS
+        {
+            return;
+        }
         if delta == 0 && elapsed_ms >= Self::STALE_AFTER_MS {
             self.smoothed_bytes_per_second = None;
             self.last_sample_ms = now_ms;
@@ -3266,6 +3277,24 @@ fn newer_queue_explanation(version: Option<u64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_opening_probe_byte_is_never_reported_as_the_rate() {
+        const MIB: u64 = 1024 * 1024;
+        let mut rate = RateEstimate::default();
+        rate.observe(0, 0);
+        rate.observe(1, 1_000); // the one-byte range probe
+        assert_eq!(rate.bytes_per_second(), None);
+        assert_eq!(rate.eta_seconds(1, Some(24 * MIB)), None);
+        rate.observe(4 * MIB, 1_500); // the ranges arrive
+        assert!(rate.bytes_per_second().unwrap() > MIB);
+
+        // A link that really is slow still gets a rate, averaged from its start.
+        let mut slow = RateEstimate::default();
+        slow.observe(0, 0);
+        slow.observe(5_000, 5_000);
+        assert_eq!(slow.bytes_per_second(), Some(1_000));
+    }
 
     /// The blank line that ends an HTTP request head.
     const HEAD_TERMINATOR: &[u8] = b"\r\n\r\n";

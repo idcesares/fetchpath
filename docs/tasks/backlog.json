@@ -2255,20 +2255,24 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
-        "crates/fetchpath-session/src/lib.rs"
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/characterization.rs"
       ],
       "acceptanceIds": [
         "A04"
       ],
       "acceptance": "A download that has just started never reports a rate that does not describe its transfer, so no client shows \"1 B/s\" with thousands of hours left (seen in the terminal on 26 September 2026 for about a second at the start of each 24 MiB test download from a local server; the cause is not yet confirmed, and RateEstimate in the session is where the rate is computed).",
       "verification": "A unit test reproducing the start-of-download figure, then passing; the terminal walkthrough shows no such figure.",
-      "evidence": [],
+      "evidence": [
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/characterization.rs"
+      ],
       "blockedReason": null
     },
     {

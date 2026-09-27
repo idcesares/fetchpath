@@ -335,8 +335,6 @@ pasted line arrives as keys, and newlines become spaces or submit the line.
   folder.
 - The approval card's size is what the engine knows: before a download
   starts, the agent's request has no size yet.
-- Speeds of 1 B/s with days left can show for a moment when a download
-  starts; that is the engine's estimate (FP-074), not the terminal.
 - The engine reports only ranges in flight, not a map of the whole file, so the
   dashboard shows no piece map. It was walked through in ConPTY, not yet by
   a person in Windows Terminal and the classic console.

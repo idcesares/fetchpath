@@ -850,36 +850,42 @@ fn the_rate_is_smoothed_ignores_short_intervals_and_withdraws_when_stalled() {
         None,
         "a first sample is only a baseline"
     );
-    rate.observe(1_000, 200);
+    rate.observe(100_000, 200);
     assert_eq!(rate.bytes_per_second(), None, "under 400 ms is ignored");
-    rate.observe(1_000, 1_000);
-    assert_eq!(rate.bytes_per_second(), Some(1_000));
-    rate.observe(3_000, 2_000);
+    rate.observe(100_000, 1_000);
+    assert_eq!(rate.bytes_per_second(), Some(100_000));
+    rate.observe(300_000, 2_000);
     assert_eq!(
         rate.bytes_per_second(),
-        Some(1_300),
-        "0.3 × 2000 + 0.7 × 1000"
+        Some(130_000),
+        "0.3 × 200000 + 0.7 × 100000"
     );
-    rate.observe(3_000, 3_000);
+    rate.observe(300_000, 3_000);
     assert_eq!(
         rate.bytes_per_second(),
-        Some(909),
+        Some(91_000),
         "no progress decays, truncated"
     );
-    rate.observe(3_000, 8_000);
+    rate.observe(300_000, 8_000);
     assert_eq!(
         rate.bytes_per_second(),
         None,
         "5 s without progress withdraws the rate"
     );
-    rate.observe(500, 9_000);
+    rate.observe(50_000, 9_000);
     assert_eq!(
         rate.bytes_per_second(),
         None,
         "a lower offset restarts the estimate"
     );
-    rate.observe(1_000, 10_000);
-    assert_eq!(rate.bytes_per_second(), Some(500));
+    rate.observe(100_000, 10_000);
+    assert_eq!(
+        rate.bytes_per_second(),
+        None,
+        "a first estimate waits for 64 KiB or 5 s (FP-074)"
+    );
+    rate.observe(150_000, 10_500);
+    assert_eq!(rate.bytes_per_second(), Some(66_666));
     rate.clear();
     assert_eq!(rate.bytes_per_second(), None);
 }
@@ -888,31 +894,31 @@ fn the_rate_is_smoothed_ignores_short_intervals_and_withdraws_when_stalled() {
 fn a_rate_below_one_byte_per_second_is_not_shown() {
     let mut rate = RateEstimate::default();
     rate.observe(0, 0);
-    rate.observe(1, 4_000); // 0.25 B/s
+    rate.observe(1, 5_000); // 0.2 B/s, measured once 5 s have passed
     assert_eq!(rate.bytes_per_second(), None);
 }
 
 #[test]
 fn remaining_time_needs_a_total_and_a_rate_and_rounds_up() {
     let mut rate = RateEstimate::default();
-    assert_eq!(rate.eta_seconds(0, Some(10_000)), None, "no rate yet");
+    assert_eq!(rate.eta_seconds(0, Some(1_000_000)), None, "no rate yet");
     rate.observe(0, 0);
-    rate.observe(1_000, 1_000);
-    assert_eq!(rate.eta_seconds(1_000, None), None, "no total");
+    rate.observe(100_000, 1_000);
+    assert_eq!(rate.eta_seconds(100_000, None), None, "no total");
     assert_eq!(
-        rate.eta_seconds(1_000, Some(1_000)),
+        rate.eta_seconds(100_000, Some(100_000)),
         None,
         "nothing remaining"
     );
     assert_eq!(
-        rate.eta_seconds(2_000, Some(1_000)),
+        rate.eta_seconds(200_000, Some(100_000)),
         None,
         "received beyond total"
     );
     assert_eq!(
-        rate.eta_seconds(1_000, Some(2_001)),
+        rate.eta_seconds(100_000, Some(200_001)),
         Some(2),
-        "1001 bytes at 1000 B/s"
+        "100001 bytes at 100000 B/s"
     );
 }
 
