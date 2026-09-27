@@ -7,8 +7,12 @@ and a narrow owned file area before changing anything.
 [docs/tasks/backlog.json](docs/tasks/backlog.json) is authoritative for task
 state; nothing else in the repository duplicates it.
 
-The engine is a portable Rust core; the desktop client is Tauri 2 on
-Microsoft-serviced Windows 11 x64.
+The download core is portable Rust. One per-user engine (`fetchpath engine`,
+in `apps/cli`) hosts the session (`crates/fetchpath-session`) and is the only
+owner of the queue; the desktop (Tauri 2 on Microsoft-serviced Windows 11
+x64), the command line, the interactive terminal, the browser host and the MCP
+server are clients over protocol v1 (`crates/fetchpath-protocol`). The design
+is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Run and verify
 
@@ -37,6 +41,28 @@ $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
 & $cargo build --workspace --locked
 target\debug\fetchpath.exe download https://example.com/ example.html
 ```
+
+### Running the engine in development
+
+The engine keeps its data in `%APPDATA%\app.fetchpath.desktop`, the same
+folder an installed Fetchpath uses. Point `FETCHPATH_APP_DATA_DIR` at a
+scratch folder to run an engine of your own beside it: the instance lock,
+pipe secret and endpoint live in that folder, so the two never meet. Every
+client started from that shell reaches the scratch engine.
+
+```powershell
+$env:FETCHPATH_APP_DATA_DIR = "$PWD\work\engine-data"
+target\debug\fetchpath.exe engine status   # starts nothing; says whether one runs
+target\debug\fetchpath.exe add https://example.com/ --wait
+target\debug\fetchpath.exe                 # the interactive terminal
+target\debug\fetchpath.exe engine stop
+```
+
+`fetchpath mcp` speaks MCP on standard input and output, so drive it from an
+agent host (see [CLI.md](docs/user/CLI.md#ai-agents-mcp)) or from the tests in
+`apps/cli/tests`. The protocol's JSON Schema is checked in; after a deliberate
+wire change, regenerate it with `FETCHPATH_BLESS_SCHEMA=1` set while running
+`cargo test -p fetchpath-protocol` and review the diff.
 
 The real guided media-tool install downloads about 130 MB from the helpers'
 publishers, so it is ignored by default:
@@ -103,3 +129,6 @@ messages, or destructive actions.
 - [Content cache and paired LAN evidence](docs/development/CACHE-AND-LAN.md)
 - [Media integration evidence](docs/development/MEDIA-INTEGRATION.md)
 - [Browser capture evidence](docs/development/BROWSER-CAPTURE.md)
+- [Engine session](docs/development/ENGINE-SESSION.md), [protocol](docs/development/ENGINE-PROTOCOL.md) and [host](docs/development/ENGINE-HOST.md)
+- [Interactive terminal](docs/development/TERMINAL.md), [smart rules](docs/development/RULES.md) and [agents through MCP](docs/development/MCP.md)
+- [All development records](docs/development/README.md)

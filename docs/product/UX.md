@@ -1,8 +1,8 @@
-# Fetchpath desktop UX contract
+# Fetchpath UX contract
 
 ## Product promise
 
-Fetchpath is a Windows-first download manager that makes a link feel safe and simple: paste it, choose what matters, and see an honest, controllable result. It offers familiar queue controls for ordinary users while keeping diagnostics and tuning available in **Power mode**. The desktop client never implies a download has started, a format is available, or a source is reachable until the underlying service confirms it.
+Fetchpath is a Windows-first download manager that makes a link feel safe and simple: paste it, choose what matters, and see an honest, controllable result. It offers familiar queue controls for ordinary users while keeping diagnostics and tuning available in **Power mode**. Every client (the desktop, the command line, the interactive terminal and agents through MCP) shows the same queue from the one Fetchpath engine, and none of them implies a download has started, a format is available, or a source is reachable until the engine confirms it. The desktop is the product for ordinary users; the terminal serves people who live in one; agents act only within access the person grants.
 
 ## Information hierarchy
 
@@ -13,7 +13,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 3. **Item actions** are contextual: pause/resume, open destination when available, remove/cancel. Destructive actions require a confirmation only when completed files would be deleted.
 4. **Filters** reduce a long queue without moving items elsewhere: All, Active, Completed, Failed.
 5. **Power mode** exposes diagnostic and transfer details inline, plus a session statistics panel above the queue. It is off by default, it is turned on in Settings, and it is strictly additive: nothing it shows replaces or moves a control that is available without it.
-6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
+6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, browser extension status, AI agents' access, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
 
 ## Core journeys
 
@@ -36,12 +36,20 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 2. Network/transient failures retry only when enabled in settings; the queue shows the next retry time.
 3. Authentication, source expiry, disk-space, and permission failures require an explicit user action.
 
+### Answer an agent's request
+
+1. An agent's download inside a folder the person granted it, within its size and hourly limits, starts like any other.
+2. Anything else it asks for enters **Waiting for approval**. Nothing is fetched while it waits. The desktop announces it and shows it under **Needs attention**; the terminal shows it as a card; `fetchpath approvals` lists it.
+3. **Approve** starts it; **Deny** cancels it and the agent is told. Taking a folder away or revoking an agent in Settings (or with `fetchpath agents`) returns its unfinished downloads there to waiting.
+4. An agent never supplies credentials or cookies, replaces a file, or changes settings, rules, sharing or paired devices, and it sees only its own downloads. Text that came from a web page is handed to it marked as untrusted. The documentation says plainly that this defends against a misled agent, not against malicious software already running as the person.
+
 ## States and language
 
 | State | Plain-language presentation | Available action |
 | --- | --- | --- |
 | Scheduled | “Scheduled for &lt;time&gt;” | Start now, pause, cancel |
 | Queued | “Queued” | Pause, cancel |
+| Waiting for approval | “Waiting for approval”, naming the agent, the file, its size, the folder and why it asks; listed under Needs attention and announced | Approve, deny |
 | Downloading | Percent, received of total, speed, time remaining | Pause, cancel |
 | Paused | “Paused”, with the bytes already verified | Resume, cancel |
 | Cancelling | “Cancelling…” | none while it unwinds |
@@ -76,6 +84,15 @@ Avoid “success” until the file is safely written and verified by the engine.
 - Honor system reduced motion. Animation conveys progress only and must not be necessary to understand state.
 - Respect Windows conventions: standard title-bar commands, predictable right-click/context actions, default Downloads destination, and paths that can be copied.
 
-## Prototype boundary
+## Interactive terminal
 
-The accompanying prototype is a visual interaction model only. It simulates source inspection, quality choices, queue progress, pause/resume, filters, and diagnostics locally. It has no network access, does not inspect URLs, and does not create, change, or download files.
+`fetchpath` on its own opens it; closing it never stops a download. It follows the same states, language and honesty rules as the desktop.
+
+- **Inline by default.** A live panel above a prompt shows downloads in progress, paused, queued, scheduled or waiting for approval. A finished download prints one line into the terminal's own scrollback saying where the file went or why it stopped, so history stays scrollable and selectable.
+- **A card before anything starts.** A pasted link is inspected first and shown as a card: a video's title and qualities, a file's name, type, size and resumability, or a warning that a web page is not a file, with the destination and any rule that decided it and why. Enter starts, Esc cancels. Batches, name conflicts, checksums and agents' requests are cards too.
+- **Commands mirror the command line.** `/` lists commands and narrows as one types; each `/` command uses the same words and options as the matching `fetchpath` command.
+- **Dashboard on demand.** F2 or `/dashboard` fills the window with the queue and the chosen download's speed graph and connections, with single-key actions named on screen; leaving restores the prompt and prints what happened meanwhile.
+- **Personal, never dangerous.** Themes (including high-contrast and plain), glyphs, density, keys and aliases live in `cli.toml`. An unusable line is reported with its number and skipped. Aliases expand only to Fetchpath's own commands, never a shell or another program.
+- **Accessible by default.** Everything works from the keyboard. `--plain` prints append-only lines and answers cards by typed words; it is chosen automatically under `NO_COLOR`, a dumb `TERM`, or a Windows screen reader. Arrows, Enter, Esc, Delete and Ctrl+C keep their meaning whatever the keybindings.
+
+The desktop prototype this section once described was retired in FP-046; the shipped desktop and terminal are the reference.

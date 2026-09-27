@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-25",
+  "updated": "2026-09-27",
   "tasks": [
     {
       "id": "FP-001",
@@ -977,7 +977,7 @@
         "A10"
       ],
       "acceptance": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass. Pairing and sharing controls go through the engine protocol; agents never receive them.",
-      "verification": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass.",
+      "verification": "Desktop end-to-end run pairing two data folders through the engine, with LAN sharing off until enabled, a credential-bearing entry never offered, and unpair taking effect; keyboard-only and screen-reader walkthrough recorded in docs/development/CACHE-AND-LAN.md.",
       "evidence": [],
       "blockedReason": null,
       "priority": "P2"
@@ -1896,7 +1896,7 @@
       ],
       "status": "todo",
       "owner": null,
-      "priority": "P2",
+      "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
@@ -1906,7 +1906,7 @@
         "A01",
         "A07"
       ],
-      "acceptance": "Prompt history and completion persist across sessions with query strings and user info stripped from links by default; recent destinations and past links feed completion; opening the terminal summarizes jobs that finished or failed since it was last open, from engine history; history can be cleared with one command.",
+      "acceptance": "Prompt history and completion persist across sessions with query strings and user info stripped from links by default; recent destinations and past links feed completion; opening the terminal summarizes jobs that finished or failed since it was last open, from engine history; history can be cleared with one command. CLI.md documents the history file, what is stripped and how to clear it.",
       "verification": "Tests that a signed link never reaches the history file; completion tests; summary test against engine history.",
       "evidence": [],
       "blockedReason": null
@@ -2044,12 +2044,11 @@
       "dependsOn": [
         "FP-060",
         "FP-061",
-        "FP-063",
         "FP-064",
         "FP-065"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2058,14 +2057,23 @@
         "docs/product/UX.md",
         "README.md",
         "CHANGELOG.md",
-        "CONTRIBUTING.md"
+        "CONTRIBUTING.md",
+        "docs/user/CLI.md",
+        "PROJECT.md",
+        "docs/architecture/specs/2026-09-24-engine-platform-design.md",
+        "docs/development/README.md"
       ],
       "acceptanceIds": [
         "A01"
       ],
       "acceptance": "The user guide and CLI guide cover the engine, the interactive terminal, personalization, rules, approvals and agent setup, including the honest threat model; the UX contract gains terminal and agent journeys; the changelog records the platform.",
       "verification": "Every documented command and example is run against the build; node --test link checks pass.",
-      "evidence": [],
+      "evidence": [
+        "docs/user/CLI.md",
+        "docs/user/GUIDE.md",
+        "docs/product/UX.md",
+        "CHANGELOG.md"
+      ],
       "blockedReason": null
     },
     {
@@ -2105,7 +2113,7 @@
         "A12",
         "A13"
       ],
-      "acceptance": "The FP-018 acceptance matrix is re-run on the new architecture with added rows for the engine, terminal and agents, including a clean-machine lifecycle, upgrade from a 0.1.0 install with a persisted queue, and uninstall with the engine running; the record states ready or not ready with remaining limitations. Publishing stays the user decision.",
+      "acceptance": "The FP-018 acceptance matrix is re-run on the new architecture with added rows for the engine, terminal and agents, including a clean-machine lifecycle, upgrade over a previous build with a persisted queue, and uninstall with the engine running; the record states ready or not ready with remaining limitations. Publishing stays the user decision.",
       "verification": "Recorded matrix with commands, results and limitations in docs/development; node tools/tasks.mjs check and node --test pass.",
       "evidence": [],
       "blockedReason": null
@@ -2256,6 +2264,36 @@
       ],
       "acceptance": "A download that has just started never reports a rate that does not describe its transfer, so no client shows \"1 B/s\" with thousands of hours left (seen in the terminal on 26 September 2026 for about a second at the start of each 24 MiB test download from a local server; the cause is not yet confirmed, and RateEstimate in the session is where the rate is computed).",
       "verification": "A unit test reproducing the start-of-download figure, then passing; the terminal walkthrough shows no such figure.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-075",
+      "title": "Apply smart rules to desktop downloads and browser captures, and manage rules in the desktop",
+      "milestone": "M11",
+      "dependsOn": [
+        "FP-055",
+        "FP-056",
+        "FP-064"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session/src/lib.rs",
+        "apps/desktop",
+        "docs/user/GUIDE.md",
+        "docs/product/UX.md",
+        "docs/development/RULES.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A07"
+      ],
+      "acceptance": "A browser capture is placed, and refused for a missing required checksum, by the same rule decision as a job created through the protocol; Add download proposes the matching rule folder and names the rule and why, while a folder the person picks still wins; Settings lists, adds, removes and tests rules through the engine protocol with keyboard and screen-reader support; agents still never change rules.",
+      "verification": "Session tests for a capture matching a folder rule and a checksum rule; desktop end-to-end run adding a rule in Settings and seeing a pasted link and a browser capture placed by it; RULES.md limitations updated.",
       "evidence": [],
       "blockedReason": null
     }

@@ -20,20 +20,58 @@ The first public release of Fetchpath, for Windows 11 on x64.
   file have arrived and, for a segmented transfer, each range in flight.
 - Browser capture from Chrome and Edge through the included extension, with a
   toolbar button that shows the connection and sends the current page; a sent
-  link starts Fetchpath if it is closed.
+  link reaches the list even with the window closed.
 - Settings for concurrency, default folder, automatic retry of connection
-  problems, window behaviour and appearance, plus an optional Power mode.
+  problems, AI agents' access, window behaviour and appearance, plus an
+  optional Power mode.
 - Full keyboard operation and screen reader support.
 
-### Command line
+### Engine
+
+- One per-user background engine, `fetchpath engine`, owns the list,
+  history, settings and rules. It starts when a client needs it and stops
+  about a minute after the last download and client finish. The desktop,
+  command line, terminal, browser connection and agents are all its clients,
+  so closing any of them never stops a download.
+- A list written by a newer Fetchpath is kept rather than discarded.
+
+### Command line and terminal
 
 - `fetchpath download` with folder destinations, progress, `--sha256`,
   `--json` and documented exit codes, installed and added to your PATH. It
   needs no Visual C++ redistributable.
+- The whole queue from the command line: `add`, `batch`, `ls`, `show`,
+  `pause`, `resume`, `cancel`, `retry`, `rm`, `watch`, `history`,
+  `inspect`, `settings`, `folder` and `engine`, each with `--json`.
+- `fetchpath` on its own opens the interactive terminal: a live panel above
+  a prompt, a card before each download starts, batches, name conflicts,
+  checksums, a full-screen dashboard with speed graph and connections, and a
+  plain mode for screen readers.
+- Themes (including high contrast), glyphs, density, keys and aliases in
+  `cli.toml`.
+- `fetchpath tools` sets up the video and audio programs from the terminal.
+
+### Rules
+
+- Rules by site, file type or size choose the folder, video quality, a
+  required checksum and the connection limit; `fetchpath rules test` says
+  which rule decides and why.
+
+### AI agents
+
+- `fetchpath mcp` serves Fetchpath to agent hosts over the Model Context
+  Protocol. Agents download into the folders you grant, within a size and
+  hourly limit; anything else waits for **Approve** or **Deny** in the
+  window, the terminal or `fetchpath approve`. Agents never send
+  credentials, replace files or change settings, rules or sharing, and
+  text from web pages reaches them marked as untrusted.
+- Settings and `fetchpath agents` show and change each agent's access.
 
 ### Installer
 
 - Per-user install with no administrator rights; upgrades keep your list.
+- Setup stops the engine safely before an upgrade or uninstall and keeps it
+  from restarting until setup finishes.
 - Uninstall asks before removing your list and settings, and never removes
   downloaded files. Your PATH is restored exactly as it was.
 
@@ -44,4 +82,8 @@ The first public release of Fetchpath, for Windows 11 on x64.
 - HTTP and HTTPS only in the app. HTTP/3 isn't available in this build.
 - Video and audio downloads can't be paused.
 - The browser extension loads in developer mode; Firefox isn't supported.
+- The window doesn't show or edit rules yet, and browser captures follow
+  only a rule's connection limit.
+- The protection against agents assumes no malicious program already runs
+  as you.
 - No speed claim is made.

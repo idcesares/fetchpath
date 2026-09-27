@@ -27,8 +27,17 @@ exactly what you asked for. It can also save video and audio.
   working.
 - **Keyboard and screen reader friendly.** Every control has a name, and
   everything can be done from the keyboard.
-- **A command line too.** `fetchpath download LINK` for scripts and terminals.
-  See [CLI.md](docs/user/CLI.md).
+- **Downloads keep going.** A background engine keeps the one list, so
+  closing the window or a terminal never stops a download, and every way in
+  sees the same list.
+- **A command line and an interactive terminal.** `fetchpath download LINK`
+  for scripts, the whole queue from the command line, and `fetchpath` on its
+  own for a live terminal view with themes, keys and aliases of your own.
+- **Rules.** Send downloads to a folder, pick a video quality or require a
+  checksum by site, file type or size.
+- **AI agents, on your terms.** Agents such as Claude Code can download
+  through `fetchpath mcp` into the folders you grant; anything else waits for
+  you to approve it. See [CLI.md](docs/user/CLI.md#ai-agents-mcp).
 
 ## Requirements
 
@@ -45,7 +54,7 @@ menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns when you run
 the installer**. Once the checksum matches, choose **More info → Run anyway**.
 
-## Limitations in 0.1.0
+## Limitations
 
 - HTTP and HTTPS links only. HTTP/2 is used where the server offers it.
   HTTP/3, FTP and SFTP aren't available in the app yet.
@@ -53,6 +62,10 @@ the installer**. Once the checksum matches, choose **More info → Run anyway**.
   work; that depends on `yt-dlp`.
 - The browser extension is added in developer mode for now. Firefox isn't
   supported yet.
+- Rules are managed from the command line and terminal; the window doesn't
+  show them yet, and links sent from the browser follow only a rule's
+  connection limit.
+- Pairing devices and sharing between them is command-line only.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 

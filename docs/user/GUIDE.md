@@ -17,6 +17,7 @@ two sections are enough to start. After that, use it as a reference.
 - [Video and audio](#video-and-audio)
 - [Sending links from your browser](#sending-links-from-your-browser)
 - [Settings](#settings)
+- [Requests from AI agents](#requests-from-ai-agents)
 - [The command line](#the-command-line)
 - [Uninstalling](#uninstalling)
 - [When something goes wrong](#when-something-goes-wrong)
@@ -291,7 +292,22 @@ The installer also adds a `fetchpath` command. Open a **new** terminal and run:
 fetchpath download https://example.com/file.zip
 ```
 
-See [CLI.md](CLI.md) for everything it can do.
+Run `fetchpath` on its own for the interactive terminal: your downloads
+above a prompt where you paste links, and `/` commands to pause, resume,
+cancel or change them. Both work on the same list as the window, so a download added in
+one shows in the others.
+
+The command line also holds **rules**, which choose where a new download goes
+and how, by the site it comes from, its type or its size. For example,
+`fetchpath rules add --type iso --folder D:\ISOs` sends disc images to
+`D:\ISOs`. Rules decide for downloads added from the command line, the
+interactive terminal and AI agents. The window doesn't show rules yet and
+saves where you choose, but a rule's required checksum and connection limit
+apply to its downloads too. Links sent from your browser follow only the
+connection limit for now.
+
+See [CLI.md](CLI.md) for everything it can do, including connecting an AI
+agent.
 
 ## Uninstalling
 

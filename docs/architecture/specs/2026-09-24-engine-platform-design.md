@@ -304,6 +304,7 @@ research. `node tools/tasks.mjs next` lists ready tasks in this order.
 | Terminal | FP-058 commands (P0); FP-059 TUI foundation (P1, starts on the in-process client after FP-051) → FP-060 dashboard, FP-061 flows, FP-062 personalization (P1) → FP-063 remembered context (P2); FP-064 smart rules (P1) |
 | Agents | FP-065 MCP server (P1) → FP-066 approval surfaces and agent access (P1) → FP-067 adversarial review (P1) |
 | Close | FP-068 docs and UX contract (P1) → FP-069 platform gate (P1) |
+| Added during the phase | FP-070 newer-build queue kept (P1), FP-071 clutter cleared (P0), FP-073 terminal additions review (P1); FP-072 slow-subscriber test budget, FP-074 start-of-download rate, FP-075 rules for desktop and browser captures (P2) |
 | Existing, re-sequenced | FP-032, FP-033 onto the session (P2); FP-021, FP-022 as session job kinds (P2); FP-034 (P3); FP-023–FP-025 research (P3) |
 
 Strong-model review is required for FP-049, FP-051, FP-052, FP-053, FP-054,

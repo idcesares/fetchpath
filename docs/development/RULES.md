@@ -2,8 +2,9 @@
 
 FP-064, 26 September 2026. Rules by site, file type or size choose where a
 new download is saved, the video quality, whether a checksum is required and
-how many connections it opens. The engine keeps and applies them, so every
-client and principal gets the same outcome.
+how many connections it opens. The engine keeps and applies them to every
+job created through the protocol, whichever client or principal sends it;
+see the limitations for the desktop and browser captures.
 
 ## What exists
 
@@ -62,8 +63,12 @@ client and principal gets the same outcome.
 - The connection cap reaches the transfer's limit but is not separately
   measured: the adaptive transfer starts at one connection and grows with
   timing.
-- The desktop app does not show or edit rules yet; its downloads follow them
-  only when it sends a bare file name, which it does not.
+- The desktop app does not show or edit rules yet; its downloads follow a
+  rule's folder only when it sends a bare file name, which it does not, but
+  its required checksum and connection cap do apply (FP-075).
+- Browser captures enter the queue through the inbox, not `CreateJob`, so
+  only a rule's connection cap reaches them (checked 27 September 2026:
+  `apply_rules` has one caller, `engine.rs` `ruled_destination`; FP-075).
 - An agent may read the verdict on `InspectLink`, including the matching
   rule's folder; it can never change rules.
 - A rule's folder applies only when no folder was given. Rules are not

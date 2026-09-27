@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 24 September 2026. Phase: **M10–M12, the engine platform.** Fetchpath 0.1.0 passed its release gate (FP-018) and is published only when the user decides; release timing is not tied to the plan. The next phase turns Fetchpath into one engine with many clients: the desktop app, a full command line, an interactive terminal, the browser extension, and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md) (FP-047, accepted 24 September 2026).
+Updated 27 September 2026. Phase: **M10–M12, the engine platform.** The engine platform ships in 0.1.0, which is published only when the user decides; release timing is not tied to the plan. The next phase turns Fetchpath into one engine with many clients: the desktop app, a full command line, an interactive terminal, the browser extension, and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md) (FP-047, accepted 24 September 2026).
 
 ## Confirmed purpose
 
@@ -21,7 +21,9 @@ Do not duplicate task status into multiple checklists. The backlog is authoritat
 
 ## What exists
 
-Fetchpath 0.1.0 is a Windows download manager (Tauri 2 desktop, `fetchpath` CLI, browser extension) over a Rust core: recoverable checkpoints with strong-validator resume, bounded adaptive ranges, no-overwrite publication, Metalink verified repair, a bounded content cache and paired LAN peers, media downloads through supervised pinned helpers, and a per-user NSIS installer. Limitations per area are in the development records. The engine platform has so far moved the queue into `fetchpath-session`, defined protocol v1 with its pipe transport, added the `fetchpath engine` host with principals and agent policy (FP-048 to FP-054), put the whole queue on the command line (FP-058), made the desktop a client of the engine (FP-055), made setup stop and restart it safely across upgrade and uninstall (FP-057), kept a queue written by a newer build instead of losing it (FP-070), and handed browser captures to the engine without the window (FP-056). That completes M10: every client now reaches the one engine. Since then the terminal has gained its dashboard, flows and personal configuration (FP-060 to FP-062), and agents reach the engine through `fetchpath mcp` (FP-065) under access the person grants and approves in the desktop and command line (FP-066).
+Fetchpath 0.1.0 is a Windows download manager (Tauri 2 desktop, `fetchpath` CLI, browser extension) over a Rust core: recoverable checkpoints with strong-validator resume, bounded adaptive ranges, no-overwrite publication, Metalink verified repair, a bounded content cache and paired LAN peers, media downloads through supervised pinned helpers, and a per-user NSIS installer. Limitations per area are in the development records. The engine platform has so far moved the queue into `fetchpath-session`, defined protocol v1 with its pipe transport, added the `fetchpath engine` host with principals and agent policy (FP-048 to FP-054), put the whole queue on the command line (FP-058), made the desktop a client of the engine (FP-055), made setup stop and restart it safely across upgrade and uninstall (FP-057), kept a queue written by a newer build instead of losing it (FP-070), and handed browser captures to the engine without the window (FP-056). That completes M10: every client now reaches the one engine. Since then the terminal has gained its dashboard, flows and personal configuration (FP-060 to FP-062), the engine applies smart rules (FP-064), and agents reach the engine through `fetchpath mcp` (FP-065) under access the person grants and approves in the desktop and command line (FP-066), with the boundary attacked and its findings fixed (FP-067). User and contributor documentation now covers the platform (FP-068).
+
+What remains of the phase: remembered context in the terminal (FP-063, which documents itself), then the platform release gate (FP-069). Known product gaps kept as tasks: rules are not yet shown in the desktop and do not reach browser captures (FP-075); the cache and LAN pairing have no desktop surface (FP-032, FP-033).
 
 ## Direction (decided 24 September 2026)
 
@@ -34,7 +36,7 @@ Fetchpath 0.1.0 is a Windows download manager (Tauri 2 desktop, `fetchpath` CLI,
 
 Run `node tools/tasks.mjs next`: active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). The lanes and review requirements are in §11 of the spec.
 
-The FP-018 record stays valid for the 0.1.0 tree at commit `ce6615a`. Publishing it is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`) made only on the user's word; no remote exists yet. FP-069 re-runs the gate on the platform.
+Nothing has been published, so the platform ships as 0.1.0 (decided 27 September 2026): the FP-018 build at `ce6615a` is superseded as a release candidate, and FP-069 is the gate for 0.1.0. Publishing is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`) made only on the user's word; no remote exists yet.
 
 
 ## Remaining choices

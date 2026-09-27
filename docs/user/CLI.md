@@ -4,12 +4,16 @@ The installer adds `fetchpath` to your PATH. Open a **new** terminal after
 installing so it's found.
 
 ```powershell
+fetchpath [--plain]                      # the interactive terminal
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
-fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history
-fetchpath approve | deny JOB...
-fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop [--for-update]
+fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
+fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history | folder
+fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
+fetchpath approvals | approve JOB... | deny JOB... | agents ...
 fetchpath mcp [--agent NAME]
+fetchpath tools [install [--yes] | use FOLDER]
+fetchpath lan ... | fetch-verified ... | cache status
 fetchpath --version
 fetchpath --help
 ```
@@ -419,12 +423,12 @@ fetchpath lan serve 0.0.0.0:47631
 fetchpath fetch-verified --sha256 HEX --size BYTES --peer 192.168.1.20:47631=KEY LINK DESTINATION
 ```
 
-`pair-join` prints the other device's `key`. `fetchpath lan peers` lists paired
+`pair-join` prints the other device's `key`; `fetchpath lan id` prints this one's. `fetchpath lan peers` lists paired
 devices and `fetchpath lan unpair KEY` removes one; a running `serve` stops
 serving it within two seconds. `fetchpath lan disable` stops sharing the same
 way. Devices are not discovered automatically; you give the address. Windows
 Firewall may ask whether to allow Fetchpath on your network the first time you
 run `serve`.
 
-These commands print JSON and are meant for people comfortable with a
-terminal. The desktop app does not show them yet.
+`fetchpath cache status` shows how much the local content cache holds. These
+commands print JSON and are meant for people comfortable with a terminal. The desktop app does not show them yet.
