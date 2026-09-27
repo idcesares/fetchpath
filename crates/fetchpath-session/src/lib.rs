@@ -3106,8 +3106,9 @@ fn write_json_atomically(path: &Path, value: &impl Serialize) -> io::Result<()> 
         .truncate(true)
         .write(true)
         .open(&temporary)?;
-    serde_json::to_writer(io::BufWriter::new(&mut file), value)?;
-    file.flush()?;
+    // Serialized first and written once, so a failed write is an error
+    // rather than a short file that is synced and renamed into place.
+    file.write_all(&serde_json::to_vec(value)?)?;
     file.sync_all()?;
     drop(file);
     fs::rename(&temporary, path)
@@ -3155,9 +3156,11 @@ fn write_queue(
         .truncate(true)
         .write(true)
         .open(&temporary)?;
-    serde_json::to_writer_pretty(&mut file, &queue)?;
-    file.write_all(b"\n")?;
-    file.flush()?;
+    // One write: straight into the file, serde's small writes cost a system
+    // call each, about a millisecond per job on a long queue.
+    let mut bytes = serde_json::to_vec_pretty(&queue)?;
+    bytes.push(b'\n');
+    file.write_all(&bytes)?;
     file.sync_all()?;
     drop(file);
 

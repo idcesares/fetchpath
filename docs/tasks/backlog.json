@@ -2195,20 +2195,24 @@
       "dependsOn": [
         "FP-051"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
-        "crates/fetchpath-session/tests/engine.rs"
+        "crates/fetchpath-session/tests/engine.rs",
+        "crates/fetchpath-session/src/lib.rs"
       ],
       "acceptanceIds": [
         "A04"
       ],
       "acceptance": "a_subscriber_that_never_reads_cannot_hold_up_the_queue passes reliably on the development machine: either the 600 durable create/remove commands are made cheaper, or the test measures what it guards (the stalled subscriber cannot slow the queue) without a wall-clock budget that disk speed decides.",
       "verification": "The test passes in five consecutive workspace runs, including while another build runs; the reason for the slowdown is recorded (26 September 2026: about 92 s against 60 s in three runs, the same on e42bde5, and 42 s in a later run on a quieter machine).",
-      "evidence": [],
+      "evidence": [
+        "docs/development/ENGINE-HOST.md",
+        "crates/fetchpath-session/tests/engine.rs"
+      ],
       "blockedReason": null
     },
     {

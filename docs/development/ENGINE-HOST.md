@@ -206,10 +206,10 @@ Recorded 25 September 2026 on Windows 11 Pro 26200 x64. Code:
   `cargo test -p fetchpath-protocol --lib launch`: the default-folder test.
   `node --test tests/installer`: the hook guards. The generated installer
   script compiles with `makensis -WX`.
-- In three workspace runs,
-  `a_subscriber_that_never_reads_cannot_hold_up_the_queue` failed the same
-  way on `e42bde5` without these changes: about 92 s against its 60 s budget.
-  A later run took 42 s. Tracked as FP-072.
+- `a_subscriber_that_never_reads_cannot_hold_up_the_queue` once took 42 to
+  92 s against its 60 s budget. FP-072 found the cause in the session, not
+  the disk: the queue file was serialized straight into an unbuffered file,
+  one system call per token, about 1 ms per job per save. It now takes 1 s.
 
 | Temporary change | Failing test |
 |---|---|

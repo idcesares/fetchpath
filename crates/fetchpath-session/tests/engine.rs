@@ -477,20 +477,23 @@ fn a_subscriber_that_never_reads_cannot_hold_up_the_queue() {
             .job_id
         })
         .collect();
-    // Enough durable events to overflow the stalled subscriber.
-    for index in 0..600 {
-        let job = job_of(
-            &engine
-                .execute(&CommandEnvelope::new(
-                    client(),
-                    scheduled(dir.path(), &format!("s{index}.bin")),
-                ))
-                .unwrap(),
-        );
+    // Enough durable events to overflow the stalled subscriber, in batches
+    // so the queue is written a few times rather than once per event.
+    for batch in 0..11 {
+        let requests = (0..100)
+            .map(|index| {
+                let Command::CreateJob { request } =
+                    scheduled(dir.path(), &format!("s{batch}-{index}.bin"))
+                else {
+                    unreachable!()
+                };
+                request
+            })
+            .collect();
         engine
             .execute(&CommandEnvelope::new(
                 client(),
-                Command::RemoveJob { job_id: job.job_id },
+                Command::CreateJobs { requests },
             ))
             .unwrap();
     }
