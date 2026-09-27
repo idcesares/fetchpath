@@ -22,7 +22,7 @@ Use a single repository while the product shares identity, lifecycle, and releas
 
 Split crates only at useful compile/test/ownership boundaries; avoid a crate per abstraction.
 
-Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): smart rules live in `crates/fetchpath-session/src/rules.rs` (FP-064), with the command line's `fetchpath rules` in `apps/cli/src/rules.rs`. The engine, the interactive terminal and the MCP server are modules of `apps/cli`, so `fetchpath.exe` carries them all. Since FP-055, `apps/desktop` is a client of the engine and does not link the session crate.
+Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.md): smart rules live in `crates/fetchpath-session/src/rules.rs` (FP-064), with the command line's `fetchpath rules` in `apps/cli/src/rules.rs`. The engine, the interactive terminal (`apps/cli/src/tui`) and the MCP server (`apps/cli/src/mcp`, FP-065) are modules of `apps/cli`, so `fetchpath.exe` carries them all. Since FP-055, `apps/desktop` is a client of the engine and does not link the session crate.
 
 ## Documentation
 

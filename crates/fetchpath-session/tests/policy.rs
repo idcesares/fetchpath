@@ -477,7 +477,6 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
             agent: agent_name(),
             policy: Some(granting(&s.root)),
         },
-        Command::GetAgentPolicies,
         Command::UpdateSettings { settings },
         Command::GetSettings,
         Command::QueueStats,
@@ -568,6 +567,79 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
     ] {
         assert_eq!(code(send(&browser, command)), "policy.not_permitted");
     }
+}
+
+/// An agent may read its own access (D3), so its MCP server can offer its
+/// folders; it never sees another agent's.
+#[test]
+fn an_agent_reads_its_own_access_and_no_one_elses() {
+    let s = setup(granting);
+    let other = AgentName::try_from("other").unwrap();
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: other.clone(),
+            policy: Some(granting(&s.outside)),
+        },
+    )
+    .unwrap();
+    let seen = |client: &InProcessClient| match send(client, Command::GetAgentPolicies).unwrap() {
+        CommandResult::AgentPolicies { policies } => policies,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(seen(&s.user).len(), 2);
+    let own = seen(&s.agent);
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].agent, agent_name());
+    assert_eq!(own[0].policy.folders, vec![s.granted.display().to_string()]);
+
+    // An agent the person never configured sees the default: no folders.
+    let stranger = InProcessClient::manual(Arc::clone(&s.engine))
+        .with_principal(Principal::try_from("agent:stranger").unwrap());
+    let own = seen(&stranger);
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].agent.as_str(), "stranger");
+    assert!(own[0].policy.folders.is_empty());
+}
+
+/// An agent's history search cannot spell out a folder it was not granted
+/// (FP-065 review): outside its grant only the file name matches.
+#[test]
+fn an_agent_history_search_matches_hidden_folders_by_file_name_only() {
+    let s = setup(granting);
+    let hidden = s.root.join("AcmeCorp-private");
+    std::fs::create_dir_all(&hidden).unwrap();
+    for destination in [hidden.join("report.bin"), s.granted.join("inside.bin")] {
+        let asked = job(send(&s.agent, later(&destination)).unwrap());
+        send(
+            &s.agent,
+            Command::Cancel {
+                job_id: asked.job_id.clone(),
+                retain_partial: false,
+            },
+        )
+        .unwrap();
+    }
+    let search = |client: &InProcessClient, text: &str| -> usize {
+        match send(
+            client,
+            Command::History {
+                query: Some(text.to_owned()),
+                limit: None,
+            },
+        )
+        .unwrap()
+        {
+            CommandResult::Jobs { jobs } => jobs.len(),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(search(&s.agent, "acmecorp"), 0);
+    assert_eq!(search(&s.agent, "report.bin"), 1);
+    // Inside the grant the folder matches, and the person matches anything.
+    let granted_name = s.granted.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(search(&s.agent, &format!("{granted_name}\\inside")), 1);
+    assert_eq!(search(&s.user, "acmecorp"), 1);
 }
 
 #[test]

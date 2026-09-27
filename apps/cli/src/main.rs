@@ -2,6 +2,7 @@ mod client;
 mod download;
 mod engine;
 mod lan;
+mod mcp;
 mod queue;
 mod reveal;
 mod rules;
@@ -31,6 +32,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
+  fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
 
 Video and audio need two free programs, yt-dlp and ffmpeg, that are not
 part of Fetchpath:
@@ -100,6 +102,7 @@ fn main() {
         Some("tools") => tools::run(&args[1..]),
         Some("folder") => reveal::run(&args[1..]),
         Some("rules") => rules::run(&args[1..]),
+        Some("mcp") => mcp::run(&args[1..]),
         Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");

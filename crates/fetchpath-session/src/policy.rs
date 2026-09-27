@@ -96,6 +96,7 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
             | Command::InspectLink { .. }
             | Command::History { .. }
             | Command::SubscribeJob { .. }
+            | Command::GetAgentPolicies
             | Command::EngineStatus => true,
             Command::ResolveDestination { decision, .. } => {
                 !matches!(decision, DestinationDecision::ReplaceExisting)
@@ -162,7 +163,7 @@ fn resolved(path: &Path) -> Option<PathBuf> {
 
 /// True when `destination` lies inside one of the granted folders once links
 /// and junctions are resolved. A grant that does not exist grants nothing.
-pub(crate) fn inside_grants(destination: &Path, folders: &[String]) -> bool {
+pub fn inside_grants(destination: &Path, folders: &[String]) -> bool {
     let Some(directory) = destination.parent().and_then(resolved) else {
         return false;
     };

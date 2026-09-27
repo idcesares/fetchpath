@@ -9,6 +9,7 @@ fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME
 fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history
 fetchpath approve | deny JOB...
 fetchpath inspect LINK | batch FILE | settings [NAME [VALUE]] | engine status | engine stop [--for-update]
+fetchpath mcp [--agent NAME]
 fetchpath --version
 fetchpath --help
 ```
@@ -321,6 +322,48 @@ redraws nothing, which suits screen readers; it is chosen automatically when
 Its cards and questions are answered by typing: Enter, `no`, a number, or
 on a file's card `sha256 CHECKSUM` and `name NEW-NAME`; a batch takes the
 numbers to mark or unmark; an agent's request takes `approve` or `deny`.
+
+## AI agents (MCP)
+
+`fetchpath mcp` lets an AI agent host (Claude Code, Claude Desktop, Codex,
+VS Code and others that speak the Model Context Protocol) download through
+Fetchpath. The host starts it and talks to it over standard input and
+output; you never run it yourself. Give each host its own name with
+`--agent`, so you can tell their requests apart and grant them separately.
+
+| Host | Setup |
+|---|---|
+| Claude Code | `claude mcp add fetchpath -- fetchpath mcp --agent claude-code` |
+| Claude Desktop | in `claude_desktop_config.json`: `"mcpServers": {"fetchpath": {"command": "fetchpath", "args": ["mcp", "--agent", "claude-desktop"]}}` |
+| Codex | in `~/.codex/config.toml`: `[mcp_servers.fetchpath]` with `command = "fetchpath"` and `args = ["mcp", "--agent", "codex"]` |
+| VS Code | in `.vscode/mcp.json`: `"servers": {"fetchpath": {"type": "stdio", "command": "fetchpath", "args": ["mcp", "--agent", "vscode"]}}` |
+
+Restart the host after installing Fetchpath so it finds `fetchpath` on your
+PATH, or give the full path to `fetchpath.exe`.
+
+The agent gets these tools: `download` (a file, or a video at a quality;
+optionally waiting, with progress), `inspect_link`, `list_downloads`,
+`get_download`, `wait_for_download`, `pause`, `resume`, `cancel` and
+`search_history`. What it may do is decided by Fetchpath, not by the agent:
+
+- Downloads into folders you granted to that agent start at once. Anything
+  else (another folder, a file over its size limit, more than its number of
+  downloads an hour) waits for you: the terminal shows a card, and
+  `fetchpath approve JOB` or `fetchpath deny JOB` answers from the command
+  line. Until you grant folders (`fetchpath agents`, coming next), every
+  request waits for you.
+- An agent can never send a password or cookies, replace an existing file,
+  or change settings, rules, sharing or paired devices; it sees and controls
+  only the downloads it asked for.
+- It is shown a saved file's path only inside a folder you granted it.
+  Names, titles and server messages are handed to it marked as untrusted, so
+  a web page cannot pass itself off as instructions from Fetchpath. A
+  SHA-256 Fetchpath computes is described as what arrived, never as proof of
+  who published the file.
+
+These rules defend against an agent that a web page misleads. They do not
+defend against a malicious program already running as you, which could read
+Fetchpath's data folder like any other of your files.
 
 ## Video and audio tools
 

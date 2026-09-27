@@ -3,201 +3,14 @@
 //! `--json` shapes, and job references by queue index or id prefix.
 #![cfg(windows)]
 
+mod common;
+
+use common::*;
 use serde_json::Value;
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::io::Read;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-
-const EXE: &str = env!("CARGO_BIN_EXE_fetchpath");
-
-/// A data folder with its own engine, stopped when the test ends.
-struct Home {
-    dir: tempfile::TempDir,
-    engine: Child,
-}
-
-impl Home {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("profile").join("Downloads")).unwrap();
-        std::fs::create_dir_all(dir.path().join("out")).unwrap();
-        // The engine places a download sent without a folder; it must never
-        // reach the real Downloads folder.
-        let data = dir.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        std::fs::write(
-            data.join("settings-v1.json"),
-            serde_json::json!({
-                "schemaVersion": 1,
-                "defaultDestinationDir": dir.path().join("profile").join("Downloads"),
-            })
-            .to_string(),
-        )
-        .unwrap();
-        let engine = Command::new(EXE)
-            .args(["engine", "--idle-grace-ms", "3000"])
-            .env("FETCHPATH_APP_DATA_DIR", dir.path().join("data"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let home = Self { dir, engine };
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while home.run(&["engine", "status"]).status.code() != Some(0) {
-            assert!(Instant::now() < deadline, "the engine never started");
-            thread::sleep(Duration::from_millis(50));
-        }
-        home
-    }
-
-    fn out(&self) -> PathBuf {
-        self.dir.path().join("out")
-    }
-
-    fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(EXE);
-        command
-            .args(args)
-            .current_dir(self.out())
-            .env("FETCHPATH_APP_DATA_DIR", self.dir.path().join("data"))
-            .env("USERPROFILE", self.dir.path().join("profile"))
-            .stdin(Stdio::null());
-        command
-    }
-
-    fn run(&self, args: &[&str]) -> Output {
-        self.command(args).output().unwrap()
-    }
-
-    /// Runs a command and returns its exit code and its standard output as
-    /// JSON lines.
-    fn json(&self, args: &[&str]) -> (i32, Vec<Value>) {
-        let output = self.run(args);
-        let lines = String::from_utf8(output.stdout)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line}")))
-            .collect();
-        (output.status.code().unwrap(), lines)
-    }
-
-    fn jobs(&self) -> Vec<Value> {
-        let (code, lines) = self.json(&["ls", "--json"]);
-        assert_eq!(code, 0);
-        assert_eq!(lines[0]["type"], "Jobs");
-        lines[0]["jobs"].as_array().unwrap().clone()
-    }
-
-    fn wait_for_state(&self, index: usize, state: &str) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            // Another process may not have created the job yet.
-            let job = self.jobs().get(index).cloned().unwrap_or(Value::Null);
-            if job["state"] == state {
-                return job;
-            }
-            assert!(Instant::now() < deadline, "never {state}: {job}");
-            thread::sleep(Duration::from_millis(50));
-        }
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        let _ = self.run(&["engine", "stop"]);
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while Instant::now() < deadline {
-            if self.engine.try_wait().ok().flatten().is_some() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        let _ = self.engine.kill();
-    }
-}
-
-fn code(output: &Output) -> i32 {
-    output.status.code().unwrap()
-}
-
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
-}
-
-/// Serves `body` at any path, slowly, with ranges and a strong validator;
-/// paths containing `missing` answer 404.
-fn server(body: Vec<u8>, pause: Duration) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            let body = body.clone();
-            thread::spawn(move || {
-                let mut request = Vec::new();
-                let mut buffer = [0_u8; 1024];
-                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match stream.read(&mut buffer) {
-                        Ok(0) | Err(_) => return,
-                        Ok(read) => request.extend_from_slice(&buffer[..read]),
-                    }
-                }
-                let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
-                if text.lines().next().unwrap_or("").contains("missing") {
-                    let _ = stream.write_all(
-                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    );
-                    return;
-                }
-                let range = text
-                    .lines()
-                    .find_map(|line| line.strip_prefix("range: bytes="))
-                    .map(str::to_owned);
-                let start = range
-                    .as_deref()
-                    .and_then(|range| range.split('-').next())
-                    .and_then(|start| start.trim().parse::<usize>().ok());
-                let end = range
-                    .as_deref()
-                    .and_then(|range| range.split('-').nth(1))
-                    .and_then(|end| end.trim().parse::<usize>().ok())
-                    .unwrap_or(body.len() - 1)
-                    .min(body.len() - 1);
-                let head = match start {
-                    Some(start) => format!(
-                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nETag: \"fixed\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
-                        end - start + 1,
-                        body.len()
-                    ),
-                    None => format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"fixed\"\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
-                        body.len()
-                    ),
-                };
-                if stream.write_all(head.as_bytes()).is_err() {
-                    return;
-                }
-                let from = start.unwrap_or(0);
-                let to = if start.is_some() { end + 1 } else { body.len() };
-                for chunk in body[from..to].chunks(16 * 1024) {
-                    if stream.write_all(chunk).is_err() {
-                        return;
-                    }
-                    thread::sleep(pause);
-                }
-            });
-        }
-    });
-    base
-}
-
-fn body(length: usize) -> Vec<u8> {
-    (0..length).map(|index| (index % 251) as u8).collect()
-}
 
 #[test]
 fn download_keeps_its_exit_codes_and_joins_the_shared_queue() {
@@ -566,7 +379,15 @@ fn rules_place_downloads_explain_themselves_and_can_require_a_checksum() {
     let sorted_arg = sorted.display().to_string();
 
     let added = home.run(&[
-        "rules", "add", "--name", "Archives", "--type", "zip", "--min-size", "20KB", "--folder",
+        "rules",
+        "add",
+        "--name",
+        "Archives",
+        "--type",
+        "zip",
+        "--min-size",
+        "20KB",
+        "--folder",
         &sorted_arg,
     ]);
     assert_eq!(added.status.code(), Some(0), "{}", text(&added.stderr));
@@ -578,18 +399,31 @@ fn rules_place_downloads_explain_themselves_and_can_require_a_checksum() {
 
     let tested = home.run(&["rules", "test", &format!("{base}/pack.zip")]);
     let said = text(&tested.stdout);
-    assert!(said.contains("Rule 1 (Archives) decides: save in"), "{said}");
-    assert!(said.contains("the file is a .zip; 29.3 KiB is at least 20.0 KiB"), "{said}");
+    assert!(
+        said.contains("Rule 1 (Archives) decides: save in"),
+        "{said}"
+    );
+    assert!(
+        said.contains("the file is a .zip; 29.3 KiB is at least 20.0 KiB"),
+        "{said}"
+    );
 
     // Without --to, the engine puts it where the rule says.
     let saved = home.run(&["add", &format!("{base}/pack.zip"), "--wait", "--quiet"]);
     assert_eq!(saved.status.code(), Some(0), "{}", text(&saved.stderr));
-    assert_eq!(std::fs::read(sorted.join("pack.zip")).unwrap(), body(30_000));
+    assert_eq!(
+        std::fs::read(sorted.join("pack.zip")).unwrap(),
+        body(30_000)
+    );
 
     // The second rule refuses an .iso without a checksum.
     let unchecked = home.run(&["add", &format!("{base}/disc.iso")]);
     assert_ne!(unchecked.status.code(), Some(0));
-    assert!(text(&unchecked.stderr).contains("requires a SHA-256"), "{}", text(&unchecked.stderr));
+    assert!(
+        text(&unchecked.stderr).contains("requires a SHA-256"),
+        "{}",
+        text(&unchecked.stderr)
+    );
 
     let removed = home.run(&["rules", "rm", "1"]);
     assert!(!text(&removed.stdout).contains("Archives"));
@@ -662,10 +496,18 @@ fn an_agent_request_is_approved_and_denied_from_the_command_line() {
 
     let output = home.run(&["approve", &id(&approved)]);
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
-    assert!(text(&output.stdout).starts_with("Approved "), "{}", text(&output.stdout));
+    assert!(
+        text(&output.stdout).starts_with("Approved "),
+        "{}",
+        text(&output.stdout)
+    );
     let output = home.run(&["deny", &id(&denied)]);
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
-    assert!(text(&output.stdout).contains("it will not download"), "{}", text(&output.stdout));
+    assert!(
+        text(&output.stdout).contains("it will not download"),
+        "{}",
+        text(&output.stdout)
+    );
 
     let states: Vec<(String, String)> = home
         .jobs()
@@ -677,8 +519,14 @@ fn an_agent_request_is_approved_and_denied_from_the_command_line() {
             )
         })
         .collect();
-    assert!(states.contains(&(id(&approved), "queued".to_owned())), "{states:?}");
-    assert!(states.contains(&(id(&denied), "cancelled".to_owned())), "{states:?}");
+    assert!(
+        states.contains(&(id(&approved), "queued".to_owned())),
+        "{states:?}"
+    );
+    assert!(
+        states.contains(&(id(&denied), "cancelled".to_owned())),
+        "{states:?}"
+    );
 
     // Nothing is waiting any more, so answering again is refused.
     let again = home.run(&["approve", &id(&approved)]);

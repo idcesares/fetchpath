@@ -391,3 +391,24 @@ process. Source: `crates/fetchpath-protocol/src/command.rs`.
   host sends it after each accepted capture, or starts an engine, which takes
   the inbox in before it serves; an engine that does not know it answers
   `contract.unknown_command` and takes the inbox in at its next tick.
+
+### D3 · An agent reads its own access (FP-065, 27 September 2026)
+
+Supersedes the part of D1 that makes agent access `user` only, for reading.
+Source: `crates/fetchpath-session/src/engine.rs`, `policy.rs`.
+
+- **`GetAgentPolicies` from an agent** answers with that agent's own entry
+  only: its granted folders, size limit and rate, or the defaults (no
+  folders) when the person has not configured it. It never lists another
+  agent. `SetAgentPolicy`, approvals and every other access change stay
+  `user` only.
+- **Why.** The MCP server (`fetchpath mcp`) needs the grants to offer a
+  default folder that does not wait for approval, and to show saved paths
+  only when they lie inside a granted folder, using the engine's own
+  `inside_grants` so client and engine resolve links and junctions alike.
+  An agent could already learn its grants by trying destinations; reading
+  them adds no power.
+- **`History` from an agent** matches its words against a destination's
+  folders only when that destination lies inside the agent's grant, and
+  otherwise against the file name alone, so repeated searches cannot spell
+  out a folder the agent is not shown (found by the FP-065 review).

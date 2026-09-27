@@ -1952,8 +1952,8 @@
         "FP-053",
         "FP-054"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -1969,7 +1969,11 @@
       ],
       "acceptance": "fetchpath mcp speaks MCP over stdio as an agent principal with tools download, inspect_link, list_downloads, get_download, wait_for_download, pause, resume, cancel and search_history; tool schemas are generated from protocol types; progress arrives as MCP progress notifications; results mark page titles, file names and server text as untrusted; saved paths appear only inside granted folders; an observed hash is never described as publisher authenticity; setup instructions for common agent hosts are documented. The SDK is chosen from current documentation.",
       "verification": "MCP conformance tests with a scripted client; end-to-end download from a real agent host recorded; strong-model review of the agent boundary.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/MCP.md",
+        "apps/cli/tests/mcp.rs",
+        "crates/fetchpath-session/tests/policy.rs"
+      ],
       "blockedReason": null
     },
     {

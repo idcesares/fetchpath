@@ -11,6 +11,7 @@ use fetchpath_protocol::launch::{self, EngineHome, LAUNCH_WAIT};
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::{JobState, Progress};
 use fetchpath_protocol::pipe::{Limits, PipeEngineClient};
+use fetchpath_protocol::principal::Principal;
 use fetchpath_protocol::{ClientId, EngineClient, JobSnapshot, ProtocolError};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +28,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn connect() -> Result<Self, ProtocolError> {
+        Self::connect_as(Principal::User)
+    }
+
+    /// Connects as `principal`, which the engine then holds this
+    /// connection to (the MCP server connects as its agent).
+    pub fn connect_as(principal: Principal) -> Result<Self, ProtocolError> {
         let home = EngineHome::from_env()?;
         let exe = std::env::current_exe().map_err(|error| {
             ProtocolError::new(
@@ -35,7 +42,8 @@ impl Engine {
                 format!("Fetchpath could not find its own program file: {error}"),
             )
         })?;
-        let client = launch::attach_or_launch(&home, &exe, Limits::default(), LAUNCH_WAIT)?;
+        let client = launch::attach_or_launch(&home, &exe, Limits::default(), LAUNCH_WAIT)?
+            .with_principal(principal);
         Ok(Self {
             client,
             id: ClientId::random(),
@@ -44,7 +52,13 @@ impl Engine {
 
     /// Connects to a running engine only; never starts one.
     pub fn attach() -> Result<Self, ProtocolError> {
-        let client = launch::attach(&EngineHome::from_env()?, Limits::default())?;
+        Self::attach_as(Principal::User)
+    }
+
+    /// Connects to a running engine only, as `principal`.
+    pub fn attach_as(principal: Principal) -> Result<Self, ProtocolError> {
+        let client =
+            launch::attach(&EngineHome::from_env()?, Limits::default())?.with_principal(principal);
         Ok(Self {
             client,
             id: ClientId::random(),

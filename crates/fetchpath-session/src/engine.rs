@@ -982,6 +982,24 @@ impl Engine {
             Command::History { query, limit } => {
                 let needle = query.as_deref().map(str::to_lowercase);
                 let limit = limit.unwrap_or(100).clamp(1, 1_000) as usize;
+                // An agent's words match a destination's folders only inside
+                // its grant, so a search cannot spell out a hidden path.
+                let grants = principal
+                    .agent()
+                    .map(|agent| self.session.agent_policy(agent).folders);
+                let searchable = |path: &str| -> String {
+                    match &grants {
+                        Some(folders)
+                            if !policy::inside_grants(std::path::Path::new(path), folders) =>
+                        {
+                            std::path::Path::new(path)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_lowercase())
+                                .unwrap_or_default()
+                        }
+                        _ => path.to_lowercase(),
+                    }
+                };
                 let jobs = self
                     .snapshots()?
                     .into_iter()
@@ -993,7 +1011,7 @@ impl Engine {
                                 || job
                                     .destination
                                     .as_deref()
-                                    .is_some_and(|path| path.to_lowercase().contains(needle))
+                                    .is_some_and(|path| searchable(path).contains(needle))
                         })
                     })
                     .take(limit)
@@ -1023,8 +1041,16 @@ impl Engine {
             Command::ListRules => Ok(CommandResult::Rules {
                 rules: self.session.rules(),
             }),
+            // An agent sees only its own access (D3), the default when the
+            // person has not configured it; the person sees every agent.
             Command::GetAgentPolicies => Ok(CommandResult::AgentPolicies {
-                policies: self.session.agent_policies(),
+                policies: match principal.agent() {
+                    None => self.session.agent_policies(),
+                    Some(agent) => vec![fetchpath_protocol::principal::AgentAccess {
+                        agent: agent.clone(),
+                        policy: self.session.agent_policy(agent),
+                    }],
+                },
             }),
             Command::EngineStatus => {
                 // An agent's count covers its own jobs only.

@@ -309,14 +309,39 @@ pub(crate) fn add_one(
     look: bool,
     not_before: Option<Timestamp>,
 ) -> Result<JobSnapshot, ProtocolError> {
-    let url = SensitiveUrl::try_from(link.to_owned())
-        .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
     // A link that cannot be looked at is still added, as a file.
     let seen = if look {
         crate::rules::inspect(engine, link).ok()
     } else {
         None
     };
+    add_named(
+        engine,
+        parsed,
+        link,
+        target,
+        None,
+        seen.as_ref(),
+        not_before,
+    )
+}
+
+/// `add_one` with a file name given instead of the one the link or page
+/// suggests, and the link as already looked at (`None` treats it as a file
+/// unless a quality is asked for). `name` must already be a safe file name;
+/// with a folder as `target` it goes inside it, and without a target only the
+/// name is sent.
+pub(crate) fn add_named(
+    engine: &Engine,
+    parsed: &Args,
+    link: &str,
+    target: Option<&str>,
+    name: Option<&str>,
+    seen: Option<&fetchpath_protocol::model::LinkInspection>,
+    not_before: Option<Timestamp>,
+) -> Result<JobSnapshot, ProtocolError> {
+    let url = SensitiveUrl::try_from(link.to_owned())
+        .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
     // A video page is never saved as the page: the quality is the one asked
     // for, else a matching rule's, else the best up to 1080p.
     let quality = parsed.quality.clone().or_else(|| {
@@ -345,6 +370,7 @@ pub(crate) fn add_one(
             (Some((variant.id.clone(), variant.label.clone())), name)
         }
     };
+    let suggested = name.map_or(suggested, str::to_owned);
     // Without --to only the name is sent, and the engine places it by rule
     // or in its default folder.
     let destination = match target {
