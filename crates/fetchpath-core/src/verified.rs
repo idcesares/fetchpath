@@ -651,6 +651,45 @@ pub(crate) fn reuse_for_file(
     })
 }
 
+/// Publishes a checksum-verified file job from the first paired device that
+/// has it (FP-034). Their bytes are checked against the job's own checksum
+/// before publication and are not cached: the sender's provenance cannot be
+/// checked here. `None` means the job downloads as usual.
+pub(crate) fn fetch_file_from_peers(
+    request: &DownloadRequest,
+    peers: &[std::sync::Arc<dyn PeerSource + Send + Sync>],
+    ceiling: u64,
+) -> Option<(crate::DownloadedFile, [u8; 32])> {
+    let id = ContentId::from_expected_sha256(request.expected_sha256.as_deref()?)?;
+    let mut verified = VerifiedDownloadRequest::new(
+        vec![MirrorSource::new(request.url.clone())],
+        request.destination.clone(),
+    );
+    verified.cancellation = request.cancellation.clone();
+    verified.cancel_cleanup = request.cancel_cleanup;
+    verified.context = request.context.clone();
+    verified.expected_sha256 = request.expected_sha256.clone();
+    for peer in peers {
+        if request.cancellation.is_cancelled() {
+            return None;
+        }
+        if let Ok(PeerAttempt::Published(done)) =
+            fetch_from_peer(&verified, peer.as_ref(), &id, ceiling)
+        {
+            return Some((
+                crate::DownloadedFile {
+                    destination: done.destination,
+                    bytes: done.bytes,
+                    observed_sha256: done.observed_sha256,
+                    staging_cleanup_pending: done.staging_cleanup_pending,
+                },
+                peer.fingerprint(),
+            ));
+        }
+    }
+    None
+}
+
 /// Remembers a file a checksum-verified job just published from the network.
 /// It is shareable with paired devices only when nothing private reached the
 /// request: no cookies or referrer, no query or fragment, no user name.

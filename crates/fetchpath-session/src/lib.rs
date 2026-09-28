@@ -387,6 +387,9 @@ pub struct JobSnapshot {
     /// Completed from this computer's cache rather than a transfer (FP-032).
     #[serde(default, skip_serializing_if = "is_false")]
     pub reused_from_cache: bool,
+    /// The fingerprint of the paired device it came from (FP-034).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_paired_device: Option<String>,
 }
 
 /// Aggregate queue figures, for the statistics panel.
@@ -1946,6 +1949,16 @@ impl Session {
                 {
                     let _ = file.use_cache(root, Self::cache_config(&settings));
                 }
+                // Paired devices are asked for the person's and the browser's
+                // checksum-verified downloads only, like the cache.
+                if !matches!(record.principal, Principal::Agent(_))
+                    && let Some(lan) = self.lan.get()
+                {
+                    let peers = lan.peer_sources();
+                    if !peers.is_empty() {
+                        let _ = file.use_peers(peers);
+                    }
+                }
             }
             if let Err(code) = job.start() {
                 record.view.state = "failed".into();
@@ -2046,6 +2059,7 @@ impl Session {
         if let Some(lan) = self.lan.get() {
             lan.cancel_pairing();
             lan.stop_serving();
+            lan.stop_listening();
         }
     }
 
@@ -2430,6 +2444,7 @@ impl QueueRecord {
                 kind: "file".into(),
                 quality_label: None,
                 reused_from_cache: false,
+                from_paired_device: None,
             },
         }
     }
@@ -2507,6 +2522,7 @@ impl QueueRecord {
                 kind: "media".into(),
                 quality_label: Some(quality_label),
                 reused_from_cache: false,
+                from_paired_device: None,
             },
         }
     }
@@ -2774,6 +2790,9 @@ fn refresh_record(record: &mut QueueRecord) {
             record.view.cleanup_pending = snapshot.staging_cleanup_pending.is_some();
             record.view.error = snapshot.error;
             record.view.reused_from_cache = snapshot.reused_from_cache;
+            record.view.from_paired_device = snapshot
+                .from_peer
+                .map(|fingerprint| fetchpath_lan::Fingerprint(fingerprint).to_string());
         }
         JobHandle::Media(job) => {
             let snapshot = job.snapshot();

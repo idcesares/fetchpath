@@ -1,8 +1,8 @@
 # Content cache and paired computers
 
 FP-020 (store and LAN adapter, 22–23 September 2026), FP-032 (the cache in
-the engine and its clients, 28 September 2026) and FP-033 (pairing and
-sharing through the engine and the desktop, 28 September 2026). Design:
+the engine and its clients), FP-033 (pairing and sharing through the engine
+and the desktop) and FP-034 (discovery and receiving), 28 September 2026. Design:
 [content cache and paired LAN](../architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md).
 The earlier per-step record is in Git history.
 
@@ -53,6 +53,23 @@ the joiner sees the host's. Failures read in plain words: a wrong code pairs
 nothing, an expired or used code asks for a new one. The server and the engine
 share one pin list, so Remove takes effect on the next request.
 
+**Discovery and receiving (FP-034).** While sharing is on, the engine
+broadcasts a 62-byte UDP beacon on port 47633 every five seconds: its serve
+port, the time, a fresh 16-byte nonce and an HMAC-SHA256 over them keyed by
+its own public key (`adapters/lan/src/discovery.rs`). Nothing is sent while
+sharing is off. To anyone without that key the beacon is random bytes: no
+name, fingerprint or content identifier. Every engine listens; a datagram of
+any other length, another magic, a zero port, a time more than 60 s away or a
+tag no pinned key produces is dropped, and at most one address is kept per
+pinned device, for 30 s. The address is a hint: the session still
+authenticates the pinned key, so a forged or replayed beacon only sends a
+request to the wrong place. A person's or browser's checksum-verified job
+then asks those devices after the cache and before the link
+(`verified::fetch_file_from_peers`); their bytes are checked against the
+job's checksum, are not cached, and the job reports `from_paired_device`
+with no rate ("From your paired computer ..." in the desktop, `from paired`
+in the terminal). An agent's job never asks paired devices.
+
 State lives in one local data folder: `FETCHPATH_DATA_DIR`, else a moved
 engine home, else `%LOCALAPPDATA%\app.fetchpath.desktop` (`cache\`, `lan\`),
 which uninstall removes with the rest of the data when the person asks.
@@ -75,7 +92,11 @@ directly; `ls` shows `from cache`.
 - Engine: `a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_agent`
   (policy suite) and `two_engines_pair_with_a_code_and_the_person_controls_sharing`
   (`tests/lan.rs`: a wrong code pairs nothing, the right one pairs both ways,
-  sharing off until on, unpair, agents refused).
+  sharing off until on; the other engine hears the beacon, shows the address
+  and completes a checksum-verified file from the sharing one with its own
+  link dead, labelled with its fingerprint; unpair; agents refused). The
+  beacon's own tests cover recognition by the pinned key only, a fresh nonce
+  each time, and refusal of short, long, stale and altered datagrams.
 - `tests/compatibility/windows/ui-cache.ps1` against the release desktop: the
   same file with its checksum completes from the cache with the server gone,
   byte-identical, with no speed shown; Settings shows use, every control is
@@ -96,9 +117,11 @@ directly; `ls` shows `from cache`.
 
 ## Limitations that still hold
 
-1. **Receiving is command-line only.** A desktop or queue download does not
-   ask paired computers; `fetchpath fetch-verified --peer ADDRESS=KEY` does.
-   Paired devices have no stored address until discovery (FP-034).
+1. **Discovery works within one broadcast domain** (the local subnet), and
+   only for a device that is sharing and whose engine is running. Someone who
+   knows a device's public key (any device it paired with, or anyone who saw
+   a session's hello) can recognize its beacons, so it can be tracked on the
+   network by them.
 2. **The host names every joiner "paired device"**; the joiner names the host.
 3. **Sharing keeps the engine running**, and after a restart only resumes when
    the engine starts (at sign-in if that setting is on).

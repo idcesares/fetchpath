@@ -371,6 +371,8 @@ pub struct FileJobSnapshot {
     /// Published from the local cache: a copy, not a transfer, so there is no
     /// rate to report.
     pub reused_from_cache: bool,
+    /// The fingerprint of the paired device it came from, when it did.
+    pub from_peer: Option<[u8; 32]>,
 }
 #[derive(Clone, Debug)]
 pub struct FileJobEvent {
@@ -390,6 +392,7 @@ struct JobInner {
     events: Vec<FileJobEvent>,
     request: Option<DownloadRequest>,
     cache: Option<(PathBuf, fetchpath_cache::CacheConfig)>,
+    peers: Vec<Arc<dyn PeerSource + Send + Sync>>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 #[derive(Clone)]
@@ -456,6 +459,7 @@ impl FileJob {
             staging_cleanup_pending: None,
             error: None,
             reused_from_cache: false,
+            from_peer: None,
         };
         Self {
             inner: Arc::new(Mutex::new(JobInner {
@@ -476,6 +480,7 @@ impl FileJob {
                     max_connections: None,
                 }),
                 cache: None,
+                peers: Vec::new(),
                 worker: None,
             })),
             cancellation,
@@ -513,6 +518,20 @@ impl FileJob {
         Ok(())
     }
 
+    /// Paired devices to ask, after the cache and before the link, for a
+    /// checksum-verified download. Only before it starts.
+    pub fn use_peers(
+        &self,
+        peers: Vec<Arc<dyn PeerSource + Send + Sync>>,
+    ) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.request.is_none() {
+            return Err("contract.invalid_transition");
+        }
+        inner.peers = peers;
+        Ok(())
+    }
+
     /// Caps the connections this download opens. Only before it starts.
     pub fn limit_connections(&self, connections: usize) -> Result<(), &'static str> {
         let mut inner = self.inner.lock().unwrap();
@@ -534,6 +553,7 @@ impl FileJob {
             .cache
             .take()
             .filter(|_| request.expected_sha256.is_some());
+        let peers = std::mem::take(&mut inner.peers);
         transition(&mut inner, FileJobState::Running);
         let shared = self.inner.clone();
         let token = self.cancellation.clone();
@@ -544,14 +564,30 @@ impl FileJob {
                 .as_mut()
                 .and_then(|cache| verified::reuse_for_file(&request, cache));
             let reused_from_cache = reused.is_some();
+            // Never more than the cache would keep, or 64 GiB without one.
+            let ceiling = cache
+                .as_ref()
+                .map_or(64 << 30, |cache| cache.config().max_entry_bytes);
+            let mut from_peer = None;
             let result = match reused {
                 Some(done) => Ok(done),
+                None if request.expected_sha256.is_some() && !peers.is_empty() => {
+                    match verified::fetch_file_from_peers(&request, &peers, ceiling) {
+                        Some((done, fingerprint)) => {
+                            from_peer = Some(fingerprint);
+                            Ok(done)
+                        }
+                        None => download(request.clone()),
+                    }
+                }
                 None => download(request.clone()),
             };
             // Copied into the cache after the job reports completion, so a
             // large file does not sit at 100% while it is copied.
             let remember = match &result {
-                Ok(done) if !reused_from_cache => Some(done.destination.clone()),
+                Ok(done) if !reused_from_cache && from_peer.is_none() => {
+                    Some(done.destination.clone())
+                }
                 _ => None,
             };
             let mut state = shared.lock().unwrap();
@@ -565,10 +601,11 @@ impl FileJob {
             state.snapshot.total_bytes = token.total().or(state.snapshot.total_bytes);
             match result {
                 Ok(done) => {
-                    if reused_from_cache {
+                    if reused_from_cache || from_peer.is_some() {
                         state.snapshot.bytes_received = done.bytes;
                         state.snapshot.total_bytes = Some(done.bytes);
-                        state.snapshot.reused_from_cache = true;
+                        state.snapshot.reused_from_cache = reused_from_cache;
+                        state.snapshot.from_peer = from_peer;
                     }
                     state.snapshot.destination = Some(done.destination);
                     state.snapshot.observed_sha256 = Some(done.observed_sha256);

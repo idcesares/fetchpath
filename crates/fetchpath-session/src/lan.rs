@@ -11,9 +11,10 @@ use crate::wire;
 use fetchpath_core::fetchpath_cache::{CacheConfig, ContentCache};
 use fetchpath_lan::{
     DeviceIdentity, Dpapi, PairingCode, PairingError, PeerKey, PeerServer, PinStore, UploadBudget,
-    host_pairing, join_pairing,
+    discovery, host_pairing, join_pairing,
 };
 use fetchpath_protocol::model::{LanView, PairedDevice, PairingState, PairingView};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -41,7 +42,17 @@ pub struct Lan {
     server: Mutex<Option<Server>>,
     problem: Mutex<Option<String>>,
     pairing: Arc<Mutex<Option<Pairing>>>,
+    /// Where each pinned device was last heard from, by its key: at most one
+    /// entry per pinned device, so a flood of beacons cannot grow it.
+    seen: Arc<Mutex<HashMap<PeerKey, (SocketAddr, Instant)>>>,
+    listening: AtomicBool,
+    stop_listening: Arc<AtomicBool>,
 }
+
+/// How often a sharing device announces itself.
+const BEACON_EVERY: Duration = Duration::from_secs(5);
+/// How long an announcement is believed.
+const SEEN_FOR: Duration = Duration::from_secs(30);
 
 struct Server {
     address: SocketAddr,
@@ -74,6 +85,9 @@ impl Lan {
             server: Mutex::new(None),
             problem: Mutex::new(None),
             pairing: Arc::new(Mutex::new(None)),
+            seen: Arc::default(),
+            listening: AtomicBool::new(false),
+            stop_listening: Arc::default(),
         };
         lan.enabled.store(lan.flag_on(), Ordering::SeqCst);
         lan
@@ -109,11 +123,69 @@ impl Lan {
         ))
     }
 
-    /// Starts serving if sharing was left on.
+    /// Starts serving if sharing was left on, and listens for paired
+    /// devices that are sharing.
     pub fn resume(&self) {
         if self.enabled.load(Ordering::SeqCst) {
             self.start_serving();
         }
+        self.listen();
+    }
+
+    /// Where a paired device can be reached, if it announced itself lately.
+    pub fn address_of(&self, key: &PeerKey) -> Option<SocketAddr> {
+        self.seen
+            .lock()
+            .expect("lan poisoned")
+            .get(key)
+            .filter(|(_, at)| at.elapsed() < SEEN_FOR)
+            .map(|(address, _)| *address)
+    }
+
+    /// Hears beacons, keeping only those from pinned devices. Listening
+    /// reveals nothing; a port already taken (another engine on this
+    /// computer) only means nothing is discovered.
+    fn listen(&self) {
+        if self.listening.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let port = std::env::var("FETCHPATH_LAN_DISCOVERY_PORT")
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(discovery::DISCOVERY_PORT);
+        let Ok(socket) = UdpSocket::bind(SocketAddr::new(self.bind, port)) else {
+            return;
+        };
+        let _ = socket.set_read_timeout(Some(Duration::from_secs(1)));
+        let Ok(pins) = self.pins() else {
+            return;
+        };
+        let seen = Arc::clone(&self.seen);
+        let stop = Arc::clone(&self.stop_listening);
+        std::thread::spawn(move || {
+            // One byte more than a beacon, so a longer datagram is seen as
+            // too long rather than cut to size.
+            let mut buffer = [0_u8; discovery::BEACON_LEN + 1];
+            while !stop.load(Ordering::SeqCst) {
+                let Ok((length, from)) = socket.recv_from(&mut buffer) else {
+                    continue;
+                };
+                let pinned: Vec<PeerKey> = pins
+                    .lock()
+                    .expect("pins poisoned")
+                    .peers()
+                    .into_iter()
+                    .map(|(key, _)| key)
+                    .collect();
+                if let Some((key, serves_on)) =
+                    discovery::recognize(&buffer[..length], &pinned, now_secs())
+                {
+                    seen.lock()
+                        .expect("lan poisoned")
+                        .insert(key, (SocketAddr::new(from.ip(), serves_on), Instant::now()));
+                }
+            }
+        });
     }
 
     /// True while the engine should stay up for other devices: sharing is
@@ -136,7 +208,11 @@ impl Lan {
             .expect("pins poisoned")
             .peers()
             .into_iter()
-            .map(|(key, label)| device(&key, &label))
+            .map(|(key, label)| {
+                let mut shown = device(&key, &label);
+                shown.address = self.address_of(&key).map(|address| address.to_string());
+                shown
+            })
             .collect();
         let serving = self
             .server
@@ -201,6 +277,7 @@ impl Lan {
         }
         let started = (|| {
             let identity = self.identity()?;
+            let identity_for_beacons = Arc::clone(&identity);
             let pins = self.pins()?;
             let cache = ContentCache::open(&self.cache_root, CacheConfig::new(u64::MAX, u64::MAX))
                 .map_err(|error| format!("The cache cannot be read: {error}"))?;
@@ -219,6 +296,7 @@ impl Lan {
             ));
             let stopping = Arc::clone(&stop);
             std::thread::spawn(move || peer_server.run(listener, stopping, MAX_SESSIONS));
+            announce(&identity_for_beacons, address.port(), Arc::clone(&stop));
             Ok::<_, String>(Server { address, stop })
         })();
         match started {
@@ -240,6 +318,34 @@ impl Lan {
             let _ =
                 TcpStream::connect_timeout(&wake_address(server.address), Duration::from_secs(1));
         }
+    }
+
+    /// Paired devices that announced themselves lately, to ask for a file
+    /// before its link. Each is still authenticated by its pinned key.
+    pub fn peer_sources(&self) -> Vec<Arc<dyn fetchpath_core::PeerSource + Send + Sync>> {
+        let (Ok(identity), Ok(pins)) = (self.identity(), self.pins()) else {
+            return Vec::new();
+        };
+        let keys: Vec<PeerKey> = pins
+            .lock()
+            .expect("pins poisoned")
+            .peers()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| {
+                let address = self.address_of(&key)?;
+                let peer: Arc<dyn fetchpath_core::PeerSource + Send + Sync> = Arc::new(LanPeer(
+                    fetchpath_lan::PeerClient::new(Arc::clone(&identity), address, key),
+                ));
+                Some(peer)
+            })
+            .collect()
+    }
+
+    pub fn stop_listening(&self) {
+        self.stop_listening.store(true, Ordering::SeqCst);
     }
 
     /// Shows a new code and waits for one device, replacing any code shown.
@@ -397,7 +503,63 @@ fn device(key: &PeerKey, label: &str) -> PairedDevice {
         key: key.hex(),
         fingerprint: key.fingerprint().to_string(),
         label: label.to_owned(),
+        address: None,
     }
+}
+
+/// A paired device as a source for the core. Every failure is "not here":
+/// the job falls through to the next source.
+struct LanPeer(fetchpath_lan::PeerClient);
+
+impl fetchpath_core::PeerSource for LanPeer {
+    fn fingerprint(&self) -> [u8; 32] {
+        self.0.peer().fingerprint().0
+    }
+
+    fn fetch(
+        &self,
+        id: &fetchpath_core::fetchpath_cache::ContentId,
+        ceiling: u64,
+        into: &std::path::Path,
+    ) -> io::Result<bool> {
+        Ok(self.0.fetch(id, ceiling, into).is_ok())
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Announces, while serving, that this device serves on `port`: to the
+/// local network's broadcast address, or to `FETCHPATH_LAN_DISCOVERY_TARGET`
+/// in tests. Only while sharing is on; nothing is sent otherwise.
+fn announce(identity: &Arc<DeviceIdentity>, port: u16, stop: Arc<AtomicBool>) {
+    let identity = Arc::clone(identity);
+    let target: SocketAddr = std::env::var("FETCHPATH_LAN_DISCOVERY_TARGET")
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::BROADCAST),
+            discovery::DISCOVERY_PORT,
+        ));
+    std::thread::spawn(move || {
+        let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else {
+            return;
+        };
+        let _ = socket.set_broadcast(true);
+        while !stop.load(Ordering::SeqCst) {
+            if let Ok(beacon) = discovery::beacon(&identity, port, now_secs()) {
+                let _ = socket.send_to(&beacon, target);
+            }
+            // Checked often, so turning sharing off stops the beacons at once.
+            let until = Instant::now() + BEACON_EVERY;
+            while Instant::now() < until && !stop.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    });
 }
 
 fn plain(error: &PairingError) -> String {

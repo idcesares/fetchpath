@@ -255,6 +255,7 @@ pub fn state_label(job: &JobSnapshot) -> &'static str {
         JobState::Failed if job.retry_at.is_some() => "retrying",
         // Copied from the cache, not transferred (FP-032).
         JobState::Completed if job.reused_from_cache => "from cache",
+        JobState::Completed if job.from_paired_device.is_some() => "from paired",
         state => state_name(state),
     }
 }

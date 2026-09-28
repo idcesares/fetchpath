@@ -2390,6 +2390,13 @@
             }
           ]
         },
+        "from_paired_device": {
+          "description": "Completed from a paired computer on the local network, whose\nfingerprint this is (FP-034); checked against the job's checksum.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "integrity": {
           "anyOf": [
             {
@@ -2728,6 +2735,13 @@
     },
     "PairedDevice": {
       "properties": {
+        "address": {
+          "description": "Where it announced itself on the local network lately, if it is\nsharing. A hint only: the device is still authenticated by its key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "fingerprint": {
           "type": "string"
         },

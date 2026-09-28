@@ -1012,12 +1012,18 @@
       "dependsOn": [
         "FP-020"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "astra-high",
       "files": [
         "adapters/lan",
-        "docs/development"
+        "docs/development",
+        "crates/fetchpath-session/src/lan.rs",
+        "crates/fetchpath-core",
+        "crates/fetchpath-protocol",
+        "apps/cli",
+        "apps/desktop",
+        "docs/user"
       ],
       "acceptanceIds": [
         "A07",
@@ -1025,7 +1031,9 @@
       ],
       "acceptance": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
       "verification": "Discovery advertises nothing identifying while LAN mode is off, reveals no content identifiers, and never substitutes for pinned-key authentication; malformed announcements are refused under bounded memory.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/CACHE-AND-LAN.md"
+      ],
       "blockedReason": null,
       "priority": "P3"
     },

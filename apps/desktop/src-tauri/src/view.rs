@@ -41,6 +41,8 @@ pub struct JobView {
     pub approval_reasons: Vec<&'static str>,
     /// Completed from this computer's cache, not transferred (FP-032).
     pub reused_from_cache: bool,
+    /// The fingerprint of the paired computer it came from (FP-034).
+    pub from_paired_device: Option<String>,
 }
 
 fn ms(at: Timestamp) -> u64 {
@@ -115,6 +117,7 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
         },
         quality_label: job.quality_label.clone(),
         reused_from_cache: job.reused_from_cache,
+        from_paired_device: job.from_paired_device.clone(),
         agent: job.principal.agent().map(ToString::to_string),
         approval_reasons: job
             .approval
@@ -535,6 +538,7 @@ mod tests {
                 "agent": null,
                 "approvalReasons": [],
                 "reusedFromCache": false,
+                "fromPairedDevice": null,
             })
         );
     }

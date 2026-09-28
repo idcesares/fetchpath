@@ -781,6 +781,12 @@ pub(crate) fn job_lines(job: &JobSnapshot) -> Vec<String> {
     if let Some(expected) = &job.expected_sha256 {
         line("Expected", &format!("SHA-256 {expected}"));
     }
+    if let Some(fingerprint) = &job.from_paired_device {
+        line(
+            "Source",
+            &format!("your paired computer {fingerprint}, checked against the checksum"),
+        );
+    }
     if job.reused_from_cache {
         line(
             "Source",

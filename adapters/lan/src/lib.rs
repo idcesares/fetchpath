@@ -8,8 +8,10 @@
 //! trusted digest before publication: a peer is a source, never an authority.
 //!
 //! Peer retrieval is sequential and is not presented as acceleration.
-//! Discovery is out of scope; peers are reached at an address the user gives.
+//! Discovery ([`discovery`]) is a hint for where a pinned device is, never
+//! a substitute for authenticating it.
 
+pub mod discovery;
 mod fetch;
 mod frame;
 mod handshake;

@@ -144,6 +144,7 @@ fn snapshot() -> JobSnapshot {
             reasons: vec![ApprovalReason::SizeLimit, ApprovalReason::RateLimit],
         }),
         reused_from_cache: true,
+        from_paired_device: None,
     }
 }
 
@@ -402,6 +403,7 @@ fn device() -> PairedDevice {
         key: "cd".repeat(32),
         fingerprint: "771f-1df9-c299-5152-7cc9".into(),
         label: "Laptop".into(),
+        address: Some("192.168.1.21:47631".into()),
     }
 }
 

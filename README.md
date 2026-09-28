@@ -64,8 +64,6 @@ and 0.1.0 can't be installed; see the [user guide](docs/user/GUIDE.md#install).
   work; that depends on `yt-dlp`.
 - The browser extension is added in developer mode for now. Firefox isn't
   supported yet.
-- Getting a file from a paired computer is command-line only; pairing and
-  sharing are in Settings too.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 

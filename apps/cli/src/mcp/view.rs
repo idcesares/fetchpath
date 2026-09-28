@@ -438,6 +438,7 @@ mod tests {
             finished_at: None,
             quality_label: None,
             reused_from_cache: false,
+            from_paired_device: None,
             principal: Principal::try_from("agent:helper").unwrap(),
             approval: None,
         }

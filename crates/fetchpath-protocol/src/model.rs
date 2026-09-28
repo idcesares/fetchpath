@@ -271,6 +271,10 @@ pub struct JobSnapshot {
     /// than by a transfer, so it has no rate (FP-032).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reused_from_cache: bool,
+    /// Completed from a paired computer on the local network, whose
+    /// fingerprint this is (FP-034); checked against the job's checksum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_paired_device: Option<String>,
 }
 
 /// One byte range in flight: received into memory, not yet written.
@@ -573,6 +577,10 @@ pub struct PairedDevice {
     pub key: String,
     pub fingerprint: String,
     pub label: String,
+    /// Where it announced itself on the local network lately, if it is
+    /// sharing. A hint only: the device is still authenticated by its key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
 }
 
 /// A pairing code this device shows, and what became of it.

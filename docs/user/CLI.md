@@ -465,10 +465,16 @@ fetchpath lan on
 fetchpath fetch-verified --sha256 HEX --size BYTES --peer 192.168.1.20:47631=KEY LINK DESTINATION
 ```
 
+A computer that is sharing announces itself on the local network, only in a
+form its paired computers can recognize. Any download with a checksum, from
+`add`, the terminal or the desktop, then asks it first, checks what it
+sends, and shows `from paired` in `ls`. `fetch-verified` asks the addresses
+you give instead.
+
 `fetchpath lan` shows this computer's fingerprint, whether it is sharing and
-the paired computers with their keys; compare fingerprints on both screens
+the paired computers with their keys and, when heard, their addresses; compare fingerprints on both screens
 after pairing. `fetchpath lan unpair KEY` removes one, and `fetchpath lan off`
 stops sharing; both take effect at once. While sharing is on, Fetchpath keeps
-running in the background. Computers are not discovered automatically; you
-give the address. Windows Firewall may ask whether to allow Fetchpath on your
+running in the background. You type an address only to pair, or for
+`fetch-verified`. Windows Firewall may ask whether to allow Fetchpath on your
 network the first time you pair or share. `fetch-verified` prints JSON.

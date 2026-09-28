@@ -52,6 +52,8 @@ interface JobSnapshot {
   approvalReasons: ApprovalReason[];
   /** Finished by copying verified bytes from the cache, not by a transfer. */
   reusedFromCache?: boolean;
+  /** Fingerprint of the paired computer it came from. */
+  fromPairedDevice?: string | null;
 }
 
 /** A model or dataset repository resolved to one commit (FP-022). */
@@ -2480,6 +2482,7 @@ function metricSpans(job: JobSnapshot): HTMLElement[] {
   }
   // A copy from the cache is not a transfer, so it has no speed to report.
   if (job.reusedFromCache && job.state === "completed") add("Reused from this computer's cache");
+  if (job.fromPairedDevice && job.state === "completed") add(`From your paired computer ${job.fromPairedDevice}`);
   // Speed and time left describe motion; a stopped row keeps neither.
   const moving = job.state === "running";
   if (moving && job.bytesPerSecond) add(`${formatBytes(job.bytesPerSecond)}/s`);

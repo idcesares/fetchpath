@@ -129,6 +129,7 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
         quality_label: view.quality_label.clone(),
         principal: record.principal.clone(),
         reused_from_cache: view.reused_from_cache,
+        from_paired_device: view.from_paired_device.clone(),
         approval: record.awaiting_approval().then(|| ApprovalRequest {
             reasons: record
                 .approval
