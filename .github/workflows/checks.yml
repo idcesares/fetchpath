@@ -21,6 +21,6 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Also builds target/debug/fetchpath-browser-host.exe for the Node tests.
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --no-fail-fast
       - run: node --test
       - run: node tools/licenses/generate.mjs --check

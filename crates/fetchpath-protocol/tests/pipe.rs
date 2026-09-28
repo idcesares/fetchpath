@@ -374,6 +374,14 @@ fn an_authenticated_client_sends_commands_and_follows_events() {
     );
 }
 
+/// How an access entry names this user in SDDL. Windows writes the machine's
+/// built-in Administrator (RID 500, the account CI runners use) as `LA`
+/// rather than its SID.
+fn trustee(sid: &str) -> String {
+    let alias = sid.starts_with("S-1-5-21-") && sid.ends_with("-500");
+    format!(";{})", if alias { "LA" } else { sid })
+}
+
 #[test]
 fn only_this_user_may_open_the_pipe() {
     let name = unique_name();
@@ -390,7 +398,10 @@ fn only_this_user_may_open_the_pipe() {
         1,
         "exactly one allow entry: {sddl}"
     );
-    assert!(dacl.contains(&sid), "the one entry is this user: {sddl}");
+    assert!(
+        dacl.contains(&trustee(&sid)),
+        "the one entry is this user: {sddl}"
+    );
     assert!(
         !dacl.contains(";WD)") && !dacl.contains(";AU)") && !dacl.contains(";BU)"),
         "{sddl}"
@@ -707,7 +718,7 @@ fn the_secret_file_is_created_once_private_and_checked_on_load() {
     let dacl = sddl.split("D:").nth(1).unwrap().split("S:").next().unwrap();
     assert!(dacl.starts_with('P'), "{sddl}");
     assert_eq!(dacl.matches("(A;").count(), 1, "{sddl}");
-    assert!(dacl.contains(&sid), "{sddl}");
+    assert!(dacl.contains(&trustee(&sid)), "{sddl}");
     let label = sddl.split("S:").nth(1).expect("an integrity label");
     assert!(
         label.contains("ML;") && label.contains("NR") && label.contains(";ME)"),
@@ -867,7 +878,7 @@ fn each_engine_run_gets_an_unpredictable_name_published_privately() {
     let sddl = file_security_sddl(&path).unwrap();
     let dacl = sddl.split("D:").nth(1).unwrap().split("S:").next().unwrap();
     assert!(
-        dacl.starts_with('P') && dacl.matches("(A;").count() == 1 && dacl.contains(&sid),
+        dacl.starts_with('P') && dacl.matches("(A;").count() == 1 && dacl.contains(&trustee(&sid)),
         "{sddl}"
     );
     assert!(
