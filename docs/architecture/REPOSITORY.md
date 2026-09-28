@@ -41,7 +41,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | Area | Owns |
 |---|---|
 | `tools/tasks.mjs` / `tests/repo` | Backlog integrity and selection, release-asset and repository-structure checks |
-| `tools/bench` / `tests/bench` | Local fixture server, baseline runner, protocol matrix, fixture tests |
+| `tools/bench` / `tests/bench` | Local fixture server, baseline runner, protocol matrix, fixture tests; provider, chunking and delta comparisons (FP-022, FP-023) |
 | `tools/licenses` | Third-party notice generation from `Cargo.lock` |
 | `tools/media-tools` | Pinning media helpers against their publishers' checksums |
 | `tests/installer` | Installer PATH, runtime-import and engine-stop checks |

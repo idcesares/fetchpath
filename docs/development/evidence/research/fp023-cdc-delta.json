@@ -1,0 +1,85 @@
+{
+  "task": "FP-023",
+  "recordedOn": "2026-09-28",
+  "chunking": {
+    "method": "FastCDC normalized level 1, gear, 16/64/256 KiB",
+    "throughputMBps": "~910 on this machine",
+    "pairs": {
+      "yt-dlp 2026.07.04 -> 2026.08.19 (exe)": {
+        "newBytes": 17840399,
+        "reusedBytes": 8722902,
+        "reusedShare": 0.4889,
+        "metadataBytes": 8240
+      },
+      "sqlite3.c 3.53.3 -> 3.53.4 (source)": {
+        "newBytes": 9515341,
+        "reusedBytes": 7720904,
+        "reusedShare": 0.8114,
+        "metadataBytes": 3560
+      },
+      "ffmpeg.exe 9.0.1 -> 9.0.2 (binary)": {
+        "newBytes": 105423872,
+        "reusedBytes": 2851756,
+        "reusedShare": 0.0271,
+        "metadataBytes": 45760
+      },
+      "ffmpeg essentials zip 9.0.1 -> 9.0.2": {
+        "newBytes": 114768076,
+        "reusedBytes": 1269831,
+        "reusedShare": 0.0111,
+        "metadataBytes": 53960
+      }
+    }
+  },
+  "zstdDelta": {
+    "level": 19,
+    "windowLog": 27,
+    "longDistanceMatching": true,
+    "pairs": [
+      {
+        "new": "work/cdc/corpus/yt-dlp-2026.08.19.exe",
+        "newBytes": 17840399,
+        "compressedAlone": 17475700,
+        "delta": 3882362,
+        "deltaShareOfNew": 0.2176,
+        "compressSeconds": 3.89,
+        "deltaSeconds": 3.45,
+        "applySeconds": 0.02
+      },
+      {
+        "new": "work/cdc/corpus/sqlite-3530400/sqlite-amalgamation-3530400/sqlite3.c",
+        "newBytes": 9515341,
+        "compressedAlone": 1760717,
+        "delta": 2012,
+        "deltaShareOfNew": 0.0002,
+        "compressSeconds": 4.46,
+        "deltaSeconds": 2.54,
+        "applySeconds": 0.01
+      },
+      {
+        "new": "work/cdc/corpus/ffmpeg-9.0.2/ffmpeg.exe",
+        "newBytes": 105423872,
+        "compressedAlone": 30467520,
+        "delta": 24236712,
+        "deltaShareOfNew": 0.2299,
+        "compressSeconds": 40.81,
+        "deltaSeconds": 40.67,
+        "applySeconds": 0.23
+      },
+      {
+        "new": "work/cdc/corpus/ffmpeg-9.0.2.zip",
+        "newBytes": 114768076,
+        "compressedAlone": 114030176,
+        "delta": 113904992,
+        "deltaShareOfNew": 0.9925,
+        "compressSeconds": 33.0,
+        "deltaSeconds": 40.53,
+        "applySeconds": 0.13
+      }
+    ]
+  },
+  "tools": [
+    "tools/bench/cdc-compare.rs",
+    "tools/bench/delta-compare.py"
+  ]
+}

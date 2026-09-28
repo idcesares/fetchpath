@@ -694,12 +694,15 @@
       "dependsOn": [
         "FP-020"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "terra-medium",
       "files": [
         "work/cdc",
-        "tools/bench"
+        "tools/bench",
+        "docs/development",
+        "tools/bench/cdc-compare.rs",
+        "tools/bench/delta-compare.py"
       ],
       "acceptanceIds": [
         "A02",
@@ -707,7 +710,10 @@
       ],
       "acceptance": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
       "verification": "Trusted reconstruction mapping; record bytes saved versus CPU/storage/metadata cost; retain only if net benefit.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/EFFICIENCY-RESEARCH.md",
+        "docs/development/evidence/research/fp023-cdc-delta.json"
+      ],
       "blockedReason": null,
       "priority": "P3"
     },
@@ -719,12 +725,15 @@
         "FP-015",
         "FP-019"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "astra-high",
       "files": [
         "work/transport-research",
-        "tools/bench"
+        "tools/bench",
+        "docs/development",
+        "tools/bench/cdc-compare.rs",
+        "tools/bench/delta-compare.py"
       ],
       "acceptanceIds": [
         "A05",
@@ -732,7 +741,9 @@
       ],
       "acceptance": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
       "verification": "Revalidate standards, endpoint support, cost/energy/fairness; no FEC or custom transport without reproducible net benefit.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/EFFICIENCY-RESEARCH.md"
+      ],
       "blockedReason": null,
       "priority": "P3"
     },
@@ -743,8 +754,8 @@
       "dependsOn": [
         "FP-018"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "terra-medium",
       "files": [
         "docs/product"
@@ -756,7 +767,9 @@
       ],
       "acceptance": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
       "verification": "Separate platform behavior/packaging and lifecycle evidence before portability claims.",
-      "evidence": [],
+      "evidence": [
+        "docs/product/PLATFORMS.md"
+      ],
       "blockedReason": null,
       "priority": "P3"
     },
