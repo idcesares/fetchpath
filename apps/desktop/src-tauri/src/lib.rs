@@ -8,8 +8,9 @@ use engine_link::{EngineLink, Signal};
 use fetchpath_protocol::command::{Command, DestinationDecision, JobFilter, JobInput};
 use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
+use fetchpath_protocol::model::RuleSpec;
 use fetchpath_protocol::principal::{AgentName, AgentPolicy};
-use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, Timestamp};
+use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -672,6 +673,58 @@ async fn revoke_agent(name: String, engine: Engine<'_>) -> Result<Vec<view::Agen
     .await
 }
 
+fn rule_views(result: CommandResult) -> Result<Vec<view::RuleView>, String> {
+    match result {
+        CommandResult::Rules { rules } => Ok(view::rules(&rules)),
+        other => Err(unexpected(&other)),
+    }
+}
+
+#[tauri::command]
+async fn list_rules(engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || rule_views(engine.send(Command::ListRules).map_err(text)?)).await
+}
+
+/// Adds a rule last. The engine checks and normalizes it (FP-064).
+#[tauri::command]
+async fn add_rule(rule: RuleSpec, engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let command = Command::AddRule {
+            rule: Box::new(rule),
+            position: None,
+        };
+        rule_views(engine.send(command).map_err(text)?)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_rule(rule_id: u32, engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || rule_views(engine.send(Command::RemoveRule { rule_id }).map_err(text)?))
+        .await
+}
+
+/// How the rules decide for a link. The engine reads the link's headers
+/// (not its body) so a size rule can decide.
+#[tauri::command]
+async fn inspect_rules(url: String, engine: Engine<'_>) -> Result<view::RuleAdvice, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let url = SensitiveUrl::try_from(url)
+            .map_err(|message| format!("That link cannot be used: {message}."))?;
+        match engine.send(Command::InspectLink { url }).map_err(text)? {
+            CommandResult::LinkInspection { inspection } => {
+                Ok(view::rule_advice(inspection.rules.as_ref()))
+            }
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
+}
+
 /// One Fetchpath window per Windows user account.
 ///
 /// The queue belongs to the engine, which holds its own single-owner lock; this
@@ -806,7 +859,11 @@ pub fn run() {
             deny_download,
             list_agents,
             set_agent,
-            revoke_agent
+            revoke_agent,
+            list_rules,
+            add_rule,
+            remove_rule,
+            inspect_rules
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is

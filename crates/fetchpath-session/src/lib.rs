@@ -2060,10 +2060,16 @@ impl Session {
             let secret = store
                 .load_secret(&capture.credential_ref)
                 .map_err(|error| format!("Protected browser capture is unavailable: {error}"))?;
-            // A page on a media site saved as a file would be its HTML. It goes
-            // to Add download instead, where the video and its quality are
-            // found. Its cookies are not carried over.
-            if is_media_page(&secret.url) {
+            // The person's rules decide as for any new job (FP-075).
+            let verdict = self.decide_rules(&secret.url, Some(&capture.suggested_filename), None);
+            let rule = verdict.matched.as_ref();
+            // A page on a media site saved as a file would be its HTML, and a
+            // file a rule requires a checksum for cannot start without one.
+            // Both go to Add download instead, where the video is found or
+            // the checksum is asked for. Their cookies are not carried over.
+            if is_media_page(&secret.url)
+                || rule.is_some_and(|rule| rule.spec.then.require_checksum)
+            {
                 if !state
                     .link_reviews
                     .iter()
@@ -2079,11 +2085,13 @@ impl Session {
             }
             let context = RequestContext::new(secret.cookie_lines, secret.referer)
                 .map_err(|code| format!("Browser request context was rejected ({code})."))?;
-            let destination = unique_browser_destination(
-                download_dir,
-                &capture.suggested_filename,
-                &state.records,
-            );
+            let folder = rule
+                .and_then(|rule| rule.spec.then.folder.clone())
+                .map(PathBuf::from)
+                .or_else(|| self.default_folder())
+                .unwrap_or_else(|| download_dir.clone());
+            let destination =
+                unique_browser_destination(&folder, &capture.suggested_filename, &state.records);
             let record = QueueRecord::new_with_context(
                 secret.url,
                 destination,
@@ -4092,6 +4100,69 @@ mod tests {
             .unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].job_id, queued[0].job_id);
+    }
+
+    #[test]
+    fn browser_captures_follow_the_rules_like_any_new_download() {
+        use crate::browser_inbox::{BrowserCookie, CaptureRequest, SCHEMA_VERSION};
+        use fetchpath_protocol::model::{RuleActions, RuleConditions, RuleSpec};
+
+        let dir = tempfile::tempdir().unwrap();
+        let (downloads, isos) = (dir.path().join("downloads"), dir.path().join("isos"));
+        let jobs = Session::load_with_browser(
+            dir.path().join("queue-v1.json"),
+            1,
+            Some(downloads.clone()),
+        )
+        .unwrap();
+        let rule = |types: &str, then: RuleActions| RuleSpec {
+            name: None,
+            when: RuleConditions {
+                file_types: vec![types.into()],
+                ..Default::default()
+            },
+            then,
+        };
+        let folder = RuleActions {
+            folder: Some(isos.display().to_string()),
+            ..Default::default()
+        };
+        let checksum = RuleActions {
+            require_checksum: true,
+            ..Default::default()
+        };
+        jobs.add_rule(rule("iso", folder), None).unwrap();
+        jobs.add_rule(rule("exe", checksum), None).unwrap();
+
+        let store = BridgeStore::new(dir.path().to_path_buf());
+        for name in ["disc.iso", "setup.exe", "notes.txt"] {
+            store
+                .accept(&CaptureRequest {
+                    schema_version: SCHEMA_VERSION,
+                    capture_id: uuid::Uuid::new_v4().to_string(),
+                    method: "GET".into(),
+                    url: format!("http://127.0.0.1:9/{name}"),
+                    suggested_filename: name.into(),
+                    referrer: None,
+                    cookies: Vec::<BrowserCookie>::new(),
+                    user_initiated: true,
+                })
+                .unwrap();
+        }
+        let queued = jobs.list().unwrap();
+        let placed = |name: &str| {
+            queued
+                .iter()
+                .filter_map(|job| job.destination.as_deref())
+                .find(|path| path.ends_with(name))
+                .map(PathBuf::from)
+        };
+        assert_eq!(placed("disc.iso"), Some(isos.join("disc.iso")));
+        assert_eq!(placed("notes.txt"), Some(downloads.join("notes.txt")));
+        // No checksum yet, so it waits in Add download instead of queuing.
+        assert_eq!(placed("setup.exe"), None);
+        assert_eq!(jobs.take_link_reviews(), ["http://127.0.0.1:9/setup.exe"]);
+        assert!(store.pending().unwrap().is_empty());
     }
 
     /// A YouTube page sent from the browser used to be queued as a file, which

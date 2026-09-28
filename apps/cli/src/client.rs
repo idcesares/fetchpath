@@ -313,20 +313,7 @@ pub fn progress_line(progress: &Progress) -> String {
     }
 }
 
-pub fn bytes(value: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut size = value as f64;
-    let mut unit = 0;
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{value} B")
-    } else {
-        format!("{size:.1} {}", UNITS[unit])
-    }
-}
+pub use fetchpath_protocol::describe::bytes;
 
 pub fn duration(seconds: u64) -> String {
     if seconds >= 3600 {

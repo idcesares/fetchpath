@@ -39,6 +39,17 @@ see the limitations for the desktop and browser captures.
   quality, names the rule and why it matched, and will not start a file a
   rule needs a checksum for; `/rules` takes the same words as the command.
 
+- **Browser captures** (FP-075, `lib.rs` `ingest_browser_locked`): the same
+  decision as `CreateJob`: the rule's folder, else the default folder
+  setting (captures used to ignore it and always used Downloads), and a
+  capture a rule requires a checksum for goes to Add download, as a media
+  page does, instead of queuing without one.
+- **Desktop** (FP-075): Settings, Rules lists, adds, removes and tests rules
+  over the protocol; Add download names the deciding rule with its reason
+  and proposes its folder while the destination is still Fetchpath's own.
+  The wording (`fetchpath-protocol` `describe.rs`) is shared with the
+  command line. `tests/compatibility/windows/ui-rules.ps1` drives it:
+  evidence in `evidence/desktop/ui-rules.json` (27 September 2026, passed).
 ## Verification
 
 - `rules::tests` (first match, reasons, domain boundaries, validation,
@@ -63,12 +74,11 @@ see the limitations for the desktop and browser captures.
 - The connection cap reaches the transfer's limit but is not separately
   measured: the adaptive transfer starts at one connection and grows with
   timing.
-- The desktop app does not show or edit rules yet; its downloads follow a
-  rule's folder only when it sends a bare file name, which it does not, but
-  its required checksum and connection cap do apply (FP-075).
-- Browser captures enter the queue through the inbox, not `CreateJob`, so
-  only a rule's connection cap reaches them (checked 27 September 2026:
-  `apply_rules` has one caller, `engine.rs` `ruled_destination`; FP-075).
+- Browser captures are decided when the inbox is taken in, from the link and
+  the suggested file name only: a size rule never matches one, since no
+  headers have been read yet.
+- Add download asks the engine (`InspectLink`, headers only) about the first
+  link; a batch is decided by that link, since a batch shares one folder.
 - An agent may read the verdict on `InspectLink`, including the matching
   rule's folder; it can never change rules.
 - A rule's folder applies only when no folder was given. Rules are not

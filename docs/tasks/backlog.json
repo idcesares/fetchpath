@@ -2293,8 +2293,8 @@
         "FP-056",
         "FP-064"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2303,7 +2303,11 @@
         "apps/desktop",
         "docs/user/GUIDE.md",
         "docs/product/UX.md",
-        "docs/development/RULES.md"
+        "docs/development/RULES.md",
+        "crates/fetchpath-protocol/src/describe.rs",
+        "apps/cli/src/rules.rs",
+        "tests/compatibility/windows/ui-rules.ps1",
+        "apps/desktop/src-tauri/tests/browser_host.rs"
       ],
       "acceptanceIds": [
         "A01",
@@ -2311,7 +2315,10 @@
       ],
       "acceptance": "A browser capture is placed, and refused for a missing required checksum, by the same rule decision as a job created through the protocol; Add download proposes the matching rule folder and names the rule and why, while a folder the person picks still wins; Settings lists, adds, removes and tests rules through the engine protocol with keyboard and screen-reader support; agents still never change rules.",
       "verification": "Session tests for a capture matching a folder rule and a checksum rule; desktop end-to-end run adding a rule in Settings and seeing a pasted link and a browser capture placed by it; RULES.md limitations updated.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/evidence/desktop/ui-rules.json",
+        "docs/development/RULES.md"
+      ],
       "blockedReason": null
     }
   ]

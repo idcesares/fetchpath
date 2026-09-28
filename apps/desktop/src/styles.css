@@ -465,3 +465,11 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 .agent-limits input { width: 100%; padding: 8px 10px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--field); color: inherit; }
 .agent-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .approval-note { margin: 6px 0; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--inset); }
+.rules-list { display: grid; gap: 8px; margin: 8px 0 12px; padding-left: 1.5em; }
+.rules-list li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.rules-list .rule-row { display: flex; gap: 12px; align-items: start; justify-content: space-between; }
+.rules-list h3 { margin: 0 0 2px; font-size: 1rem; }
+.rule-form { display: grid; gap: 4px; margin-top: 8px; }
+.rule-form > button { justify-self: start; margin-top: 12px; }
+.rule-test-result { margin: 8px 0 0; padding-left: 1.2em; }
+.rule-test-result:empty { display: none; }

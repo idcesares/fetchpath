@@ -182,7 +182,7 @@
             required
             autocomplete="off"
             spellcheck="false"
-            aria-describedby="destination-hint"
+            aria-describedby="destination-hint rule-note"
             placeholder="Choose a destination file"
           />
           <button id="choose-destination" class="secondary" type="button">
@@ -192,6 +192,7 @@
         <p id="destination-hint" class="hint field-note">
           For a batch, the other files go in the same folder under their own names.
         </p>
+        <p id="rule-note" class="hint field-note" hidden></p>
 
         <details id="advanced-options" class="advanced">
           <summary id="advanced-summary">
@@ -410,6 +411,65 @@
             <button id="agent-add" class="secondary" type="button">Add agent</button>
           </div>
           <p id="agent-new-name-hint" class="hint field-note">Lowercase letters, digits, dots, dashes or underscores.</p>
+        </fieldset>
+
+        <fieldset class="settings-group" id="rules-group">
+          <legend>Rules</legend>
+          <p class="hint field-note">
+            Rules choose where a new download goes and how, by its site, file type or size. They are tried in order and
+            the first that matches decides, for downloads from this window, your browser, the command line and agents.
+            A folder you choose yourself always wins.
+          </p>
+          <ol id="rules-list" class="rules-list"></ol>
+          <details id="rule-add" class="advanced">
+            <summary>Add a rule</summary>
+            <div class="rule-form">
+              <label for="rule-name">Name (optional)</label>
+              <input id="rule-name" autocomplete="off" placeholder="Disc images" />
+              <label for="rule-domains">Sites</label>
+              <input id="rule-domains" autocomplete="off" spellcheck="false" placeholder="example.com, cdn.example.org"
+                     aria-describedby="rule-domains-hint" />
+              <p id="rule-domains-hint" class="hint field-note">A site also covers its subdomains. Separate several with commas.</p>
+              <label for="rule-types">File types</label>
+              <input id="rule-types" autocomplete="off" spellcheck="false" placeholder="iso, img" />
+              <label for="rule-min-size">At least (MB)</label>
+              <input id="rule-min-size" type="number" min="0" step="any" inputmode="decimal" />
+              <label for="rule-max-size">At most (MB)</label>
+              <input id="rule-max-size" type="number" min="0" step="any" inputmode="decimal"
+                     aria-describedby="rule-size-hint" />
+              <p id="rule-size-hint" class="hint field-note">A size rule applies only when the website says how big the file is.</p>
+              <label for="rule-folder">Save in</label>
+              <div class="destination-row">
+                <input id="rule-folder" autocomplete="off" spellcheck="false" placeholder="D:\ISOs" />
+                <button id="rule-choose-folder" class="secondary" type="button">
+                  Choose<span aria-hidden="true">…</span><span class="sr-only"> a folder for this rule</span>
+                </button>
+              </div>
+              <label for="rule-quality">Video quality</label>
+              <select id="rule-quality">
+                <option value="">Don't change</option>
+                <option value="best">Best</option>
+                <option value="1080p">Up to 1080p</option>
+                <option value="720p">Up to 720p</option>
+                <option value="480p">Up to 480p</option>
+                <option value="audio">Audio only</option>
+              </select>
+              <label for="rule-connections">Connections at most</label>
+              <select id="rule-connections">
+                <option value="">Don't limit</option>
+                <option>1</option><option>2</option><option>3</option><option>4</option>
+                <option>5</option><option>6</option><option>7</option><option>8</option>
+              </select>
+              <label class="check"><input id="rule-checksum" type="checkbox" /> Require a checksum</label>
+              <button id="rule-save" class="secondary" type="button">Add rule</button>
+            </div>
+          </details>
+          <label for="rule-test-link">Test a link</label>
+          <div class="destination-row">
+            <input id="rule-test-link" type="url" autocomplete="off" spellcheck="false" placeholder="https://example.com/file.iso" />
+            <button id="rule-test" class="secondary" type="button">Test</button>
+          </div>
+          <ul id="rule-test-result" class="rule-test-result" aria-live="polite"></ul>
         </fieldset>
 
         <fieldset class="settings-group">

@@ -55,6 +55,20 @@ interface JobSnapshot {
 type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "unknown";
 
 /** One agent's access, as the engine keeps it. */
+interface RuleView {
+  id: number;
+  label: string;
+  when: string;
+  then: string;
+}
+
+interface RuleAdvice {
+  matched: string | null;
+  folder: string | null;
+  needsChecksum: boolean;
+  lines: string[];
+}
+
 interface AgentView {
   name: string;
   folders: string[];
@@ -148,6 +162,7 @@ const checksumField = required<HTMLDivElement>("checksum-field");
 const advancedOptions = required<HTMLDetailsElement>("advanced-options");
 const clearScheduleButton = required<HTMLButtonElement>("clear-schedule");
 const chooseButton = required<HTMLButtonElement>("choose-destination");
+const ruleNote = required<HTMLParagraphElement>("rule-note");
 const startButton = required<HTMLButtonElement>("start-download");
 const formError = required<HTMLParagraphElement>("form-error");
 const batchPreview = required<HTMLElement>("batch-preview");
@@ -292,6 +307,10 @@ let observedStates = new Map<string, JobState>();
 /// True while the destination still holds Fetchpath's own suggestion rather
 /// than something the user typed or picked.
 let destinationIsSuggested = true;
+/// The folder the person's rules choose for the first link, when one does.
+/// It replaces the default save folder in Fetchpath's own suggestion only.
+let ruleFolder: string | null = null;
+let advisedUrl = "";
 
 let settingsView: SettingsView | null = null;
 let toolsStatus: ToolsStatus | null = null;
@@ -376,8 +395,157 @@ settingsForm.addEventListener("submit", (event) => event.preventDefault());
 async function showSettings(): Promise<void> {
   clearError(settingsError);
   openDialog(settingsDialog, settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents(), refreshRules()]);
 }
+
+/* Rules (FP-075) -------------------------------------------------------------
+   The engine keeps and applies the rules for every client; Settings lists,
+   adds, removes and tests them in the words the command line uses. */
+
+const rulesList = required<HTMLOListElement>("rules-list");
+const ruleName = required<HTMLInputElement>("rule-name");
+const ruleDomains = required<HTMLInputElement>("rule-domains");
+const ruleTypes = required<HTMLInputElement>("rule-types");
+const ruleMinSize = required<HTMLInputElement>("rule-min-size");
+const ruleMaxSize = required<HTMLInputElement>("rule-max-size");
+const ruleFolderInput = required<HTMLInputElement>("rule-folder");
+const ruleChooseFolder = required<HTMLButtonElement>("rule-choose-folder");
+const ruleQuality = required<HTMLSelectElement>("rule-quality");
+const ruleConnections = required<HTMLSelectElement>("rule-connections");
+const ruleChecksum = required<HTMLInputElement>("rule-checksum");
+const ruleSave = required<HTMLButtonElement>("rule-save");
+const ruleTestLink = required<HTMLInputElement>("rule-test-link");
+const ruleTest = required<HTMLButtonElement>("rule-test");
+const ruleTestResult = required<HTMLUListElement>("rule-test-result");
+let rules: RuleView[] = [];
+
+async function refreshRules(): Promise<void> {
+  try {
+    rules = await invoke<RuleView[]>("list_rules");
+    renderRules();
+  } catch (error) {
+    showError(settingsError, error);
+  }
+}
+
+function renderRules(): void {
+  rulesList.replaceChildren();
+  if (!rules.length) {
+    const empty = document.createElement("li");
+    empty.className = "field-note";
+    empty.textContent = "No rules yet. Every download goes where you choose, or to the default save folder.";
+    rulesList.append(empty);
+    return;
+  }
+  for (const rule of rules) {
+    const item = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "rule-row";
+    const text = document.createElement("div");
+    const heading = document.createElement("h3");
+    heading.id = `rule-${rule.id}`;
+    heading.textContent = rule.label;
+    const summary = document.createElement("p");
+    summary.className = "hint field-note";
+    summary.textContent = `${rule.when} → ${rule.then}`;
+    text.append(heading, summary);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary danger";
+    remove.textContent = "Remove";
+    remove.dataset.ruleId = String(rule.id);
+    remove.setAttribute("aria-label", `Remove ${rule.label}`);
+    row.append(text, remove);
+    item.append(row);
+    rulesList.append(item);
+  }
+}
+
+function listOf(value: string): string[] {
+  return value.split(",").map((item) => item.trim().replace(/^\./, "")).filter(Boolean);
+}
+
+function megabytes(input: HTMLInputElement): number | undefined {
+  const value = input.value.trim();
+  if (!value) return undefined;
+  return Math.round(Number(value) * MIB);
+}
+
+rulesList.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-rule-id]");
+  if (!button) return;
+  const label = rules.find((rule) => String(rule.id) === button.dataset.ruleId)?.label ?? "The rule";
+  clearError(settingsError);
+  try {
+    rules = await invoke<RuleView[]>("remove_rule", { ruleId: Number(button.dataset.ruleId) });
+    renderRules();
+    agentStatus(`${label} removed.`);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+  (rulesList.querySelector<HTMLElement>("button[data-rule-id]") ?? ruleTestLink).focus();
+});
+
+ruleChooseFolder.addEventListener("click", async () => {
+  const selected = await open({ directory: true, title: "Choose a folder for this rule" }).catch(() => null);
+  if (typeof selected === "string") ruleFolderInput.value = selected;
+  ruleFolderInput.focus();
+});
+
+ruleSave.addEventListener("click", async () => {
+  clearError(settingsError);
+  const connections = ruleConnections.value ? Number(ruleConnections.value) : undefined;
+  const rule = {
+    name: ruleName.value.trim() || undefined,
+    when: {
+      domains: listOf(ruleDomains.value.toLowerCase()),
+      file_types: listOf(ruleTypes.value.toLowerCase()),
+      min_size_bytes: megabytes(ruleMinSize),
+      max_size_bytes: megabytes(ruleMaxSize),
+    },
+    then: {
+      folder: ruleFolderInput.value.trim() || undefined,
+      media_quality: ruleQuality.value || undefined,
+      require_checksum: ruleChecksum.checked,
+      max_connections: connections,
+    },
+  };
+  try {
+    rules = await invoke<RuleView[]>("add_rule", { rule });
+    renderRules();
+    for (const input of [ruleName, ruleDomains, ruleTypes, ruleMinSize, ruleMaxSize, ruleFolderInput]) input.value = "";
+    ruleQuality.value = "";
+    ruleConnections.value = "";
+    ruleChecksum.checked = false;
+    agentStatus(`${rules[rules.length - 1]?.label ?? "The rule"} added.`);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+ruleTest.addEventListener("click", async () => {
+  clearError(settingsError);
+  ruleTestResult.replaceChildren();
+  const url = ruleTestLink.value.trim();
+  if (!url) return;
+  try {
+    const advice = await invoke<RuleAdvice>("inspect_rules", { url });
+    for (const line of advice.lines) {
+      const item = document.createElement("li");
+      item.textContent = line.trim();
+      ruleTestResult.append(item);
+    }
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+ruleTestLink.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    ruleTest.click();
+  }
+});
 
 /* AI agents (FP-066) ---------------------------------------------------------
    The engine keeps each agent's folders and limits and enforces them; this
@@ -1131,8 +1299,48 @@ urlInput.addEventListener("input", () => {
     analyzedUrl = "";
   }
   window.clearTimeout(analysisTimer);
-  analysisTimer = window.setTimeout(() => void analyzeLink(), 400);
+  analysisTimer = window.setTimeout(() => {
+    void analyzeLink();
+    void adviseRules();
+  }, 400);
 });
+
+/** Says which of the person's rules decides for the first link, and why, and
+ *  proposes its folder while the destination is still Fetchpath's own. */
+async function adviseRules(): Promise<void> {
+  const first = parseUrls()[0] ?? "";
+  if (first === advisedUrl) return;
+  advisedUrl = first;
+  if (!first || editingJobId) {
+    showRuleAdvice(null);
+    return;
+  }
+  const advice = await invoke<RuleAdvice>("inspect_rules", { url: first }).catch(() => null);
+  if (advisedUrl !== first) return; // a newer link was typed meanwhile
+  showRuleAdvice(advice);
+}
+
+function showRuleAdvice(advice: RuleAdvice | null): void {
+  ruleFolder = advice?.matched ? advice.folder : null;
+  if (!advice?.matched) {
+    ruleNote.hidden = true;
+    ruleNote.textContent = "";
+    if (destinationIsSuggested) suggestDestination();
+    return;
+  }
+  const parts = [advice.matched];
+  if (advice.folder) {
+    parts.push(destinationIsSuggested ? `saves in ${advice.folder}` : `would save in ${advice.folder}; your choice is used`);
+  }
+  if (advice.needsChecksum) parts.push("needs a checksum, under Advanced options");
+  ruleNote.textContent = `${parts.join(" · ")}.`;
+  ruleNote.hidden = false;
+  if (destinationIsSuggested) {
+    const variant = selectedMediaVariant();
+    if (downloadKind() === "media" && variant) setMediaDestination(variant);
+    else suggestDestination();
+  }
+}
 
 mediaQuality.addEventListener("change", () => {
   const variant = selectedMediaVariant();
@@ -1212,7 +1420,7 @@ function suggestDestination(): void {
     return;
   }
   if (!parsed.protocol) return;
-  destinationInput.value = joinPath(defaultDestinationDir, suggestedFilename(first));
+  destinationInput.value = joinPath(ruleFolder ?? defaultDestinationDir, suggestedFilename(first));
 }
 
 // Any edit to the destination, by typing or by picking, makes it the user's.
@@ -2358,6 +2566,10 @@ function clearComposer(): void {
   destinationIsSuggested = true;
   kindChosenByPerson = false;
   analyzedUrl = "";
+  advisedUrl = "";
+  ruleFolder = null;
+  ruleNote.hidden = true;
+  ruleNote.textContent = "";
   window.clearTimeout(analysisTimer);
   mediaInspection = null;
   inspectedMediaUrl = "";
@@ -2554,7 +2766,7 @@ function setMediaDestination(variant: MediaVariant, replaceExtension = false): v
   // Fetchpath's own suggestion (for a YouTube link, "watch") gives way to the
   // video's title; a name the person typed or picked is kept.
   if (!current || destinationIsSuggested) {
-    destinationInput.value = joinPath(defaultDestinationDir, `${title}.${variant.extension}`);
+    destinationInput.value = joinPath(ruleFolder ?? defaultDestinationDir, `${title}.${variant.extension}`);
     return;
   }
   if (replaceExtension) {

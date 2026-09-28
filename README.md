@@ -62,9 +62,6 @@ the installer**. Once the checksum matches, choose **More info → Run anyway**.
   work; that depends on `yt-dlp`.
 - The browser extension is added in developer mode for now. Firefox isn't
   supported yet.
-- Rules are managed from the command line and terminal; the window doesn't
-  show them yet, and links sent from the browser follow only a rule's
-  connection limit.
 - Pairing devices and sharing between them is command-line only.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.

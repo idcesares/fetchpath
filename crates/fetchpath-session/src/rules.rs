@@ -136,13 +136,7 @@ fn check(when: &RuleConditions, facts: &Facts) -> (bool, Vec<String>) {
     (matched, reasons)
 }
 
-/// "Rule 2 (Big ISOs)", for messages.
-pub fn label(rule: &Rule) -> String {
-    match &rule.spec.name {
-        Some(name) => format!("Rule {} ({name})", rule.id),
-        None => format!("Rule {}", rule.id),
-    }
-}
+pub use fetchpath_protocol::describe::label;
 
 fn in_domain(host: &str, domain: &str) -> bool {
     host == domain
@@ -151,23 +145,7 @@ fn in_domain(host: &str, domain: &str) -> bool {
             .is_some_and(|rest| rest.ends_with('.'))
 }
 
-/// A byte count as people read it, in binary units.
-pub fn bytes(value: u64) -> String {
-    const UNITS: [&str; 4] = ["KiB", "MiB", "GiB", "TiB"];
-    if value < 1024 {
-        return format!("{value} B");
-    }
-    let mut amount = value as f64;
-    let mut unit = "B";
-    for next in UNITS {
-        if amount < 1024.0 {
-            break;
-        }
-        amount /= 1024.0;
-        unit = next;
-    }
-    format!("{amount:.1} {unit}")
-}
+pub use fetchpath_protocol::describe::bytes;
 
 /// Checks and normalizes a rule as the person wrote it.
 pub fn validate(mut spec: RuleSpec) -> Result<RuleSpec, String> {

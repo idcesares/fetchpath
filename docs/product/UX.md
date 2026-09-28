@@ -13,7 +13,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 3. **Item actions** are contextual: pause/resume, open destination when available, remove/cancel. Destructive actions require a confirmation only when completed files would be deleted.
 4. **Filters** reduce a long queue without moving items elsewhere: All, Active, Completed, Failed.
 5. **Power mode** exposes diagnostic and transfer details inline, plus a session statistics panel above the queue. It is off by default, it is turned on in Settings, and it is strictly additive: nothing it shows replaces or moves a control that is available without it.
-6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, browser extension status, AI agents' access, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
+6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, browser extension status, rules, AI agents' access, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
 
 ## Core journeys
 
@@ -22,7 +22,8 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 1. Select **Add link** (`Ctrl+L`), paste a URL, optionally name it, and select a destination.
 2. Choose **Add to queue**. The item enters `Queued`, then `Connecting`, then `Downloading` only after confirmation from the download engine.
 3. Pause/resume is immediate in the interface and is reconciled with the engine. Completion shows the saved location and an **Open folder** action.
-4. Optionally, under **Advanced options**, paste the SHA-256 a publisher lists for the file. Fetchpath then saves the file only if it matches. Surrounding spaces, either case and a `sha256:` prefix are accepted. A checksum describes one file, so it is refused on a batch, and it is not offered for video or audio, which are assembled locally.
+4. When one of the person's rules decides for the first link, its name and reason show under the destination and its folder is proposed; a folder the person picked is kept and the note says so. A rule that requires a checksum says so here.
+5. Optionally, under **Advanced options**, paste the SHA-256 a publisher lists for the file. Fetchpath then saves the file only if it matches. Surrounding spaces, either case and a `sha256:` prefix are accepted. A checksum describes one file, so it is refused on a batch, and it is not offered for video or audio, which are assembled locally.
 
 ### Save video or audio
 

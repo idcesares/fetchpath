@@ -132,6 +132,54 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
     }
 }
 
+/// One rule, in the words every client uses.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleView {
+    pub id: u32,
+    pub label: String,
+    pub when: String,
+    pub then: String,
+}
+
+pub fn rules(rules: &[fetchpath_protocol::model::Rule]) -> Vec<RuleView> {
+    use fetchpath_protocol::describe;
+    rules
+        .iter()
+        .map(|rule| RuleView {
+            id: rule.id,
+            label: describe::label(rule),
+            when: describe::conditions(&rule.spec.when),
+            then: describe::actions(&rule.spec.then),
+        })
+        .collect()
+}
+
+/// How the rules decide for one link: for Add download and for testing a
+/// link in Settings.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleAdvice {
+    /// "Rule 1 (Disc images): a .iso file", when one matches.
+    pub matched: Option<String>,
+    pub folder: Option<String>,
+    pub needs_checksum: bool,
+    /// Every rule tried and why, as `fetchpath rules test` prints it.
+    pub lines: Vec<String>,
+}
+
+pub fn rule_advice(verdict: Option<&fetchpath_protocol::model::RulesVerdict>) -> RuleAdvice {
+    let then = verdict
+        .and_then(|verdict| verdict.matched.as_ref())
+        .map(|rule| &rule.spec.then);
+    RuleAdvice {
+        matched: fetchpath_protocol::describe::matched(verdict),
+        folder: then.and_then(|then| then.folder.clone()),
+        needs_checksum: then.is_some_and(|then| then.require_checksum),
+        lines: fetchpath_protocol::describe::verdict(verdict),
+    }
+}
+
 /// One agent's access, as Settings shows it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

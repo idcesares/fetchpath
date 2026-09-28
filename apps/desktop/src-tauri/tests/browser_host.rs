@@ -22,6 +22,17 @@ use std::time::{Duration, Instant};
 
 const CALLER: &str = "chrome-extension://lfikhkjdpjcjaboanknaabncpkbgoele/";
 
+/// One test at a time: each starts hosts and engines, and on Windows a
+/// process started by one test can inherit another's pipe handles, which
+/// tied one test's timing to another's engine start.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn built(name: &str) -> PathBuf {
     let exe = std::env::current_exe()
         .unwrap()
@@ -88,20 +99,16 @@ fn send(installed: &Path, home: &EngineHome, request: &Value) -> (Value, Duratio
     stdin.write_all(&(body.len() as u32).to_le_bytes()).unwrap();
     stdin.write_all(&body).unwrap();
     drop(stdin);
-    let mut output = Vec::new();
-    child
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_end(&mut output)
-        .unwrap();
+    // One framed reply, read by its length as Chrome reads it. Waiting for
+    // end of output instead would also wait for any host another test
+    // started meanwhile, which can inherit this pipe's write end.
+    let mut stdout = child.stdout.take().unwrap();
+    let mut header = [0_u8; 4];
+    stdout.read_exact(&mut header).unwrap();
+    let mut reply = vec![0_u8; u32::from_le_bytes(header) as usize];
+    stdout.read_exact(&mut reply).unwrap();
     assert!(child.wait().unwrap().success());
-    let length = u32::from_le_bytes(output[..4].try_into().unwrap()) as usize;
-    assert_eq!(output.len(), length + 4);
-    (
-        serde_json::from_slice(&output[4..]).unwrap(),
-        started.elapsed(),
-    )
+    (serde_json::from_slice(&reply).unwrap(), started.elapsed())
 }
 
 fn jobs(home: &EngineHome) -> Vec<JobSnapshot> {
@@ -160,6 +167,7 @@ impl Drop for StopsEngine {
 
 #[test]
 fn a_capture_reaches_the_queue_with_no_window_and_no_engine_running() {
+    let _serial = serial();
     let installed = install(true);
     let data = tempfile::tempdir().unwrap();
     let home = EngineHome::at(data.path().to_path_buf());
@@ -206,6 +214,7 @@ fn a_capture_reaches_the_queue_with_no_window_and_no_engine_running() {
 
 #[test]
 fn a_capture_no_engine_can_take_waits_in_the_inbox_for_the_next_one() {
+    let _serial = serial();
     let data = tempfile::tempdir().unwrap();
     let home = EngineHome::at(data.path().to_path_buf());
     let _stops = StopsEngine(home.clone());
@@ -229,7 +238,17 @@ fn a_capture_no_engine_can_take_waits_in_the_inbox_for_the_next_one() {
         &capture("https://files.example.test/during-setup.zip"),
     );
     assert_eq!(answer["accepted"], true);
-    assert!(waited < Duration::from_secs(2), "{waited:?}");
+    // "At once" means no engine wait on top of starting the host, which a
+    // probe (no engine involved) measures on this machine at this moment.
+    let (_, baseline) = send(
+        installed.path(),
+        &home,
+        &json!({ "schema_version": 1, "type": "probe" }),
+    );
+    assert!(
+        waited < baseline + Duration::from_secs(2),
+        "{waited:?} against a probe's {baseline:?}"
+    );
     assert!(launch::attach(&home, Limits::default()).is_err());
     assert_eq!(pending(&home), 2);
 
@@ -249,6 +268,7 @@ fn a_capture_no_engine_can_take_waits_in_the_inbox_for_the_next_one() {
 
 #[test]
 fn a_media_page_waits_for_a_window_even_across_engine_restarts() {
+    let _serial = serial();
     let installed = install(true);
     let data = tempfile::tempdir().unwrap();
     let home = EngineHome::at(data.path().to_path_buf());

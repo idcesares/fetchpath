@@ -264,6 +264,7 @@ Changes save straight away.
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
+| Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
 | AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
@@ -297,14 +298,12 @@ above a prompt where you paste links, and `/` commands to pause, resume,
 cancel or change them. Both work on the same list as the window, so a download added in
 one shows in the others.
 
-The command line also holds **rules**, which choose where a new download goes
-and how, by the site it comes from, its type or its size. For example,
-`fetchpath rules add --type iso --folder D:\ISOs` sends disc images to
-`D:\ISOs`. Rules decide for downloads added from the command line, the
-interactive terminal and AI agents. The window doesn't show rules yet and
-saves where you choose, but a rule's required checksum and connection limit
-apply to its downloads too. Links sent from your browser follow only the
-connection limit for now.
+**Rules** (in Settings, or `fetchpath rules`) apply however a download is
+added: from this window, your browser, the command line or an AI agent. In
+**Add download**, the rule that decides is named under the file name with its
+reason, and its folder is proposed; a folder you choose yourself always wins.
+A link from your browser that a rule requires a checksum for opens in **Add
+download** so you can paste it.
 
 See [CLI.md](CLI.md) for everything it can do, including connecting an AI
 agent.

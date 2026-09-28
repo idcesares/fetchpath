@@ -1,0 +1,26 @@
+{
+  "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
+  "rules": {
+    "id": 1,
+    "name": "Harness",
+    "when": {
+      "file_types": [
+        "bin"
+      ]
+    },
+    "then": {
+      "folder": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled"
+    }
+  },
+  "unnamedRuleControls": [],
+  "testResult": "Rule 1 (Harness) decides: save in C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled. Rule 1: matches — the file is a .bin",
+  "ruleNote": "Rule 1 (Harness): the file is a .bin · saves in C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled.",
+  "proposedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled\\pasted.bin",
+  "pastedSaved": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled\\pasted.bin",
+  "captureReply": "{\"schema_version\":1,\"type\":\"capture_ack\",\"accepted\":true,\"capture_id\":\"338a5c4a-fe5e-4c3c-8274-0ac90e309f66\",\"deduplicated\":false,\"reason\":null}",
+  "capturedSaved": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\ruled\\captured.bin",
+  "unmatchedSaved": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp075-rules\\default\\other.dat",
+  "removed": true,
+  "failures": [],
+  "passed": true
+}

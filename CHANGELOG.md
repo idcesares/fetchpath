@@ -54,8 +54,10 @@ The first public release of Fetchpath, for Windows 11 on x64.
 ### Rules
 
 - Rules by site, file type or size choose the folder, video quality, a
-  required checksum and the connection limit; `fetchpath rules test` says
-  which rule decides and why.
+  required checksum and the connection limit, for downloads from the window,
+  the browser, the command line and agents. Settings lists, adds, removes
+  and tests them; Add download names the rule that decides and proposes its
+  folder; `fetchpath rules test` says which rule decides and why.
 
 ### AI agents
 
@@ -82,8 +84,6 @@ The first public release of Fetchpath, for Windows 11 on x64.
 - HTTP and HTTPS only in the app. HTTP/3 isn't available in this build.
 - Video and audio downloads can't be paused.
 - The browser extension loads in developer mode; Firefox isn't supported.
-- The window doesn't show or edit rules yet, and browser captures follow
-  only a rule's connection limit.
 - The protection against agents assumes no malicious program already runs
   as you.
 - No speed claim is made.
