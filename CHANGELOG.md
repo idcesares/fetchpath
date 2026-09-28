@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (28 September 2026)
 
 The first public release of Fetchpath, for Windows 11 on x64.
 
