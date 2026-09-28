@@ -107,6 +107,7 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
         kind: match view.kind.as_str() {
             "file" => JobKind::File,
             "media" => JobKind::Media,
+            "torrent" => JobKind::Torrent,
             _ => JobKind::Unknown,
         },
         state: job_state(&view.state),
@@ -162,6 +163,8 @@ fn approval_error(record: &QueueRecord) -> Option<ProtocolError> {
             }
             ApprovalReason::SizeLimit => "it is larger than this agent may download",
             ApprovalReason::RateLimit => "this agent asked for too many downloads this hour",
+            ApprovalReason::PeerDiscovery => "it would contact peers and discovery services",
+            ApprovalReason::PeerUpload => "it would upload pieces to peers",
             ApprovalReason::Unknown => "it is outside this agent's access",
         })
         .collect();

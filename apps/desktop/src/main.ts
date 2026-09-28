@@ -44,7 +44,7 @@ interface JobSnapshot {
   createdAtMs: number;
   notBeforeMs: number | null;
   finishedAtMs: number | null;
-  kind: "file" | "media";
+  kind: "file" | "media" | "torrent";
   qualityLabel: string | null;
   /** The agent that asked for it, when an agent did. */
   agent: string | null;
@@ -100,7 +100,7 @@ interface CacheView {
   max_quota_bytes: number;
 }
 
-type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "unknown";
+type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "peer_discovery" | "peer_upload" | "unknown";
 
 /** One agent's access, as the engine keeps it. */
 interface RuleView {
@@ -228,6 +228,9 @@ const jobList = required<HTMLDivElement>("job-list");
 const activeCount = required<HTMLElement>("active-count");
 const kindChooser = required<HTMLFieldSetElement>("download-kind");
 const mediaOptions = required<HTMLElement>("media-options");
+const torrentOptions = required<HTMLElement>("torrent-options");
+const torrentDiscovery = required<HTMLInputElement>("torrent-discovery");
+const torrentUpload = required<HTMLInputElement>("torrent-upload");
 const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
 const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
 const mediaOpenSettings = required<HTMLButtonElement>("media-open-settings");
@@ -1383,12 +1386,16 @@ kindChooser.addEventListener("change", () => {
   mediaQuality.disabled = true;
   mediaTitle.textContent = "";
   const media = downloadKind() === "media";
+  const torrent = downloadKind() === "torrent";
   mediaOptions.hidden = !media;
+  torrentOptions.hidden = !torrent;
   // A checksum describes one file's bytes; a media variant is assembled
   // locally, so there is nothing a published checksum could describe.
-  checksumField.hidden = media;
-  urlInput.rows = media ? 2 : 3;
-  urlInput.placeholder = media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
+  checksumField.hidden = media || torrent;
+  urlInput.rows = media || torrent ? 2 : 3;
+  urlInput.placeholder = torrent ? "magnet:?xt=urn:btih:…" : media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
+  destinationInput.placeholder = torrent ? "New folder for this torrent" : "Choose a destination file";
+  if (torrent && destinationIsSuggested) destinationInput.value = "";
   if (media && !toolsStatus) void refreshToolsStatus();
   renderPreview();
 });
@@ -1654,7 +1661,7 @@ chooseButton.addEventListener("click", async () => {
   try {
     const suggested = destinationInput.value || suggestedFilename(parseUrls()[0] ?? "");
     const selected = await save({
-      title: "Save download as",
+      title: downloadKind() === "torrent" ? "Choose a new torrent folder name" : "Save download as",
       // Opens in the user's chosen folder rather than wherever Windows last
       // left the picker.
       defaultPath: suggested.includes("\\") || suggested.includes("/")
@@ -1777,6 +1784,18 @@ form.addEventListener("submit", async (event) => {
           qualityLabel: variant.label,
           destination: drafts[0].destination,
           notBeforeMs: drafts[0].notBeforeMs,
+        },
+      });
+    } else if (downloadKind() === "torrent") {
+      if (drafts.length !== 1) throw new Error("Add one torrent at a time.");
+      if (!torrentDiscovery.checked) throw new Error("Choose whether this torrent may contact peers and discovery services.");
+      await invoke<JobSnapshot>("start_torrent_download", {
+        draft: {
+          url: drafts[0].url,
+          destination: drafts[0].destination,
+          notBeforeMs: drafts[0].notBeforeMs,
+          discoverPeers: torrentDiscovery.checked,
+          upload: torrentUpload.checked,
         },
       });
     } else {
@@ -2690,8 +2709,8 @@ function renderFileMap(job: JobSnapshot, segments: SegmentView[], known: number 
   detailsSegmentsNote.textContent =
     job.state !== "running"
       ? ""
-      : job.kind === "media"
-        ? "Video and audio downloads are fetched by the media helper, which does not report its connections."
+      : job.kind === "media" || job.kind === "torrent"
+        ? "This download is fetched by its isolated helper, which does not report individual connections."
         : segments.length
           ? "Pieces are fetched side by side and written in order once each group has arrived."
           : "One connection. Fetchpath splits a download into pieces only when the server supports it and the file is large enough.";
@@ -2701,7 +2720,7 @@ function renderDetailsInfo(job: JobSnapshot): void {
   const rows: Array<[string, string]> = [
     ["Saved to", job.destination ?? "Not chosen yet"],
     ["Total size", job.totalBytes === null ? "Not stated by the source" : `${formatBytes(job.totalBytes)} (${job.totalBytes.toLocaleString()} bytes)`],
-    ["Kind", job.kind === "media" ? `Media${job.qualityLabel ? ` · ${job.qualityLabel}` : ""}` : "File"],
+    ["Kind", job.kind === "torrent" ? "Torrent" : job.kind === "media" ? `Media${job.qualityLabel ? ` · ${job.qualityLabel}` : ""}` : "File"],
     ["Added", new Date(job.createdAtMs).toLocaleString()],
   ];
   if (job.finishedAtMs) {
@@ -2739,7 +2758,7 @@ function diagnostics(job: JobSnapshot): HTMLElement {
   const list = document.createElement("dl");
   const rows: Array<[string, string]> = [
     ["Job", job.jobId],
-    ["Kind", job.kind === "media" ? "Media" : "File"],
+    ["Kind", job.kind === "torrent" ? "Torrent" : job.kind === "media" ? "Media" : "File"],
     ["Added", new Date(job.createdAtMs).toLocaleString()],
     ["Total size", job.totalBytes === null ? "Not stated by the source" : `${job.totalBytes.toLocaleString()} bytes`],
     ["Received", `${job.bytesReceived.toLocaleString()} bytes`],
@@ -2848,7 +2867,8 @@ function beginEdit(job: JobSnapshot): void {
   const kind = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${job.kind}"]`);
   if (kind) kind.checked = true;
   mediaOptions.hidden = job.kind !== "media";
-  checksumField.hidden = job.kind === "media";
+  torrentOptions.hidden = true;
+  checksumField.hidden = job.kind !== "file";
   if (job.kind === "media") {
     mediaTitle.textContent = `${job.qualityLabel ?? "Selected quality"} will be revalidated before retrying.`;
   }
@@ -2890,12 +2910,14 @@ function clearComposer(): void {
   mediaInspection = null;
   inspectedMediaUrl = "";
   mediaOptions.hidden = true;
+  torrentOptions.hidden = true;
   checksumField.hidden = false;
   mediaQuality.replaceChildren(new Option("Inspect a link first", ""));
   mediaQuality.disabled = true;
   mediaTitle.textContent = "";
   urlInput.rows = 3;
   urlInput.placeholder = "https://example.com/archive.zip";
+  destinationInput.placeholder = "Choose a destination file";
   clearError(formError);
   clearNotice();
   renderPreview();
@@ -2971,6 +2993,8 @@ function approvalText(job: JobSnapshot): string {
     outside_granted_folders: "it would save outside the folders you let it use",
     size_limit: "it passed the size you let it download and stopped",
     rate_limit: "it asked for more downloads this hour than you allow",
+    peer_discovery: "it would contact peers and discovery services",
+    peer_upload: "it would upload pieces to peers",
     unknown: "it asked for something its access does not cover",
   })[reason]);
   return why.length
@@ -3068,8 +3092,9 @@ function suggestedFilename(value: string): string {
   }
 }
 
-function downloadKind(): "file" | "media" {
-  return form.querySelector<HTMLInputElement>('input[name="download-kind"]:checked')?.value === "media" ? "media" : "file";
+function downloadKind(): "file" | "media" | "torrent" {
+  const value = form.querySelector<HTMLInputElement>('input[name="download-kind"]:checked')?.value;
+  return value === "media" || value === "torrent" ? value : "file";
 }
 
 function selectedMediaVariant(): MediaVariant | null {

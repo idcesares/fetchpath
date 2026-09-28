@@ -30,6 +30,7 @@ one your task names.
 - [Content cache and paired computers](CACHE-AND-LAN.md) — FP-020, FP-032, FP-033.
 - [Desktop checksum](DESKTOP-CHECKSUM.md) — FP-031.
 - [Model and dataset providers](PROVIDERS.md) — FP-022.
+- [Torrents and magnets](TORRENTS.md) — FP-021: isolated helper, consent boundaries, publication and current limits.
 - [Efficiency research: chunking, deltas, paths, coding](EFFICIENCY-RESEARCH.md) — FP-023, FP-024.
 
 ## Release

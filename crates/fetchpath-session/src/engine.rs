@@ -17,7 +17,9 @@
 
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
 use crate::policy::{self, RateWindow};
-use crate::{JobDraft, MediaDraft, Origin, Session, error_code, now_ms, wire};
+use crate::{
+    JobDraft, MediaDraft, Origin, Session, TorrentDraft, TorrentPolicy, error_code, now_ms, wire,
+};
 use fetchpath_protocol::client::{EngineClient, EventStream, StreamItem, Subscription};
 use fetchpath_protocol::command::{
     Command, CommandEnvelope, ConflictPolicy, DestinationDecision, DestinationIntent, JobFilter,
@@ -604,6 +606,52 @@ impl Engine {
                                 quality_label: quality_label.clone(),
                                 destination: destination.path.clone(),
                                 not_before_ms: not_before.map(millis).transpose()?,
+                            },
+                            &origin,
+                        )
+                        .map_err(input)?;
+                    self.created(principal);
+                    Ok(Outcome::Job(job.job_id))
+                }
+                JobRequest::Torrent {
+                    input: source,
+                    destination,
+                    not_before,
+                    discover_peers,
+                    upload,
+                } => {
+                    if matches!(principal, Principal::Browser) {
+                        return Err(unsupported("Browser captures cannot start peer discovery"));
+                    }
+                    if destination.conflict != ConflictPolicy::Ask {
+                        return Err(unsupported("Replacing an existing torrent destination"));
+                    }
+                    let mut origin = self.origin(principal, source, destination)?;
+                    if !principal.is_user() {
+                        if *discover_peers {
+                            origin
+                                .approval
+                                .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
+                        }
+                        if *upload {
+                            origin
+                                .approval
+                                .push(fetchpath_protocol::principal::ApprovalReason::PeerUpload);
+                        }
+                    }
+                    let JobInput::Url { url } = source else {
+                        return Err(unsupported("Creating a torrent from a stored request"));
+                    };
+                    let job = session
+                        .enqueue_torrent_for(
+                            TorrentDraft {
+                                source: url.expose().to_owned(),
+                                destination: destination.path.clone(),
+                                not_before_ms: not_before.map(millis).transpose()?,
+                                policy: TorrentPolicy {
+                                    discover_peers: *discover_peers,
+                                    upload: *upload,
+                                },
                             },
                             &origin,
                         )

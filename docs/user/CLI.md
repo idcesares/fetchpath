@@ -7,6 +7,7 @@ installing so it's found.
 fetchpath [--plain]                      # the interactive terminal
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
+fetchpath torrent MAGNET|HTTPS_LINK --to NEW_FOLDER --discover-peers [--upload] [--wait] [--json]
 fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
 fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history | folder
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
@@ -57,6 +58,18 @@ fetchpath download https://example.com/tools/archive.zip D:\Installers\tools.zip
   first failure the last.
 
 Links must start with `http://` or `https://`.
+
+### Torrents in development builds
+
+The published 0.1.0 installer does not contain this command. In a build with
+`fetchpath-torrent-helper.exe` beside `fetchpath.exe`, add one magnet or HTTPS
+`.torrent` link with `fetchpath torrent LINK --to D:\Downloads\NewFolder
+--discover-peers`. The destination is a new folder; Fetchpath will not replace
+an existing folder. Peer discovery is required and must be requested explicitly.
+Uploading is off unless you also pass `--upload`. The job appears in the shared
+queue and can be cancelled or retried there. An agent's request waits for your
+approval before contacting peers. The transfer has a 32-peer limit and bounded
+download and upload rates.
 
 ## Checking a checksum
 

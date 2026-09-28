@@ -200,7 +200,8 @@ pub struct DownloadParams {
     pub file_name: Option<String>,
     /// auto (default) looks at the link first: a file is saved, a video page
     /// is saved as its video, and a web page is refused. file saves whatever
-    /// the link returns; media treats it as a video or audio page.
+    /// the link returns; media treats it as a video or audio page; torrent
+    /// needs a new folder name and explicit peer discovery.
     #[serde(default)]
     pub kind: Option<Kind>,
     /// For video or audio: a format's label or id from inspect_link, best,
@@ -211,6 +212,12 @@ pub struct DownloadParams {
     /// never saved.
     #[serde(default)]
     pub sha256: Option<String>,
+    /// For torrents: allow contact with peers, trackers and/or DHT.
+    #[serde(default)]
+    pub discover_peers: bool,
+    /// For torrents: allow bounded piece uploads after the person approves.
+    #[serde(default)]
+    pub upload: bool,
     /// Wait for the download to settle, sending progress notifications.
     #[serde(default)]
     pub wait: bool,
@@ -227,6 +234,7 @@ pub enum Kind {
     Auto,
     File,
     Media,
+    Torrent,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -290,7 +298,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Download a file, or a video or audio page, into a folder. Returns the \
+        description = "Download a file, video or audio page, or torrent into a folder. Returns the \
                        download with its id; with wait, waits for it to settle and reports \
                        progress. Outside your granted folders it waits for the person's approval.",
         annotations(
@@ -689,6 +697,32 @@ fn start(
             }
         },
     };
+    if params.kind == Some(Kind::Torrent) {
+        if params.quality.is_some() || params.sha256.is_some() {
+            return Err(client::input_error(
+                "Torrent jobs do not take a media quality or flat SHA-256.",
+            ));
+        }
+        if !params.discover_peers {
+            return Err(client::input_error(
+                "Set discover_peers to true to request contact with the swarm.",
+            ));
+        }
+        let folder = folder.ok_or_else(|| {
+            client::input_error("Give a full destination folder for this torrent.")
+        })?;
+        let name = name.ok_or_else(|| {
+            client::input_error("Give a new folder name in file_name for this torrent.")
+        })?;
+        let destination = std::path::Path::new(&folder).join(name);
+        return queue::create_torrent_job(
+            engine,
+            &params.url,
+            &destination.display().to_string(),
+            true,
+            params.upload,
+        );
+    }
     let mut flags = Vec::new();
     if let Some(quality) = &params.quality {
         flags.extend(["--quality".to_owned(), quality.clone()]);
@@ -711,7 +745,7 @@ fn start(
     // file, as `fetchpath add` does.
     let seen = match kind {
         Kind::Auto => crate::rules::inspect(engine, &params.url).ok(),
-        Kind::File | Kind::Media => None,
+        Kind::File | Kind::Media | Kind::Torrent => None,
     };
     if let Some(seen) = &seen
         && seen.kind == LinkKind::WebPage

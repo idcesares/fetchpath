@@ -25,6 +25,7 @@ Usage:
 
 The download queue, kept by the Fetchpath engine:
   fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
+  fetchpath torrent MAGNET|HTTPS_TORRENT --to NEW_FOLDER --discover-peers [--upload] [--wait]
   fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...
@@ -88,6 +89,7 @@ fn main() {
         }
         Some("download") => download::run(&args[1..]),
         Some("add") => queue::add(&args[1..]),
+        Some("torrent") => queue::torrent(&args[1..]),
         Some("batch") => queue::batch(&args[1..]),
         Some("ls" | "list") => queue::ls(&args[1..]),
         Some("show") => queue::show(&args[1..]),

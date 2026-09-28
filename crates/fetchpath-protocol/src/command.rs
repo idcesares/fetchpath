@@ -345,6 +345,16 @@ pub enum JobRequest {
         variant_id: String,
         quality_label: String,
     },
+    Torrent {
+        input: JobInput,
+        destination: DestinationIntent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        not_before: Option<Timestamp>,
+        /// Peer discovery contacts trackers and/or the DHT. It is explicit.
+        discover_peers: bool,
+        /// Serving pieces to peers is separately explicit and capped.
+        upload: bool,
+    },
 }
 
 /// Where a job's bytes come from.

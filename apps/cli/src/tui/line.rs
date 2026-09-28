@@ -102,6 +102,13 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Links,
     },
     Spec {
+        name: "torrent",
+        aliases: &[],
+        usage: "/torrent MAGNET|HTTPS_TORRENT --to NEW_FOLDER --discover-peers [--upload]",
+        summary: "Add a torrent; peer discovery and upload are explicit",
+        takes: Takes::Links,
+    },
+    Spec {
         name: "queue",
         aliases: &["ls", "list"],
         usage: "/queue [--active | --failed]",
@@ -443,6 +450,7 @@ fn execute(
     }
     let flags: &[&str] = match spec.name {
         "add" => &["--to", "--at", "--sha256", "--quality"],
+        "torrent" => &["--to", "--discover-peers", "--upload"],
         "queue" => &["--active", "--failed"],
         "history" => &["--limit"],
         _ => &[],
@@ -450,6 +458,27 @@ fn execute(
     let parsed = queue::parse(args, flags).map_err(|message| usage_error(spec, &message))?;
     match spec.name {
         "add" => add(engine, spec, &parsed, reply),
+        "torrent" => {
+            let [source] = parsed.words.as_slice() else {
+                return Err(usage_error(spec, "give one magnet or HTTPS torrent link"));
+            };
+            let destination = parsed
+                .to
+                .as_deref()
+                .ok_or_else(|| usage_error(spec, "choose a new folder with --to"))?;
+            if !parsed.discover_peers {
+                return Err(usage_error(
+                    spec,
+                    "add --discover-peers to contact the swarm",
+                ));
+            }
+            let job = queue::create_torrent_job(engine, source, destination, true, parsed.upload)?;
+            reply.say(
+                Tone::Good,
+                format!("Added torrent {}  {destination}", client::short_id(&job)),
+            );
+            Ok(())
+        }
         "queue" => {
             let all = engine.jobs(JobFilter::All)?;
             let shown: Vec<&JobSnapshot> = all

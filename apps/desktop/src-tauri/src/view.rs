@@ -113,6 +113,7 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
         finished_at_ms: job.finished_at.map(ms),
         kind: match job.kind {
             JobKind::Media => "media",
+            JobKind::Torrent => "torrent",
             _ => "file",
         },
         quality_label: job.quality_label.clone(),
@@ -130,6 +131,8 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
                         ApprovalReason::OutsideGrantedFolders => "outside_granted_folders",
                         ApprovalReason::SizeLimit => "size_limit",
                         ApprovalReason::RateLimit => "rate_limit",
+                        ApprovalReason::PeerDiscovery => "peer_discovery",
+                        ApprovalReason::PeerUpload => "peer_upload",
                         ApprovalReason::Unknown => "unknown",
                     })
                     .collect()
@@ -234,6 +237,16 @@ pub struct MediaDraft {
     pub not_before_ms: Option<u64>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentDraft {
+    pub url: String,
+    pub destination: String,
+    pub not_before_ms: Option<u64>,
+    pub discover_peers: bool,
+    pub upload: bool,
+}
+
 pub fn link(url: &str) -> Result<SensitiveUrl, String> {
     SensitiveUrl::try_from(url.trim().to_owned())
         .map_err(|reason| format!("That address cannot be used: {reason}."))
@@ -274,6 +287,20 @@ impl MediaDraft {
             not_before: at(self.not_before_ms),
             variant_id: self.variant_id.clone(),
             quality_label: self.quality_label.clone(),
+        })
+    }
+}
+
+impl TorrentDraft {
+    pub fn request(&self) -> Result<JobRequest, String> {
+        Ok(JobRequest::Torrent {
+            input: JobInput::Url {
+                url: link(&self.url)?,
+            },
+            destination: destination(&self.destination),
+            not_before: at(self.not_before_ms),
+            discover_peers: self.discover_peers,
+            upload: self.upload,
         })
     }
 }

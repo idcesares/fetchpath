@@ -33,6 +33,8 @@ pub(crate) struct Args {
     pub quality: Option<String>,
     pub at: Option<String>,
     pub limit: Option<u32>,
+    pub discover_peers: bool,
+    pub upload: bool,
 }
 
 /// Which flags a command accepts; anything else is refused.
@@ -52,6 +54,8 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
         quality: None,
         at: None,
         limit: None,
+        discover_peers: false,
+        upload: false,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -97,6 +101,8 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
             "--active" => parsed.active = true,
             "--failed" => parsed.failed = true,
             "--wait" => parsed.wait = true,
+            "--discover-peers" => parsed.discover_peers = true,
+            "--upload" => parsed.upload = true,
             _ => unreachable!("every allowed flag is handled"),
         }
     }
@@ -149,6 +155,77 @@ pub fn add(args: &[String]) -> i32 {
         .map(|link| (link.clone(), None))
         .collect();
     add_links(&parsed, &links, true)
+}
+
+/// Adds a torrent with an explicit peer-discovery decision. Upload remains off
+/// unless the person asks for it in this command.
+pub fn torrent(args: &[String]) -> i32 {
+    let allowed = ["--to", "--discover-peers", "--upload", "--wait", "--json"];
+    let parsed = match parse(args, &allowed) {
+        Ok(parsed) => parsed,
+        Err(message) => return usage(&message),
+    };
+    let [source] = parsed.words.as_slice() else {
+        return usage("torrent needs one magnet or HTTPS .torrent link");
+    };
+    let Some(destination) = parsed.to.as_deref() else {
+        return usage("torrent needs --to with a new destination folder");
+    };
+    if !parsed.discover_peers {
+        return usage("torrent needs --discover-peers to contact the swarm");
+    }
+    let outcome = Engine::connect().and_then(|mut engine| {
+        let job = create_torrent_job(
+            &engine,
+            source,
+            destination,
+            parsed.discover_peers,
+            parsed.upload,
+        )?;
+        if parsed.json {
+            client::print_json(&CommandResult::Job { job: job.clone() });
+        } else {
+            println!("Added torrent {}  {}", client::short_id(&job), destination);
+        }
+        if parsed.wait {
+            client::catch_interrupt();
+            let waited = wait::follow(&mut engine, job, !parsed.json, OnInterrupt::Leave)?;
+            Ok(client::job_exit_code(&waited.job))
+        } else {
+            Ok(0)
+        }
+    });
+    match outcome {
+        Ok(code) => code,
+        Err(error) => client::fail(&error, parsed.json),
+    }
+}
+
+pub(crate) fn create_torrent_job(
+    engine: &Engine,
+    source: &str,
+    destination: &str,
+    discover_peers: bool,
+    upload: bool,
+) -> Result<JobSnapshot, ProtocolError> {
+    let url = SensitiveUrl::try_from(source.to_owned())
+        .map_err(|_| client::input_error("That torrent link cannot be read."))?;
+    let created = engine.send(Command::CreateJob {
+        request: JobRequest::Torrent {
+            input: JobInput::Url { url },
+            destination: DestinationIntent {
+                path: destination.to_owned(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: None,
+            discover_peers,
+            upload,
+        },
+    })?;
+    let CommandResult::Job { job } = created else {
+        return Err(client::unexpected(&created));
+    };
+    Ok(job)
 }
 
 /// `fetchpath batch FILE|-`: one link per line, optionally followed by a

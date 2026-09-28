@@ -208,6 +208,10 @@ pub enum ApprovalReason {
     SizeLimit,
     /// The agent asked for more new downloads per hour than it may.
     RateLimit,
+    /// A torrent request would contact peers, trackers or the DHT.
+    PeerDiscovery,
+    /// A torrent request would serve pieces to other peers.
+    PeerUpload,
     #[serde(other)]
     Unknown,
 }

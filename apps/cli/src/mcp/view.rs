@@ -149,6 +149,10 @@ pub fn approval_text(reasons: &[ApprovalReason]) -> String {
             ApprovalReason::RateLimit => {
                 "this agent asked for more downloads this hour than it may without asking"
             }
+            ApprovalReason::PeerDiscovery => {
+                "this torrent would contact peers and discovery services"
+            }
+            ApprovalReason::PeerUpload => "this torrent would upload pieces to peers",
             ApprovalReason::Unknown => "Fetchpath's policy asks the person first",
         })
         .collect();

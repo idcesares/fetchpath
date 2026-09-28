@@ -220,6 +220,23 @@ async fn start_media_download(
 }
 
 #[tauri::command]
+async fn start_torrent_download(
+    draft: view::TorrentDraft,
+    engine: Engine<'_>,
+) -> Result<view::JobView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        send_job(
+            &engine,
+            Command::CreateJob {
+                request: draft.request()?,
+            },
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 async fn list_downloads(engine: Engine<'_>) -> Result<Vec<view::JobView>, String> {
     let engine = Arc::clone(&engine);
     off_thread(move || {
@@ -974,6 +991,7 @@ pub fn run() {
             start_batch,
             inspect_media,
             start_media_download,
+            start_torrent_download,
             list_downloads,
             take_link_reviews,
             download_details,

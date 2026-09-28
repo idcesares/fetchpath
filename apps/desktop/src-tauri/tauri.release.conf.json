@@ -4,6 +4,6 @@
     "beforeBuildCommand": "node src-tauri/tools/stage-cli.mjs && pnpm build"
   },
   "bundle": {
-    "externalBin": ["binaries/fetchpath"]
+    "externalBin": ["binaries/fetchpath", "binaries/fetchpath-torrent-helper"]
   }
 }

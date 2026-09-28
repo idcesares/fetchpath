@@ -99,6 +99,7 @@ impl JsonSchema for SensitiveUrl {
 pub enum JobKind {
     File,
     Media,
+    Torrent,
     #[serde(other)]
     Unknown,
 }

@@ -27,6 +27,10 @@ execFileSync(cargo, ['build', '--release', '--locked', '-p', 'fetchpath'], {
   cwd: root,
   stdio: 'inherit',
 });
+execFileSync(cargo, ['build', '--release', '--locked', '-p', 'fetchpath-torrent', '--bin', 'fetchpath-torrent-helper', '--features', 'helper'], {
+  cwd: root,
+  stdio: 'inherit',
+});
 
 const built = path.join(root, 'target', 'release', 'fetchpath.exe');
 const stagedDir = path.join(srcTauri, 'binaries');
@@ -34,3 +38,7 @@ mkdirSync(stagedDir, { recursive: true });
 const staged = path.join(stagedDir, `fetchpath-${triple}.exe`);
 copyFileSync(built, staged);
 console.log(`staged ${path.relative(root, staged)}`);
+const torrentBuilt = path.join(root, 'target', 'release', 'fetchpath-torrent-helper.exe');
+const torrentStaged = path.join(stagedDir, `fetchpath-torrent-helper-${triple}.exe`);
+copyFileSync(torrentBuilt, torrentStaged);
+console.log(`staged ${path.relative(root, torrentStaged)}`);

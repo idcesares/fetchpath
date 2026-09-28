@@ -635,22 +635,35 @@
         "FP-019",
         "FP-049"
       ],
-      "status": "blocked",
-      "owner": null,
+        "status": "done",
+        "owner": "codex (lead)",
       "modelTier": "terra-medium",
       "files": [
         "adapters/torrent",
-        "crates/fetchpath-session"
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "apps/cli",
+        "apps/desktop",
+        "Cargo.toml",
+        "Cargo.lock",
+          "docs/architecture/REPOSITORY.md",
+          "docs/development",
+          "docs/user/CLI.md",
+          "PROJECT.md",
+          "SECURITY.md",
+          "docs/tasks/backlog.json"
       ],
       "acceptanceIds": [
         "A02",
         "A05",
         "A10"
       ],
-      "acceptance": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests. Lands as a session job kind so every client (desktop, CLI, TUI, agents) gets it.",
-      "verification": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
-      "evidence": [],
-      "blockedReason": "Needs the user's choice of torrent engine before any dependency lands (28 September 2026). Options: libtorrent-rasterbar through FFI, as the plan names (mature piece policy; a large C++/Boost build and a strong review of the FFI); a Rust engine such as librqbit, run as an isolated helper process (pure Rust, many new crates in the lockfile and licence manifest); or aria2c as a pinned, supervised helper like yt-dlp (smallest change, least control over piece policy and quotas). Recommendation: librqbit in a separate `fetchpath torrent-helper` process, seeding off by default and uploads bounded. Next action: the user picks one; then implement as a session job kind.",
+      "acceptance": "Integrate librqbit in an isolated Windows helper coordinated by the session. Torrent and magnet jobs use bounded peers and bandwidth, explicit discovery and upload policy, safe paths and no-overwrite publication. The protocol exposes the job kind to desktop, CLI, TUI and agents; agents cannot enable sharing or discovery without the person's approval.",
+      "verification": "Build the affected crates and package path; review input, path, process and policy boundaries. The owner waived an optional torrent test campaign on 28 September 2026.",
+        "evidence": [
+          "docs/development/TORRENTS.md"
+        ],
+      "blockedReason": null,
       "priority": "P2"
     },
     {

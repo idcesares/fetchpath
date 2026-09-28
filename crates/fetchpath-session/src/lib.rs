@@ -18,6 +18,7 @@ use durable::{Durable, DurableEngine, RecordDurable, RemovedJob, Reported};
 use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext, normalize_sha256};
 use fetchpath_media::{MediaInspection, MediaJob, MediaJobState, MediaTools};
 use fetchpath_protocol::principal::{AgentName, AgentPolicy, ApprovalReason, Principal};
+use fetchpath_torrent::{JobState as TorrentJobState, TorrentJob};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::collections::{BTreeMap, HashSet};
@@ -96,6 +97,7 @@ struct LinkReview {
 enum JobHandle {
     File(FileJob),
     Media(MediaJob),
+    Torrent(TorrentJob),
 }
 
 impl JobHandle {
@@ -103,6 +105,7 @@ impl JobHandle {
         match self {
             Self::File(job) => job.start(),
             Self::Media(job) => job.start(),
+            Self::Torrent(job) => job.start(),
         }
     }
 
@@ -124,6 +127,7 @@ impl JobHandle {
                     "accepted"
                 }
             }
+            Self::Torrent(job) => job.cancel(),
         }
     }
 
@@ -131,6 +135,7 @@ impl JobHandle {
         match self {
             Self::File(job) => job.join(),
             Self::Media(job) => job.join(),
+            Self::Torrent(job) => job.join(),
         }
     }
 
@@ -138,6 +143,7 @@ impl JobHandle {
         match self {
             Self::File(job) => job.snapshot().state == FileJobState::Completed,
             Self::Media(job) => job.snapshot().state == MediaJobState::Completed,
+            Self::Torrent(job) => job.snapshot().state == TorrentJobState::Completed,
         }
     }
 }
@@ -242,6 +248,7 @@ struct QueueRecord {
     finished_at_ms: Option<u64>,
     media_variant_id: Option<String>,
     media_quality: Option<String>,
+    torrent_policy: Option<TorrentPolicy>,
     job: Option<JobHandle>,
     /// Live only. Deliberately not persisted: a rate measured before a restart
     /// describes a transfer that is no longer running.
@@ -339,6 +346,22 @@ pub struct MediaDraft {
     pub quality_label: String,
     pub destination: String,
     pub not_before_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentPolicy {
+    pub discover_peers: bool,
+    pub upload: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentDraft {
+    pub source: String,
+    pub destination: String,
+    pub not_before_ms: Option<u64>,
+    pub policy: TorrentPolicy,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -479,6 +502,8 @@ struct PersistedRecord {
     media_variant_id: Option<String>,
     #[serde(default)]
     media_quality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    torrent_policy: Option<TorrentPolicy>,
     #[serde(flatten, default)]
     durable: RecordDurable,
     /// Absent for the person's own jobs, so a 0.1.0 file writes back
@@ -1036,6 +1061,28 @@ impl Session {
         self.enqueue_media_for(draft, &Origin::default())
     }
 
+    pub(crate) fn enqueue_torrent_for(
+        &self,
+        draft: TorrentDraft,
+        origin: &Origin,
+    ) -> Result<JobSnapshot, String> {
+        let source = validated_torrent_source(&draft.source)?;
+        let destination = validated_destination(&draft.destination)?;
+        if !draft.policy.discover_peers {
+            return Err("Enable peer discovery explicitly for this torrent.".into());
+        }
+        let mut record =
+            QueueRecord::new_torrent(source, destination, draft.not_before_ms, draft.policy);
+        record.apply(origin);
+        let id = record.id.clone();
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        state.records.push(record);
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)?;
+        Ok(find_record(&state, &id)?.view.clone())
+    }
+
     pub(crate) fn enqueue_media_for(
         &self,
         draft: MediaDraft,
@@ -1252,7 +1299,15 @@ impl Session {
                 }
             }
         }
-        let url = url.map(|url| validated_source(&url)).transpose()?;
+        let url = url
+            .map(|url| {
+                if record.torrent_policy.is_some() {
+                    validated_torrent_source(&url)
+                } else {
+                    validated_source(&url)
+                }
+            })
+            .transpose()?;
         let destination = destination
             .map(|destination| validated_destination(&destination))
             .transpose()?;
@@ -1302,7 +1357,9 @@ impl Session {
             record.view.action = Some("choose_new_path".into());
             record.view.retryable = true;
         } else {
-            record.job = Some(if let Some(variant_id) = record.media_variant_id.clone() {
+            record.job = Some(if let Some(policy) = record.torrent_policy {
+                torrent_job(record, live_url, policy)
+            } else if let Some(variant_id) = record.media_variant_id.clone() {
                 let tools = self
                     .media_tools()
                     .ok_or_else(|| TOOLS_MISSING.to_string())?;
@@ -1523,6 +1580,11 @@ impl Session {
                 "failed",
                 "A file already exists at this destination.",
                 "choose_new_path",
+            )),
+            Some(url) if record.torrent_policy.is_some() => Ok(torrent_job(
+                record,
+                url,
+                record.torrent_policy.expect("checked above"),
             )),
             Some(url) => match record.media_variant_id.clone() {
                 Some(variant_id) => media_tools
@@ -1832,7 +1894,9 @@ impl Session {
             if record.view.state == "cancelled"
                 && let Some(url) = record.live_url.clone()
             {
-                record.job = if let Some(variant_id) = record.media_variant_id.clone() {
+                record.job = if let Some(policy) = record.torrent_policy {
+                    Some(torrent_job(record, url, policy))
+                } else if let Some(variant_id) = record.media_variant_id.clone() {
                     self.media_tools().map(|tools| {
                         JobHandle::Media(MediaJob::create(
                             url,
@@ -1920,6 +1984,17 @@ impl Session {
                     .get(agent)
                     .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
                 media.limit_bytes(limit);
+            }
+            if let (JobHandle::Torrent(torrent), Principal::Agent(agent)) = (job, &record.principal)
+                && !record.size_approved
+            {
+                let limit = self
+                    .agents
+                    .lock()
+                    .expect("agents poisoned")
+                    .get(agent)
+                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+                torrent.limit_bytes(limit);
             }
             if let JobHandle::File(file) = job {
                 // A rule may cap the connections, decided as the job starts.
@@ -2014,7 +2089,9 @@ impl Session {
             record.attempt += 1;
             let delay = settings.retry_delay_seconds(record.attempt);
             let due_at = now.saturating_add(delay.saturating_mul(1_000));
-            record.job = if let Some(variant_id) = record.media_variant_id.clone() {
+            record.job = if let Some(policy) = record.torrent_policy {
+                Some(torrent_job(record, url, policy))
+            } else if let Some(variant_id) = record.media_variant_id.clone() {
                 let Some(tools) = self.media_tools() else {
                     record.attempt -= 1;
                     continue;
@@ -2413,6 +2490,7 @@ impl QueueRecord {
             finished_at_ms: conflict.then_some(now),
             media_variant_id: None,
             media_quality: None,
+            torrent_policy: None,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2491,6 +2569,7 @@ impl QueueRecord {
             finished_at_ms: conflict.then_some(now),
             media_variant_id: Some(variant_id),
             media_quality: Some(quality_label.clone()),
+            torrent_policy: None,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2525,6 +2604,28 @@ impl QueueRecord {
                 from_paired_device: None,
             },
         }
+    }
+
+    fn new_torrent(
+        source: String,
+        destination: PathBuf,
+        not_before_ms: Option<u64>,
+        policy: TorrentPolicy,
+    ) -> Self {
+        let mut record =
+            Self::new_checked(source.clone(), destination.clone(), not_before_ms, None);
+        record.torrent_policy = Some(policy);
+        record.view.kind = "torrent".into();
+        record.job = (!destination.exists()).then(|| {
+            JobHandle::Torrent(TorrentJob::create(fetchpath_torrent::request(
+                source,
+                destination,
+                record.id.clone(),
+                policy.discover_peers,
+                policy.upload,
+            )))
+        });
+        record
     }
 
     fn restore(
@@ -2597,7 +2698,17 @@ impl QueueRecord {
             } else {
                 "queued"
             };
-            let job = if let Some(variant_id) = saved.media_variant_id.clone() {
+            let job = if let Some(policy) = saved.torrent_policy {
+                Some(JobHandle::Torrent(TorrentJob::create(
+                    fetchpath_torrent::request(
+                        url.clone(),
+                        PathBuf::from(&saved.destination),
+                        saved.id.clone(),
+                        policy.discover_peers,
+                        policy.upload,
+                    ),
+                )))
+            } else if let Some(variant_id) = saved.media_variant_id.clone() {
                 media_tools.map(|tools| {
                     JobHandle::Media(MediaJob::create(
                         url.clone(),
@@ -2616,7 +2727,7 @@ impl QueueRecord {
                 .ok()
                 .map(JobHandle::File)
             };
-            if saved.media_variant_id.is_none() && job.is_none() {
+            if saved.media_variant_id.is_none() && saved.torrent_policy.is_none() && job.is_none() {
                 // Only an unreadable saved checksum gets here. Fail closed.
                 (
                     None,
@@ -2690,6 +2801,7 @@ impl QueueRecord {
             finished_at_ms: saved.finished_at_ms,
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
+            torrent_policy: saved.torrent_policy,
             job,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -2730,6 +2842,7 @@ impl QueueRecord {
             finished_at_ms: saved.finished_at_ms,
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
+            torrent_policy: saved.torrent_policy,
             job: None,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -2815,6 +2928,28 @@ fn refresh_record(record: &mut QueueRecord) {
                 record.view.action = snapshot.action;
             }
         }
+        JobHandle::Torrent(job) => {
+            let snapshot = job.snapshot();
+            if snapshot.state == TorrentJobState::Queued
+                && record.not_before_ms.is_some_and(|due| due > now_ms())
+            {
+                record.view.state = "scheduled".into();
+                return;
+            }
+            record.view.state = match snapshot.state {
+                TorrentJobState::Queued => "queued",
+                TorrentJobState::Running => "running",
+                TorrentJobState::Cancelling => "cancelling",
+                TorrentJobState::Cancelled => "cancelled",
+                TorrentJobState::Completed => "completed",
+                TorrentJobState::Failed => "failed",
+            }
+            .into();
+            record.view.bytes_received = snapshot.received;
+            record.view.total_bytes = snapshot.total;
+            record.view.error = snapshot.error;
+            record.view.cleanup_pending = false;
+        }
     }
     let (action, retryable) = recovery_action(&record.view);
     if record.view.action.is_none() {
@@ -2883,6 +3018,16 @@ fn file_job(
     }
 }
 
+fn torrent_job(record: &QueueRecord, source: String, policy: TorrentPolicy) -> JobHandle {
+    JobHandle::Torrent(TorrentJob::create(fetchpath_torrent::request(
+        source,
+        record.destination.clone(),
+        record.id.clone(),
+        policy.discover_peers,
+        policy.upload,
+    )))
+}
+
 fn recovery_action(snapshot: &JobSnapshot) -> (Option<String>, bool) {
     if snapshot.state != "failed" {
         return (None, false);
@@ -2905,7 +3050,10 @@ fn action_for_code(code: &str, error: &str) -> &'static str {
         "integrity.checksum_mismatch" | "integrity.checksum_unreadable" => "check_checksum",
         "media.source_expired" | "media.unknown_variant" => "refresh_source",
         "media.helper_unavailable" => "configure_media_tools",
-        "storage.destination_conflict" | "media.destination_conflict" => "choose_new_path",
+        "storage.destination_conflict" | "media.destination_conflict" | "destination.conflict" => {
+            "choose_new_path"
+        }
+        "torrent.path_invalid" | "torrent.metadata_invalid" | "source.unsupported" => "edit_link",
         "media.invalid_source" => "edit_link",
         "source.transfer_failed" if refused_by_server(error) => "edit_link",
         code if code.starts_with("input.") => "edit_link",
@@ -3121,6 +3269,37 @@ fn validated_source(raw: &str) -> Result<String, String> {
     Ok(url.to_owned())
 }
 
+fn validated_torrent_source(raw: &str) -> Result<String, String> {
+    let source = raw.trim();
+    if source.is_empty() || source.len() > MAX_SOURCE_LENGTH || source.chars().any(char::is_control)
+    {
+        return Err("That torrent or magnet link cannot be queued safely.".into());
+    }
+    if source.starts_with("magnet:?") {
+        let parsed = url::Url::parse(source)
+            .map_err(|_| "That magnet link could not be read.".to_string())?;
+        let has_hash = parsed.query_pairs().any(|(key, value)| {
+            key == "xt" && (value.starts_with("urn:btih:") || value.starts_with("urn:btmh:"))
+        });
+        if !has_hash {
+            return Err("That magnet link has no supported torrent hash.".into());
+        }
+        return Ok(source.to_owned());
+    }
+    if source.starts_with("https://") {
+        let parsed = url::Url::parse(source)
+            .map_err(|_| "That torrent link could not be read.".to_string())?;
+        if parsed.host_str().is_none()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err("That torrent link has an invalid host or embedded credentials.".into());
+        }
+        return Ok(source.to_owned());
+    }
+    Err("Use a magnet link or HTTPS torrent link.".into())
+}
+
 /// Validates a destination arriving over IPC. The path must be absolute and free
 /// of traversal, so a renderer cannot steer a write outside the folder the user
 /// actually chose, and the leaf must be a name Windows can really create.
@@ -3311,6 +3490,7 @@ fn write_queue(
                 finished_at_ms: record.finished_at_ms,
                 media_variant_id: record.media_variant_id.clone(),
                 media_quality: record.media_quality.clone(),
+                torrent_policy: record.torrent_policy,
                 durable: record.durable.clone(),
                 principal: record.principal.clone(),
                 approval: record.approval.clone(),

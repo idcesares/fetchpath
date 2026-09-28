@@ -34,6 +34,8 @@ fn reason(reason: &ApprovalReason) -> &'static str {
         }
         ApprovalReason::SizeLimit => "It passed the size you let it download and stopped.",
         ApprovalReason::RateLimit => "It asked for more downloads this hour than you allow.",
+        ApprovalReason::PeerDiscovery => "It would contact peers and discovery services.",
+        ApprovalReason::PeerUpload => "It would upload pieces to peers.",
         ApprovalReason::Unknown => "It asked for something its access does not cover.",
     }
 }

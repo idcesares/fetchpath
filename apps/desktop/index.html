@@ -126,6 +126,7 @@
             <legend class="sr-only">Download type</legend>
             <label><input type="radio" name="download-kind" value="file" checked /> <span>File or batch</span></label>
             <label><input type="radio" name="download-kind" value="media" /> <span>Video or audio</span></label>
+            <label><input type="radio" name="download-kind" value="torrent" /> <span>Torrent</span></label>
           </fieldset>
         </div>
 
@@ -172,6 +173,12 @@
             </select>
             <p id="media-title" class="field-note"></p>
           </div>
+        </section>
+
+        <section id="torrent-options" class="media-options" aria-label="Torrent network options" hidden>
+          <p class="hint">A torrent contacts peers who can see your network address. Choose a new destination folder; Fetchpath will not replace one that exists.</p>
+          <label><input id="torrent-discovery" type="checkbox" /> Contact peers and discovery services for this torrent</label>
+          <label><input id="torrent-upload" type="checkbox" /> Upload verified pieces to peers (limited to 128 KiB/s)</label>
         </section>
 
         <label for="destination">Save as</label>

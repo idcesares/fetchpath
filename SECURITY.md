@@ -24,6 +24,9 @@ Only the latest release receives security fixes.
   serving files that were not shared, or content accepted without its
   checksum.
 - Media helpers run without the pinned digest matching.
+- Torrent metadata that escapes the chosen folder, peer discovery or uploading
+  without the person's consent, or a torrent marked complete before its files
+  are checked and published safely.
 - Secrets or private URLs written to logs.
 
 ## Out of scope
