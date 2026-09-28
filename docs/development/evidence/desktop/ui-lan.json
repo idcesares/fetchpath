@@ -1,10 +1,10 @@
 {
   "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
   "sharingAtStart": "Off. Nothing is offered to any computer.",
-  "ownFingerprintShown": "This computer's fingerprint: 53f2-2f6c-d531-2642-800a",
-  "pairingInstructions": "On the other computer, choose Pair with a computer that shows a code, and enter the address 127.0.0.1:47632 and this code. It works once, for 120 more seconds. The other computer should show this computer's fingerprint, 53f2-2f6c-d531-2642-800a.",
-  "bSawFingerprint": "53f2-2f6c-d531-2642-800a",
-  "afterPairing": "Paired with a computer whose fingerprint is ca0e-4393-6a25-ef8f-573a. Check that the other computer shows the same, and that it shows 53f2-2f6c-d531-2642-800a for this one.",
+  "ownFingerprintShown": "This computer's fingerprint: 231f-238b-cd02-0a9c-2ef6",
+  "pairingInstructions": "On the other computer, choose Pair with a computer that shows a code, and enter the address 127.0.0.1:47632 and this code. It works once, for 120 more seconds. The other computer should show this computer's fingerprint, 231f-238b-cd02-0a9c-2ef6.",
+  "bSawFingerprint": "231f-238b-cd02-0a9c-2ef6",
+  "afterPairing": "Paired with a computer whose fingerprint is 0309-a485-d804-28dd-09a7. Check that the other computer shows the same, and that it shows 231f-238b-cd02-0a9c-2ef6 for this one.",
   "codeHiddenAfterUse": true,
   "sharingOn": "On. Paired computers reach this one at 127.0.0.1:47631. Fetchpath keeps running in the background while sharing is on.",
   "publicFromA": {

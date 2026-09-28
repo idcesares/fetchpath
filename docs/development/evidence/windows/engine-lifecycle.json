@@ -1,6 +1,6 @@
 {
   "task": "FP-057",
-  "recordedAt": "2026-09-28T00:33:07.1197197Z",
+  "recordedAt": "2026-09-28T08:13:47.4472324Z",
   "machine": {
     "os": "Microsoft Windows 11 Pro",
     "build": "10.0.26200.0"
@@ -8,7 +8,7 @@
   "fromVersion010": {
     "install010": {
       "installer": "Fetchpath_0.1.0_x64-setup.exe",
-      "sha256": "e43e33b35e2cd4065c4336f4c9bb9f7e87344860a75a1b50c85d0bd487240fa5",
+      "sha256": "1fc5c99aafa309251eb6eb6873352166e1fade4906d5226a9ade55d0db3c9298",
       "exitCode": 0,
       "seconds": 2.8
     },
@@ -16,9 +16,9 @@
     "jobsBefore": 14,
     "upgrade": {
       "installer": "Fetchpath_0.1.1_x64-setup.exe",
-      "sha256": "be584bfe30f2417555a34fb9fb729ce1b818f6d13d8534bb1c58877e83497982",
+      "sha256": "306fe22e41dc4cf601ad0f590e4e75ffe5a2ce2e89dbededb54176954992f570",
       "exitCode": 0,
-      "seconds": 3.7
+      "seconds": 5.2
     },
     "window010StoppedBySetup": true,
     "queueFileUntouchedBySetup": true,
@@ -30,21 +30,21 @@
   },
   "overRunningEngine": {
     "markedBeforeUpgrade": true,
-    "enginePidBefore": 83728,
-    "bytesBeforeUpgrade": 1048577,
+    "enginePidBefore": 26588,
+    "bytesBeforeUpgrade": 1720321,
     "stillDownloadingWhenSetupStarted": true,
     "watchAliveWhenSetupStarted": true,
     "upgrade": {
       "installer": "Fetchpath_0.1.2_x64-setup.exe",
-      "sha256": "0687909792a67d689de5abd6b8733aeb7e93421d18c295f7ca6dd76051c01262",
+      "sha256": "ecbe680bbc2d2e320d1f7dbf3cac5d045f5ed93656e1e251eb17fa4a490badec",
       "exitCode": 0,
       "seconds": 4.4
     },
     "displayVersion": "0.1.2",
     "cliSha256": {
-      "marked": "0e96cc1073f6debecebf82de709178e41a1ad2e567a22092c6009cfc6bdd5111",
-      "carried": "f1071581a43f313bfc64e88cb74b8e35d8b441982de7fd012a382b8807116ac5",
-      "afterUpgrade": "f1071581a43f313bfc64e88cb74b8e35d8b441982de7fd012a382b8807116ac5"
+      "marked": "011d69572065ed44073d3c79a7fb79731bc3755601bcd279b15e1941b69be4a7",
+      "carried": "f7346f32aab2ace553a313f25c11e619733513dc7fe27b721b5e306f7e2f2092",
+      "afterUpgrade": "f7346f32aab2ace553a313f25c11e619733513dc7fe27b721b5e306f7e2f2092"
     },
     "cliReplaced": true,
     "oldEngineGone": true,
@@ -60,8 +60,8 @@
   },
   "uninstallWithEngineRunning": {
     "signInValueSet": "\"C:\\Users\\idces\\AppData\\Local\\Fetchpath\\fetchpath.exe\" engine",
-    "enginePidBefore": 86216,
-    "seconds": 26.3,
+    "enginePidBefore": 25508,
+    "seconds": 26.5,
     "engineGone": true,
     "stuckCommandInInstallEnded": true,
     "sameCommandElsewhereSpared": true,

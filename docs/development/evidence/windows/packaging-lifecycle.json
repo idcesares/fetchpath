@@ -3,8 +3,8 @@
   "machineArchitecture": "AMD64",
   "installerUnderTest": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
   "upgradeInstaller": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
-  "installerSha256": "e43e33b35e2cd4065c4336f4c9bb9f7e87344860a75a1b50c85d0bd487240fa5",
-  "upgradeInstallerSha256": "be584bfe30f2417555a34fb9fb729ce1b818f6d13d8534bb1c58877e83497982",
+  "installerSha256": "26558639c522a3b441be8ced4586500cb32739ba4ec9a0c47e428d6320dc5e3c",
+  "upgradeInstallerSha256": "306fe22e41dc4cf601ad0f590e4e75ffe5a2ce2e89dbededb54176954992f570",
   "preflight": {
     "existingUninstallEntries": [],
     "appDataExistedBefore": true,
@@ -18,7 +18,7 @@
     "label": "install 0.1.0",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 4.7,
+    "elapsedSeconds": 3.7,
     "uninstallEntries": [
       {
         "registryKey": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Fetchpath",
@@ -27,7 +27,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 25608
+        "estimatedSizeKb": 26738
       }
     ],
     "installDirectory": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
@@ -99,7 +99,7 @@
     "label": "upgrade to 0.1.1 with the app running",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 6.8,
+    "elapsedSeconds": 4.4,
     "runningInstanceStoppedByInstaller": true,
     "uninstallEntries": [
       {
@@ -109,7 +109,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 25608
+        "estimatedSizeKb": 26738
       }
     ],
     "files": [
@@ -148,7 +148,7 @@
   },
   "uninstall": {
     "exitCode": 0,
-    "elapsedSeconds": 3.5,
+    "elapsedSeconds": 5.7,
     "installDirectoryRemains": false,
     "remainingInstalledFiles": [],
     "startMenuShortcutRemains": false,
@@ -158,7 +158,10 @@
     "queueFileRemains": true,
     "instanceLockRemains": true,
     "localAppDataBundleDirectoryRemains": true,
-    "localAppDataBundleContents": "EBWebView",
+    "localAppDataBundleContents": [
+      "EBWebView",
+      "lan"
+    ],
     "installPathRegistryKeyRemains": true,
     "installPathRegistryValueAfterUninstall": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
     "dataRemovalHook": "./installer-hooks.nsh",

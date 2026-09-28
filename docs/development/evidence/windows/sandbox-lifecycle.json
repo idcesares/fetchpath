@@ -2,7 +2,7 @@
   "environment": "Windows Sandbox",
   "osBuild": "10.0.26100.0",
   "machineArchitecture": "AMD64",
-  "installerSha256": "8757a1d2fa7116cb1c2bee99a1059be453068d5e7c566b9cab4894d6ddb72e26",
+  "installerSha256": "d97d87db6bf6d045cb7e1c50462aedb2a7b66d504f3d04709ee2eddb398fb6a1",
   "preflight": {
     "vcruntime140Present": false,
     "webview2RuntimeVersion": null,
@@ -15,7 +15,7 @@
   },
   "install": {
     "exitCode": 0,
-    "elapsedSeconds": 73.9,
+    "elapsedSeconds": 78.7,
     "uninstallEntries": [
       {
         "displayName": "Fetchpath",
@@ -32,7 +32,7 @@
     "help": {
       "commandLine": "fetchpath --help",
       "exitCode": 0,
-      "output": "Fetchpath — download files from the command line.\n\nUsage:\n  fetchpath [--plain]        Open the interactive terminal (in a terminal only)\n  fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]\n  fetchpath --version\n  fetchpath --help\n\nThe download queue, kept by the Fetchpath engine:\n  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]\n  fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]\n  fetchpath ls [--active | --failed]          fetchpath show JOB...\n  fetchpath pause | resume | cancel | retry | rm JOB...\n  fetchpath approvals                         agents' requests that wait for you\n  fetchpath approve | deny JOB...             answer an agent's request that waits for you\n  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N]\n  fetchpath watch [JOB]                       fetchpath inspect LINK\n  fetchpath folder JOB                        show its file in File Explorer\n  fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]\n  fetchpath engine status | stop\n  fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size\n  fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)\n\nVideo and audio need two free programs, yt-dlp and ffmpeg, that are not\npart of Fetchpath:\n  fetchpath tools                             whether they are set up\n  fetchpath tools install [--yes]             download and set them up (asks first)\n  fetchpath tools use FOLDER                  use copies you already have\n\nJOB is a download's number in `fetchpath ls`, or the start of its id.\nEvery queue command takes --json to print the engine's own records.\n\n\nPaired devices (advanced; off until you run `fetchpath lan enable`):\n  fetchpath lan id | enable | disable | peers | unpair KEY\n  fetchpath lan pair-host [BIND]      then on the other device:\n  fetchpath lan pair-join ADDRESS CODE [LABEL]\n  fetchpath lan serve [BIND]\n  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION\n  fetchpath cache status\n\nDESTINATION may be a file name or a folder. Without one, the file goes where\na matching rule says, or to your Downloads folder, under the name the link\nsuggests. Fetchpath never\noverwrites an existing file.\n\nOptions:\n  --sha256 HEX   Save the file only if it matches this SHA-256 checksum.\n  --json         Print one JSON result on standard output, and no progress.\n  -q, --quiet    Print only the saved path.\n\nExit codes:\n  0 saved   1 engine unavailable   2 bad input   3 file already exists\n  4 network or server   5 checksum did not match   6 could not write\n  130 cancelled or interrupted\n\nThe full guide is docs\\CLI.md in the Fetchpath install folder.\n"
+      "output": "Fetchpath — download files from the command line.\n\nUsage:\n  fetchpath [--plain]        Open the interactive terminal (in a terminal only)\n  fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]\n  fetchpath --version\n  fetchpath --help\n\nThe download queue, kept by the Fetchpath engine:\n  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]\n  fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]\n  fetchpath ls [--active | --failed]          fetchpath show JOB...\n  fetchpath pause | resume | cancel | retry | rm JOB...\n  fetchpath approvals                         agents' requests that wait for you\n  fetchpath approve | deny JOB...             answer an agent's request that waits for you\n  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N]\n  fetchpath watch [JOB]                       fetchpath inspect LINK\n  fetchpath folder JOB                        show its file in File Explorer\n  fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]\n  fetchpath engine status | stop\n  fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size\n  fetchpath cache [status | clear]            verified copies kept for downloads with a checksum\n  fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)\n\nVideo and audio need two free programs, yt-dlp and ffmpeg, that are not\npart of Fetchpath:\n  fetchpath tools                             whether they are set up\n  fetchpath tools install [--yes]             download and set them up (asks first)\n  fetchpath tools use FOLDER                  use copies you already have\n\nJOB is a download's number in `fetchpath ls`, or the start of its id.\nEvery queue command takes --json to print the engine's own records.\n\n\nPaired devices (advanced; sharing is off until you run `fetchpath lan on`):\n  fetchpath lan [status]                      this computer and its paired devices\n  fetchpath lan on | off                      share checksum-verified public files with them\n  fetchpath lan pair                          show a code; then on the other device:\n  fetchpath lan join ADDRESS CODE [NAME]      fetchpath lan unpair KEY\n  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION\n\nDESTINATION may be a file name or a folder. Without one, the file goes where\na matching rule says, or to your Downloads folder, under the name the link\nsuggests. Fetchpath never\noverwrites an existing file.\n\nOptions:\n  --sha256 HEX   Save the file only if it matches this SHA-256 checksum.\n  --json         Print one JSON result on standard output, and no progress.\n  -q, --quiet    Print only the saved path.\n\nExit codes:\n  0 saved   1 engine unavailable   2 bad input   3 file already exists\n  4 network or server   5 checksum did not match   6 could not write\n  130 cancelled or interrupted\n\nThe full guide is docs\\CLI.md in the Fetchpath install folder.\n"
     },
     "version": {
       "commandLine": "fetchpath --version",
@@ -40,21 +40,21 @@
       "output": "fetchpath 0.1.0\n"
     },
     "download": {
-      "commandLine": "fetchpath download http://127.0.0.1:49736/cli.bin \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\cli-download.bin\" --json",
+      "commandLine": "fetchpath download http://127.0.0.1:49737/cli.bin \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\cli-download.bin\" --json",
       "exitCode": 0,
-      "output": "{\"bytes\":262144,\"checksum_matched\":false,\"destination\":\"C:\\\\Users\\\\WDAGUtilityAccount\\\\AppData\\\\Local\\\\Temp\\\\fp043\\\\cli-download.bin\",\"job_id\":\"5f9f71d9-64c2-4444-8aee-032b2070a102\",\"observed_sha256\":\"81d0141af58569f91edf2d036b67a6b82c062d1829fd93aec50ed96b4773d225\",\"result\":\"downloaded_observed\",\"staging_cleanup_pending\":null}\n"
+      "output": "{\"bytes\":262144,\"checksum_matched\":false,\"destination\":\"C:\\\\Users\\\\WDAGUtilityAccount\\\\AppData\\\\Local\\\\Temp\\\\fp043\\\\cli-download.bin\",\"job_id\":\"3dccf302-f9e7-49bd-8360-b2fd84dfd167\",\"observed_sha256\":\"81d0141af58569f91edf2d036b67a6b82c062d1829fd93aec50ed96b4773d225\",\"result\":\"downloaded_observed\",\"staging_cleanup_pending\":null}\n"
     },
     "downloadedBytes": 262144,
     "queuedDownload": {
-      "commandLine": "fetchpath add http://127.0.0.1:49736/queued.bin --to \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\" --wait",
+      "commandLine": "fetchpath add http://127.0.0.1:49737/queued.bin --to \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\" --wait",
       "exitCode": 0,
-      "output": "Added ab2e1057  C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\nC:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\n"
+      "output": "Added c57ab013  C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\nC:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\n"
     },
     "queuedBytes": 262144,
     "engineStatus": {
       "commandLine": "fetchpath engine status",
       "exitCode": 0,
-      "output": "The Fetchpath engine 0.1.0 is running, started 2026-09-28 00:22.\n0 active downloads.\n"
+      "output": "The Fetchpath engine 0.1.0 is running, started 2026-09-28 03:32.\n0 active downloads.\n"
     }
   },
   "app": {
@@ -65,7 +65,7 @@
     "matchesCliDownload": true,
     "fixture": {
       "state": "Running",
-      "port": 49736,
+      "port": 49737,
       "unexpectedOutput": [],
       "errors": []
     }
@@ -92,6 +92,6 @@
   "failures": [],
   "passed": true,
   "hostOsBuild": "10.0.26200.0",
-  "recordedAt": "2026-09-28T03:25:01.5837133Z",
-  "wallClockSeconds": 265.0
+  "recordedAt": "2026-09-28T06:34:31.7800674Z",
+  "wallClockSeconds": 270.0
 }

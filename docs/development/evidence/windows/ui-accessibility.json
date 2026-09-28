@@ -340,9 +340,9 @@
     }
   ],
   "keyboardOnlyJourney": {
-    "typedAddress": "http://127.0.0.1:39173/keyboard.bin",
+    "typedAddress": "http://127.0.0.1:7295/keyboard.bin",
     "typedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
-    "typedUrlReadBack": "http://127.0.0.1:39173/keyboard.bin",
+    "typedUrlReadBack": "http://127.0.0.1:7295/keyboard.bin",
     "typedDestinationReadBack": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
     "tabsFromDestinationToSubmit": 8,
     "finalStatus": "Complete",
@@ -352,7 +352,7 @@
   },
   "fixtureServer": {
     "state": "Running",
-    "port": 39173,
+    "port": 7295,
     "unexpectedOutput": [],
     "errors": []
   },
@@ -517,6 +517,26 @@
         "name": "Test"
       },
       {
+        "automationId": "setting-cache-quota",
+        "controlType": "Spinner",
+        "name": "Keep at most (GB)"
+      },
+      {
+        "automationId": "lan-sharing",
+        "controlType": "CheckBox",
+        "name": "Share with paired computers"
+      },
+      {
+        "automationId": "lan-pair",
+        "controlType": "Button",
+        "name": "Show a pairing code"
+      },
+      {
+        "automationId": "lan-join-summary",
+        "controlType": "Button",
+        "name": "Pair with a computer that shows a code"
+      },
+      {
         "automationId": "setting-close-to-tray",
         "controlType": "CheckBox",
         "name": "Keep running in the notification area when I close the window"
@@ -559,7 +579,7 @@
     }
   },
   "styleChecks": {
-    "stylesheet": "index-CXqbh0JM.css",
+    "stylesheet": "index-pryCpy7K.css",
     "prefersReducedMotion": true,
     "forcedColors": true,
     "focusVisible": true,

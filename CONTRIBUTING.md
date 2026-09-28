@@ -94,6 +94,21 @@ pwsh -NoProfile -File tests/compatibility/windows/packaging-lifecycle.ps1
 pwsh -NoProfile -File tests/compatibility/metalink/run.ps1
 ```
 
+### Windows lifecycle checks
+
+`packaging-lifecycle.ps1` and `engine-lifecycle.ps1` upgrade to builds
+numbered 0.1.1 and 0.1.2, and refuse installers built before the last
+commit. Build them from the current tree, then the release last:
+
+```powershell
+corepack pnpm --dir apps/desktop tauri build --config src-tauri/tauri.release.conf.json --config '{"version":"0.1.1"}'
+corepack pnpm --dir apps/desktop tauri build --config src-tauri/tauri.release.conf.json --config '{"version":"0.1.2"}'
+corepack pnpm --dir apps/desktop release
+```
+
+`engine-lifecycle.ps1` also needs the pre-engine 0.1.0 installer to upgrade
+from, passed as `-OldInstallerPath`.
+
 Both Windows scripts throw on a failed assertion and still write their partial
 observation, so a JSON file with `"passed": false` is a failure record rather
 than a missing run. They drive the real window and inject keystrokes, so do not

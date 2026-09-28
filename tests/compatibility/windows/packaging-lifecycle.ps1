@@ -41,6 +41,14 @@ if (-not $OutputPath) {
 foreach ($path in @($InstallerPath, $UpgradeInstallerPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installer not found: $path" }
 }
+# An installer built before the last commit tests older code: the 28
+# September re-run upgraded to a day-old 0.1.2 without noticing.
+$committed = [DateTimeOffset]::FromUnixTimeSeconds([int64] (& git -C $repositoryRoot log -1 --format=%ct)).LocalDateTime
+foreach ($path in @($InstallerPath, $UpgradeInstallerPath)) {
+    if ((Get-Item -LiteralPath $path).LastWriteTime -lt $committed) {
+        throw "$path was built before the last commit; rebuild it (CONTRIBUTING.md, Windows lifecycle checks)."
+    }
+}
 
 $appDataDirectory = Join-Path $env:APPDATA 'app.fetchpath.desktop'
 $queuePath = Join-Path $appDataDirectory 'queue-v1.json'
