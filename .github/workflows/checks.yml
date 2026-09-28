@@ -14,4 +14,13 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - run: node tools/tasks.mjs check
+      # The desktop crate embeds the built front end, so build it before cargo.
+      - run: corepack pnpm --dir apps/desktop install --frozen-lockfile
+      - run: corepack pnpm --dir apps/desktop build
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Also builds target/debug/fetchpath-browser-host.exe for the Node tests.
+      - run: cargo test --workspace --locked
       - run: node --test
+      - run: node tools/licenses/generate.mjs --check

@@ -162,7 +162,7 @@ artifacts that were run.
 
 **Install** (`Fetchpath_0.1.0_x64-setup.exe /S`, 3.5 s):
 
-- install directory `C:\Users\idces\AppData\Local\Fetchpath`, confirmed under
+- install directory `C:\Users\<user>\AppData\Local\Fetchpath`, confirmed under
   `%LOCALAPPDATA%`;
 - one Apps & features entry at
   `HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Fetchpath`

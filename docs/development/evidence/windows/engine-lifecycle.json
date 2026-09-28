@@ -59,7 +59,7 @@
     "rangedRequestsAfterUpgrade": 1
   },
   "uninstallWithEngineRunning": {
-    "signInValueSet": "\"C:\\Users\\idces\\AppData\\Local\\Fetchpath\\fetchpath.exe\" engine",
+    "signInValueSet": "\"C:\\Users\\<user>\\AppData\\Local\\Fetchpath\\fetchpath.exe\" engine",
     "enginePidBefore": 25508,
     "seconds": 26.5,
     "engineGone": true,

@@ -1,8 +1,8 @@
 {
   "osBuild": "10.0.26200.0",
   "machineArchitecture": "AMD64",
-  "installerUnderTest": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
-  "upgradeInstaller": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
+  "installerUnderTest": "<repo>\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
+  "upgradeInstaller": "<repo>\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
   "installerSha256": "26558639c522a3b441be8ced4586500cb32739ba4ec9a0c47e428d6320dc5e3c",
   "upgradeInstallerSha256": "306fe22e41dc4cf601ad0f590e4e75ffe5a2ce2e89dbededb54176954992f570",
   "preflight": {
@@ -12,11 +12,11 @@
     "manufacturerRegistryKeyExistedBefore": false,
     "localAppDataBundleDirectoryExistedBefore": true,
     "webview2RuntimeVersion": "153.0.4234.48",
-    "appDataBackup": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-packaging\\preexisting-appdata"
+    "appDataBackup": "<repo>\\work\\fp017-packaging\\preexisting-appdata"
   },
   "install": {
     "label": "install 0.1.0",
-    "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
+    "installer": "<repo>\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
     "exitCode": 0,
     "elapsedSeconds": 3.7,
     "uninstallEntries": [
@@ -25,12 +25,12 @@
         "displayName": "Fetchpath",
         "displayVersion": "0.1.0",
         "publisher": "Fetchpath contributors",
-        "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
-        "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
+        "installLocation": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath",
+        "uninstallString": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath\\uninstall.exe",
         "estimatedSizeKb": 26738
       }
     ],
-    "installDirectory": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
+    "installDirectory": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath",
     "installDirectoryIsPerUser": true,
     "files": [
       "browser-extension\\background.js",
@@ -60,12 +60,12 @@
     "startMenuShortcut": true,
     "desktopShortcut": true,
     "shortcutTargets": {
-      "startMenu": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\fetchpath-desktop.exe",
-      "desktop": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\fetchpath-desktop.exe"
+      "startMenu": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath\\fetchpath-desktop.exe",
+      "desktop": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath\\fetchpath-desktop.exe"
     },
     "executableIsSigned": "NotSigned",
     "installerIsSigned": "NotSigned",
-    "installPathRegistryValue": "C:\\Users\\idces\\AppData\\Local\\Fetchpath"
+    "installPathRegistryValue": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath"
   },
   "seed": {
     "completedStatus": "Complete",
@@ -97,7 +97,7 @@
   },
   "upgrade": {
     "label": "upgrade to 0.1.1 with the app running",
-    "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
+    "installer": "<repo>\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
     "exitCode": 0,
     "elapsedSeconds": 4.4,
     "runningInstanceStoppedByInstaller": true,
@@ -107,8 +107,8 @@
         "displayName": "Fetchpath",
         "displayVersion": "0.1.1",
         "publisher": "Fetchpath contributors",
-        "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
-        "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
+        "installLocation": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath",
+        "uninstallString": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath\\uninstall.exe",
         "estimatedSizeKb": 26738
       }
     ],
@@ -163,7 +163,7 @@
       "lan"
     ],
     "installPathRegistryKeyRemains": true,
-    "installPathRegistryValueAfterUninstall": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
+    "installPathRegistryValueAfterUninstall": "C:\\Users\\<user>\\AppData\\Local\\Fetchpath",
     "dataRemovalHook": "./installer-hooks.nsh",
     "dataRemovalPrompt": "Interactive uninstall shows the bundler's unticked Delete the application data checkbox, the only question; a silent uninstall keeps the data."
   },

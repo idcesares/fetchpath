@@ -1,5 +1,5 @@
 {
-  "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
+  "application": "<repo>\\target\\release\\fetchpath-desktop.exe",
   "osBuild": "10.0.26200.0",
   "foregroundWindowClass": "Windows.UI.Core.CoreWindow",
   "keyboardInputMethod": {
@@ -341,9 +341,9 @@
   ],
   "keyboardOnlyJourney": {
     "typedAddress": "http://127.0.0.1:7295/keyboard.bin",
-    "typedDestination": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
+    "typedDestination": "<repo>\\work\\fp017-accessibility\\keyboard-only.bin",
     "typedUrlReadBack": "http://127.0.0.1:7295/keyboard.bin",
-    "typedDestinationReadBack": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-accessibility\\keyboard-only.bin",
+    "typedDestinationReadBack": "<repo>\\work\\fp017-accessibility\\keyboard-only.bin",
     "tabsFromDestinationToSubmit": 8,
     "finalStatus": "Complete",
     "bytesOnDisk": 262144,

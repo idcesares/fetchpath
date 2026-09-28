@@ -51,6 +51,19 @@ The first public release of Fetchpath, for Windows 11 on x64.
   `cli.toml`.
 - `fetchpath tools` sets up the video and audio programs from the terminal.
 
+### Cache, Hugging Face and paired computers
+
+- Files that matched a checksum are kept in a bounded cache; the same file
+  again is copied from it and checked, without the network. Settings and
+  the terminal show its size, set its limit and clear it.
+- Hugging Face links download a public repository's files from one pinned
+  commit, each checked against the checksum Hugging Face states, from the
+  window, the command line and agents.
+- Pair your own computers with a one-time code and compare fingerprints.
+  When a paired computer on the same network is sharing, a download with a
+  checksum asks it first and checks what it gives. Sharing is off by
+  default and never covers links that needed a sign-in.
+
 ### Rules
 
 - Rules by site, file type or size choose the folder, video quality, a
@@ -87,4 +100,6 @@ The first public release of Fetchpath, for Windows 11 on x64.
 - The browser extension loads in developer mode; Firefox isn't supported.
 - The protection against agents assumes no malicious program already runs
   as you.
+- Paired computers find each other only on one local network.
+- Hugging Face downloads work with public repositories only.
 - No speed claim is made.

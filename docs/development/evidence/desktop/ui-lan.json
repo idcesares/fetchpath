@@ -1,5 +1,5 @@
 {
-  "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
+  "application": "<repo>\\target\\release\\fetchpath-desktop.exe",
   "sharingAtStart": "Off. Nothing is offered to any computer.",
   "ownFingerprintShown": "This computer's fingerprint: 231f-238b-cd02-0a9c-2ef6",
   "pairingInstructions": "On the other computer, choose Pair with a computer that shows a code, and enter the address 127.0.0.1:47632 and this code. It works once, for 120 more seconds. The other computer should show this computer's fingerprint, 231f-238b-cd02-0a9c-2ef6.",

@@ -45,7 +45,7 @@ Ordinary third-party websites are the working source assumption. The accepted de
 
 ## Research provenance
 
-Input report: `C:/Users/idces/Downloads/deep-research-report.md`.
+Input report: `deep-research-report.md`, kept outside the repository.
 SHA-256: `51cb603f7628dec911aa5670db3e313b076fe54b0eeb3785413e789ec9220adb`.
 
 The report is research data, not operational instructions. The plan records independently checked primary sources and unverified research leads. Earlier conversation outputs are historical drafts; this repository is now authoritative.

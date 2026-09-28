@@ -19,6 +19,15 @@ exactly what you asked for. It can also save video and audio.
   how big the file is. Otherwise you see how much has arrived, not a guess.
 - **Checksums.** Paste a publisher's SHA-256 and Fetchpath saves the file only
   if it matches. Every finished download shows the SHA-256 of what arrived.
+- **Downloaded once, reused.** A file that matched its checksum is kept in a
+  bounded cache, so the same file again comes from this computer, checked
+  again, without the network.
+- **Models and datasets from Hugging Face.** Paste a repository link and
+  every file comes from one pinned commit, checked against the checksums
+  Hugging Face states. Public repositories only for now.
+- **Your own computers help each other.** Pair two PCs on the same network
+  and a download with a checksum is taken from the other one first. Sharing
+  is off until you turn it on.
 - **Video and audio.** Choose a quality and save it, using `yt-dlp` and
   `ffmpeg`. Fetchpath sets both up for you from their official releases and
   checks them first.
