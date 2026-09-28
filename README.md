@@ -55,8 +55,8 @@ Windows 11 on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
 
 ## Installing
 
-Download `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt` from the release
-page, check one against the other, and run the installer. It installs just for
+Download `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt` from the
+[release page](https://github.com/idcesares/fetchpath/releases/latest), check one against the other, and run the installer. It installs just for
 you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
@@ -85,6 +85,10 @@ Fetchpath is available under either the [MIT licence](LICENSE-MIT) or the
 are listed in
 [THIRD-PARTY-NOTICES.md](apps/desktop/src-tauri/THIRD-PARTY-NOTICES.md).
 `yt-dlp` and `ffmpeg` aren't part of Fetchpath and keep their own licences.
+
+## Security
+
+Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 

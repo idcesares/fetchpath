@@ -36,7 +36,7 @@ The terminal remembers context across sessions (FP-063). Rules apply to every wa
 
 Run `node tools/tasks.mjs next`: active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). The lanes and review requirements are in §11 of the spec.
 
-Nothing has been published, so the platform ships as 0.1.0 (decided 27 September 2026): the FP-018 build at `ce6615a` is superseded as a release candidate, and FP-069 is the gate for 0.1.0. Publishing is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`) made only on the user's word; no remote exists yet.
+Nothing has been published, so the platform ships as 0.1.0 (decided 27 September 2026): the FP-018 build at `ce6615a` is superseded as a release candidate, and FP-069 is the gate for 0.1.0. Publishing is a GitHub release (tag `v0.1.0`, installer and `SHA256SUMS.txt`) made only on the user's word. The public repository is https://github.com/idcesares/fetchpath (28 September 2026).
 
 
 ## Remaining choices

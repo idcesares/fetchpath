@@ -29,7 +29,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 
 | Area | Owns | Primary work |
 |---|---|---|
-| `PROJECT.md` / `AGENTS.md` / `CONTRIBUTING.md` | Intent, navigation, operating rules, build commands | Lead |
+| `PROJECT.md` / `AGENTS.md` / `CONTRIBUTING.md` / `SECURITY.md` | Intent, navigation, operating rules, build commands, vulnerability reporting and scope | Lead |
 | `docs/architecture` | Plan, contracts, consequential decisions; design specs in `docs/architecture/specs` | Lead |
 | `docs/product` | User journeys and interaction contract | UX owner, lead review |
 | `docs/user` | End-user guide and CLI reference | Release owner |
