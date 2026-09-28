@@ -10,7 +10,7 @@ Acceptance: A03, A05, A06, A09
 - A one-byte `Range` probe establishes exact length and a strong ETag. A server that returns `200` instead streams sequentially without buffering the full object.
 - Every segmented request uses `Accept-Encoding: identity`, an exact byte range, and `If-Range` with the probe's strong ETag. Status, `Content-Range`, ETag, and actual byte count must all match.
 - The controller starts at one request, requires two healthy observations before growing, reduces concurrency after a measured 20% rate regression, and applies a two-observation cooldown.
-- One process-wide budget caps active requests at 8 and buffered range bytes at 8 MiB. Each buffered segment reserves its full capacity before a request starts and releases it through RAII on success, failure, panic propagation, or cancellation.
+- One process-wide budget caps active requests at 8 and buffered range bytes at 32 MiB (8 MiB before 28 September 2026). Ranges start at 1 MiB and grow to at most 8 MiB, sized to about 1.5 s of each lane's measured rate. Each buffered segment reserves its full capacity before a request starts and releases it through RAII on success, failure, panic propagation, or cancellation.
 - Chunks are sorted and passed to the core only in ascending order. Adaptive protocol/range failure resets the unpublished staging file before the established sequential path runs; sink, cancellation, checkpoint, and publication errors do not take that fallback.
 - The static libcurl build now includes nghttp2. Automatic HTTPS requests prefer H2 and may negotiate lower; controlled cleartext H2 uses an explicit prior-knowledge mode. The packaged build still reports HTTP/3 unavailable, so the policy records `http3_unavailable` and does not claim or simulate an H3 attempt.
 
@@ -22,6 +22,34 @@ The controlled protocol matrix produced matching 5 MiB hashes over both H1 and H
 
 The paired pilot used five deterministically randomized 8 MiB loopback pairs. Every Fetchpath and curl output matched SHA-256 `a9407298d138c39f01e2067ad330ea65db7fa553a7cb541fd8bfd243c5405c45`. Fetchpath's wall-clock median was 81.3978 ms and curl's was 56.8628 ms. Fetchpath was therefore slower in this pilot; the first Fetchpath sample also showed a large startup outlier. Peak observed Fetchpath concurrency was 2, peak active requests was 2, and peak buffered bytes was 2,097,152, all within the configured global limits. See [the raw paired observations](evidence/http-adaptive/fp015-loopback-pilot.json).
 
+## Internet throughput (28 September 2026)
+
+Loopback had hidden two defects that the first measurement over the internet
+exposed (FP-022). Downloading a 115 MB GitHub release asset took 15.6 s where
+curl took 2.5 s, and a 440 MB Hugging Face file 269 s where curl took 7.1 s.
+
+1. **Every 1 MiB range opened a new connection.** `fetch_range` built a fresh
+   curl handle per range, so each MiB paid TCP, TLS, slow start and, on
+   Hugging Face, a redirect to the CDN: a cold 1 MiB range measured 1.5–1.6 s,
+   matching the 1.7 s per round observed over 105 rounds. Each lane now keeps
+   one handle across rounds and so reuses its connections, and ranges grow
+   from 1 MiB to 8 MiB with the lane's rate. They grow rather than start
+   large so that on a slow link progress still moves and a crash loses about
+   a round's seconds, not 32 MiB; a job's `bytes_received` now includes a
+   range's bytes held in memory, and what survives a crash stays the
+   checkpoint.
+2. **Every checkpoint re-hashed the whole staging file.** With a strong ETag
+   the sink recomputed SHA-256 from byte 0 at each checkpoint (every 64 KiB on
+   the sequential path), quadratic in the file's size. Both paths now extend a
+   running digest of the in-order prefix; a resume seeds it once from the kept
+   bytes. The final digest is still computed from what is on disk.
+
+Transfer layer alone (`fetchpath-http-bench`): 7.6 s → 3.1 s with reuse →
+2.4 s with 8 MiB ranges for the GitHub asset (curl 2.5 s); 177 s → 58 s →
+18.8 s for the Hugging Face file. End to end through the engine, with ranges
+growing from 1 MiB: 3.5 s and 26.2 s. One run each on a home connection, 28 September 2026: evidence of the
+defects and their size, not a speed claim.
+
 ## Limits carried forward
 
-No speed advantage is claimed. Loopback does not model RTT, loss, congestion, blocked UDP, slow storage, or competing traffic, and five pairs cannot establish tail percentiles. The current worker design uses bounded independent easy handles; it negotiates H2 but does not yet share one multiplexed H2 connection across ranges. A packaged HTTP/3 backend, controlled H3 endpoint, and blocked-UDP fallback run remain required before any H3 support claim.
+No speed advantage is claimed. Loopback does not model RTT, loss, congestion, blocked UDP, slow storage, or competing traffic, and five pairs cannot establish tail percentiles. Each lane keeps its own easy handle; ranges are fetched in lock-step rounds, each waiting for its slowest range, and every range on Hugging Face still follows the redirect to the CDN, which keeps a 440 MB Xet-backed file at about 2.6× curl's time. H2 is negotiated but one multiplexed H2 connection is not shared across ranges. A packaged HTTP/3 backend, controlled H3 endpoint, and blocked-UDP fallback run remain required before any H3 support claim.

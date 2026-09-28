@@ -165,6 +165,53 @@ pub fn inspect_link(
     })
 }
 
+/// Reads a small document, such as a provider's JSON listing: at most
+/// `limit` bytes, HTTP(S) only, with the status so the caller can tell a
+/// missing resource from a refused one.
+pub fn fetch_small(
+    url: &str,
+    limit: usize,
+    timeout: Duration,
+) -> Result<(u32, Vec<u8>), TransferError> {
+    let decision = super::decide_protocol(super::ProtocolCapabilities::detect());
+    let mut easy = Easy::new();
+    configure(&mut easy, url, &RequestContext::default(), &decision)?;
+    easy.fail_on_error(false).map_err(curl_error)?;
+    easy.timeout(timeout).map_err(curl_error)?;
+    easy.connect_timeout(timeout.min(Duration::from_secs(10)))
+        .map_err(curl_error)?;
+    easy.accept_encoding("").map_err(curl_error)?;
+    let mut list = List::new();
+    list.append("Accept: application/json")
+        .map_err(curl_error)?;
+    easy.http_headers(list).map_err(curl_error)?;
+    let body = RefCell::new(Vec::new());
+    let over = std::cell::Cell::new(false);
+    let result = {
+        let mut transfer = easy.transfer();
+        transfer
+            .write_function(|data| {
+                let mut body = body.borrow_mut();
+                if body.len() + data.len() > limit {
+                    over.set(true);
+                    return Ok(0);
+                }
+                body.extend_from_slice(data);
+                Ok(data.len())
+            })
+            .map_err(curl_error)?;
+        transfer.perform()
+    };
+    if over.get() {
+        return Err(TransferError::Transport(format!(
+            "the answer is larger than {limit} bytes"
+        )));
+    }
+    result.map_err(curl_error)?;
+    let status = easy.response_code().map_err(curl_error)?;
+    Ok((status, body.into_inner()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

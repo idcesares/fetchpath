@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 mod compatibility;
 mod link;
 
-pub use link::{LinkFacts, disposition_file_name, inspect_link};
+pub use link::{LinkFacts, disposition_file_name, fetch_small, inspect_link};
 
 pub use compatibility::{
     Authentication, CompatibilityCapabilities, CompatibilityContext, CompatibilityProtocol,
@@ -91,17 +91,27 @@ pub struct TransferLimits {
     pub max_active_requests: usize,
     pub max_buffered_bytes: usize,
     pub max_concurrency: usize,
+    /// The largest range. Ranges start at `min_segment_bytes` and grow toward
+    /// this as fast as each lane moves, so a range holds about
+    /// [`SEGMENT_SECONDS`] of data: large enough that connection and redirect
+    /// costs vanish on a fast link, small enough that progress and a crash's
+    /// loss stay bounded in time on a slow one.
     pub segment_bytes: usize,
+    pub min_segment_bytes: usize,
     pub min_adaptive_bytes: u64,
 }
+
+/// How much time one range should take on its lane.
+pub const SEGMENT_SECONDS: f64 = 1.5;
 
 impl Default for TransferLimits {
     fn default() -> Self {
         Self {
             max_active_requests: 8,
-            max_buffered_bytes: 8 * 1024 * 1024,
+            max_buffered_bytes: 32 * 1024 * 1024,
             max_concurrency: 4,
-            segment_bytes: 1024 * 1024,
+            segment_bytes: 8 * 1024 * 1024,
+            min_segment_bytes: 1024 * 1024,
             min_adaptive_bytes: 4 * 1024 * 1024,
         }
     }
@@ -113,6 +123,8 @@ impl TransferLimits {
             || self.max_buffered_bytes == 0
             || self.max_concurrency == 0
             || self.segment_bytes == 0
+            || self.min_segment_bytes == 0
+            || self.min_segment_bytes > self.segment_bytes
             || self.segment_bytes > self.max_buffered_bytes
         {
             return Err(TransferError::InvalidLimits);
@@ -574,12 +586,16 @@ where
         1
     };
     let mut controller = AdaptiveController::new(adaptive_maximum);
+    // One handle per lane, kept across rounds, so each lane reuses its
+    // connections (and its redirect's) instead of opening new ones per range.
+    let mut lanes: Vec<Easy> = (0..adaptive_maximum).map(|_| Easy::new()).collect();
+    let mut segment = limits.min_segment_bytes;
     let mut peak_concurrency = 1;
     while next < range.total {
         if cancelled() {
             return Err(TransferError::Cancelled);
         }
-        let remaining_chunks = (range.total - next).div_ceil(limits.segment_bytes as u64) as usize;
+        let remaining_chunks = (range.total - next).div_ceil(segment as u64) as usize;
         let concurrency = controller.concurrency().min(remaining_chunks);
         peak_concurrency = peak_concurrency.max(concurrency);
         let mut specs = Vec::with_capacity(concurrency);
@@ -587,7 +603,7 @@ where
             if next >= range.total {
                 break;
             }
-            let end = (next + limits.segment_bytes as u64 - 1).min(range.total - 1);
+            let end = (next + segment as u64 - 1).min(range.total - 1);
             specs.push((next, end));
             next = end + 1;
         }
@@ -599,10 +615,12 @@ where
             let handles: Vec<_> = specs
                 .iter()
                 .zip(&live)
-                .map(|(&(start, end), segment)| {
+                .zip(lanes.iter_mut())
+                .map(|((&(start, end), segment), easy)| {
                     let etag = etag.clone();
                     scope.spawn(move || {
                         fetch_range(
+                            easy,
                             url,
                             context,
                             decision_ref,
@@ -651,6 +669,10 @@ where
             elapsed_ms: elapsed.as_secs_f64() * 1000.0,
         });
         controller.observe(batch_bytes, elapsed, false);
+        // Each lane's rate sizes the next ranges.
+        let lane_rate = batch_bytes as f64 / concurrency as f64 / elapsed.as_secs_f64().max(0.001);
+        segment = ((lane_rate * SEGMENT_SECONDS) as usize)
+            .clamp(limits.min_segment_bytes, limits.segment_bytes);
     }
     let mut fallback_reasons = decision.fallback_reasons;
     if decision.preferred != probe.headers.protocol {
@@ -836,6 +858,7 @@ struct RangeChunk {
 
 #[allow(clippy::too_many_arguments)]
 fn fetch_range<C>(
+    easy: &mut Easy,
     url: &str,
     context: &RequestContext,
     decision: &ProtocolDecision,
@@ -852,8 +875,7 @@ where
 {
     let expected = (end - start + 1) as usize;
     let _permit = budget.reserve(expected, cancelled)?;
-    let mut easy = Easy::new();
-    configure(&mut easy, url, context, decision)?;
+    configure(easy, url, context, decision)?;
     easy.range(&format!("{start}-{end}")).map_err(curl_error)?;
     easy.http_headers(request_headers(Some(etag))?)
         .map_err(curl_error)?;

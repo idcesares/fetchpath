@@ -230,6 +230,9 @@ fn perform_adaptive_attempt(
     };
     let current_offset = Cell::new(0_u64);
     let last_checkpoint = Cell::new(0_u64);
+    // Ranges arrive in order, so the digest of the prefix is kept as it
+    // grows instead of re-reading the whole staging file at each checkpoint.
+    let prefix = std::cell::RefCell::new(<sha2::Sha256 as sha2::Digest>::new());
     let result = transfer_adaptive_observed(
         &request.url,
         &context,
@@ -249,13 +252,14 @@ fn perform_adaptive_attempt(
                 ));
             }
             store.write_payload(file, chunk.offset, chunk.bytes, faults)?;
+            sha2::Digest::update(&mut *prefix.borrow_mut(), chunk.bytes);
             let next = chunk.offset + chunk.bytes.len() as u64;
             current_offset.set(next);
             request.cancellation.set_received(next);
             request.cancellation.set_total(chunk.total_bytes);
             if chunk.strong_etag.is_some() && next - last_checkpoint.get() >= CHECKPOINT_BYTES {
                 store.sync_payload(file, faults)?;
-                let digest = sha256_file(store.staging())?;
+                let digest = format!("{:x}", sha2::Digest::finalize(prefix.borrow().clone()));
                 let record = CheckpointRecord::downloading(
                     source_key_with_context(&request.url, &request.context.fingerprint()),
                     next,
@@ -344,6 +348,11 @@ fn perform_attempt(
             .map_err(|error| CallbackFailure::Transport(error.to_string()))?;
     }
 
+    // The digest of the bytes kept so far, extended as bytes arrive rather
+    // than recomputed from the whole staging file at every checkpoint.
+    let prefix = RefCell::new(
+        prefix_digest(store.staging(), start_offset).map_err(CallbackFailure::Storage)?,
+    );
     let headers = RefCell::new(ResponseHeaders::default());
     let callback_failure = RefCell::new(None);
     let current_offset = Cell::new(start_offset);
@@ -396,6 +405,7 @@ fn perform_attempt(
                     *callback_failure.borrow_mut() = Some(CallbackFailure::Storage(error));
                     return Ok(0);
                 }
+                sha2::Digest::update(&mut *prefix.borrow_mut(), data);
                 let next = offset + data.len() as u64;
                 current_offset.set(next);
                 received_this_attempt.set(received_this_attempt.get() + data.len() as u64);
@@ -405,7 +415,8 @@ fn perform_attempt(
                 if validator.is_some() && next - last_checkpoint.get() >= CHECKPOINT_BYTES {
                     let checkpoint_result = (|| -> io::Result<()> {
                         store.sync_payload(file, faults)?;
-                        let digest = sha256_file(store.staging())?;
+                        let digest =
+                            format!("{:x}", sha2::Digest::finalize(prefix.borrow().clone()));
                         let record = CheckpointRecord::downloading(
                             source_key_with_context(&request.url, &request.context.fingerprint()),
                             next,
@@ -478,6 +489,33 @@ fn perform_attempt(
         headers,
         final_len: current_offset.get(),
     })
+}
+
+/// SHA-256 state over the first `len` bytes of `path`.
+fn prefix_digest(path: &std::path::Path, len: u64) -> io::Result<sha2::Sha256> {
+    use std::io::Read;
+    let mut digest = <sha2::Sha256 as sha2::Digest>::new();
+    if len == 0 {
+        return Ok(digest);
+    }
+    let mut reader = File::open(path)?.take(len);
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    let mut read = 0_u64;
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        sha2::Digest::update(&mut digest, &buffer[..count]);
+        read += count as u64;
+    }
+    if read != len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "staging is shorter than its checkpoint",
+        ));
+    }
+    Ok(digest)
 }
 
 pub(crate) fn configure(
@@ -822,19 +860,27 @@ mod tests {
         (format!("http://{address}/fixture"), requests, worker)
     }
 
+    /// The first range size the adaptive path uses.
+    fn segment() -> usize {
+        fetchpath_http::TransferLimits::default().min_segment_bytes
+    }
+
     fn adaptive_server(body: Vec<u8>) -> (String, Arc<Mutex<Vec<String>>>, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&requests);
-        let request_count = 1 + (body.len() - 1).div_ceil(1024 * 1024);
         let worker = thread::spawn(move || {
-            for _ in 0..request_count {
+            // Until every byte has gone out: ranges grow with the rate, so
+            // their number is not known in advance.
+            let mut served = 0;
+            while served < body.len() {
                 let (mut stream, _) = listener.accept().unwrap();
                 let request = read_request(&mut stream);
                 let (start, end) = exact_range(&request).expect("exact range request expected");
                 captured.lock().unwrap().push(request);
                 let selected = &body[start..=end];
+                served += selected.len();
                 let headers = format!(
                     "HTTP/1.1 206 Partial Content\r\nETag: \"adaptive-v1\"\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{end}/{}\r\nConnection: close\r\n\r\n",
                     selected.len(),
@@ -1125,7 +1171,7 @@ mod tests {
     fn adaptive_ranges_reassemble_in_order_under_the_core_publication_contract() {
         let dir = temp_dir("adaptive-ranges");
         let destination = dir.join("file.bin");
-        let body: Vec<u8> = (0..5 * 1024 * 1024)
+        let body: Vec<u8> = (0..5 * segment())
             .map(|index| (index % 251) as u8)
             .collect();
         let (url, requests, worker) = adaptive_server(body.clone());
@@ -1136,8 +1182,15 @@ mod tests {
         assert_eq!(done.bytes, body.len() as u64);
         assert_eq!(fs::read(&destination).unwrap(), body);
         let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 6);
+        assert!(requests.len() > 2, "the file came in several ranges");
         assert!(requests[0].contains("Range: bytes=0-0"));
+        let mut next = 1;
+        for request in &requests[1..] {
+            let (start, end) = exact_range(request).unwrap();
+            assert_eq!(start, next, "ranges are contiguous");
+            next = end + 1;
+        }
+        assert_eq!(next, body.len());
         assert!(
             requests[1..]
                 .iter()
@@ -1150,7 +1203,7 @@ mod tests {
     fn segments_in_flight_are_observable_and_cleared_when_written() {
         let dir = temp_dir("adaptive-segments");
         let destination = dir.join("file.bin");
-        let body: Vec<u8> = (0..2 * 1024 * 1024 + 1)
+        let body: Vec<u8> = (0..2 * segment() + 1)
             .map(|index| (index % 251) as u8)
             .collect();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1191,7 +1244,7 @@ mod tests {
             let segments = token.segment_monitor().snapshot();
             if segments
                 .first()
-                .is_some_and(|segment| segment.received == 512 * 1024)
+                .is_some_and(|range| range.received == segment() as u64 / 2)
             {
                 break segments;
             }
@@ -1202,7 +1255,7 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         };
         assert_eq!(observed.len(), 1);
-        assert_eq!((observed[0].start, observed[0].end), (1, 1024 * 1024));
+        assert_eq!((observed[0].start, observed[0].end), (1, segment() as u64));
         // Still in memory, so the persisted count has not moved past the probe byte.
         assert_eq!(token.received(), 1);
         release.send(()).unwrap();

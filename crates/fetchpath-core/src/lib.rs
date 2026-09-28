@@ -637,7 +637,20 @@ impl FileJob {
             state.snapshot.state,
             FileJobState::Running | FileJobState::Cancelling
         ) {
-            state.snapshot.bytes_received = self.cancellation.received();
+            // Received counts bytes held in memory for a range as well as
+            // those written; what survives a crash is the checkpoint, which
+            // is separate (contract §7).
+            // A range already written is not counted again.
+            let written = self.cancellation.received();
+            let in_flight: u64 = self
+                .cancellation
+                .segment_monitor()
+                .snapshot()
+                .iter()
+                .filter(|range| range.start >= written)
+                .map(|range| range.received)
+                .sum();
+            state.snapshot.bytes_received = written + in_flight;
         }
         // The total is published as soon as the source states one and stays
         // available after the transfer ends, so a completed row can still show
