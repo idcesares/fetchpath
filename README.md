@@ -53,6 +53,8 @@ menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
 Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns when you run
 the installer**. Once the checksum matches, choose **More info → Run anyway**.
+Where **Smart App Control** is on, Windows blocks unsigned programs outright
+and 0.1.0 can't be installed; see the [user guide](docs/user/GUIDE.md#install).
 
 ## Limitations
 

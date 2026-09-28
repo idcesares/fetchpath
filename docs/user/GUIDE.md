@@ -61,6 +61,14 @@ official release page and the checksum matched in step 2, choose
 run it. The installer may also show the publisher as unknown, for the same
 reason.
 
+**"An App Control policy blocked this file."** This is Smart App Control, a
+Windows 11 protection that is on for some new installations. It blocks
+programs that are not signed, with no option to run them anyway, so the
+unsigned 0.1.0 cannot be installed while it is on. You can see its state in
+Windows Security → App & browser control → Smart App Control. Turning it off
+is your decision to make; Fetchpath does not ask you to, and a signed build is
+the real fix.
+
 **"Allow Fetchpath on your network?"** Only if you use the command line's
 paired-device sharing. The desktop app doesn't ask.
 

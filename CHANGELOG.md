@@ -80,7 +80,8 @@ The first public release of Fetchpath, for Windows 11 on x64.
 ### Known limitations
 
 - x64 only; ARM64 isn't supported.
-- Not code-signed; SmartScreen warns on first run.
+- Not code-signed; SmartScreen warns on first run, and where Smart App
+  Control is on, Windows blocks the installer.
 - HTTP and HTTPS only in the app. HTTP/3 isn't available in this build.
 - Video and audio downloads can't be paused.
 - The browser extension loads in developer mode; Firefox isn't supported.

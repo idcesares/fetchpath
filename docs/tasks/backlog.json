@@ -932,8 +932,8 @@
         "FP-031",
         "FP-055"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "claude-opus (lead)",
       "modelTier": "terra-medium",
       "files": [
         "crates/fetchpath-session",
@@ -2104,14 +2104,15 @@
         "FP-067",
         "FP-068"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "standard",
       "files": [
         "docs/development",
-        "docs/development/evidence/release"
+        "docs/development/evidence/release",
+        "tests/compatibility/windows/sandbox-inner.ps1"
       ],
       "acceptanceIds": [
         "A01",
@@ -2124,7 +2125,14 @@
       ],
       "acceptance": "The FP-018 acceptance matrix is re-run on the new architecture with added rows for the engine, terminal and agents, including a clean-machine lifecycle, upgrade over a previous build with a persisted queue, and uninstall with the engine running; the record states ready or not ready with remaining limitations. Publishing stays the user decision.",
       "verification": "Recorded matrix with commands, results and limitations in docs/development; node tools/tasks.mjs check and node --test pass.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md",
+        "docs/development/evidence/windows/sandbox-lifecycle.json",
+        "docs/development/evidence/windows/engine-lifecycle.json",
+        "docs/development/evidence/windows/packaging-lifecycle.json",
+        "docs/development/evidence/windows/ui-accessibility.json",
+        "docs/development/evidence/release/fp069-gate.json"
+      ],
       "blockedReason": null
     },
     {
