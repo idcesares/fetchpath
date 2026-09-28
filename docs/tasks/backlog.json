@@ -969,13 +969,18 @@
         "FP-032",
         "FP-055"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "astra-high",
       "files": [
         "apps/desktop",
         "docs/product/UX.md",
-        "docs/development"
+        "docs/development",
+        "crates/fetchpath-session/src/lan.rs",
+        "crates/fetchpath-protocol",
+        "apps/cli/src/lan.rs",
+        "tests/compatibility/windows/ui-lan.ps1",
+        "docs/user"
       ],
       "acceptanceIds": [
         "A01",
@@ -984,7 +989,10 @@
       ],
       "acceptance": "LAN sharing is off by default and turned on explicitly; pairing shows the code and both fingerprints, with expiry and failure states in plain language; paired devices can be listed and removed; only credential-free entries are ever offered; keyboard and screen-reader checks pass. Pairing and sharing controls go through the engine protocol; agents never receive them.",
       "verification": "Desktop end-to-end run pairing two data folders through the engine, with LAN sharing off until enabled, a credential-bearing entry never offered, and unpair taking effect; keyboard-only and screen-reader walkthrough recorded in docs/development/CACHE-AND-LAN.md.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/CACHE-AND-LAN.md",
+        "docs/development/evidence/desktop/ui-lan.json"
+      ],
       "blockedReason": null,
       "priority": "P2"
     },

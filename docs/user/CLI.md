@@ -14,7 +14,7 @@ fetchpath approvals | approve JOB... | deny JOB... | agents ...
 fetchpath mcp [--agent NAME]
 fetchpath tools [install [--yes] | use FOLDER]
 fetchpath cache [status | clear]
-fetchpath lan ... | fetch-verified ...
+fetchpath lan [status | on | off | pair | join ... | unpair KEY] | fetch-verified ...
 fetchpath --version
 fetchpath --help
 ```
@@ -425,32 +425,30 @@ download that fails because the programs are missing says to run
 
 Two of your own computers can share files they have already downloaded and
 checked, so the second one does not fetch them again. Nothing is shared until
-you turn it on, only with devices you pair yourself, and only files that were
-downloaded without a sign-in, cookie or private link. The receiving computer
-checks every byte against the SHA-256 you give it before saving anything.
+you turn it on, only with computers you pair yourself, and only files that
+were downloaded with a checksum and without a sign-in, cookie or private link.
+The receiving computer checks every byte against the SHA-256 you give it
+before saving anything. The same controls are in the desktop app under
+**Settings → Paired computers**.
 
 ```powershell
-# On the computer that has the files: shows a code for two minutes
-fetchpath lan pair-host 0.0.0.0:47631
+# On the computer that has the files: show a code, valid once for two minutes
+fetchpath lan pair
 
-# On the other computer, within those two minutes
-fetchpath lan pair-join 192.168.1.20:47631 ABCDE-FGHJK laptop
+# On the other computer, with the address and code the first one printed
+fetchpath lan join 192.168.1.20:47632 ABCDE-FGHJK desk
 
-# On the computer that has the files: turn sharing on, then share while it runs
-fetchpath lan enable
-fetchpath lan serve 0.0.0.0:47631
+# On the computer that has the files: share while Fetchpath runs
+fetchpath lan on
 
-# On the other computer: ask the paired device first, then the link
+# On the other computer: ask the paired computer first, then the link
 fetchpath fetch-verified --sha256 HEX --size BYTES --peer 192.168.1.20:47631=KEY LINK DESTINATION
 ```
 
-`pair-join` prints the other device's `key`; `fetchpath lan id` prints this one's. `fetchpath lan peers` lists paired
-devices and `fetchpath lan unpair KEY` removes one; a running `serve` stops
-serving it within two seconds. `fetchpath lan disable` stops sharing the same
-way. Devices are not discovered automatically; you give the address. Windows
-Firewall may ask whether to allow Fetchpath on your network the first time you
-run `serve`.
-
-Paired devices share from the same cache the queue fills (see [The
-cache](#the-cache)), and only copies downloaded from a plain link with no
-sign-in. These commands print JSON and are meant for people comfortable with a terminal. The desktop app does not show them yet.
+`fetchpath lan` shows this computer's fingerprint, whether it is sharing and
+the paired computers with their keys; compare fingerprints on both screens
+after pairing. `fetchpath lan unpair KEY` removes one, and `fetchpath lan off`
+stops sharing; both take effect at once. While sharing is on, Fetchpath keeps
+running in the background. Computers are not discovered automatically; you
+give the address. Windows Firewall may ask whether to allow Fetchpath on your
+network the first time you pair or share. `fetch-verified` prints JSON.

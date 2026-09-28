@@ -49,11 +49,11 @@ JOB is a download's number in `fetchpath ls`, or the start of its id.
 Every queue command takes --json to print the engine's own records.
 
 
-Paired devices (advanced; off until you run `fetchpath lan enable`):
-  fetchpath lan id | enable | disable | peers | unpair KEY
-  fetchpath lan pair-host [BIND]      then on the other device:
-  fetchpath lan pair-join ADDRESS CODE [LABEL]
-  fetchpath lan serve [BIND]
+Paired devices (advanced; sharing is off until you run `fetchpath lan on`):
+  fetchpath lan [status]                      this computer and its paired devices
+  fetchpath lan on | off                      share checksum-verified public files with them
+  fetchpath lan pair                          show a code; then on the other device:
+  fetchpath lan join ADDRESS CODE [NAME]      fetchpath lan unpair KEY
   fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION
 
 DESTINATION may be a file name or a folder. Without one, the file goes where
@@ -110,7 +110,8 @@ fn main() {
         Some("agents") => agents::run(&args[1..]),
         Some("approvals") => agents::approvals(&args[1..]),
         Some("cache") => cache::run(&args[1..]),
-        Some("lan" | "fetch-verified") => paired_devices(&args),
+        Some("lan") => lan::run(&args[1..]),
+        Some("fetch-verified") => fetch_verified(&args[1..]),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");
             download::EXIT_USAGE
@@ -119,13 +120,9 @@ fn main() {
     std::process::exit(code);
 }
 
-/// Paired-device commands, which print JSON for scripts.
-fn paired_devices(args: &[String]) -> i32 {
-    let outcome = match args[0].as_str() {
-        "lan" => lan::run_lan(&args[1..]),
-        _ => lan::fetch_verified(&args[1..]),
-    };
-    match outcome {
+/// Asks paired devices, then the link, and prints JSON for scripts.
+fn fetch_verified(args: &[String]) -> i32 {
+    match lan::fetch_verified(args) {
         Ok(value) => {
             println!("{value}");
             0

@@ -13,7 +13,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 3. **Item actions** are contextual: pause/resume, open destination when available, remove/cancel. Destructive actions require a confirmation only when completed files would be deleted.
 4. **Filters** reduce a long queue without moving items elsewhere: All, Active, Completed, Failed.
 5. **Power mode** exposes diagnostic and transfer details inline, plus a session statistics panel above the queue. It is off by default, it is turned on in Settings, and it is strictly additive: nothing it shows replaces or moves a control that is available without it.
-6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, browser extension status, rules, AI agents' access, window behaviour and appearance. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
+6. **Settings** holds the choices a power user wants and an ordinary user never has to open: concurrency, the default save folder, automatic retry, media tool setup, browser extension status, rules, AI agents' access, the cache of verified files, paired computers, window behaviour and appearance. Sharing with paired computers is off until turned on, and pairing shows the code and both fingerprints so the person can compare them. Every value is bounded, and an unreadable settings file falls back to documented defaults rather than failing launch.
 
 ## Core journeys
 

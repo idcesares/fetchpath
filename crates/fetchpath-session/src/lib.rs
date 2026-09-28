@@ -7,6 +7,7 @@
 pub use fetchpath_browser_inbox as browser_inbox;
 mod durable;
 pub mod engine;
+pub mod lan;
 pub mod policy;
 pub mod rules;
 pub mod settings;
@@ -63,6 +64,8 @@ pub struct Session {
     /// it; an agent's never touch it, so an agent cannot learn what the
     /// person has downloaded or obtain it by naming its checksum.
     cache_root: Mutex<Option<PathBuf>>,
+    /// Paired devices and sharing, when the host gave a place for them.
+    lan: std::sync::OnceLock<lan::Lan>,
     /// Sizes of links looked at lately, so a size rule decides the same way
     /// when the job is created as it did on the card.
     inspected_sizes: Mutex<std::collections::VecDeque<(String, u64)>>,
@@ -574,6 +577,7 @@ impl Session {
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
             cache_root: Mutex::default(),
+            lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
         })
     }
@@ -600,6 +604,7 @@ impl Session {
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
             cache_root: Mutex::default(),
+            lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
         }
     }
@@ -663,6 +668,20 @@ impl Session {
     /// Keeps the content cache at `root`. Without this call nothing is cached.
     pub fn use_cache(&self, root: PathBuf) {
         *self.cache_root.lock().expect("cache poisoned") = Some(root);
+    }
+
+    /// Keeps paired devices and the sharing switch in `dir`, sharing from
+    /// the cache at `cache_root`, and resumes sharing if it was left on.
+    pub fn use_lan(&self, dir: PathBuf, cache_root: PathBuf) {
+        if self.lan.set(lan::Lan::new(dir, cache_root)).is_ok() {
+            self.lan().expect("just set").resume();
+        }
+    }
+
+    pub fn lan(&self) -> Result<&lan::Lan, String> {
+        self.lan
+            .get()
+            .ok_or_else(|| "Paired devices are not available in this Fetchpath.".to_string())
     }
 
     fn cache_config(settings: &Settings) -> fetchpath_core::fetchpath_cache::CacheConfig {
@@ -1984,6 +2003,10 @@ impl Session {
     /// and nothing takes their place.
     pub fn halt(&self) {
         self.halted.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(lan) = self.lan.get() {
+            lan.cancel_pairing();
+            lan.stop_serving();
+        }
     }
 
     /// True while a job is queued, scheduled (including an automatic retry)
@@ -1996,6 +2019,7 @@ impl Session {
         }
         let stats = self.stats();
         stats.running + stats.queued + stats.scheduled > 0
+            || self.lan.get().is_some_and(lan::Lan::busy)
     }
 
     /// Aggregate figures for the statistics panel.

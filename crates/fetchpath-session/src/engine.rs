@@ -200,6 +200,18 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Runs a LAN command and answers with the LAN's state (FP-033).
+    fn lan(
+        &self,
+        run: impl FnOnce(&crate::lan::Lan) -> Result<fetchpath_protocol::model::LanView, String>,
+    ) -> Result<CommandResult, ProtocolError> {
+        self.session
+            .lan()
+            .and_then(run)
+            .map(|lan| CommandResult::Lan { lan })
+            .map_err(input)
+    }
+
     pub fn new(session: Arc<Session>) -> Arc<Self> {
         Arc::new(Self {
             session,
@@ -1052,6 +1064,24 @@ impl Engine {
                 .session
                 .cache_status()
                 .map(|cache| CommandResult::Cache { cache })
+                .map_err(input),
+            Command::LanStatus => self.lan(|lan| lan.status()),
+            Command::SetLanSharing { enabled } => self.lan(|lan| lan.set_sharing(*enabled)),
+            Command::StartPairing => self.lan(|lan| lan.start_pairing()),
+            Command::CancelPairing => self.lan(|lan| {
+                lan.cancel_pairing();
+                lan.status()
+            }),
+            Command::Unpair { key } => self.lan(|lan| lan.unpair(key)),
+            Command::JoinPairing {
+                address,
+                code,
+                label,
+            } => self
+                .session
+                .lan()
+                .and_then(|lan| lan.join(address, code, label.as_deref()))
+                .map(|device| CommandResult::Joined { device })
                 .map_err(input),
             // An agent sees only its own access (D3), the default when the
             // person has not configured it; the person sees every agent.

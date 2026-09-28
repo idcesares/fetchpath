@@ -280,6 +280,7 @@ Changes save straight away.
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
 | Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
 | Cache | Copies of downloads that matched a checksum, so the same file downloaded again doesn't use the network. Shows how much it holds, sets how much it may keep (the oldest copies go first), and **Clear cache**. Clearing it never touches your saved files. |
+| Paired computers | Lets your own computers give each other files downloaded with a checksum from a link that needed no sign-in. **Show a pairing code** on one, then on the other choose **Pair with a computer that shows a code** and enter its address and code; each shows the other's fingerprint so you can compare them. Sharing stays off until you turn it on, and **Remove** unpairs a computer at once. Getting a file from a paired computer is done with the command line for now. |
 | AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |

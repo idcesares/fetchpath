@@ -13,9 +13,9 @@ use fetchpath_protocol::message::{
 };
 use fetchpath_protocol::model::{
     CacheView, Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
-    LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress,
-    QueueStats, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment,
-    SettingsView, Theme, WaitingReason,
+    LanView, LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind,
+    PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats, Rule, RuleActions,
+    RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -287,6 +287,18 @@ fn every_command() -> Vec<Command> {
         Command::RemoveRule { rule_id: 3 },
         Command::CacheStatus,
         Command::ClearCache,
+        Command::LanStatus,
+        Command::SetLanSharing { enabled: true },
+        Command::StartPairing,
+        Command::CancelPairing,
+        Command::JoinPairing {
+            address: "192.168.1.20:47632".into(),
+            code: "ABCDE-12345".into(),
+            label: Some("Laptop".into()),
+        },
+        Command::Unpair {
+            key: "ab".repeat(32),
+        },
         Command::SubscribeJob {
             job_id: job_id(),
             after_seq: 7,
@@ -330,6 +342,12 @@ fn every_command() -> Vec<Command> {
             | Command::RemoveRule { .. }
             | Command::CacheStatus
             | Command::ClearCache
+            | Command::LanStatus
+            | Command::SetLanSharing { .. }
+            | Command::StartPairing
+            | Command::CancelPairing
+            | Command::JoinPairing { .. }
+            | Command::Unpair { .. }
             | Command::SubscribeJob { .. }
             | Command::SubscribeQueue { .. }
             | Command::EngineStatus
@@ -337,6 +355,14 @@ fn every_command() -> Vec<Command> {
         }
     }
     commands
+}
+
+fn device() -> PairedDevice {
+    PairedDevice {
+        key: "cd".repeat(32),
+        fingerprint: "771f-1df9-c299-5152-7cc9".into(),
+        label: "Laptop".into(),
+    }
 }
 
 fn rule() -> Rule {
@@ -483,6 +509,24 @@ fn every_result() -> Vec<CommandResult> {
                 max_quota_bytes: 256 << 30,
             },
         },
+        CommandResult::Lan {
+            lan: LanView {
+                sharing: true,
+                serving: Some("192.168.1.20:47631".into()),
+                problem: None,
+                fingerprint: "c7ab-2a88-d55d-43cf-d491".into(),
+                devices: vec![device()],
+                pairing: Some(PairingView {
+                    state: PairingState::Paired,
+                    code: None,
+                    address: "192.168.1.20:47632".into(),
+                    expires_at: at("2026-09-20T12:02:00Z"),
+                    device: Some(device()),
+                    problem: None,
+                }),
+            },
+        },
+        CommandResult::Joined { device: device() },
         CommandResult::ShuttingDown,
         CommandResult::CapturesTaken,
     ];
@@ -504,6 +548,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::EngineStatus { .. }
             | CommandResult::AgentPolicies { .. }
             | CommandResult::Cache { .. }
+            | CommandResult::Lan { .. }
+            | CommandResult::Joined { .. }
             | CommandResult::ShuttingDown
             | CommandResult::CapturesTaken => {}
         }
@@ -1010,6 +1056,12 @@ fn only_queries_skip_the_command_ledger() {
         "GetAgentPolicies",
         "ListRules",
         "CacheStatus",
+        "LanStatus",
+        "SetLanSharing",
+        "StartPairing",
+        "CancelPairing",
+        "JoinPairing",
+        "Unpair",
         "SubscribeJob",
         "SubscribeQueue",
         "EngineStatus",

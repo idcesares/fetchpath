@@ -488,6 +488,43 @@
           <p id="setting-cache-quota-hint" class="hint field-note"></p>
         </fieldset>
 
+        <fieldset class="settings-group" id="lan-group">
+          <legend>Paired computers</legend>
+          <p class="hint field-note">
+            Your own computers can give each other files instead of fetching them again from the internet: only
+            files downloaded with a checksum from a link that needed no sign-in, only to computers you pair here,
+            and only while sharing is on.
+          </p>
+          <p id="lan-self" class="field-note">Checking…</p>
+          <label class="check">
+            <input id="lan-sharing" type="checkbox" aria-describedby="lan-sharing-state" />
+            <span>Share with paired computers</span>
+          </label>
+          <p id="lan-sharing-state" class="hint field-note" aria-live="polite"></p>
+          <ul id="lan-devices" class="lan-devices"></ul>
+          <div class="media-tools-actions">
+            <button id="lan-pair" class="secondary" type="button">Show a pairing code</button>
+            <button id="lan-pair-cancel" class="quiet" type="button" hidden>Stop showing the code</button>
+          </div>
+          <div id="lan-pairing" class="lan-pairing" role="status" hidden>
+            <p id="lan-pairing-text" class="field-note"></p>
+            <p id="lan-code" class="lan-code" hidden></p>
+          </div>
+          <details id="lan-join-details" class="advanced">
+            <summary id="lan-join-summary">Pair with a computer that shows a code</summary>
+            <div class="rule-form">
+              <label for="lan-join-address">Its address</label>
+              <input id="lan-join-address" autocomplete="off" spellcheck="false" placeholder="192.168.1.20:47632" />
+              <label for="lan-join-code">Its code</label>
+              <input id="lan-join-code" autocomplete="off" spellcheck="false" placeholder="ABCDE-12345" />
+              <label for="lan-join-name">A name for it (optional)</label>
+              <input id="lan-join-name" autocomplete="off" placeholder="Laptop" />
+              <button id="lan-join" class="secondary" type="button">Pair</button>
+            </div>
+            <p id="lan-join-result" class="field-note" aria-live="polite"></p>
+          </details>
+        </fieldset>
+
         <fieldset class="settings-group">
           <legend>Command line</legend>
           <p id="cli-state"></p>

@@ -473,3 +473,10 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 .rule-form > button { justify-self: start; margin-top: 12px; }
 .rule-test-result { margin: 8px 0 0; padding-left: 1.2em; }
 .rule-test-result:empty { display: none; }
+
+/* Paired computers in Settings (FP-033). */
+.lan-devices { display: grid; gap: 8px; margin: 8px 0 12px; padding: 0; list-style: none; }
+.lan-devices li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); }
+.lan-devices span { overflow-wrap: anywhere; }
+.lan-pairing { margin: 8px 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--inset); }
+.lan-code { margin: 6px 0 0; font: 600 1.6rem/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.08em; }

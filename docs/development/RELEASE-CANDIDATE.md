@@ -92,7 +92,8 @@ Each is stated in the README, the user guide or the changelog.
 7. **Power-loss durability is argued, not demonstrated.**
 8. **Agent protection assumes no malicious program already runs as the
    person.**
-9. **Pairing and LAN sharing are command-line only.**
+9. **Receiving from a paired computer is command-line only**; pairing and
+   sharing are also in the desktop (FP-033, after this gate).
 
 ## Path to publication
 

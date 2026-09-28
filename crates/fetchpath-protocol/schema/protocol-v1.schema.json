@@ -828,6 +828,102 @@
           "type": "object"
         },
         {
+          "properties": {
+            "type": {
+              "const": "LanStatus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "SetLanSharing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shows a single-use code for two minutes and waits for one device.",
+          "properties": {
+            "type": {
+              "const": "StartPairing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "CancelPairing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Pairs with a device showing `code` at `address` (`host:port`).",
+          "properties": {
+            "address": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "JoinPairing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "address",
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "const": "Unpair",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "key"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
           "properties": {
             "after_seq": {
@@ -1209,6 +1305,40 @@
           "required": [
             "type",
             "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Paired devices and sharing.",
+          "properties": {
+            "lan": {
+              "$ref": "#/$defs/LanView"
+            },
+            "type": {
+              "const": "Lan",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "lan"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "This device paired with the one showing the code.",
+          "properties": {
+            "device": {
+              "$ref": "#/$defs/PairedDevice"
+            },
+            "type": {
+              "const": "Joined",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "device"
           ],
           "type": "object"
         },
@@ -2363,6 +2493,56 @@
         }
       ]
     },
+    "LanView": {
+      "description": "Paired devices and LAN sharing (FP-033).",
+      "properties": {
+        "devices": {
+          "items": {
+            "$ref": "#/$defs/PairedDevice"
+          },
+          "type": "array"
+        },
+        "fingerprint": {
+          "description": "This device's fingerprint, grouped for reading aloud.",
+          "type": "string"
+        },
+        "pairing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PairingView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The pairing this device is hosting, while there is one to show."
+        },
+        "problem": {
+          "description": "Why sharing is on but nothing is being served.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serving": {
+          "description": "Where paired devices reach this one, while sharing is on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sharing": {
+          "description": "Off until the person turns it on.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sharing",
+        "fingerprint",
+        "devices"
+      ],
+      "type": "object"
+    },
     "LinkInspection": {
       "description": "A link looked at before downloading. Every field is the server's claim,\nand `file_name` is untrusted text to be made safe before use.",
       "properties": {
@@ -2511,6 +2691,82 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "PairedDevice": {
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "key": {
+          "description": "The device's public key, hex; what `Unpair` takes.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "fingerprint",
+        "label"
+      ],
+      "type": "object"
+    },
+    "PairingState": {
+      "enum": [
+        "waiting",
+        "paired",
+        "failed",
+        "expired",
+        "cancelled",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "PairingView": {
+      "description": "A pairing code this device shows, and what became of it.",
+      "properties": {
+        "address": {
+          "description": "What to type on the other device as its address.",
+          "type": "string"
+        },
+        "code": {
+          "description": "Present while the code can still be used.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PairedDevice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The device that paired."
+        },
+        "expires_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "problem": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/PairingState"
+        }
+      },
+      "required": [
+        "state",
+        "address",
+        "expires_at"
+      ],
+      "type": "object"
     },
     "Phase": {
       "enum": [

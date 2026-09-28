@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 fetchpath-browser-inbox = { path = "../fetchpath-browser-inbox" }
 fetchpath-core = { path = "../fetchpath-core" }
+fetchpath-lan = { path = "../../adapters/lan" }
 fetchpath-media = { path = "../../adapters/media" }
 fetchpath-protocol = { path = "../fetchpath-protocol" }
 serde = { version = "1", features = ["derive"] }

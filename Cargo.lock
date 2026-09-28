@@ -1465,6 +1465,7 @@ version = "0.1.0"
 dependencies = [
  "fetchpath-browser-inbox",
  "fetchpath-core",
+ "fetchpath-lan",
  "fetchpath-media",
  "fetchpath-protocol",
  "serde",

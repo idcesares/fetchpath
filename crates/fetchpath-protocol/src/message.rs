@@ -5,8 +5,9 @@ use crate::SCHEMA_VERSION;
 use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
-    CacheView, EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LinkInspection,
-    MediaInspection, Progress, QueueStats, Rule, SensitiveUrl, SettingsView, WaitingReason,
+    CacheView, EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LanView,
+    LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, Rule, SensitiveUrl,
+    SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -128,6 +129,14 @@ pub enum CommandResult {
     /// Every smart rule, in the order they are tried.
     Rules {
         rules: Vec<Rule>,
+    },
+    /// Paired devices and sharing.
+    Lan {
+        lan: LanView,
+    },
+    /// This device paired with the one showing the code.
+    Joined {
+        device: PairedDevice,
     },
     /// The content cache's use and bounds.
     Cache {

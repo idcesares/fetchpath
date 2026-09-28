@@ -1,88 +1,66 @@
-//! `fetchpath lan …` and `fetchpath fetch-verified`.
+//! `fetchpath lan …`, through the engine (FP-033), and `fetchpath
+//! fetch-verified`, which asks paired devices directly.
 //!
-//! State lives under `%LOCALAPPDATA%\Fetchpath`, or `FETCHPATH_DATA_DIR` when
-//! set; the cache is the engine's, at [`cache_root`]. LAN mode is off until `lan enable` is run. Nothing here prints a
-//! signing key, and the pairing code is printed only by `pair-host`, whose
-//! whole purpose is to show it.
+//! The engine keeps paired devices and the sharing switch in [`lan_dir`] and
+//! serves paired devices while sharing is on. Nothing here prints a signing
+//! key; a pairing code is printed only by `pair`, whose whole purpose is to
+//! show it.
 
+use crate::client::{self, Engine};
+use crate::download::EXIT_USAGE;
 use fetchpath_core::fetchpath_cache::{CacheConfig, ContentCache, ContentId};
 use fetchpath_core::{
     DeliverySource, MirrorSource, PeerOutcome, PeerSource, VerifiedDownloadRequest,
     download_verified_shared,
 };
-use fetchpath_lan::{
-    DeviceIdentity, Dpapi, PairingCode, PeerClient, PeerKey, PeerServer, PinStore, UploadBudget,
-    host_pairing, join_pairing,
-};
+use fetchpath_lan::{DeviceIdentity, Dpapi, PeerClient, PeerKey, PinStore};
+use fetchpath_protocol::ProtocolError;
+use fetchpath_protocol::command::Command;
+use fetchpath_protocol::message::CommandResult;
+use fetchpath_protocol::model::{LanView, PairingState};
 use serde_json::{Value, json};
-use std::fs;
 use std::io;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-const DEFAULT_PORT: u16 = 47631;
 const CACHE_QUOTA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const CACHE_MAX_ENTRY_BYTES: u64 = 1024 * 1024 * 1024;
-const MAX_SESSIONS: usize = 4;
 
-pub const USAGE: &str = "usage:
-  fetchpath download URL DESTINATION
-  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... URL DESTINATION
-  fetchpath lan id | enable | disable | peers
-  fetchpath lan unpair KEY
-  fetchpath lan pair-host [BIND]
-  fetchpath lan pair-join ADDRESS CODE [LABEL]
-  fetchpath lan serve [BIND]";
+pub const USAGE: &str = "usage: fetchpath lan [status] [--json]
+  fetchpath lan on | off                  share with paired devices, or stop
+  fetchpath lan pair                      show a code for another device to join
+  fetchpath lan join ADDRESS CODE [NAME]  pair with a device showing a code
+  fetchpath lan unpair KEY                remove a paired device
+  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION";
 
-fn data_dir() -> Result<PathBuf, String> {
+/// Fetchpath's local data: `FETCHPATH_DATA_DIR` when set, the engine's own
+/// folder when it was moved with `FETCHPATH_APP_DATA_DIR`, and otherwise
+/// `%LOCALAPPDATA%\app.fetchpath.desktop`, local rather than roaming and
+/// removed with the rest of the data when the person asks at uninstall.
+pub(crate) fn data_dir() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("FETCHPATH_DATA_DIR") {
         return Ok(PathBuf::from(dir));
-    }
-    std::env::var_os("LOCALAPPDATA")
-        .map(|base| PathBuf::from(base).join("Fetchpath"))
-        .ok_or_else(|| "cli.no_data_dir".to_owned())
-}
-
-/// The content cache the engine fills and `lan serve` shares (FP-032):
-/// `FETCHPATH_DATA_DIR\cache` when set, the engine's own folder when it was
-/// moved with `FETCHPATH_APP_DATA_DIR`, and otherwise
-/// `%LOCALAPPDATA%\app.fetchpath.desktop\cache`, local rather than roaming
-/// and removed with the rest of Fetchpath's data when the person asks.
-pub(crate) fn cache_root() -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("FETCHPATH_DATA_DIR") {
-        return Ok(PathBuf::from(dir).join("cache"));
     }
     if let Ok(home) = fetchpath_protocol::launch::EngineHome::from_env()
         && !home.is_default()
     {
-        return Ok(home.dir().join("cache"));
+        return Ok(home.dir().to_path_buf());
     }
     std::env::var_os("LOCALAPPDATA")
-        .map(|base| {
-            PathBuf::from(base)
-                .join("app.fetchpath.desktop")
-                .join("cache")
-        })
+        .map(|base| PathBuf::from(base).join("app.fetchpath.desktop"))
         .ok_or_else(|| "cli.no_data_dir".to_owned())
 }
 
-fn lan_dir() -> Result<PathBuf, String> {
+/// The content cache the engine fills and shares (FP-032).
+pub(crate) fn cache_root() -> Result<PathBuf, String> {
+    Ok(data_dir()?.join("cache"))
+}
+
+/// Paired devices, this device's identity and the sharing switch.
+pub(crate) fn lan_dir() -> Result<PathBuf, String> {
     Ok(data_dir()?.join("lan"))
-}
-
-fn flag_path() -> Result<PathBuf, String> {
-    Ok(lan_dir()?.join("enabled"))
-}
-
-/// LAN mode is on only when the flag file says exactly `on`.
-fn lan_enabled() -> bool {
-    flag_path()
-        .ok()
-        .and_then(|path| fs::read_to_string(path).ok())
-        .is_some_and(|text| text.trim() == "on")
 }
 
 fn identity() -> Result<Arc<DeviceIdentity>, String> {
@@ -104,178 +82,133 @@ fn cache() -> Result<ContentCache, String> {
     .map_err(|error| format!("cache.unavailable:{error}"))
 }
 
-fn bind_address(argument: Option<&String>) -> Result<SocketAddr, String> {
-    let text = argument
-        .cloned()
-        .unwrap_or_else(|| format!("0.0.0.0:{DEFAULT_PORT}"));
-    text.parse()
-        .map_err(|_| format!("cli.invalid_address:{text}"))
-}
-
-fn io_error(prefix: &str) -> impl Fn(io::Error) -> String + '_ {
-    move |error| format!("{prefix}:{error}")
-}
-
-pub fn run_lan(args: &[String]) -> Result<Value, String> {
-    match args.first().map(String::as_str) {
-        Some("id") => {
-            let identity = identity()?;
-            Ok(json!({
-                "fingerprint": identity.fingerprint().to_string(),
-                "key": identity.public_key().hex(),
-                "lan_enabled": lan_enabled(),
-            }))
-        }
-        Some(state @ ("enable" | "disable")) => {
-            let path = flag_path()?;
-            fs::create_dir_all(path.parent().expect("flag has a parent"))
-                .map_err(io_error("lan.flag_unwritable"))?;
-            let on = state == "enable";
-            fs::write(&path, if on { "on" } else { "off" })
-                .map_err(io_error("lan.flag_unwritable"))?;
-            Ok(json!({ "lan_enabled": on }))
-        }
-        Some("peers") => {
-            let peers: Vec<Value> = pins()?
-                .peers()
-                .into_iter()
-                .map(|(key, label)| {
-                    json!({
-                        "fingerprint": key.fingerprint().to_string(),
-                        "key": key.hex(),
-                        "label": label,
-                    })
-                })
-                .collect();
-            Ok(json!({ "peers": peers }))
-        }
-        Some("unpair") => {
-            let key = args
-                .get(1)
-                .and_then(|text| PeerKey::parse_hex(text))
-                .ok_or_else(|| "cli.invalid_key".to_owned())?;
-            let removed = pins()?
-                .unpin(&key)
-                .map_err(io_error("lan.peers_unwritable"))?;
-            Ok(json!({ "unpaired": removed }))
-        }
-        Some("pair-host") => pair_host(bind_address(args.get(1))?),
-        Some("pair-join") => {
-            let (Some(address), Some(code)) = (args.get(1), args.get(2)) else {
-                return Err(USAGE.to_owned());
-            };
-            let address: SocketAddr = address
-                .parse()
-                .map_err(|_| format!("cli.invalid_address:{address}"))?;
-            let label = args.get(3).map(String::as_str).unwrap_or("paired device");
-            let identity = identity()?;
-            let mut pins = pins()?;
-            let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5))
-                .map_err(io_error("lan.unreachable"))?;
-            let host = join_pairing(&mut stream, &identity, code, &mut pins, label)
-                .map_err(|error| error.to_string())?;
-            Ok(json!({
-                "paired": true,
-                "fingerprint": host.fingerprint().to_string(),
-                "key": host.hex(),
-            }))
-        }
-        Some("serve") => serve(bind_address(args.get(1))?),
-        _ => Err(USAGE.to_owned()),
-    }
-}
-
-/// Shows a code and waits for one pairing attempt, at most until the code
-/// expires. The first attempt spends the code whatever its outcome.
-fn pair_host(bind: SocketAddr) -> Result<Value, String> {
-    let identity = identity()?;
-    let mut pins = pins()?;
-    let listener = TcpListener::bind(bind).map_err(io_error("lan.bind_failed"))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(io_error("lan.bind_failed"))?;
-    let mut code = PairingCode::generate().map_err(io_error("lan.random_unavailable"))?;
-    println!(
-        "{}",
-        json!({
-            "code": code.display(),
-            "fingerprint": identity.fingerprint().to_string(),
-            "listening": listener.local_addr().map(|a| a.to_string()).unwrap_or_default(),
-            "expires_in_secs": fetchpath_lan::CODE_LIFETIME.as_secs(),
-        })
-    );
-    let mut stream = loop {
-        match listener.accept() {
-            Ok((stream, _)) => break stream,
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                if Instant::now() >= code.expires_at() {
-                    return Err("pairing.code_expired".to_owned());
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(error) => return Err(format!("lan.accept_failed:{error}")),
+pub fn run(args: &[String]) -> i32 {
+    let json = args.iter().any(|arg| arg == "--json");
+    let words: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|arg| *arg != "--json")
+        .collect();
+    let command = match words.as_slice() {
+        [] | ["status"] => Command::LanStatus,
+        ["on"] => Command::SetLanSharing { enabled: true },
+        ["off"] => Command::SetLanSharing { enabled: false },
+        ["pair"] => Command::StartPairing,
+        ["join", address, code] | ["join", address, code, _] => Command::JoinPairing {
+            address: (*address).to_owned(),
+            code: (*code).to_owned(),
+            label: words.get(3).map(|label| (*label).to_owned()),
+        },
+        ["unpair", key] => Command::Unpair {
+            key: (*key).to_owned(),
+        },
+        _ => {
+            eprintln!("{USAGE}");
+            return EXIT_USAGE;
         }
     };
-    stream
-        .set_nonblocking(false)
-        .map_err(io_error("lan.accept_failed"))?;
-    let joiner = host_pairing(
-        &mut stream,
-        &identity,
-        &mut code,
-        Instant::now(),
-        &mut pins,
-        "paired device",
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(json!({
-        "paired": true,
-        "fingerprint": joiner.fingerprint().to_string(),
-        "key": joiner.hex(),
-    }))
+    let pairing = matches!(command, Command::StartPairing);
+    match send(command, pairing, json) {
+        Ok(()) => 0,
+        Err(error) => client::fail(&error, json),
+    }
 }
 
-/// Serves paired peers until the process ends. Turning LAN mode off with
-/// `lan disable` takes effect within two seconds, on the next request.
-fn serve(bind: SocketAddr) -> Result<Value, String> {
-    if !lan_enabled() {
-        return Err("lan.disabled: run `fetchpath lan enable` first".to_owned());
+fn send(command: Command, pairing: bool, json: bool) -> Result<(), ProtocolError> {
+    let engine = Engine::connect()?;
+    let result = engine.send(command)?;
+    match result {
+        CommandResult::Joined { device } => {
+            if json {
+                client::print_json(&CommandResult::Joined { device });
+            } else {
+                println!(
+                    "Paired with {} ({}). Check that the other computer shows this computer's fingerprint.",
+                    device.label, device.fingerprint
+                );
+            }
+            Ok(())
+        }
+        CommandResult::Lan { lan } if pairing => wait_for_pairing(&engine, lan, json),
+        CommandResult::Lan { lan } => {
+            if json {
+                client::print_json(&CommandResult::Lan { lan });
+            } else {
+                print_status(&lan);
+            }
+            Ok(())
+        }
+        other => Err(client::unexpected(&other)),
     }
-    let identity = identity()?;
-    let enabled = Arc::new(AtomicBool::new(true));
-    let pins = Arc::new(Mutex::new(pins()?));
-    // `lan disable`, `lan unpair` and new pairings happen in other processes.
-    // Re-reading both every two seconds bounds how long a revoked device keeps
-    // access; the server also re-checks both on every request.
-    let watched_flag = Arc::clone(&enabled);
-    let watched_pins = Arc::clone(&pins);
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_secs(2));
-            watched_flag.store(lan_enabled(), Ordering::SeqCst);
-            if let Ok(mut pins) = watched_pins.lock() {
-                // Fails closed: an unreadable list pins nobody.
-                let _ = pins.reload();
+}
+
+fn print_status(lan: &LanView) {
+    println!("This computer: {}", lan.fingerprint);
+    match (&lan.serving, lan.sharing) {
+        (Some(address), true) => println!("Sharing with paired devices at {address}."),
+        (None, true) => println!(
+            "Sharing is on but not running: {}",
+            lan.problem
+                .as_deref()
+                .unwrap_or("the engine is not serving.")
+        ),
+        _ => println!("Sharing is off."),
+    }
+    if lan.devices.is_empty() {
+        println!("No paired devices.");
+    }
+    for device in &lan.devices {
+        println!("  {}  {}  {}", device.fingerprint, device.label, device.key);
+    }
+}
+
+/// Shows the code, then waits for the other device or the code's end. With
+/// `--json`, the code is printed as one line first so a script can pass it on.
+fn wait_for_pairing(engine: &Engine, mut lan: LanView, json: bool) -> Result<(), ProtocolError> {
+    if json {
+        client::print_json(&CommandResult::Lan { lan: lan.clone() });
+    } else if let Some(pairing) = &lan.pairing
+        && let Some(code) = &pairing.code
+    {
+        println!("On the other computer, run:");
+        println!("  fetchpath lan join {} {code}", pairing.address);
+        println!("or enter that address and code in Settings, Paired devices.");
+        println!("This computer's fingerprint: {}", lan.fingerprint);
+        println!("The code works once, for two minutes. Waiting...");
+    }
+    loop {
+        let Some(pairing) = lan.pairing.as_ref() else {
+            return Ok(());
+        };
+        match pairing.state {
+            PairingState::Waiting => {}
+            PairingState::Paired => {
+                if json {
+                    client::print_json(&CommandResult::Lan { lan: lan.clone() });
+                } else if let Some(device) = &pairing.device {
+                    println!(
+                        "Paired with {}. Check that the other computer shows {}.",
+                        device.fingerprint, lan.fingerprint
+                    );
+                }
+                return Ok(());
+            }
+            state => {
+                let message = pairing.problem.clone().unwrap_or_else(|| match state {
+                    PairingState::Expired => {
+                        "The code expired before another device used it.".into()
+                    }
+                    _ => "Pairing stopped.".into(),
+                });
+                return Err(client::input_error(&message));
             }
         }
-    });
-    let listener = TcpListener::bind(bind).map_err(io_error("lan.bind_failed"))?;
-    eprintln!(
-        "{}",
-        json!({
-            "serving": listener.local_addr().map(|a| a.to_string()).unwrap_or_default(),
-            "fingerprint": identity.fingerprint().to_string(),
-        })
-    );
-    let server = Arc::new(PeerServer::new(
-        identity,
-        pins,
-        Arc::new(Mutex::new(cache()?)),
-        enabled,
-        UploadBudget::default(),
-    ));
-    server.run(listener, Arc::new(AtomicBool::new(false)), MAX_SESSIONS);
-    Ok(json!({ "serving": false }))
+        std::thread::sleep(Duration::from_millis(500));
+        lan = match engine.send(Command::LanStatus)? {
+            CommandResult::Lan { lan } => lan,
+            other => return Err(client::unexpected(&other)),
+        };
+    }
 }
 
 /// Adapts the LAN client to the core's peer interface. Every failure is

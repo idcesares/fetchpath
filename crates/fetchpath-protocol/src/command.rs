@@ -190,6 +190,27 @@ pub enum Command {
     /// Removes every cached file. Downloads already saved are not touched.
     ClearCache,
 
+    // Paired devices and LAN sharing (FP-033). The person only. None of
+    // them reaches the command ledger: pairing codes must never be stored,
+    // and none of them changes the queue.
+    LanStatus,
+    SetLanSharing {
+        enabled: bool,
+    },
+    /// Shows a single-use code for two minutes and waits for one device.
+    StartPairing,
+    CancelPairing,
+    /// Pairs with a device showing `code` at `address` (`host:port`).
+    JoinPairing {
+        address: String,
+        code: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    Unpair {
+        key: String,
+    },
+
     // Event streams (contract §8).
     /// Replays durable events after `after_seq`, or answers with a snapshot
     /// boundary when they were compacted, then streams new ones.
@@ -244,6 +265,12 @@ impl Command {
             Self::RemoveRule { .. } => "RemoveRule",
             Self::CacheStatus => "CacheStatus",
             Self::ClearCache => "ClearCache",
+            Self::LanStatus => "LanStatus",
+            Self::SetLanSharing { .. } => "SetLanSharing",
+            Self::StartPairing => "StartPairing",
+            Self::CancelPairing => "CancelPairing",
+            Self::JoinPairing { .. } => "JoinPairing",
+            Self::Unpair { .. } => "Unpair",
             Self::SubscribeJob { .. } => "SubscribeJob",
             Self::SubscribeQueue { .. } => "SubscribeQueue",
             Self::EngineStatus => "EngineStatus",
@@ -252,7 +279,8 @@ impl Command {
     }
 
     /// True when the command changes engine state, and so goes through the
-    /// durable command ledger. `TakeLinkReviews` and `TakeBrowserCaptures`
+    /// durable command ledger. The LAN commands change device state, not the
+    /// queue, and carry pairing codes, so they are not. `TakeLinkReviews` and `TakeBrowserCaptures`
     /// only take the browser inbox in and hand it out, as any query's intake
     /// does, and deal in links, which must never reach the ledger, so they
     /// are not.
@@ -272,6 +300,12 @@ impl Command {
                 | Self::GetAgentPolicies
                 | Self::ListRules
                 | Self::CacheStatus
+                | Self::LanStatus
+                | Self::SetLanSharing { .. }
+                | Self::StartPairing
+                | Self::CancelPairing
+                | Self::JoinPairing { .. }
+                | Self::Unpair { .. }
                 | Self::SubscribeJob { .. }
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus

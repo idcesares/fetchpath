@@ -1,0 +1,29 @@
+{
+  "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
+  "sharingAtStart": "Off. Nothing is offered to any computer.",
+  "ownFingerprintShown": "This computer's fingerprint: 53f2-2f6c-d531-2642-800a",
+  "pairingInstructions": "On the other computer, choose Pair with a computer that shows a code, and enter the address 127.0.0.1:47632 and this code. It works once, for 120 more seconds. The other computer should show this computer's fingerprint, 53f2-2f6c-d531-2642-800a.",
+  "bSawFingerprint": "53f2-2f6c-d531-2642-800a",
+  "afterPairing": "Paired with a computer whose fingerprint is ca0e-4393-6a25-ef8f-573a. Check that the other computer shows the same, and that it shows 53f2-2f6c-d531-2642-800a for this one.",
+  "codeHiddenAfterUse": true,
+  "sharingOn": "On. Paired computers reach this one at 127.0.0.1:47631. Fetchpath keeps running in the background while sharing is on.",
+  "publicFromA": {
+    "exitCode": 0,
+    "source": "peer",
+    "saved": true
+  },
+  "signedFromA": {
+    "exitCode": 1,
+    "source": null,
+    "saved": false
+  },
+  "afterUnpair": {
+    "exitCode": 1,
+    "source": null,
+    "saved": false
+  },
+  "sharingOff": "Off. Nothing is offered to any computer.",
+  "unnamedLanControls": [],
+  "failures": [],
+  "passed": true
+}

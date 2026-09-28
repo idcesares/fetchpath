@@ -1,404 +1,118 @@
-# Bounded content cache and paired LAN mode
+# Content cache and paired computers
 
-Tasks FP-020 (store and paired LAN, 22–23 September 2026) and FP-032 (the
-cache in the engine and its clients, 28 September 2026). The independent
-strong-model review of `adapters/lan` is done and its two findings are fixed.
-Pairing has no desktop surface yet (FP-033).
+FP-020 (store and LAN adapter, 22–23 September 2026), FP-032 (the cache in
+the engine and its clients, 28 September 2026) and FP-033 (pairing and
+sharing through the engine and the desktop, 28 September 2026). Design:
+[content cache and paired LAN](../architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md).
+The earlier per-step record is in Git history.
 
-Design: [content cache and paired LAN design](../architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md).
-Plans: [bounded content cache](ARCHIVE.md),
-[paired LAN](ARCHIVE.md).
+## What exists
 
-## What exists: the cache in the engine (FP-032)
+**The store** (`crates/fetchpath-cache`) is bounded and content-addressed. Only
+content with a trusted digest enters: `FlatSha256` from a whole-file checksum,
+`PieceMapSha256` from a trusted Metalink piece map, never interchangeable. The
+store holds no trust policy: every reuse runs the caller's own check, and an
+entry that fails is evicted and reported as a miss. Provenance is `Public` or
+`Credentialed`; a rebuilt index records every entry `Credentialed`. Every
+mutation takes an exclusive lock, reloads the index and persists before
+releasing, so handles in several processes never lose each other's entries.
+Pins are reference-counted per handle.
 
-Recorded 28 September 2026. The engine keeps the cache at
-`%LOCALAPPDATA%\app.fetchpath.desktop\cache` (removed with the rest of the
-data when the person asks at uninstall), or `FETCHPATH_DATA_DIR\cache`, or
-under a moved engine home; `lan serve` and `fetch-verified` use the same store
-(`apps/cli/src/lan.rs` `cache_root`).
+**In the engine (FP-032).** A file job with a checksum, from the person or the
+browser, is given the cache as it starts (`Session::reconcile_locked` →
+`FileJob::use_cache`). The worker first tries `verified::reuse_for_file`: the
+entry is checked against the job's own checksum and published through the
+create-only fence, and the job reports `reused_from_cache` with no rate.
+Otherwise it downloads; after the job reports completion, `remember_file`
+copies the file in, `Public` only with no cookies or referrer, no query or
+fragment and no user name. **An agent's job never reads or fills the cache**,
+so an agent cannot obtain, or learn of, a file the person downloaded by naming
+its checksum. `CacheStatus` and `ClearCache` are the person's only; the quota
+is the setting `cache_quota_bytes`, 256 MiB to 256 GiB (2 GiB by default,
+written only when changed), and lowering it trims at once.
 
-- A file job with a checksum, from the person or the browser, is given the
-  cache as it starts (`Session::reconcile_locked` → `FileJob::use_cache`). The
-  worker first tries `verified::reuse_for_file`: the entry is re-verified
-  against the job's own checksum and published through the create-only fence.
-  Otherwise it downloads, and a completed download is inserted by
-  `remember_file`: `Public` only with no cookies or referrer, no query or
-  fragment and no user name, else `Credentialed`. A job without a checksum
-  never touches the cache.
-- **An agent's job never reads or fills the cache.** Otherwise an agent could
-  name a checksum and receive, or learn of, a file the person downloaded with
-  their sign-in.
-- The snapshot carries `reused_from_cache`; such a job reports no rate. The
-  desktop row says "Reused from this computer's cache", the terminal shows
-  `from cache`.
-- Protocol: `CacheStatus` (query) and `ClearCache` (ledgered), both the
-  person's only, answering `CacheView`; the quota is the setting
-  `cache_quota_bytes`, clamped to 256 MiB–256 GiB (default 2 GiB, written only
-  when changed). Lowering it trims least-recently-used entries at once.
-- Clients: Settings → Cache in the desktop (usage, size in GB, Clear cache);
-  `fetchpath cache [status | clear]` and `fetchpath settings
-  cache-quota-bytes`.
+**Paired computers (FP-020 adapter, FP-033 engine).** `adapters/lan`: each
+device has an ed25519 identity sealed with DPAPI. Pairing shows a ten-character
+code (50 bits) for two minutes, spent by the first attempt; both sides confirm
+with HMACs over the X25519 secret, the code and the transcript, plus
+signatures. Sessions authenticate pinned keys only (no trust on first use) and
+are AES-256-GCM with per-direction keys. The server offers an entry only with
+sharing on, to a pinned and authenticated device, and only if it is `Public`;
+absent, `Credentialed` and sharing-off requests get the same refusal. Sharing
+and pins are re-checked on every request. Frames are length-checked before
+allocation; the receiver reads no more than its own declared size and checks
+the bytes against its own digest before publishing, and does not cache them.
 
-Tests: `a_checksum_job_completes_from_the_cache_its_first_download_filled`,
-`a_signed_link_is_cached_as_private_and_a_job_without_a_checksum_is_not_cached`
-(core); `a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_agent`
-(engine, through the protocol). `tests/compatibility/windows/ui-cache.ps1`
-drives the release desktop: a checksum download through the engine fills the
-cache; with the server gone, the same file added in Add download with its
-checksum is saved byte-identical and its row reads "Reused from this
-computer's cache" with no speed; Settings shows "256.0 KB in 1 file, of
-2.00 GB", every Cache control is named, and Clear cache empties it while both
-saved files stay ([evidence](evidence/desktop/ui-cache.json), 28 September
-2026, passed). Limitations: an entry larger than the quota is
-never kept; the per-entry ceiling of `fetch-verified` stays 1 GiB; a reuse
-copies the whole file, so on the same volume it costs a full write.
+The engine owns all of it (`crates/fetchpath-session/src/lan.rs`): `LanStatus`,
+`SetLanSharing`, `StartPairing`, `CancelPairing`, `JoinPairing` and `Unpair`,
+the person's only and never ledgered, because pairing codes must not be
+stored. Sharing is off until turned on; while on, the engine serves on
+`0.0.0.0:47631` and stays running. Pairing listens on port 47632. The host
+shows its code, address and fingerprint and then the joiner's fingerprint;
+the joiner sees the host's. Failures read in plain words: a wrong code pairs
+nothing, an expired or used code asks for a new one. The server and the engine
+share one pin list, so Remove takes effect on the next request.
 
-## What exists: the cache store
+State lives in one local data folder: `FETCHPATH_DATA_DIR`, else a moved
+engine home, else `%LOCALAPPDATA%\app.fetchpath.desktop` (`cache\`, `lan\`),
+which uninstall removes with the rest of the data when the person asks.
 
-`crates/fetchpath-cache` is a bounded, content-addressed store for content that
-carries a trusted digest. `crates/fetchpath-core` consults it before contacting
-any mirror and inserts into it after a verified network completion, through
-`download_verified_cached`.
+**Clients.** Desktop Settings: Cache (usage, size, Clear cache) and Paired
+computers (fingerprint, sharing switch, paired list with Remove, Show a
+pairing code, Pair with a computer that shows a code); a reused row reads
+"Reused from this computer's cache". Command line: `fetchpath cache [status |
+clear]`, `fetchpath lan [status | on | off | pair | join | unpair]` through the
+engine, and `fetchpath fetch-verified --peer`, which asks paired devices
+directly; `ls` shows `from cache`.
 
-Only content with a trusted digest is eligible. A download that completed at
-`VerificationLevel::Unverified` is never inserted, so every cache hit is
-provable rather than assumed.
+## How it was verified
 
-Identity encodes construction as well as algorithm. `ContentId::FlatSha256`
-comes from a whole-file digest stated by trusted metadata; `ContentId::PieceMapSha256`
-is a digest over the canonical encoding of a trusted piece map, which exists
-because a Metalink 4 file may supply piece hashes and no whole-file digest. The
-two are distinct on disk and in the index and are never interchangeable.
+- Store, adapter and core suites: cache coherence across handles and threads,
+  a tampered entry falling through, provenance from the original URL,
+  credentialed and absent entries refused alike, unpairing inside a live
+  session, corrupt peer bytes discarded, concurrent identity creation. Each
+  leak guard was removed in turn to confirm a test fails without it.
+- Engine: `a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_agent`
+  (policy suite) and `two_engines_pair_with_a_code_and_the_person_controls_sharing`
+  (`tests/lan.rs`: a wrong code pairs nothing, the right one pairs both ways,
+  sharing off until on, unpair, agents refused).
+- `tests/compatibility/windows/ui-cache.ps1` against the release desktop: the
+  same file with its checksum completes from the cache with the server gone,
+  byte-identical, with no speed shown; Settings shows use, every control is
+  named, Clear cache empties it and keeps saved files.
+  [evidence](evidence/desktop/ui-cache.json), 28 September 2026.
+- `tests/compatibility/windows/ui-lan.ps1`, from the keyboard, the desktop as
+  one computer and a second engine in its own data folder as the other, on
+  loopback: sharing starts off; the code is shown with this computer's
+  fingerprint; the other joins and each shows the other's fingerprint; the
+  used code disappears; with sharing on the other computer receives a public
+  checksum-verified file from this one with the link dead, and is refused one
+  downloaded from a signed link; after Remove it is refused; sharing turns
+  off; every control is named. [evidence](evidence/desktop/ui-lan.json),
+  28 September 2026.
+- Independent strong-model review of `adapters/lan` (23 September 2026):
+  handshake cryptography and DPAPI FFI sound; two defects fixed (unpairing did
+  not revoke a running server; a race in identity creation).
 
-Reuse re-verifies before publishing. The cache holds no trust policy of its
-own: the caller supplies a `TrustedCheck` built from exactly the digests the
-request carries. A cached file that fails is evicted and reported as a miss.
-Publication still goes through the unchanged create-only fence in
-`fetchpath-storage`.
+## Limitations that still hold
 
-`VerifiedDownload` now carries a `DeliverySource` of `Network`, `LocalCache` or
-`Peer { fingerprint }`.
-
-Pins are reference-counted. A local reuse and a peer upload can hold the same
-entry at once, so one holder's release no longer unpins it for the other.
-
-## What exists: paired LAN mode
-
-`adapters/lan` (crate `fetchpath-lan`) depends on `fetchpath-cache` only. Core
-defines a `PeerSource` trait and `download_verified_shared`; `apps/cli` adapts
-the LAN client to that trait. The order is local cache, then paired peers in
-the order given, then mirrors. No crate was downloaded: every primitive
-(`ed25519-dalek`, `curve25519-dalek`, `hkdf`, `hmac`, `sha2`, `aes-gcm`,
-`getrandom`, `zeroize`) was already in `Cargo.lock` through `russh`, and the
-lockfile gained only the new package entry.
-
-**Identity.** Each device holds a long-lived ed25519 key, sealed with DPAPI
-under the entropy label `fetchpath-lan-identity-v1`, distinct from the browser
-inbox's label. A sealed file that cannot be unsealed is an error, never a
-reason to generate a replacement, because every device that pinned the old key
-would silently stop recognising this one. `Debug` output shows only the
-fingerprint.
-
-**Pairing.** The host shows a ten-character Crockford base32 code (50 bits)
-that expires after two minutes and is consumed by the first hello whatever the
-outcome. Each side sends an X25519 ephemeral key, its identity key and a nonce.
-Confirmation keys are `HKDF-SHA256(salt = transcript hash, ikm = X25519 shared
-secret || code)`. The joiner confirms first with an HMAC and a signature over
-the transcript; the host checks both before it pins the joiner and replies in
-kind. A mistyped code is rejected before anything is sent, so it never costs
-the host its single use.
-
-**Sessions.** Authentication is against pinned keys only; there is no
-trust-on-first-use path. The server checks the client's key against its pins on
-the first frame and sends one refusal and nothing else if it is not pinned.
-Both sides sign the transcript; a client that copied a pinned public key
-without its private key fails there. Traffic is AES-256-GCM, with one key per
-direction from HKDF over the X25519 secret and a per-direction counter nonce
-that refuses to wrap. The frame kind is associated data. The spec asked for
-authentication; encryption was added because `aes-gcm` was already locked.
-
-**Serving.** An entry leaves the machine only when LAN mode is on, the peer is
-pinned and authenticated, and the entry's provenance is `Public`. An absent
-entry, a `Credentialed` entry and a request made while LAN mode is off all get
-the same `not_available` refusal, so a paired peer cannot learn that private
-content exists. The flag is checked per request as well as per connection. A
-per-session byte budget is checked against the offered size before anything is
-sent, and a per-transfer pacer holds the average upload rate to the configured
-limit.
-
-**Receiving.** The receiver never reads more than the size its own trusted
-metadata declares. Peer bytes land in staging on the destination volume and are
-checked against the request's own digests before publication through the
-unchanged create-only fence. A peer whose bytes fail is reported `Corrupt` and
-not asked again for that download. Peer bytes are **not** inserted into the
-receiver's cache: the receiver cannot verify the sender's provenance claim, so
-it does not create an entry that a later setting could share.
-
-**Frames.** Every frame's length is checked against a 64 KiB + 16 byte limit
-before allocation. Handshake reads time out after ten seconds.
-
-**CLI.** `fetchpath lan id | enable | disable | peers | unpair KEY |
-pair-host [BIND] | pair-join ADDRESS CODE [LABEL] | serve [BIND]`,
-`fetchpath cache status`, and `fetchpath fetch-verified --sha256 HEX --size N
-[--peer ADDRESS=KEY]... URL DESTINATION`. State lives under
-`%LOCALAPPDATA%\Fetchpath`, or `FETCHPATH_DATA_DIR`. LAN mode is off until
-`lan enable`. `fetch-verified` refuses a `--peer` key that is not pinned. A
-running `lan serve` rereads the flag every two seconds. The existing
-`fetchpath download` command is unchanged.
-
-## Commands actually run
-
-```
-cargo test --workspace --offline
-cargo clippy --workspace --all-targets --offline -- -D warnings
-cargo fmt --check
-node tools/tasks.mjs check
-```
-
-Cache half, results on 22 September 2026, Windows 11 Pro 26200, x64:
-
-- `cargo test --workspace` — 158 passed, 0 failed. The recorded baseline before
-  this work was 120 passed, 0 failed.
-- `fetchpath-cache` — 29 tests (14 unit, 15 behavioural).
-- `fetchpath-core` — 45 tests, up from 36.
-- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
-- `cargo fmt --check` — clean.
-- `node tools/tasks.mjs check` — PASS.
-
-Per-test outcomes: [cache matrix](evidence/cache/fp020-cache-matrix.json).
-
-LAN half, results on 23 September 2026, same machine, same four commands with
-`--locked`:
-
-- `cargo test --workspace --locked` — 205 passed, 0 failed, 4 ignored. The 4
-  ignored tests were already marked ignored before this work. The baseline
-  before the LAN half was 158 passed.
-- `fetchpath-lan` — 40 tests (21 unit, 19 behavioural over loopback TCP).
-- `fetchpath-core` — 51 tests, up from 45.
-- `fetchpath-cache` — 30 tests, up from 29.
-- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
-- `cargo fmt --check` — clean.
-- `node tools/tasks.mjs check` — PASS.
-
-Per-test outcomes: [LAN matrix](evidence/cache/fp020-lan-matrix.json).
-
-### End-to-end CLI run
-
-Two data directories on one machine stood in for two devices, over loopback.
-Recorded 23 September 2026:
-
-1. `lan pair-host` / `lan pair-join` paired them; each pinned the other.
-2. Device A downloaded two files from a local HTTP server: one from a plain URL
-   and one from a URL with a query string. `cache status` on A: 2 entries,
-   1 shareable.
-3. The HTTP server was stopped, and A ran `lan serve`.
-4. B's `fetch-verified --peer` for the plain-URL file completed with
-   `"source":"peer"` and output byte-identical to the original.
-5. B's request for the query-string file was refused by A, then fell through
-   to the dead mirror and failed. No file was published.
-6. B's `cache status` afterwards showed 0 entries, because peer bytes are not
-   cached.
-7. A `--peer` key that was not pinned was refused locally with
-   `lan.not_paired`.
-8. After `lan disable` on A, the still-running server refused the same
-   plain-URL request that had just succeeded.
-
-### Leak checks verified adversarially
-
-Each guard was removed in turn and the suite rerun, to confirm that the tests
-detect the leak rather than merely pass:
-
-- Removing the `is_shareable` check in `serve.rs` fails
-  `a_credentialed_entry_is_refused_exactly_as_an_absent_one_is`.
-- Removing the pin check in `session.rs` fails
-  `an_unpaired_device_is_refused_before_a_single_byte_is_served`.
-- Removing the re-verification of peer bytes in `verified.rs` fails
-  `corrupt_peer_bytes_are_discarded_unpublished_and_that_peer_is_not_asked_again`
-  and `when_every_peer_fails_the_mirrors_are_used_and_nothing_bad_is_published`.
-
-### Cross-process coherence
-
-Recorded 23 September 2026. Before this change, two handles on one store each
-persisted their own view. The second writer silently erased the first writer's
-entries, and quota was enforced against a partial picture. Five tests cover
-the fix:
-
-- `two_handles_on_one_store_never_drop_each_others_entries`
-- `a_refreshed_handle_sees_entries_another_handle_inserted`
-- `quota_is_enforced_against_what_every_handle_inserted`
-- `concurrent_writers_through_separate_handles_lose_nothing` (two threads, 20
-  inserts each, through separate handles)
-- `a_running_server_serves_an_entry_another_process_inserted_after_it_started`
-
-Skipping the reload makes the concurrent-writer test fail, and skipping the
-server's refresh makes the running-server test fail.
-
-After this change: `cargo test --workspace --locked` 210 passed, 0 failed,
-4 ignored (pre-existing); clippy with `-D warnings` and `cargo fmt --check`
-clean.
-
-### A pre-existing test race, fixed
-
-`tests::cancellation_removes_or_retains_unpublished_staging_by_policy` in
-`fetchpath-core` hung in 3 of 6 parallel runs once the peer tests were added.
-It cancelled after a fixed 30 ms. The download first waits for a permit from
-the process-wide request budget, which the new tests' offline mirrors hold for
-about two seconds each on Windows. So the cancel could arrive while the
-download was still queued. The download then correctly returned without
-connecting, and the test's server thread blocked in `accept` forever. The test
-now cancels once the server signals that its first chunk is on the wire. With
-that change, 10 of 10 parallel runs passed. Production behaviour did not
-change.
-
-## Two behaviours worth stating plainly
-
-**A rebuilt index fails closed.** If the index file cannot be read, accounting
-is rebuilt by walking the store directory. Entry size is recoverable from the
-files; provenance is not. Recording a rebuilt entry as `Public` would be a
-leak, so rebuilt entries are recorded `Credentialed` and can never be shared.
-Covered by `a_corrupted_index_is_rebuilt_from_the_store_directory`.
-
-**Provenance is read from the original mirror URL.** `MirrorReport::redacted_url`
-already has its query string stripped, so a check against the report cannot
-tell a signed URL from a plain one. Provenance is therefore decided from the
-request's own mirror list. This was verified adversarially: reverting to the
-report-based check makes `a_download_from_a_signed_url_is_cached_as_credentialed`
-fail, confirming the test detects the leak rather than merely passing.
-
-## Claims this work does not make
-
-**No speed claim.** A cache hit is reuse, not throughput. Peer retrieval is
-sequential across peers and is not presented as acceleration. Warm-cache completion
-time is not wide-area throughput, which is what `DeliverySource` exists to make
-visible. No benchmark in this repository reports a cache-served completion as a
-transfer rate.
-
-**No publisher-authenticity claim.** A trusted digest supplied by metadata
-establishes representation identity, not who published the object. An observed
-local digest records what was retained.
-
-**Pairing is not a PAKE.** A passive observer cannot test guesses, because the
-confirmation keys also depend on an X25519 secret. An *active* attacker who
-impersonates the host to the joiner receives the joiner's confirmation and can
-attempt an offline guess of the 50-bit code. To complete the pairing, that
-guess must succeed before the code expires, which is two minutes after it was
-shown.
-
-**No durability claim beyond what was tested.** Insertion and index writes use
-temporary file, durability barrier, then rename. No power-loss testing was
-performed; process-level tests cannot establish power-loss behaviour.
-
-## Known limitations
-
-1. **Independent review outstanding.** `adapters/lan` contains the credential
-   boundary, the handshake cryptography and DPAPI FFI. AGENTS.md requires a
-   strong-model review of those; the author's own review and the adversarial
-   checks above do not substitute for it.
-2. **mDNS discovery is deferred** to its own task by decision on
-   22 September 2026. Peers are reached at an address the user gives.
-3. **The desktop settings surface is deferred.** Quota and the LAN flag are
-   controlled from the CLI only. The CLI uses a fixed 2 GiB quota and a 1 GiB
-   per-entry ceiling.
-4. **Pins are per handle.** Since 23 September 2026 the store is safe to share
-   between processes: every mutation takes an exclusive lock on `cache/lock`,
-   reloads the index, applies its change and persists before releasing. Large
-   copies and verification run outside the lock, and incoming copies are
-   written at the store root, where a rebuild never walks. A running
-   `lan serve` refreshes its view before every request. What is *not* shared
-   is pinning. A pin stops this handle from evicting an entry but not another
-   process. A reader that loses its file that way sees a miss and falls
-   through, never wrong bytes, because every reuse is re-verified and every
-   peer transfer is re-verified by the receiver. No power-loss testing covers
-   the lock.
-5. **Eviction resolution is one second.** `last_used_at_secs` has second
-   granularity; entries used within the same second are ordered by content id.
-6. **No cache-hit path for partial content.** A hit is whole-artifact only. A
-   partially downloaded file is not repaired from cache.
-7. **The pin list is not sealed.** It holds public keys, written by temporary
-   file and rename, and a malformed file is refused rather than partly read.
-   Anyone who can write the user's profile can add a pin; that is the same
-   boundary DPAPI protects.
-8. **One-sided pins are possible.** The host pins the joiner before its final
-   confirmation reaches the joiner. If that last frame is lost, the host holds a
-   pin the joiner does not. That pin is useless without the joiner's pin of the
-   host, and `lan unpair` removes it.
-9. **Budget scope.** The byte budget applies per session and the pace per
-   transfer; there is no daily or global upload cap. `lan serve` allows four
-   concurrent sessions. The default bind is `0.0.0.0:47631`, so the listening
-   port is visible on every interface. Only pinned peers receive anything.
-10. **"Not asked again" is per download.** A peer reported `Corrupt` is skipped
-    for the rest of that `download_verified_shared` call. Remembering it across
-    calls is left to the caller.
-11. **The server does not re-verify its own entries before sending.** The
-    receiver's check is the gate; a tampered entry on the server is caught there
-    and reported `Corrupt`.
-12. **Pin membership is observable to someone who knows a pinned key.** The
-    server sends its hello once the client's claimed key is pinned, before the
-    client proves possession of that key. Anyone who knows a pinned device's
-    public key can therefore learn that this server pins it, and learn the
-    server's own public key. They get no session and no content.
-
-## Independent review of `adapters/lan` (23 September 2026)
-
-The strong-model review AGENTS.md requires for credential boundaries, handshake
-cryptography and FFI, done by a reviewer that did not write the adapter. Every
-file in `adapters/lan/src` was read in full, with `apps/cli/src/lan.rs`.
-
-**Handshake cryptography: sound.** Sessions are a signed-transcript mutual
-authentication in the TLS 1.3 style: both hellos (version, X25519 ephemeral,
-ed25519 identity, 32-byte nonce) are hashed with length prefixes under a
-distinct label; each side signs the transcript under a role label, so a
-signature cannot be reflected; ed25519 verification is strict; an all-zero
-X25519 result is refused; traffic keys come from HKDF-SHA256 salted with the
-transcript, one AES-256-GCM key per direction with a non-wrapping counter
-nonce, and the frame kind is associated data. There is no trust-on-first-use
-path. Pairing binds the typed code, the X25519 secret and the transcript into
-HMAC confirmations, compared in constant time and each paired with a signature.
-An online guess costs the single-use code; a fake host cannot produce the host
-confirmation without the code, so the joiner pins nothing.
-
-**DPAPI FFI: sound, one hardening.** Pointers refer to live locals for the
-whole call, output is copied, wiped and freed exactly once, and the entropy
-label separates identity blobs from the browser inbox. `take` now returns an
-empty buffer for a null output pointer instead of building a slice from it.
-
-**Credential boundary: one defect, fixed.** Serving requires LAN mode on, a
-pinned and authenticated peer, and a `Public` entry; absent, `Credentialed`
-and LAN-off requests get the same `not_available`, and LAN mode is re-checked
-on every request. But the pin was checked only at the handshake, and
-`lan serve` read the pin list once at start-up, so `lan unpair`, run as it
-must be from another process, did not revoke a running server's peer until
-restart. The server now re-checks the pin on every request, and `lan serve`
-reloads the pin list every two seconds alongside the LAN flag, failing closed
-(no one pinned) if the file is unreadable. Tests:
-`unpairing_a_device_takes_effect_within_its_live_session` (fails with the
-per-request check removed) and `a_reload_sees_another_processs_unpairing_and_fails_closed`.
-
-**Identity creation: one race, fixed.** Two processes creating the identity at
-once wrote the same temporary file and renamed over each other, so one could
-keep a key that was not the one on disk, and every device that paired with it
-would later fail. The sealed key is now written to a uniquely named temporary
-and published with a hard link that fails if the file exists; the loser loads
-the winner's key. `concurrent_first_launches_agree_on_one_identity` runs six
-threads over twenty rounds.
-
-**Accepted and recorded, not changed:**
-
-- Pairing is not a PAKE. An attacker who impersonates the host can try the
-  joiner's confirmation offline, but must search 2^50 codes within the
-  two-minute lifetime, about 10^13 HMAC evaluations a second.
-- Anyone on the network can spend a pairing code by connecting first. The
-  person generates another.
-- The `not_paired` refusal tells a prober whether a public key is pinned.
-- Unauthenticated connections can hold the four session slots for up to the
-  ten-second handshake timeout at a time.
-- Two processes pinning at the same moment can lose one pin (last writer wins).
-
-**End to end, real CLI, two data directories on loopback:** paired with a real
-code; the server cached a public object from a mirror; with the mirror stopped
-the client received it from the peer (`source: peer`, outcome `delivered`);
-after `lan unpair` in a separate process, the still-running server refused the
-same client within three seconds and nothing was written.
-
-After the fixes: `cargo test --workspace --locked` 236 passed, 0 failed, 5
-ignored; clippy `-D warnings` and `cargo fmt --check` clean.
+1. **Receiving is command-line only.** A desktop or queue download does not
+   ask paired computers; `fetchpath fetch-verified --peer ADDRESS=KEY` does.
+   Paired devices have no stored address until discovery (FP-034).
+2. **The host names every joiner "paired device"**; the joiner names the host.
+3. **Sharing keeps the engine running**, and after a restart only resumes when
+   the engine starts (at sign-in if that setting is on).
+4. **Pairing is not a PAKE.** Impersonating a host lets an attacker test codes
+   offline against 2^50 within two minutes. Anyone on the network can spend a
+   code by connecting first; the person shows another.
+5. **Knowing a pinned key reveals that it is pinned**, and the server's key,
+   but gives no session or content.
+6. **One-sided pins are possible** if the final pairing frame is lost; Remove
+   clears it.
+7. **Budgets are per session and per transfer**: no daily cap; four sessions
+   at once; the port listens on every interface.
+8. **A hit is whole-file only**, eviction resolution is one second, and a
+   reuse copies the whole file.
+9. **The server does not re-check its own entries before sending**; the
+   receiver's check is the gate.
+10. **No power-loss testing** covers the cache lock.

@@ -484,6 +484,62 @@ pub struct EngineSettings {
     pub cache_quota_bytes: Option<u64>,
 }
 
+/// Paired devices and LAN sharing (FP-033).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LanView {
+    /// Off until the person turns it on.
+    pub sharing: bool,
+    /// Where paired devices reach this one, while sharing is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<String>,
+    /// Why sharing is on but nothing is being served.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    /// This device's fingerprint, grouped for reading aloud.
+    pub fingerprint: String,
+    pub devices: Vec<PairedDevice>,
+    /// The pairing this device is hosting, while there is one to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pairing: Option<PairingView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PairedDevice {
+    /// The device's public key, hex; what `Unpair` takes.
+    pub key: String,
+    pub fingerprint: String,
+    pub label: String,
+}
+
+/// A pairing code this device shows, and what became of it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PairingView {
+    pub state: PairingState,
+    /// Present while the code can still be used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// What to type on the other device as its address.
+    pub address: String,
+    pub expires_at: Timestamp,
+    /// The device that paired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<PairedDevice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PairingState {
+    Waiting,
+    Paired,
+    Failed,
+    Expired,
+    Cancelled,
+    #[serde(other)]
+    Unknown,
+}
+
 /// The content cache: verified files kept so a download whose checksum
 /// matches completes without a transfer (FP-032).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

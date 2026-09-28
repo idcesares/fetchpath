@@ -707,6 +707,73 @@ async fn remove_rule(rule_id: u32, engine: Engine<'_>) -> Result<Vec<view::RuleV
         .await
 }
 
+fn lan_view(result: CommandResult) -> Result<model::LanView, String> {
+    match result {
+        CommandResult::Lan { lan } => Ok(lan),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Paired computers and sharing, kept by the engine (FP-033).
+#[tauri::command]
+async fn lan_status(engine: Engine<'_>) -> Result<model::LanView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || lan_view(engine.send(Command::LanStatus).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn set_lan_sharing(enabled: bool, engine: Engine<'_>) -> Result<model::LanView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        lan_view(
+            engine
+                .send(Command::SetLanSharing { enabled })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_pairing(engine: Engine<'_>) -> Result<model::LanView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || lan_view(engine.send(Command::StartPairing).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn cancel_pairing(engine: Engine<'_>) -> Result<model::LanView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || lan_view(engine.send(Command::CancelPairing).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn join_pairing(
+    address: String,
+    code: String,
+    label: Option<String>,
+    engine: Engine<'_>,
+) -> Result<model::PairedDevice, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let command = Command::JoinPairing {
+            address,
+            code,
+            label: label.filter(|label| !label.trim().is_empty()),
+        };
+        match engine.send(command).map_err(text)? {
+            CommandResult::Joined { device } => Ok(device),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unpair_device(key: String, engine: Engine<'_>) -> Result<model::LanView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || lan_view(engine.send(Command::Unpair { key }).map_err(text)?)).await
+}
+
 fn cache_view(result: CommandResult) -> Result<model::CacheView, String> {
     match result {
         CommandResult::Cache { cache } => Ok(cache),
@@ -885,7 +952,13 @@ pub fn run() {
             remove_rule,
             inspect_rules,
             cache_status,
-            clear_cache
+            clear_cache,
+            lan_status,
+            set_lan_sharing,
+            start_pairing,
+            cancel_pairing,
+            join_pairing,
+            unpair_device
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is
