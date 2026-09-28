@@ -2433,6 +2433,39 @@
       "verification": "Run the Windows power-interruption harness against a real build and record checksums, queue state and publication outcomes. Obtain an independent strong-model review of the persistence boundary and harness before marking done.",
       "evidence": [],
       "blockedReason": "The current Windows environment has no `wsb` or persistent VM control (Hyper-V, VirtualBox or VMware commands were unavailable, including outside the sandbox) on 28 September 2026. Existing process-kill and fault-injection tests pass but cannot demonstrate OS or power-loss behavior. Next action: provide a persistent Windows 11 x64 VM on NTFS with abrupt power-off control, run cuts during checkpoint and around the publication fence, inspect queue and destination bytes after boot, then obtain an independent strong review. Keep the recoverable-only promise until that evidence exists."
+    },
+    {
+      "id": "FP-078",
+      "title": "Prepare browser extension store distribution without publishing",
+      "milestone": "M13",
+      "dependsOn": [
+        "FP-069"
+      ],
+      "status": "done",
+      "owner": "codex (lead)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "README.md",
+        "extensions/browser",
+        "docs/user",
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/tasks/backlog.json",
+        "work/"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A12"
+      ],
+      "acceptance": "Prepare a local extension ZIP with only the shipped Chromium files and a factual privacy disclosure suitable for a store listing. Audit permissions and native messaging identity so the remaining store-assigned ID and account steps are explicit. Do not upload, publish, or alter the installed extension until those IDs are known.",
+      "verification": "Inspect ZIP contents and manifest; run extension policy tests and repository link/structure checks; record remaining store dependencies and any policy limitations.",
+      "evidence": [
+        "docs/user/BROWSER-PRIVACY.md",
+        "extensions/browser/README.md",
+        "docs/development/BROWSER-CAPTURE.md"
+      ],
+      "blockedReason": null
     }
   ]
 }

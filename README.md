@@ -95,6 +95,8 @@ are listed in
 ## Security
 
 Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+The [browser extension privacy page](docs/user/BROWSER-PRIVACY.md) explains
+what link and sign-in data stays on your computer when you send a download.
 
 ## Contributing
 

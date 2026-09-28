@@ -4,7 +4,7 @@ Verified 21 September 2026 for FP-013 and acceptance criteria A07/A08.
 
 ## Delivered boundary
 
-Fetchpath exposes an explicit **Send link to Fetchpath** browser context-menu action. The extension does not observe, cancel, or replace ordinary browser downloads, so an unsupported URL, denied site permission, excluded origin, native-host failure, POST, or `blob:` workflow remains on the browser path.
+Fetchpath exposes an explicit **Send link to Fetchpath** browser context-menu action. Automatic capture is separate and off by default; when enabled it observes browser downloads, hands supported ones to Fetchpath and tries to restart a browser download if the host refuses it. An unsupported URL, denied site permission, excluded origin, POST, or `blob:` workflow remains on the browser path.
 
 The first send for a site requests that exact HTTP/HTTPS origin. After the user gesture, the extension reads only cookies applicable to the selected URL and sends a versioned GET capture over native messaging. It stores only bounded redacted events: capture ID, query-free URL, result, and cookie count. Site exclusions are exact-origin entries in extension-local storage and are checked before permission or native-host work.
 
@@ -39,13 +39,32 @@ Additional automated coverage includes:
 
 ## Current limits
 
-- Capture is deliberately explicit. Generic automatic cancellation remains unsafe because browser observation cannot prove that a Chromium request lacks hidden `Authorization` or proxy credentials.
+- Explicit capture is the default. Optional automatic mode can hand off browser downloads, but browser observation cannot recover hidden `Authorization` or proxy credentials; sites that depend on them can fail after handoff.
 - Version 1 supports replayable GET links, including signed URLs and browser cookies. POST bodies, page-owned blobs, client certificates, proxy credentials, and hidden authorization headers remain in the browser.
 - Superseded by FP-056 (below): the host hands each capture to the engine, starting one if needed, and still opens the window.
 - Chrome runtime behavior is proven. The Chromium manifest is shared with Edge at the API level, and a distinct Firefox manifest is present, but Edge and Firefox runtime/store testing remain release compatibility gates.
 - Native-host manifest installation and browser-specific registry registration are installer responsibilities. The current manifests are templates and the executable is produced by the desktop Rust package; no unsigned development artifact is presented as distributable.
 - *Update, 23 September 2026 (FP-036):* the installer now installs host manifests with a relative `path` beside the host, registers them under HKCU for Chrome, Edge and Firefox, ships the unpacked Chromium extension, and removes the three keys on uninstall. Settings reports the registration and guides Load unpacked. See [release readiness](ARCHIVE.md).
 - DPAPI protects data for the current Windows user on the current machine. Secret plaintext necessarily exists briefly in extension/native/core process memory while authorized work is prepared. Power-loss durability and hostile same-user process isolation are not claimed.
+- A store extension may receive a different ID from the unpacked copy. Both the installed native-host manifest and the host's caller check currently accept only the fixed unpacked Chromium ID; store IDs must be known and tested before a listing directs people to install the extension. Chrome and Edge may use different IDs.
+
+## Store preparation (FP-078, 28 September 2026)
+
+The local ZIP in ignored `work/fp078-store-prep/` has `manifest.json` at its
+root and only the eight Chromium files shipped in the installer. The public
+[browser privacy page](../user/BROWSER-PRIVACY.md) describes optional automatic
+capture, local storage, cookies, and the native host. Policy and background
+tests passed. No store item was created or uploaded.
+
+Before offering a store install, obtain the Chrome and Edge item IDs, add both
+to the installed host manifest and the host's caller check, and test each
+published-store identity end to end. The listings also need publisher accounts,
+permission and privacy declarations, screenshots, and store artwork. Chrome's
+[key guidance](https://developer.chrome.com/docs/extensions/reference/manifest/key)
+and Edge's [native messaging guidance](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging)
+explain the ID dependency; Chrome requires a
+[privacy policy](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq)
+even for locally held user data.
 
 ## FP-056: captures reach the engine without the window
 

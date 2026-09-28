@@ -234,6 +234,9 @@ sticks for that link.
 The Fetchpath installer connects Fetchpath to Chrome and Microsoft Edge. You
 add the extension to your browser once:
 
+The [browser extension privacy page](BROWSER-PRIVACY.md) explains what the
+extension reads, sends to the local app, and keeps on your computer.
+
 1. Open **Settings → Browser extension**. It should say Fetchpath is
    connected to Chrome and Edge.
 2. Choose **Copy Chrome address** or **Copy Edge address**, paste it into
@@ -273,8 +276,9 @@ over without your sign-in.)
 
 **Automatic mode.** In the toolbar popup, turn on **Send downloads to Fetchpath
 automatically** and allow the permissions the browser asks for. From then on,
-downloads you start in the browser go to Fetchpath instead. If Fetchpath can't
-take one, the browser downloads it as usual. It's off until you turn it on.
+downloads you start in the browser go to Fetchpath instead. If the native host
+refuses a handoff, the extension tries to restart the browser download. It's
+off until you turn it on.
 
 **Why "Developer mode"?** Version 0.1.0 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
