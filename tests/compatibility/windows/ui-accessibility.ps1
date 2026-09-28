@@ -88,13 +88,16 @@ if (-not $workDirectory.StartsWith($repositoryRoot, [System.StringComparison]::O
 if (Test-Path -LiteralPath $workDirectory) { Remove-Item -LiteralPath $workDirectory -Recurse -Force }
 [System.IO.Directory]::CreateDirectory($workDirectory) | Out-Null
 
-# Running the application creates a per-user queue file and a WebView2 profile.
-# Both are recorded now so the finally block can remove exactly what this run
-# created and leave a pre-existing installation's data alone.
-$appDataDirectory = Join-Path $env:APPDATA 'app.fetchpath.desktop'
+# The run gets a data folder of its own (FETCHPATH_APP_DATA_DIR), so it starts
+# from the empty first-run state whatever the person's queue holds, and the
+# engine it starts is its own. The WebView2 profile is per user; it is
+# recorded now so the finally block removes it only if this run created it.
+$appDataDirectory = Join-Path $workDirectory 'data'
 $webviewProfileDirectory = Join-Path $env:LOCALAPPDATA 'app.fetchpath.desktop'
 $appDataExistedBefore = Test-Path -LiteralPath $appDataDirectory
 $webviewProfileExistedBefore = Test-Path -LiteralPath $webviewProfileDirectory
+[System.IO.Directory]::CreateDirectory($appDataDirectory) | Out-Null
+$env:FETCHPATH_APP_DATA_DIR = $appDataDirectory
 
 $VK = Get-VirtualKeys
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -733,6 +736,9 @@ try {
         if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
         $process.WaitForExit(10000) | Out-Null
     }
+    # The engine the window started outlives it; stop it so its folder can go.
+    $engine = Join-Path (Split-Path $ApplicationPath) 'fetchpath.exe'
+    if (Test-Path -LiteralPath $engine) { & $engine engine stop | Out-Null }
     Stop-FixtureServer $fixture
 
     # WebView2 releases its profile directory a moment after the host process

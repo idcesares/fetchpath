@@ -2104,8 +2104,8 @@
         "FP-067",
         "FP-068"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "claude-opus (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "standard",

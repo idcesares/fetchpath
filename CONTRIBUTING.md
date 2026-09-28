@@ -48,7 +48,9 @@ The engine keeps its data in `%APPDATA%\app.fetchpath.desktop`, the same
 folder an installed Fetchpath uses. Point `FETCHPATH_APP_DATA_DIR` at a
 scratch folder to run an engine of your own beside it: the instance lock,
 pipe secret and endpoint live in that folder, so the two never meet. Every
-client started from that shell reaches the scratch engine.
+client started from that shell reaches the scratch engine. The content
+cache and paired-device state use `FETCHPATH_DATA_DIR` instead
+(default `%LOCALAPPDATA%\Fetchpath`); set it too for a fully separate run.
 
 ```powershell
 $env:FETCHPATH_APP_DATA_DIR = "$PWD\work\engine-data"
@@ -68,7 +70,7 @@ The real guided media-tool install downloads about 130 MB from the helpers'
 publishers, so it is ignored by default:
 
 ```powershell
-& $cargo test -p fetchpath-desktop --locked -- --ignored guided_install
+& $cargo test -p fetchpath-media --locked -- --ignored guided_install
 ```
 
 The desktop application needs `pnpm` through corepack:

@@ -3,21 +3,22 @@
   "machineArchitecture": "AMD64",
   "installerUnderTest": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
   "upgradeInstaller": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
-  "installerSha256": "1695f504a9417edd5899aee86fb851baff57772039374cf0e6411b5b14d55488",
-  "upgradeInstallerSha256": "b1d9b506c86b1833208829b70a5689dc9dd0d633fc27e11c48343cda26fb9522",
+  "installerSha256": "e43e33b35e2cd4065c4336f4c9bb9f7e87344860a75a1b50c85d0bd487240fa5",
+  "upgradeInstallerSha256": "be584bfe30f2417555a34fb9fb729ce1b818f6d13d8534bb1c58877e83497982",
   "preflight": {
     "existingUninstallEntries": [],
-    "appDataExistedBefore": false,
+    "appDataExistedBefore": true,
     "installDirectoryExistedBefore": false,
     "manufacturerRegistryKeyExistedBefore": false,
-    "localAppDataBundleDirectoryExistedBefore": false,
-    "webview2RuntimeVersion": "153.0.4234.48"
+    "localAppDataBundleDirectoryExistedBefore": true,
+    "webview2RuntimeVersion": "153.0.4234.48",
+    "appDataBackup": "C:\\Users\\idces\\IDCODES\\fetchpath\\work\\fp017-packaging\\preexisting-appdata"
   },
   "install": {
     "label": "install 0.1.0",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.0_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 3.5,
+    "elapsedSeconds": 4.7,
     "uninstallEntries": [
       {
         "registryKey": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Fetchpath",
@@ -26,7 +27,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 14467
+        "estimatedSizeKb": 25608
       }
     ],
     "installDirectory": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
@@ -37,6 +38,9 @@
       "browser-extension\\icons\\icon-32.png",
       "browser-extension\\manifest.json",
       "browser-extension\\policy.js",
+      "browser-extension\\popup.css",
+      "browser-extension\\popup.html",
+      "browser-extension\\popup.js",
       "com.fetchpath.browser.chromium.json",
       "com.fetchpath.browser.firefox.json",
       "docs\\CLI.md",
@@ -70,7 +74,7 @@
       "retained-failed.bin, Needs attention",
       "retained-complete.bin, Complete"
     ],
-    "queueBytesBeforeUpgrade": 3782,
+    "queueBytesBeforeUpgrade": 4329,
     "queueRecordCountBeforeUpgrade": 3,
     "privateQueryValueInQueueFile": false
   },
@@ -89,13 +93,13 @@
     "secondLaunchExitCode": 0,
     "firstInstanceStillRunning": true,
     "firstWindowRestored": true,
-    "fetchpathProcessCount": 0
+    "fetchpathProcessCount": 1
   },
   "upgrade": {
     "label": "upgrade to 0.1.1 with the app running",
     "installer": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\bundle\\nsis\\Fetchpath_0.1.1_x64-setup.exe",
     "exitCode": 0,
-    "elapsedSeconds": 3.7,
+    "elapsedSeconds": 6.8,
     "runningInstanceStoppedByInstaller": true,
     "uninstallEntries": [
       {
@@ -105,7 +109,7 @@
         "publisher": "Fetchpath contributors",
         "installLocation": "C:\\Users\\idces\\AppData\\Local\\Fetchpath",
         "uninstallString": "C:\\Users\\idces\\AppData\\Local\\Fetchpath\\uninstall.exe",
-        "estimatedSizeKb": 14467
+        "estimatedSizeKb": 25608
       }
     ],
     "files": [
@@ -114,6 +118,9 @@
       "browser-extension\\icons\\icon-32.png",
       "browser-extension\\manifest.json",
       "browser-extension\\policy.js",
+      "browser-extension\\popup.css",
+      "browser-extension\\popup.html",
+      "browser-extension\\popup.js",
       "com.fetchpath.browser.chromium.json",
       "com.fetchpath.browser.firefox.json",
       "docs\\CLI.md",
@@ -141,7 +148,7 @@
   },
   "uninstall": {
     "exitCode": 0,
-    "elapsedSeconds": 2.5,
+    "elapsedSeconds": 3.5,
     "installDirectoryRemains": false,
     "remainingInstalledFiles": [],
     "startMenuShortcutRemains": false,
@@ -160,14 +167,13 @@
   "failures": [],
   "passed": true,
   "machineRestored": {
-    "webviewProfileCreatedByThisRunRemoved": true,
     "manufacturerRegistryKeyCreatedByThisRunRemoved": true,
-    "appDataCreatedByThisRunRemoved": true,
-    "appDataPresentAtExit": false,
+    "appDataRestoredFromBackup": true,
+    "appDataPresentAtExit": true,
     "installDirectoryPresentAtExit": false,
     "uninstallEntriesAtExit": 0,
     "manufacturerRegistryKeyPresentAtExit": false,
-    "webviewProfilePresentAtExit": false,
+    "webviewProfilePresentAtExit": true,
     "matchesPreflight": true
   }
 }
