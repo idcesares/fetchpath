@@ -23,4 +23,6 @@ jobs:
       # Also builds target/debug/fetchpath-browser-host.exe for the Node tests.
       - run: cargo test --workspace --locked --no-fail-fast
       - run: node --test
+      # The notices cover every platform's crates; the build fetched only Windows'.
+      - run: cargo fetch --locked
       - run: node tools/licenses/generate.mjs --check

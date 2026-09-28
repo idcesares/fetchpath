@@ -163,6 +163,15 @@ async function main() {
     '',
   ].join('\n');
 
+  if (unresolved.length) {
+    throw new Error(
+      'No license could be established for:\n' +
+        unresolved.map((pkg) => `  ${pkg.name} ${pkg.version}`).join('\n') +
+        '\nRun `cargo fetch --locked` so every platform\'s crates are in the registry,' +
+        '\nor add each one to tools/licenses/curated.json with the evidence that was checked.',
+    );
+  }
+
   if (checkOnly) {
     const existing = await readFile(outputPath, 'utf8').catch(() => '');
     if (existing !== generated) {
@@ -176,13 +185,6 @@ async function main() {
     process.stdout.write(`Wrote ${path.relative(root, outputPath)} with ${rows.length} packages.\n`);
   }
 
-  if (unresolved.length) {
-    throw new Error(
-      'No license could be established for:\n' +
-        unresolved.map((pkg) => `  ${pkg.name} ${pkg.version}`).join('\n') +
-        '\nAdd each one to tools/licenses/curated.json with the evidence that was checked.',
-    );
-  }
   if (checkOnly) process.stdout.write('THIRD-PARTY-NOTICES.md is up to date.\n');
 }
 
