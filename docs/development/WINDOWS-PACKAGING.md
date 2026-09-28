@@ -333,17 +333,19 @@ spaces needs this reworked before signing is enabled.
   **not** grant instant SmartScreen reputation: warnings persist until enough
   installs accumulate, though reputation then attaches to the publisher rather
   than to each binary.
-- **EV (extended validation) code signing certificate.** Hardware-backed key,
-  and historically the fastest route to SmartScreen reputation - often
-  immediately. Higher cost, and the key must live in an HSM or token, which
-  complicates automated builds.
-- **Azure Trusted Signing.** A Microsoft-operated signing service with
-  short-lived certificates and no key material to hold. Cheaper than EV and
-  CI-friendly. Its reputation behavior is closer to OV than to EV, and it
-  requires an eligible Azure subscription and identity validation.
+- **EV (extended validation) code signing certificate.** Hardware-backed key
+  and usually higher cost. Microsoft says EV no longer grants automatic
+  SmartScreen reputation, so it is not a shortcut around first-download
+  warnings.
+- **Artifact Signing (formerly Trusted Signing).** A Microsoft-operated
+  signing service with short-lived certificates and no key material to hold.
+  It is CI-friendly but needs an eligible Azure subscription and identity
+  validation; Public Trust eligibility depends on publisher location and type.
 
 Whichever is chosen, `sign-windows.ps1` is where it plugs in, and the bundle
-build then produces a signed installer with no other configuration change.
+build then needs a verified signing integration for that provider. The current
+hook supports a certificate in a Windows store; a service-backed signer needs
+its own integration and validation.
 Until then the honest position is: this is an unsigned build, SmartScreen will
 warn, and that warning is correct.
 

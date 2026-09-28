@@ -2372,6 +2372,67 @@
         "docs/development/RULES.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-076",
+      "title": "Make release terms and post-release state clear",
+      "milestone": "M13",
+      "dependsOn": [
+        "FP-069"
+      ],
+      "status": "done",
+      "owner": "codex (lead)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "README.md",
+        "docs/user/GUIDE.md",
+        "PROJECT.md",
+        "docs/development/RELEASE-CANDIDATE.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A12"
+      ],
+      "acceptance": "Before installation, the README and guide plainly say Fetchpath is free, open source and provided as is, with no warranty or promised support; they direct readers to the unchanged MIT or Apache-2.0 licenses and make user responsibility for sources and content clear. Project and release records describe the published 0.1.0 state, and signing guidance does not claim EV bypasses SmartScreen.",
+      "verification": "Review the install path and license links; node tools/tasks.mjs check and node --test pass.",
+      "evidence": [
+        "README.md",
+        "docs/user/GUIDE.md",
+        "PROJECT.md",
+        "docs/development/RELEASE-CANDIDATE.md",
+        "docs/development/WINDOWS-PACKAGING.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-077",
+      "title": "Exercise Windows power-loss recovery and publication boundaries",
+      "milestone": "M13",
+      "dependsOn": [
+        "FP-069"
+      ],
+      "status": "blocked",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "tests/compatibility/windows",
+        "docs/development/RELEASE-CANDIDATE.md",
+        "docs/development/evidence/windows",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A05"
+      ],
+      "acceptance": "An abrupt Windows VM stop during a checkpointed download and near publication is followed by restart and inspection: no unverified or partially written destination is reported complete, an existing destination remains intact, and recovery stays within the documented recoverable profile. Record the actual filesystem and VM conditions; do not promote this to a durable-mode promise from one run.",
+      "verification": "Run the Windows power-interruption harness against a real build and record checksums, queue state and publication outcomes. Obtain an independent strong-model review of the persistence boundary and harness before marking done.",
+      "evidence": [],
+      "blockedReason": "The current Windows environment has no `wsb` or persistent VM control (Hyper-V, VirtualBox or VMware commands were unavailable, including outside the sandbox) on 28 September 2026. Existing process-kill and fault-injection tests pass but cannot demonstrate OS or power-loss behavior. Next action: provide a persistent Windows 11 x64 VM on NTFS with abrupt power-off control, run cuts during checkpoint and around the publication fence, inspect queue and destination bytes after boot, then obtain an independent strong review. Keep the recoverable-only promise until that evidence exists."
     }
   ]
 }

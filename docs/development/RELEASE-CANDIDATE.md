@@ -2,11 +2,11 @@
 
 FP-069, on the engine platform. Recorded 28 September 2026 on Windows 11 Pro
 10.0.26200, x64. It replaces the FP-018 record for the pre-engine build at
-`ce6615a` (22–24 September), which nothing will publish; that history is in Git.
+`ce6615a` (22–24 September), which was not published; that history is in Git.
 
 ## Verdict
 
-**Ready to publish, on the user's word.** First passed on `1b6ef32`, then
+**Passed and published.** The gate first passed on `1b6ef32`, then was
 re-run in full on 28 September 2026 on `dc01da2`, after the cache, paired
 computers and discovery (FP-032 to FP-034), Hugging Face repositories (FP-022)
 and the HTTP throughput fix. Every row below passed on that tree: the Rust
@@ -112,10 +112,10 @@ Each is stated in the README, the user guide or the changelog.
 9. **Paired computers find each other only on one local subnet** (FP-033
    and FP-034, after this gate).
 
-## Path to publication
+## Publication
 
-When the user says so: create the GitHub repository and push `main`; build
-with `corepack pnpm --dir apps/desktop release`; tag `v0.1.0` and create the
-release from the changelog's 0.1.0 section with the installer and
-`SHA256SUMS.txt`. Code signing and store listings for the extension are the
-next steps worth taking, not blockers.
+Version 0.1.0 was published on 28 September 2026 as the GitHub release
+`v0.1.0`, with `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt`. Its
+installer remains unsigned by decision. Later releases require the user's
+publication decision. A store listing for the browser extension remains a
+possible later step.

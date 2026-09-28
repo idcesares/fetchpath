@@ -55,6 +55,12 @@ Windows 11 on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
 
 ## Installing
 
+Fetchpath is free, open source software provided **as is**, without a warranty
+or a promise of support. You choose what to download and are responsible for
+using it lawfully and checking whether its sources and files are safe. Its
+[MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) licence, at your option,
+sets the terms for using Fetchpath.
+
 Download `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt` from the
 [release page](https://github.com/idcesares/fetchpath/releases/latest), check one against the other, and run the installer. It installs just for
 you and doesn't need administrator rights. Then open Fetchpath from the Start
