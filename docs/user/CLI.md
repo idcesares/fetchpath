@@ -83,6 +83,26 @@ against its checksum again instead of being downloaded; `ls` shows it as
 256 GiB, 2 GiB to start). The oldest copies go first when it is full.
 Agents' downloads never use the cache.
 
+## Models and datasets from Hugging Face
+
+```powershell
+fetchpath add hf://openai-community/gpt2 --to D:\Models
+fetchpath add hf://datasets/owner/name@v1.0/train --to D:\Data
+fetchpath add https://huggingface.co/owner/name/tree/main/onnx --to D:\Models
+```
+
+A Hugging Face link, as `hf://OWNER/NAME[@REVISION][/PATH]` or a
+`huggingface.co` address, is looked up first: Fetchpath asks Hugging Face
+which commit the branch or tag points at now and pins every file to that
+commit, so the download cannot mix two versions if the repository changes
+meanwhile. The files keep the repository's layout, in a folder named after
+it inside `--to`. Every large file is saved only if it matches the SHA-256
+Hugging Face states for it, and the same file downloaded again comes from
+[the cache](#the-cache). A path after the name takes one file or folder.
+Public repositories only: a gated or private one is refused, because
+Fetchpath has no Hugging Face sign-in yet. The same links work in the
+terminal's `/add` and in the desktop's Add download.
+
 ## For scripts
 
 `--json` prints one JSON object on standard output and no progress:

@@ -828,6 +828,23 @@
           "type": "object"
         },
         {
+          "description": "Resolves a model or dataset repository link to one commit and its\nfiles (FP-022). Reads the provider's public listing; queues nothing.",
+          "properties": {
+            "type": {
+              "const": "InspectRepository",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/$defs/SensitiveUrl"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "type": {
               "const": "LanStatus",
@@ -1305,6 +1322,23 @@
           "required": [
             "type",
             "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A repository resolved to one commit and its files.",
+          "properties": {
+            "repository": {
+              "$ref": "#/$defs/RepositoryView"
+            },
+            "type": {
+              "const": "Repository",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "repository"
           ],
           "type": "object"
         },
@@ -3123,6 +3157,90 @@
           "type": "object"
         }
       ]
+    },
+    "RepositoryFile": {
+      "properties": {
+        "path": {
+          "description": "`/`-separated, inside the repository.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Stated by the provider for large files. The download is published\nonly if it matches.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "url"
+      ],
+      "type": "object"
+    },
+    "RepositoryView": {
+      "description": "A model or dataset repository resolved to one commit (FP-022). Each file\nbecomes an ordinary download pinned to that commit; see\n[`RepositoryView::requests`].",
+      "properties": {
+        "commit": {
+          "description": "The commit every file is pinned to.",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/RepositoryFile"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "description": "`model`, `dataset` or `space`.",
+          "type": "string"
+        },
+        "provider": {
+          "description": "`huggingface`.",
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "revision": {
+          "description": "The branch, tag or commit the link named.",
+          "type": "string"
+        },
+        "skipped": {
+          "description": "Paths that cannot be saved safely on Windows, left out.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "total_bytes": {
+          "description": "The sum of the sizes the provider states.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "kind",
+        "repo",
+        "revision",
+        "commit",
+        "files",
+        "total_bytes"
+      ],
+      "type": "object"
     },
     "Rule": {
       "description": "A smart rule (FP-064). A link matches when it meets every condition the\nrule sets; rules are tried in order and the first match decides.",

@@ -54,6 +54,18 @@ interface JobSnapshot {
   reusedFromCache?: boolean;
 }
 
+/** A model or dataset repository resolved to one commit (FP-022). */
+interface RepositoryView {
+  provider: string;
+  kind: string;
+  repo: string;
+  revision: string;
+  commit: string;
+  files: { path: string; size?: number; sha256?: string; url: string }[];
+  skipped?: string[];
+  total_bytes: number;
+}
+
 /** Paired computers and sharing, as the engine reports them. */
 interface PairedDevice {
   key: string;
@@ -1502,12 +1514,58 @@ kindChooser.addEventListener("change", () => {
   if (!settingKindAutomatically) kindChosenByPerson = true;
 });
 
+const repositoryNote = required<HTMLParagraphElement>("repository-note");
+let repository: RepositoryView | null = null;
+let repositoryUrl = "";
+
+function isRepositoryLink(value: string): boolean {
+  return /^(hf:\/\/|https:\/\/(www\.)?huggingface\.co\/)/i.test(value.trim());
+}
+
+function showRepository(view: RepositoryView | null, problem?: string): void {
+  repository = view;
+  if (!view) {
+    repositoryNote.hidden = !problem;
+    repositoryNote.textContent = problem ?? "";
+    return;
+  }
+  const checked = view.files.filter((file) => file.sha256).length;
+  const name = view.repo.split("/").pop() ?? view.repo;
+  repositoryNote.textContent =
+    `Hugging Face ${view.kind} ${view.repo} at commit ${view.commit.slice(0, 12)}: ` +
+    `${view.files.length} ${view.files.length === 1 ? "file" : "files"}, ${formatBytes(view.total_bytes)}, ` +
+    `${checked} checked against the SHA-256 Hugging Face states. They go in a folder named ${name} inside the folder below.` +
+    (view.skipped?.length ? ` ${view.skipped.length} left out because Windows can't save their names.` : "");
+  repositoryNote.hidden = false;
+  if (destinationIsSuggested) destinationInput.value = ruleFolder ?? defaultDestinationDir ?? "";
+}
+
+async function analyzeRepository(url: string): Promise<void> {
+  setKind("file");
+  repositoryUrl = url;
+  showRepository(null, "Looking up this repository…");
+  try {
+    const view = await invoke<RepositoryView>("inspect_repository", { url });
+    if (repositoryUrl === url) showRepository(view);
+  } catch (error) {
+    if (repositoryUrl === url) showRepository(null, String(error));
+  }
+}
+
 async function analyzeLink(): Promise<void> {
   const urls = parseUrls();
   if (editingJobId || urls.length !== 1) return;
   const url = urls[0];
   if (url === analyzedUrl) return;
   analyzedUrl = url;
+  if (isRepositoryLink(url)) {
+    await analyzeRepository(url);
+    return;
+  }
+  if (repository || repositoryUrl) {
+    repositoryUrl = "";
+    showRepository(null);
+  }
   const ready = toolsStatus?.ready ?? false;
   if (kindChosenByPerson) {
     if (downloadKind() === "media" && ready) {
@@ -1661,6 +1719,11 @@ function suggestDestination(): void {
     return;
   }
   if (!parsed.protocol) return;
+  // A repository goes in a folder named after it inside this one.
+  if (isRepositoryLink(first)) {
+    destinationInput.value = ruleFolder ?? defaultDestinationDir ?? "";
+    return;
+  }
   destinationInput.value = joinPath(ruleFolder ?? defaultDestinationDir, suggestedFilename(first));
 }
 
@@ -1695,6 +1758,11 @@ form.addEventListener("submit", async (event) => {
       });
       editingJobId = null;
       editingChecksum = false;
+    } else if (repository && drafts.length === 1 && repositoryUrl === drafts[0].url) {
+      const folder = destinationInput.value.trim();
+      if (!folder) throw new Error("Choose the folder the repository goes in.");
+      const added = await invoke<JobSnapshot[]>("add_repository", { url: drafts[0].url, folder });
+      drafts.length = added.length;
     } else if (downloadKind() === "media") {
       const variant = selectedMediaVariant();
       if (!variant || inspectedMediaUrl !== drafts[0].url) {
@@ -2813,6 +2881,8 @@ function clearComposer(): void {
   ruleFolder = null;
   ruleNote.hidden = true;
   ruleNote.textContent = "";
+  repositoryUrl = "";
+  showRepository(null);
   window.clearTimeout(analysisTimer);
   mediaInspection = null;
   inspectedMediaUrl = "";

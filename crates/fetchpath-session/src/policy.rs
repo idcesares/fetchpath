@@ -94,6 +94,7 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
             | Command::JobDetails { .. }
             | Command::InspectMedia { .. }
             | Command::InspectLink { .. }
+            | Command::InspectRepository { .. }
             | Command::History { .. }
             | Command::SubscribeJob { .. }
             | Command::GetAgentPolicies

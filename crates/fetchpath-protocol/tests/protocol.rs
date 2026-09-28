@@ -14,8 +14,9 @@ use fetchpath_protocol::message::{
 use fetchpath_protocol::model::{
     CacheView, Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
     LanView, LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind,
-    PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats, Rule, RuleActions,
-    RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
+    PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats, RepositoryFile,
+    RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment,
+    SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -287,6 +288,9 @@ fn every_command() -> Vec<Command> {
         Command::RemoveRule { rule_id: 3 },
         Command::CacheStatus,
         Command::ClearCache,
+        Command::InspectRepository {
+            url: SensitiveUrl::try_from("hf://owner/name@main/onnx".to_owned()).unwrap(),
+        },
         Command::LanStatus,
         Command::SetLanSharing { enabled: true },
         Command::StartPairing,
@@ -342,6 +346,7 @@ fn every_command() -> Vec<Command> {
             | Command::RemoveRule { .. }
             | Command::CacheStatus
             | Command::ClearCache
+            | Command::InspectRepository { .. }
             | Command::LanStatus
             | Command::SetLanSharing { .. }
             | Command::StartPairing
@@ -355,6 +360,41 @@ fn every_command() -> Vec<Command> {
         }
     }
     commands
+}
+
+fn repository() -> RepositoryView {
+    RepositoryView {
+        provider: "huggingface".into(),
+        kind: "model".into(),
+        repo: "owner/tiny".into(),
+        revision: "main".into(),
+        commit: "ab".repeat(20),
+        files: vec![RepositoryFile {
+            path: "onnx/model.onnx".into(),
+            size: Some(1024),
+            sha256: Some("cd".repeat(32)),
+            url: "https://huggingface.co/owner/tiny/resolve/abab/onnx/model.onnx".into(),
+        }],
+        skipped: vec!["con.txt".into()],
+        total_bytes: 1024,
+    }
+}
+
+#[test]
+fn a_repository_becomes_one_checked_download_per_file_inside_its_own_folder() {
+    let requests = repository().requests("D:\\Models\\");
+    let [
+        JobRequest::File {
+            destination,
+            expected_sha256,
+            ..
+        },
+    ] = requests.as_slice()
+    else {
+        panic!("{requests:?}");
+    };
+    assert_eq!(destination.path, "D:\\Models\\tiny\\onnx\\model.onnx");
+    assert_eq!(expected_sha256.as_deref(), Some("cd".repeat(32).as_str()));
 }
 
 fn device() -> PairedDevice {
@@ -527,6 +567,9 @@ fn every_result() -> Vec<CommandResult> {
             },
         },
         CommandResult::Joined { device: device() },
+        CommandResult::Repository {
+            repository: repository(),
+        },
         CommandResult::ShuttingDown,
         CommandResult::CapturesTaken,
     ];
@@ -550,6 +593,7 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Cache { .. }
             | CommandResult::Lan { .. }
             | CommandResult::Joined { .. }
+            | CommandResult::Repository { .. }
             | CommandResult::ShuttingDown
             | CommandResult::CapturesTaken => {}
         }
@@ -1056,6 +1100,7 @@ fn only_queries_skip_the_command_ledger() {
         "GetAgentPolicies",
         "ListRules",
         "CacheStatus",
+        "InspectRepository",
         "LanStatus",
         "SetLanSharing",
         "StartPairing",

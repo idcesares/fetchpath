@@ -670,6 +670,38 @@ impl Session {
         *self.cache_root.lock().expect("cache poisoned") = Some(root);
     }
 
+    /// Resolves a model or dataset repository link to one commit and its
+    /// files (FP-022). Nothing is queued.
+    pub fn inspect_repository(
+        &self,
+        link: &str,
+    ) -> Result<fetchpath_protocol::model::RepositoryView, String> {
+        let reference = fetchpath_providers::parse(link).ok_or_else(|| {
+            "That is not a Hugging Face repository link, such as hf://owner/name or https://huggingface.co/owner/name.".to_string()
+        })?;
+        let listing =
+            fetchpath_providers::resolve(&reference).map_err(|error| error.to_string())?;
+        Ok(fetchpath_protocol::model::RepositoryView {
+            provider: "huggingface".into(),
+            kind: listing.kind.name().into(),
+            total_bytes: listing.files.iter().filter_map(|file| file.size).sum(),
+            files: listing
+                .files
+                .into_iter()
+                .map(|file| fetchpath_protocol::model::RepositoryFile {
+                    path: file.path,
+                    size: file.size,
+                    sha256: file.sha256,
+                    url: file.url,
+                })
+                .collect(),
+            repo: listing.repo,
+            revision: listing.revision,
+            commit: listing.commit,
+            skipped: listing.skipped,
+        })
+    }
+
     /// Keeps paired devices and the sharing switch in `dir`, sharing from
     /// the cache at `cache_root`, and resumes sharing if it was left on.
     pub fn use_lan(&self, dir: PathBuf, cache_root: PathBuf) {
@@ -1900,6 +1932,14 @@ impl Session {
                     .and_then(|rule| rule.spec.then.max_connections)
                 {
                     let _ = file.limit_connections(connections as usize);
+                }
+                // A download into a folder that does not exist yet, such as
+                // a repository's subfolder, gets it as it starts: after any
+                // approval, never while it waits for one.
+                if let Some(parent) = record.destination.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = fs::create_dir_all(parent);
                 }
                 if !matches!(record.principal, Principal::Agent(_))
                     && let Some(root) = self.cache_root.lock().expect("cache poisoned").clone()
@@ -4046,6 +4086,32 @@ mod tests {
         assert_eq!(completed.state, "completed");
         assert_eq!(fs::read(&destination).unwrap(), body);
         assert!(completed.observed_sha256.is_some());
+    }
+
+    #[test]
+    fn a_download_into_a_folder_not_yet_made_gets_it_as_it_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir
+            .path()
+            .join("tiny-model")
+            .join("onnx")
+            .join("model.onnx");
+        let body = vec![0x5a; 64 * 1024];
+        let (url, server) = fixture(body.clone(), false);
+        let jobs = Session::in_memory(3);
+        let started = jobs
+            .enqueue(vec![JobDraft {
+                checksum: None,
+                url,
+                destination: destination.display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap()
+            .remove(0);
+        let completed = wait_for_terminal(&jobs, &started.job_id);
+        server.join().unwrap();
+        assert_eq!(completed.state, "completed", "{:?}", completed.error);
+        assert_eq!(fs::read(&destination).unwrap(), body);
     }
 
     #[test]

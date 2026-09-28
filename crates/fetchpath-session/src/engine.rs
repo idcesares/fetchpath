@@ -1065,6 +1065,11 @@ impl Engine {
                 .cache_status()
                 .map(|cache| CommandResult::Cache { cache })
                 .map_err(input),
+            Command::InspectRepository { url } => self
+                .session
+                .inspect_repository(url.expose())
+                .map(|repository| CommandResult::Repository { repository })
+                .map_err(input),
             Command::LanStatus => self.lan(|lan| lan.status()),
             Command::SetLanSharing { enabled } => self.lan(|lan| lan.set_sharing(*enabled)),
             Command::StartPairing => self.lan(|lan| lan.start_pairing()),

@@ -220,6 +220,20 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
     let mut created = Vec::new();
     for (link, own_destination) in links {
         let target = own_destination.as_deref().or(parsed.to.as_deref());
+        if is_repository_link(link) {
+            match add_repository(&engine, parsed, link, target, not_before) {
+                Ok(jobs) => created.extend(jobs),
+                Err(error) => {
+                    if parsed.json {
+                        client::print_json(&serde_json::json!({ "error": error }));
+                    } else {
+                        eprintln!("fetchpath: {link}: {}", error.message);
+                    }
+                    worst = first_failure(worst, client::exit_code(&error));
+                }
+            }
+            continue;
+        }
         match add_one(&engine, parsed, link, target, look, not_before) {
             Ok(job) => {
                 if parsed.json {
@@ -264,6 +278,118 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
         }
     }
     worst
+}
+
+/// A Hugging Face link: the engine resolves it to one commit and its files.
+pub(crate) fn is_repository_link(link: &str) -> bool {
+    let link = link.trim();
+    link.starts_with("hf://")
+        || link.starts_with("https://huggingface.co/")
+        || link.starts_with("https://www.huggingface.co/")
+}
+
+pub(crate) fn inspect_repository(
+    engine: &Engine,
+    link: &str,
+) -> Result<fetchpath_protocol::model::RepositoryView, ProtocolError> {
+    let url = SensitiveUrl::try_from(link.trim().to_owned())
+        .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
+    match engine.send(Command::InspectRepository { url })? {
+        CommandResult::Repository { repository } => Ok(repository),
+        other => Err(client::unexpected(&other)),
+    }
+}
+
+/// Queues every file of a repository, pinned to one commit, in a folder
+/// named after it, each large file checked against its stated SHA-256. One
+/// job per file: each has its own checksum and subfolder, which a batch,
+/// meant for links pasted together, does not allow.
+pub(crate) fn queue_repository(
+    engine: &Engine,
+    link: &str,
+    target: Option<&str>,
+    not_before: Option<Timestamp>,
+) -> Result<
+    (
+        fetchpath_protocol::model::RepositoryView,
+        String,
+        Vec<JobSnapshot>,
+    ),
+    ProtocolError,
+> {
+    let repository = inspect_repository(engine, link)?;
+    let folder = match target {
+        Some(folder) => PathBuf::from(folder),
+        None => default_folder(engine)?
+            .ok_or_else(|| client::input_error("choose a folder with --to"))?,
+    };
+    let folder = folder.display().to_string();
+    let mut jobs = Vec::new();
+    for mut request in repository.requests(&folder) {
+        if let JobRequest::File { not_before: at, .. } = &mut request {
+            *at = not_before;
+        }
+        match engine.send(Command::CreateJob { request })? {
+            CommandResult::Job { job } => jobs.push(job),
+            other => return Err(client::unexpected(&other)),
+        }
+    }
+    Ok((repository, folder, jobs))
+}
+
+/// What `add` says about a queued repository, then each path left out.
+pub(crate) fn repository_lines(
+    repository: &fetchpath_protocol::model::RepositoryView,
+    folder: &str,
+    jobs: &[JobSnapshot],
+) -> Vec<String> {
+    let checked = repository
+        .files
+        .iter()
+        .filter(|file| file.sha256.is_some())
+        .count();
+    let mut lines = vec![format!(
+        "Added {} files of {} at commit {} ({}, {} checked against their SHA-256) into {}",
+        jobs.len(),
+        repository.repo,
+        &repository.commit[..12.min(repository.commit.len())],
+        fetchpath_protocol::describe::bytes(repository.total_bytes),
+        checked,
+        repository.folder_in(folder)
+    )];
+    for path in &repository.skipped {
+        lines.push(format!(
+            "Left out {path}: its name cannot be saved on Windows."
+        ));
+    }
+    lines
+}
+
+fn add_repository(
+    engine: &Engine,
+    parsed: &Args,
+    link: &str,
+    target: Option<&str>,
+    not_before: Option<Timestamp>,
+) -> Result<Vec<JobSnapshot>, ProtocolError> {
+    if parsed.sha256.is_some() {
+        return Err(client::input_error(
+            "a repository states each file's checksum itself; leave out --sha256",
+        ));
+    }
+    let (repository, folder, jobs) = queue_repository(engine, link, target, not_before)?;
+    if parsed.json {
+        client::print_json(&CommandResult::Jobs { jobs: jobs.clone() });
+    } else if parsed.quiet {
+        for job in &jobs {
+            println!("{}", job.job_id);
+        }
+    } else {
+        for line in repository_lines(&repository, &folder, &jobs) {
+            println!("{line}");
+        }
+    }
+    Ok(jobs)
 }
 
 fn first_failure(current: i32, next: i32) -> i32 {

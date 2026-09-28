@@ -449,7 +449,7 @@ fn execute(
     };
     let parsed = queue::parse(args, flags).map_err(|message| usage_error(spec, &message))?;
     match spec.name {
-        "add" => add(spec, &parsed, reply),
+        "add" => add(engine, spec, &parsed, reply),
         "queue" => {
             let all = engine.jobs(JobFilter::All)?;
             let shown: Vec<&JobSnapshot> = all
@@ -676,7 +676,12 @@ fn resolve(jobs: &[JobSnapshot], references: &[String]) -> Result<Vec<JobSnapsho
 }
 
 /// Turns links into drafts to look at and confirm; nothing starts here.
-fn add(spec: &Spec, parsed: &queue::Args, reply: &mut Reply) -> Result<(), ProtocolError> {
+fn add(
+    engine: &Engine,
+    spec: &Spec,
+    parsed: &queue::Args,
+    reply: &mut Reply,
+) -> Result<(), ProtocolError> {
     if parsed.words.is_empty() {
         return Err(usage_error(spec, "Give a link"));
     }
@@ -692,6 +697,19 @@ fn add(spec: &Spec, parsed: &queue::Args, reply: &mut Reply) -> Result<(), Proto
         .transpose()
         .map_err(|message| client::input_error(&message))?;
     for link in &parsed.words {
+        // A repository is queued file by file at once, pinned to one commit;
+        // there is nothing to choose on a card.
+        if queue::is_repository_link(link) {
+            match queue::queue_repository(engine, link, parsed.to.as_deref(), at) {
+                Ok((repository, folder, jobs)) => {
+                    for line in queue::repository_lines(&repository, &folder, &jobs) {
+                        reply.say(Tone::Normal, line);
+                    }
+                }
+                Err(error) => reply.say(Tone::Bad, format!("{link}: {}", error.message)),
+            }
+            continue;
+        }
         match SensitiveUrl::try_from(link.clone()) {
             Ok(url) => reply.drafts.push(Draft {
                 link: link.clone(),

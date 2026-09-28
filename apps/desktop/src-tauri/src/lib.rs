@@ -131,6 +131,58 @@ async fn start_batch(
     .await
 }
 
+/// A model or dataset repository resolved to one commit (FP-022).
+#[tauri::command]
+async fn inspect_repository(
+    url: String,
+    engine: Engine<'_>,
+) -> Result<model::RepositoryView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let url = view::link(&url)?;
+        match engine
+            .send(Command::InspectRepository { url })
+            .map_err(text)?
+        {
+            CommandResult::Repository { repository } => Ok(repository),
+            other => Err(unexpected(&other)),
+        }
+    })
+    .await
+}
+
+/// Queues every file of a repository, pinned to one commit, in a folder
+/// named after it inside `folder`. Resolved again here, so what is queued is
+/// what the provider states now, not what the window last showed.
+#[tauri::command]
+async fn add_repository(
+    url: String,
+    folder: String,
+    engine: Engine<'_>,
+) -> Result<Vec<view::JobView>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let url = view::link(&url)?;
+        let repository = match engine
+            .send(Command::InspectRepository { url })
+            .map_err(text)?
+        {
+            CommandResult::Repository { repository } => repository,
+            other => return Err(unexpected(&other)),
+        };
+        let mut jobs = Vec::new();
+        // One job per file: each has its own checksum and subfolder.
+        for request in repository.requests(&folder) {
+            match engine.send(Command::CreateJob { request }).map_err(text)? {
+                CommandResult::Job { job } => jobs.push(job),
+                other => return Err(unexpected(&other)),
+            }
+        }
+        Ok(view::jobs(&jobs))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn inspect_media(url: String, engine: Engine<'_>) -> Result<view::Inspection, String> {
     let engine = Arc::clone(&engine);
@@ -953,6 +1005,8 @@ pub fn run() {
             inspect_rules,
             cache_status,
             clear_cache,
+            inspect_repository,
+            add_repository,
             lan_status,
             set_lan_sharing,
             start_pairing,

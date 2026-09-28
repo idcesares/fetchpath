@@ -484,6 +484,70 @@ pub struct EngineSettings {
     pub cache_quota_bytes: Option<u64>,
 }
 
+/// A model or dataset repository resolved to one commit (FP-022). Each file
+/// becomes an ordinary download pinned to that commit; see
+/// [`RepositoryView::requests`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RepositoryView {
+    /// `huggingface`.
+    pub provider: String,
+    /// `model`, `dataset` or `space`.
+    pub kind: String,
+    pub repo: String,
+    /// The branch, tag or commit the link named.
+    pub revision: String,
+    /// The commit every file is pinned to.
+    pub commit: String,
+    pub files: Vec<RepositoryFile>,
+    /// Paths that cannot be saved safely on Windows, left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
+    /// The sum of the sizes the provider states.
+    pub total_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RepositoryFile {
+    /// `/`-separated, inside the repository.
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Stated by the provider for large files. The download is published
+    /// only if it matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    pub url: String,
+}
+
+impl RepositoryView {
+    /// The folder the files go in: the repository's name inside `folder`.
+    pub fn folder_in(&self, folder: &str) -> String {
+        let name = self.repo.rsplit('/').next().unwrap_or(&self.repo);
+        format!("{}\\{name}", folder.trim_end_matches(['\\', '/']))
+    }
+
+    /// One file download per file, into [`Self::folder_in`] with the
+    /// repository's own layout, each checked against its stated SHA-256.
+    pub fn requests(&self, folder: &str) -> Vec<crate::command::JobRequest> {
+        let root = self.folder_in(folder);
+        self.files
+            .iter()
+            .filter_map(|file| {
+                let url = SensitiveUrl::try_from(file.url.clone()).ok()?;
+                Some(crate::command::JobRequest::File {
+                    input: crate::command::JobInput::Url { url },
+                    destination: crate::command::DestinationIntent {
+                        path: format!("{root}\\{}", file.path.replace('/', "\\")),
+                        conflict: crate::command::ConflictPolicy::Ask,
+                    },
+                    not_before: None,
+                    expected_sha256: file.sha256.clone(),
+                })
+            })
+            .collect()
+    }
+}
+
 /// Paired devices and LAN sharing (FP-033).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanView {

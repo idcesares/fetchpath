@@ -58,6 +58,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "RemoveRule",
     "CacheStatus",
     "ClearCache",
+    "InspectRepository",
     "LanStatus",
     "SetLanSharing",
     "StartPairing",

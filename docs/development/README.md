@@ -27,8 +27,9 @@ one your task names.
 - [Adaptive HTTP](ADAPTIVE-HTTP.md) — FP-015.
 - [FTP, FTPS and SFTP compatibility](PROTOCOL-COMPATIBILITY.md) — FP-016.
 - [Metalink repair](METALINK-REPAIR.md) — FP-019.
-- [Content cache and paired LAN](CACHE-AND-LAN.md) — FP-020.
+- [Content cache and paired computers](CACHE-AND-LAN.md) — FP-020, FP-032, FP-033.
 - [Desktop checksum](DESKTOP-CHECKSUM.md) — FP-031.
+- [Model and dataset providers](PROVIDERS.md) — FP-022.
 
 ## Release
 

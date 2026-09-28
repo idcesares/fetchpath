@@ -174,6 +174,16 @@ checked again, without using the network, and the row says **Reused from this
 computer's cache**. **Settings → Cache** shows how much it holds, sets its
 size and clears it.
 
+## Models and datasets from Hugging Face
+
+Paste a Hugging Face link, such as `https://huggingface.co/owner/name`, into
+**Add download**. Fetchpath looks the repository up and says which commit it
+will download, how many files and how large, and how many it checks against
+the checksum Hugging Face states. Choose the folder: the files go in a folder
+named after the repository, with the repository's own layout. Every file
+comes from the same commit, even if the repository changes while you
+download. Only public repositories work for now.
+
 ## Video and audio
 
 Fetchpath can save video and audio from pages that the free tool `yt-dlp`

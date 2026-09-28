@@ -635,7 +635,7 @@
         "FP-019",
         "FP-049"
       ],
-      "status": "todo",
+      "status": "blocked",
       "owner": null,
       "modelTier": "terra-medium",
       "files": [
@@ -650,7 +650,7 @@
       "acceptance": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests. Lands as a session job kind so every client (desktop, CLI, TUI, agents) gets it.",
       "verification": "Coordinate libtorrent piece policy and global quotas; explicit upload/discovery controls and malformed-input tests.",
       "evidence": [],
-      "blockedReason": null,
+      "blockedReason": "Needs the user's choice of torrent engine before any dependency lands (28 September 2026). Options: libtorrent-rasterbar through FFI, as the plan names (mature piece policy; a large C++/Boost build and a strong review of the FFI); a Rust engine such as librqbit, run as an isolated helper process (pure Rust, many new crates in the lockfile and licence manifest); or aria2c as a pinned, supervised helper like yt-dlp (smallest change, least control over piece policy and quotas). Recommendation: librqbit in a separate `fetchpath torrent-helper` process, seeding off by default and uploads bounded. Next action: the user picks one; then implement as a session job kind.",
       "priority": "P2"
     },
     {
@@ -661,11 +661,17 @@
         "FP-019",
         "FP-049"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude-opus (lead)",
       "modelTier": "terra-medium",
       "files": [
-        "adapters/providers"
+        "adapters/providers",
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "apps/cli",
+        "apps/desktop",
+        "tools/bench/provider-compare.py",
+        "docs/user"
       ],
       "acceptanceIds": [
         "A02",
@@ -674,7 +680,10 @@
       ],
       "acceptance": "Provider auth/version identity correct; compare to official client, including Xet where applicable. Lands as a session source adapter so every client gets it.",
       "verification": "Provider auth/version identity correct; compare to official client, including Xet where applicable.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/PROVIDERS.md",
+        "docs/development/evidence/providers/fp022-compare.json"
+      ],
       "blockedReason": null,
       "priority": "P2"
     },

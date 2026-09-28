@@ -1,0 +1,59 @@
+{
+  "huggingface_hub": "2.0.0",
+  "runs": 3,
+  "cases": [
+    {
+      "repo": "hf-internal-testing/tiny-random-gpt2",
+      "file": null,
+      "commit": "71034c5d8bde858ff824298bdedc65515b97d2b9",
+      "official_seconds": [
+        2.83,
+        2.46,
+        2.52
+      ],
+      "fetchpath_seconds": [
+        4.87,
+        5.22,
+        4.53
+      ],
+      "identical": true,
+      "files": 10,
+      "official_median": 2.52,
+      "fetchpath_median": 4.87
+    },
+    {
+      "repo": "google-bert/bert-base-uncased",
+      "file": "model.safetensors",
+      "commit": "86b5e0934494bd15c9632b12f734a8a67f723594",
+      "official_seconds": [
+        10.28,
+        16.71,
+        7.12
+      ],
+      "fetchpath_seconds": [
+        25.44,
+        24.42,
+        23.93
+      ],
+      "identical": true,
+      "files": 1,
+      "official_median": 10.28,
+      "fetchpath_median": 24.42
+    }
+  ],
+  "recordedOn": "2026-09-28",
+  "fetchpathBuild": "FP-022 working tree after the connection-reuse and running-digest fixes",
+  "before": {
+    "tiny-random-gpt2": [
+      10.34,
+      10.09,
+      10.08
+    ],
+    "bert-base-uncased/model.safetensors": [
+      268.85,
+      268.73,
+      270.22
+    ]
+  },
+  "note": "One home connection; each run from empty caches on both sides. Correctness and relative evidence, not a speed claim."
+}

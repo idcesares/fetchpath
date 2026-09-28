@@ -6,8 +6,8 @@ use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
     CacheView, EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LanView,
-    LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, Rule, SensitiveUrl,
-    SettingsView, WaitingReason,
+    LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, RepositoryView, Rule,
+    SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -129,6 +129,10 @@ pub enum CommandResult {
     /// Every smart rule, in the order they are tried.
     Rules {
         rules: Vec<Rule>,
+    },
+    /// A repository resolved to one commit and its files.
+    Repository {
+        repository: RepositoryView,
     },
     /// Paired devices and sharing.
     Lan {

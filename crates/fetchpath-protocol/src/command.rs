@@ -190,6 +190,12 @@ pub enum Command {
     /// Removes every cached file. Downloads already saved are not touched.
     ClearCache,
 
+    /// Resolves a model or dataset repository link to one commit and its
+    /// files (FP-022). Reads the provider's public listing; queues nothing.
+    InspectRepository {
+        url: SensitiveUrl,
+    },
+
     // Paired devices and LAN sharing (FP-033). The person only. None of
     // them reaches the command ledger: pairing codes must never be stored,
     // and none of them changes the queue.
@@ -265,6 +271,7 @@ impl Command {
             Self::RemoveRule { .. } => "RemoveRule",
             Self::CacheStatus => "CacheStatus",
             Self::ClearCache => "ClearCache",
+            Self::InspectRepository { .. } => "InspectRepository",
             Self::LanStatus => "LanStatus",
             Self::SetLanSharing { .. } => "SetLanSharing",
             Self::StartPairing => "StartPairing",
@@ -300,6 +307,7 @@ impl Command {
                 | Self::GetAgentPolicies
                 | Self::ListRules
                 | Self::CacheStatus
+                | Self::InspectRepository { .. }
                 | Self::LanStatus
                 | Self::SetLanSharing { .. }
                 | Self::StartPairing

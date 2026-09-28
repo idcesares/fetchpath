@@ -1460,6 +1460,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fetchpath-providers"
+version = "0.1.0"
+dependencies = [
+ "fetchpath-http",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "fetchpath-session"
 version = "0.1.0"
 dependencies = [
@@ -1468,6 +1477,7 @@ dependencies = [
  "fetchpath-lan",
  "fetchpath-media",
  "fetchpath-protocol",
+ "fetchpath-providers",
  "serde",
  "serde_json",
  "sha2 0.10.9",
