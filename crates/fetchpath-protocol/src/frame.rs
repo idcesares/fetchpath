@@ -56,6 +56,8 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "ListRules",
     "AddRule",
     "RemoveRule",
+    "CacheStatus",
+    "ClearCache",
     "SubscribeJob",
     "SubscribeQueue",
     "EngineStatus",

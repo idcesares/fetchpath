@@ -260,6 +260,10 @@ fn serve(grace: Duration) -> Result<i32, String> {
     let session =
         Session::load_with_browser(home.queue_path(), DEFAULT_MAX_ACTIVE, downloads_dir())
             .map_err(|error| format!("The download queue could not be opened: {error}"))?;
+    // A cache that cannot be placed only means nothing is cached.
+    if let Ok(root) = crate::lan::cache_root() {
+        session.use_cache(root);
+    }
     let engine = Engine::new(Arc::new(session));
     engine.tick();
 

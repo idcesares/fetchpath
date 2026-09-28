@@ -368,6 +368,9 @@ pub struct FileJobSnapshot {
     pub observed_sha256: Option<String>,
     pub staging_cleanup_pending: Option<PathBuf>,
     pub error: Option<String>,
+    /// Published from the local cache: a copy, not a transfer, so there is no
+    /// rate to report.
+    pub reused_from_cache: bool,
 }
 #[derive(Clone, Debug)]
 pub struct FileJobEvent {
@@ -386,6 +389,7 @@ struct JobInner {
     snapshot: FileJobSnapshot,
     events: Vec<FileJobEvent>,
     request: Option<DownloadRequest>,
+    cache: Option<(PathBuf, fetchpath_cache::CacheConfig)>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 #[derive(Clone)]
@@ -451,6 +455,7 @@ impl FileJob {
             observed_sha256: None,
             staging_cleanup_pending: None,
             error: None,
+            reused_from_cache: false,
         };
         Self {
             inner: Arc::new(Mutex::new(JobInner {
@@ -470,6 +475,7 @@ impl FileJob {
                     expected_sha256: None,
                     max_connections: None,
                 }),
+                cache: None,
                 worker: None,
             })),
             cancellation,
@@ -491,6 +497,22 @@ impl FileJob {
         Ok(self)
     }
 
+    /// Lets a checksum-verified download complete from the content cache at
+    /// `root` and remember what it fetches there. Only before it starts; a
+    /// job without a checksum never touches the cache.
+    pub fn use_cache(
+        &self,
+        root: PathBuf,
+        config: fetchpath_cache::CacheConfig,
+    ) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.request.is_none() {
+            return Err("contract.invalid_transition");
+        }
+        inner.cache = Some((root, config));
+        Ok(())
+    }
+
     /// Caps the connections this download opens. Only before it starts.
     pub fn limit_connections(&self, connections: usize) -> Result<(), &'static str> {
         let mut inner = self.inner.lock().unwrap();
@@ -508,11 +530,30 @@ impl FileJob {
             return Err("contract.invalid_transition");
         }
         let request = inner.request.take().unwrap();
+        let cache = inner
+            .cache
+            .take()
+            .filter(|_| request.expected_sha256.is_some());
         transition(&mut inner, FileJobState::Running);
         let shared = self.inner.clone();
         let token = self.cancellation.clone();
         inner.worker = Some(std::thread::spawn(move || {
-            let result = download(request);
+            let mut cache = cache
+                .and_then(|(root, config)| fetchpath_cache::ContentCache::open(&root, config).ok());
+            let reused = cache
+                .as_mut()
+                .and_then(|cache| verified::reuse_for_file(&request, cache));
+            let reused_from_cache = reused.is_some();
+            let result = match reused {
+                Some(done) => Ok(done),
+                None => download(request.clone()),
+            };
+            // Copied into the cache after the job reports completion, so a
+            // large file does not sit at 100% while it is copied.
+            let remember = match &result {
+                Ok(done) if !reused_from_cache => Some(done.destination.clone()),
+                _ => None,
+            };
             let mut state = shared.lock().unwrap();
             if !matches!(
                 state.snapshot.state,
@@ -524,6 +565,11 @@ impl FileJob {
             state.snapshot.total_bytes = token.total().or(state.snapshot.total_bytes);
             match result {
                 Ok(done) => {
+                    if reused_from_cache {
+                        state.snapshot.bytes_received = done.bytes;
+                        state.snapshot.total_bytes = Some(done.bytes);
+                        state.snapshot.reused_from_cache = true;
+                    }
                     state.snapshot.destination = Some(done.destination);
                     state.snapshot.observed_sha256 = Some(done.observed_sha256);
                     state.snapshot.staging_cleanup_pending = done.staging_cleanup_pending;
@@ -547,6 +593,10 @@ impl FileJob {
                     transition(&mut state, FileJobState::Failed);
                 }
             };
+            drop(state);
+            if let (Some(published), Some(cache)) = (remember, cache.as_mut()) {
+                verified::remember_file(&request, &published, cache);
+            }
         }));
         Ok(())
     }
@@ -810,6 +860,91 @@ Connection: close
             expected_sha256: None,
             max_connections: None,
         }
+    }
+
+    fn finished(job: &FileJob) -> FileJobSnapshot {
+        job.join();
+        job.snapshot()
+    }
+
+    #[test]
+    fn a_checksum_job_completes_from_the_cache_its_first_download_filled() {
+        use fetchpath_cache::{CacheConfig, ContentCache, ContentId, Provenance};
+        let dir = temp_dir("cache-reuse");
+        let root = dir.join("cache");
+        let config = CacheConfig::new(1 << 24, 1 << 24);
+        let body = b"cached fixture".repeat(4096);
+        let expected = format!("{:x}", Sha256::digest(&body));
+        let (url, server) = server(body.clone(), false);
+
+        let first = FileJob::create(url.clone(), dir.join("first.bin"))
+            .with_expected_sha256(&expected)
+            .unwrap();
+        first.use_cache(root.clone(), config).unwrap();
+        first.start().unwrap();
+        let done = finished(&first);
+        server.join().unwrap();
+        assert_eq!(done.state, FileJobState::Completed);
+        assert!(!done.reused_from_cache);
+        let id = ContentId::from_expected_sha256(&expected).unwrap();
+        let entry = ContentCache::open(&root, config)
+            .unwrap()
+            .lookup(&id)
+            .unwrap();
+        // A plain link with no cookies or referrer may be shared later.
+        assert_eq!(entry.provenance, Provenance::Public);
+
+        // The server is gone: only the cache can complete this one.
+        let second = FileJob::create(url, dir.join("second.bin"))
+            .with_expected_sha256(&expected)
+            .unwrap();
+        second.use_cache(root.clone(), config).unwrap();
+        second.start().unwrap();
+        let reused = finished(&second);
+        assert_eq!(reused.state, FileJobState::Completed, "{:?}", reused.error);
+        assert!(reused.reused_from_cache);
+        assert_eq!(reused.total_bytes, Some(body.len() as u64));
+        assert_eq!(fs::read(dir.join("second.bin")).unwrap(), body);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_signed_link_is_cached_as_private_and_a_job_without_a_checksum_is_not_cached() {
+        use fetchpath_cache::{CacheConfig, ContentCache, ContentId, Provenance};
+        let dir = temp_dir("cache-private");
+        let root = dir.join("cache");
+        let config = CacheConfig::new(1 << 24, 1 << 24);
+        let body = b"signed fixture".repeat(1024);
+        let expected = format!("{:x}", Sha256::digest(&body));
+
+        let (url, first) = server(body.clone(), false);
+        let unchecked = FileJob::create(format!("{url}/plain"), dir.join("plain.bin"));
+        unchecked.use_cache(root.clone(), config).unwrap();
+        unchecked.start().unwrap();
+        assert_eq!(finished(&unchecked).state, FileJobState::Completed);
+        first.join().unwrap();
+        assert!(
+            ContentCache::open(&root, config)
+                .unwrap()
+                .entries()
+                .is_empty()
+        );
+
+        let (url, second) = server(body, false);
+        let signed = FileJob::create(format!("{url}/file?sig=secret"), dir.join("signed.bin"))
+            .with_expected_sha256(&expected)
+            .unwrap();
+        signed.use_cache(root.clone(), config).unwrap();
+        signed.start().unwrap();
+        assert_eq!(finished(&signed).state, FileJobState::Completed);
+        second.join().unwrap();
+        let id = ContentId::from_expected_sha256(&expected).unwrap();
+        let entry = ContentCache::open(&root, config)
+            .unwrap()
+            .lookup(&id)
+            .unwrap();
+        assert_eq!(entry.provenance, Provenance::Credentialed);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

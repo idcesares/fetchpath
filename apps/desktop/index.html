@@ -472,6 +472,22 @@
           <ul id="rule-test-result" class="rule-test-result" aria-live="polite"></ul>
         </fieldset>
 
+        <fieldset class="settings-group" id="cache-group">
+          <legend>Cache</legend>
+          <p class="hint field-note">
+            When you give a checksum, Fetchpath keeps a copy of the verified file. Downloading the same file again
+            finishes from that copy, checked again, without using the network.
+          </p>
+          <p id="cache-usage" class="field-note" aria-live="polite">Checking…</p>
+          <label for="setting-cache-quota">Keep at most (GB)</label>
+          <div class="destination-row">
+            <input id="setting-cache-quota" type="number" step="0.25" inputmode="decimal"
+                   aria-describedby="setting-cache-quota-hint" />
+            <button id="cache-clear" class="secondary" type="button">Clear cache</button>
+          </div>
+          <p id="setting-cache-quota-hint" class="hint field-note"></p>
+        </fieldset>
+
         <fieldset class="settings-group">
           <legend>Command line</legend>
           <p id="cli-state"></p>

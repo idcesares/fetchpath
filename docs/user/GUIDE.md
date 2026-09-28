@@ -168,6 +168,12 @@ to trust it depends on where you got the checksum.
 
 This works for one file at a time, not for a batch.
 
+Fetchpath keeps a copy of each file that matched its checksum. If you download
+the same file again with the same checksum, it is copied from that copy and
+checked again, without using the network, and the row says **Reused from this
+computer's cache**. **Settings → Cache** shows how much it holds, sets its
+size and clears it.
+
 ## Video and audio
 
 Fetchpath can save video and audio from pages that the free tool `yt-dlp`
@@ -273,6 +279,7 @@ Changes save straight away.
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
 | Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
+| Cache | Copies of downloads that matched a checksum, so the same file downloaded again doesn't use the network. Shows how much it holds, sets how much it may keep (the oldest copies go first), and **Clear cache**. Clearing it never touches your saved files. |
 | AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
@@ -321,7 +328,7 @@ agent.
 Use **Settings → Apps → Installed apps** in Windows, find Fetchpath, and
 choose **Uninstall**. On the uninstaller's confirmation page, tick **Delete the
 application data** only if you also want your download list, history,
-settings and media tools removed. Leave it unticked, as it starts, if you're
+settings, media tools and cache removed. Leave it unticked, as it starts, if you're
 reinstalling.
 
 **Files you downloaded are never removed**, wherever you saved them.

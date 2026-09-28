@@ -1,4 +1,5 @@
 mod agents;
+mod cache;
 mod client;
 mod download;
 mod engine;
@@ -35,6 +36,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
+  fetchpath cache [status | clear]            verified copies kept for downloads with a checksum
   fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
 
 Video and audio need two free programs, yt-dlp and ffmpeg, that are not
@@ -53,7 +55,6 @@ Paired devices (advanced; off until you run `fetchpath lan enable`):
   fetchpath lan pair-join ADDRESS CODE [LABEL]
   fetchpath lan serve [BIND]
   fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION
-  fetchpath cache status
 
 DESTINATION may be a file name or a folder. Without one, the file goes where
 a matching rule says, or to your Downloads folder, under the name the link
@@ -108,7 +109,8 @@ fn main() {
         Some("mcp") => mcp::run(&args[1..]),
         Some("agents") => agents::run(&args[1..]),
         Some("approvals") => agents::approvals(&args[1..]),
-        Some("lan" | "cache" | "fetch-verified") => paired_devices(&args),
+        Some("cache") => cache::run(&args[1..]),
+        Some("lan" | "fetch-verified") => paired_devices(&args),
         Some(other) => {
             eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");
             download::EXIT_USAGE
@@ -117,12 +119,10 @@ fn main() {
     std::process::exit(code);
 }
 
-/// Cache and paired-device commands, which print JSON for scripts.
+/// Paired-device commands, which print JSON for scripts.
 fn paired_devices(args: &[String]) -> i32 {
     let outcome = match args[0].as_str() {
         "lan" => lan::run_lan(&args[1..]),
-        "cache" if args.get(1).map(String::as_str) == Some("status") => lan::cache_status(),
-        "cache" => Err(lan::USAGE.to_owned()),
         _ => lan::fetch_verified(&args[1..]),
     };
     match outcome {

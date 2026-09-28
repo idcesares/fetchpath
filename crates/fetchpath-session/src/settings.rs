@@ -31,6 +31,10 @@ pub const MIN_RETRY_DELAY_SECONDS: u64 = 5;
 pub const MAX_RETRY_DELAY_SECONDS: u64 = 3_600;
 pub const DEFAULT_RETRY_DELAY_SECONDS: u64 = 15;
 
+pub const MIN_CACHE_QUOTA_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_CACHE_QUOTA_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+pub const DEFAULT_CACHE_QUOTA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// Upper bound for any stored path, matching the queue's own limit.
 const MAX_PATH_LENGTH: usize = 4_096;
 
@@ -89,6 +93,14 @@ pub struct Settings {
         deserialize_with = "readable_rules"
     )]
     pub rules: Vec<Rule>,
+    /// The most the content cache may hold (FP-032). Written only when
+    /// changed, so a settings file from before it writes back unchanged.
+    #[serde(skip_serializing_if = "is_default_quota")]
+    pub cache_quota_bytes: u64,
+}
+
+fn is_default_quota(bytes: &u64) -> bool {
+    *bytes == DEFAULT_CACHE_QUOTA_BYTES
 }
 
 fn readable_rules<'de, D: serde::Deserializer<'de>>(
@@ -117,6 +129,7 @@ impl Default for Settings {
             onboarding_completed: false,
             start_engine_at_sign_in: false,
             rules: Vec::new(),
+            cache_quota_bytes: DEFAULT_CACHE_QUOTA_BYTES,
         }
     }
 }
@@ -138,6 +151,9 @@ impl Settings {
         self.default_destination_dir = clamp_directory(self.default_destination_dir.take());
         self.media_tools_dir = clamp_directory(self.media_tools_dir.take());
         self.rules = crate::rules::sanitized(std::mem::take(&mut self.rules));
+        self.cache_quota_bytes = self
+            .cache_quota_bytes
+            .clamp(MIN_CACHE_QUOTA_BYTES, MAX_CACHE_QUOTA_BYTES);
     }
 
     /// The delay before attempt number `attempt` (1-based), doubling each time

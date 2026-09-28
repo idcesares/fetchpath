@@ -253,6 +253,8 @@ pub fn state_label(job: &JobSnapshot) -> &'static str {
     match job.state {
         JobState::Queued if job.not_before.is_some() => "scheduled",
         JobState::Failed if job.retry_at.is_some() => "retrying",
+        // Copied from the cache, not transferred (FP-032).
+        JobState::Completed if job.reused_from_cache => "from cache",
         state => state_name(state),
     }
 }

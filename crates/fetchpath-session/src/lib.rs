@@ -58,6 +58,11 @@ pub struct Session {
     /// What each configured agent may do without asking (contract D1).
     agents: Mutex<BTreeMap<AgentName, AgentPolicy>>,
     agents_path: Option<PathBuf>,
+    /// The content cache, when the host gave one (FP-032). The person's and
+    /// the browser's checksum-verified downloads complete from it and fill
+    /// it; an agent's never touch it, so an agent cannot learn what the
+    /// person has downloaded or obtain it by naming its checksum.
+    cache_root: Mutex<Option<PathBuf>>,
     /// Sizes of links looked at lately, so a size rule decides the same way
     /// when the job is created as it did on the card.
     inspected_sizes: Mutex<std::collections::VecDeque<(String, u64)>>,
@@ -376,6 +381,9 @@ pub struct JobSnapshot {
     pub kind: String,
     #[serde(default)]
     pub quality_label: Option<String>,
+    /// Completed from this computer's cache rather than a transfer (FP-032).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reused_from_cache: bool,
 }
 
 /// Aggregate queue figures, for the statistics panel.
@@ -401,6 +409,10 @@ pub struct QueueStats {
     combined_bytes_per_second: u64,
     max_active_downloads: usize,
 }
+
+/// Where the content cache lives, and the bounds of its quota (FP-032).
+pub const MIN_CACHE_QUOTA_BYTES: u64 = settings::MIN_CACHE_QUOTA_BYTES;
+pub const MAX_CACHE_QUOTA_BYTES: u64 = settings::MAX_CACHE_QUOTA_BYTES;
 
 /// One byte range in flight: received into memory, not yet written.
 #[derive(Clone, Debug, Serialize)]
@@ -561,6 +573,7 @@ impl Session {
             read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
+            cache_root: Mutex::default(),
             inspected_sizes: Mutex::default(),
         })
     }
@@ -586,6 +599,7 @@ impl Session {
             read_only: None,
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
+            cache_root: Mutex::default(),
             inspected_sizes: Mutex::default(),
         }
     }
@@ -646,6 +660,50 @@ impl Session {
             .clone()
     }
 
+    /// Keeps the content cache at `root`. Without this call nothing is cached.
+    pub fn use_cache(&self, root: PathBuf) {
+        *self.cache_root.lock().expect("cache poisoned") = Some(root);
+    }
+
+    fn cache_config(settings: &Settings) -> fetchpath_core::fetchpath_cache::CacheConfig {
+        let quota = settings.cache_quota_bytes;
+        fetchpath_core::fetchpath_cache::CacheConfig::new(quota, quota)
+    }
+
+    fn open_cache(&self) -> Result<fetchpath_core::fetchpath_cache::ContentCache, String> {
+        let root = self
+            .cache_root
+            .lock()
+            .expect("cache poisoned")
+            .clone()
+            .ok_or_else(|| "This Fetchpath keeps no cache.".to_string())?;
+        fetchpath_core::fetchpath_cache::ContentCache::open(
+            &root,
+            Self::cache_config(&self.settings()),
+        )
+        .map_err(|error| format!("The cache cannot be read: {error}"))
+    }
+
+    /// How much the cache holds, and its bounds.
+    pub fn cache_status(&self) -> Result<fetchpath_protocol::model::CacheView, String> {
+        let cache = self.open_cache()?;
+        Ok(fetchpath_protocol::model::CacheView {
+            bytes: cache.total_bytes(),
+            entries: cache.entries().len() as u64,
+            quota_bytes: cache.config().quota_bytes,
+            min_quota_bytes: MIN_CACHE_QUOTA_BYTES,
+            max_quota_bytes: MAX_CACHE_QUOTA_BYTES,
+        })
+    }
+
+    /// Empties the cache. Saved downloads are separate files and stay.
+    pub fn clear_cache(&self) -> Result<fetchpath_protocol::model::CacheView, String> {
+        self.open_cache()?
+            .clear()
+            .map_err(|error| format!("The cache could not be cleared: {error}"))?;
+        self.cache_status()
+    }
+
     /// Applies a settings change, clamping it first and re-resolving anything
     /// the change affects.
     pub fn update_settings(&self, mut next: Settings) -> Result<Settings, String> {
@@ -658,7 +716,11 @@ impl Session {
             *self.media_tools.lock().expect("media tools poisoned") =
                 discover_media_tools(next.media_tools_dir.as_deref());
         }
+        let quota_lowered = next.cache_quota_bytes < self.settings().cache_quota_bytes;
         *self.settings.lock().expect("settings poisoned") = next.clone();
+        if quota_lowered && let Ok(mut cache) = self.open_cache() {
+            let _ = cache.trim();
+        }
         if let Some(path) = self.settings_path.as_ref() {
             settings::save(path, &next).map_err(|error| {
                 format!("Could not save settings at {}: {error}", path.display())
@@ -1820,6 +1882,11 @@ impl Session {
                 {
                     let _ = file.limit_connections(connections as usize);
                 }
+                if !matches!(record.principal, Principal::Agent(_))
+                    && let Some(root) = self.cache_root.lock().expect("cache poisoned").clone()
+                {
+                    let _ = file.use_cache(root, Self::cache_config(&settings));
+                }
             }
             if let Err(code) = job.start() {
                 record.view.state = "failed".into();
@@ -2298,6 +2365,7 @@ impl QueueRecord {
                 finished_at_ms: conflict.then_some(now),
                 kind: "file".into(),
                 quality_label: None,
+                reused_from_cache: false,
             },
         }
     }
@@ -2374,6 +2442,7 @@ impl QueueRecord {
                 finished_at_ms: conflict.then_some(now),
                 kind: "media".into(),
                 quality_label: Some(quality_label),
+                reused_from_cache: false,
             },
         }
     }
@@ -2640,6 +2709,7 @@ fn refresh_record(record: &mut QueueRecord) {
             record.view.observed_sha256 = snapshot.observed_sha256;
             record.view.cleanup_pending = snapshot.staging_cleanup_pending.is_some();
             record.view.error = snapshot.error;
+            record.view.reused_from_cache = snapshot.reused_from_cache;
         }
         JobHandle::Media(job) => {
             let snapshot = job.snapshot();

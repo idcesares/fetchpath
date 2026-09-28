@@ -197,6 +197,44 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
     },
+    "CacheView": {
+      "description": "The content cache: verified files kept so a download whose checksum\nmatches completes without a transfer (FP-032).",
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entries": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_quota_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_quota_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quota_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bytes",
+        "entries",
+        "quota_bytes",
+        "min_quota_bytes",
+        "max_quota_bytes"
+      ],
+      "type": "object"
+    },
     "ClientId": {
       "format": "uuid",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -765,6 +803,31 @@
           "type": "object"
         },
         {
+          "properties": {
+            "type": {
+              "const": "CacheStatus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Removes every cached file. Downloads already saved are not touched.",
+          "properties": {
+            "type": {
+              "const": "ClearCache",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
           "properties": {
             "after_seq": {
@@ -1150,6 +1213,23 @@
           "type": "object"
         },
         {
+          "description": "The content cache's use and bounds.",
+          "properties": {
+            "cache": {
+              "$ref": "#/$defs/CacheView"
+            },
+            "type": {
+              "const": "Cache",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "cache"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The engine is stopping after finishing in-flight work safely.",
           "properties": {
             "type": {
@@ -1352,6 +1432,15 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "cache_quota_bytes": {
+          "description": "The most the content cache may hold. Absent from an update means\n\"leave it as it is\".",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "close_to_tray": {
           "type": "boolean"
@@ -2205,6 +2294,10 @@
             }
           ],
           "description": "When an automatic retry is due."
+        },
+        "reused_from_cache": {
+          "description": "Completed by copying verified bytes from this computer's cache rather\nthan by a transfer, so it has no rate (FP-032).",
+          "type": "boolean"
         },
         "source_display": {
           "description": "The link without user info, query or fragment.",

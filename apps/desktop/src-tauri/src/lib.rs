@@ -8,7 +8,7 @@ use engine_link::{EngineLink, Signal};
 use fetchpath_protocol::command::{Command, DestinationDecision, JobFilter, JobInput};
 use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
-use fetchpath_protocol::model::RuleSpec;
+use fetchpath_protocol::model::{self, RuleSpec};
 use fetchpath_protocol::principal::{AgentName, AgentPolicy};
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
 use std::path::PathBuf;
@@ -707,6 +707,26 @@ async fn remove_rule(rule_id: u32, engine: Engine<'_>) -> Result<Vec<view::RuleV
         .await
 }
 
+fn cache_view(result: CommandResult) -> Result<model::CacheView, String> {
+    match result {
+        CommandResult::Cache { cache } => Ok(cache),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// How much the content cache holds, and its quota bounds (FP-032).
+#[tauri::command]
+async fn cache_status(engine: Engine<'_>) -> Result<model::CacheView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || cache_view(engine.send(Command::CacheStatus).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn clear_cache(engine: Engine<'_>) -> Result<model::CacheView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || cache_view(engine.send(Command::ClearCache).map_err(text)?)).await
+}
+
 /// How the rules decide for a link. The engine reads the link's headers
 /// (not its body) so a size rule can decide.
 #[tauri::command]
@@ -863,7 +883,9 @@ pub fn run() {
             list_rules,
             add_rule,
             remove_rule,
-            inspect_rules
+            inspect_rules,
+            cache_status,
+            clear_cache
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is

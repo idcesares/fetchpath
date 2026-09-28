@@ -1,16 +1,59 @@
 # Bounded content cache and paired LAN mode
 
-Task FP-020. Cache half recorded 22 September 2026; paired LAN half recorded
-23 September 2026. Status: both halves are implemented and tested. An
-independent strong-model review of `adapters/lan`, which AGENTS.md requires for
-credential boundaries and FFI, has **not** been performed yet, so FP-020 stays
-`in_progress`.
+Tasks FP-020 (store and paired LAN, 22–23 September 2026) and FP-032 (the
+cache in the engine and its clients, 28 September 2026). The independent
+strong-model review of `adapters/lan` is done and its two findings are fixed.
+Pairing has no desktop surface yet (FP-033).
 
 Design: [content cache and paired LAN design](../architecture/specs/2026-09-22-content-cache-and-paired-lan-design.md).
 Plans: [bounded content cache](ARCHIVE.md),
 [paired LAN](ARCHIVE.md).
 
-## What exists: the cache
+## What exists: the cache in the engine (FP-032)
+
+Recorded 28 September 2026. The engine keeps the cache at
+`%LOCALAPPDATA%\app.fetchpath.desktop\cache` (removed with the rest of the
+data when the person asks at uninstall), or `FETCHPATH_DATA_DIR\cache`, or
+under a moved engine home; `lan serve` and `fetch-verified` use the same store
+(`apps/cli/src/lan.rs` `cache_root`).
+
+- A file job with a checksum, from the person or the browser, is given the
+  cache as it starts (`Session::reconcile_locked` → `FileJob::use_cache`). The
+  worker first tries `verified::reuse_for_file`: the entry is re-verified
+  against the job's own checksum and published through the create-only fence.
+  Otherwise it downloads, and a completed download is inserted by
+  `remember_file`: `Public` only with no cookies or referrer, no query or
+  fragment and no user name, else `Credentialed`. A job without a checksum
+  never touches the cache.
+- **An agent's job never reads or fills the cache.** Otherwise an agent could
+  name a checksum and receive, or learn of, a file the person downloaded with
+  their sign-in.
+- The snapshot carries `reused_from_cache`; such a job reports no rate. The
+  desktop row says "Reused from this computer's cache", the terminal shows
+  `from cache`.
+- Protocol: `CacheStatus` (query) and `ClearCache` (ledgered), both the
+  person's only, answering `CacheView`; the quota is the setting
+  `cache_quota_bytes`, clamped to 256 MiB–256 GiB (default 2 GiB, written only
+  when changed). Lowering it trims least-recently-used entries at once.
+- Clients: Settings → Cache in the desktop (usage, size in GB, Clear cache);
+  `fetchpath cache [status | clear]` and `fetchpath settings
+  cache-quota-bytes`.
+
+Tests: `a_checksum_job_completes_from_the_cache_its_first_download_filled`,
+`a_signed_link_is_cached_as_private_and_a_job_without_a_checksum_is_not_cached`
+(core); `a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_agent`
+(engine, through the protocol). `tests/compatibility/windows/ui-cache.ps1`
+drives the release desktop: a checksum download through the engine fills the
+cache; with the server gone, the same file added in Add download with its
+checksum is saved byte-identical and its row reads "Reused from this
+computer's cache" with no speed; Settings shows "256.0 KB in 1 file, of
+2.00 GB", every Cache control is named, and Clear cache empties it while both
+saved files stay ([evidence](evidence/desktop/ui-cache.json), 28 September
+2026, passed). Limitations: an entry larger than the quota is
+never kept; the per-entry ceiling of `fetch-verified` stays 1 GiB; a reuse
+copies the whole file, so on the same volume it costs a full write.
+
+## What exists: the cache store
 
 `crates/fetchpath-cache` is a bounded, content-addressed store for content that
 carries a trusted digest. `crates/fetchpath-core` consults it before contacting

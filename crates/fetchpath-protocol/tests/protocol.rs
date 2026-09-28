@@ -12,7 +12,7 @@ use fetchpath_protocol::message::{
     ControlOutcome, Correlation, ProgressKind, ReplyResult, StreamPosition,
 };
 use fetchpath_protocol::model::{
-    Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
+    CacheView, Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
     LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind, Phase, Progress,
     QueueStats, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment,
     SettingsView, Theme, WaitingReason,
@@ -68,6 +68,7 @@ fn settings() -> EngineSettings {
         theme: Theme::Dark,
         onboarding_completed: true,
         start_engine_at_sign_in: Some(false),
+        cache_quota_bytes: None,
     }
 }
 
@@ -141,6 +142,7 @@ fn snapshot() -> JobSnapshot {
         approval: Some(ApprovalRequest {
             reasons: vec![ApprovalReason::SizeLimit, ApprovalReason::RateLimit],
         }),
+        reused_from_cache: true,
     }
 }
 
@@ -283,6 +285,8 @@ fn every_command() -> Vec<Command> {
             position: Some(1),
         },
         Command::RemoveRule { rule_id: 3 },
+        Command::CacheStatus,
+        Command::ClearCache,
         Command::SubscribeJob {
             job_id: job_id(),
             after_seq: 7,
@@ -324,6 +328,8 @@ fn every_command() -> Vec<Command> {
             | Command::ListRules
             | Command::AddRule { .. }
             | Command::RemoveRule { .. }
+            | Command::CacheStatus
+            | Command::ClearCache
             | Command::SubscribeJob { .. }
             | Command::SubscribeQueue { .. }
             | Command::EngineStatus
@@ -468,6 +474,15 @@ fn every_result() -> Vec<CommandResult> {
                 policy: agent_policy(),
             }],
         },
+        CommandResult::Cache {
+            cache: CacheView {
+                bytes: 3_145_728,
+                entries: 2,
+                quota_bytes: 2 << 30,
+                min_quota_bytes: 256 << 20,
+                max_quota_bytes: 256 << 30,
+            },
+        },
         CommandResult::ShuttingDown,
         CommandResult::CapturesTaken,
     ];
@@ -488,6 +503,7 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::SnapshotBoundary { .. }
             | CommandResult::EngineStatus { .. }
             | CommandResult::AgentPolicies { .. }
+            | CommandResult::Cache { .. }
             | CommandResult::ShuttingDown
             | CommandResult::CapturesTaken => {}
         }
@@ -993,6 +1009,7 @@ fn only_queries_skip_the_command_ledger() {
         "TakeBrowserCaptures",
         "GetAgentPolicies",
         "ListRules",
+        "CacheStatus",
         "SubscribeJob",
         "SubscribeQueue",
         "EngineStatus",

@@ -932,7 +932,7 @@
         "FP-031",
         "FP-055"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude-opus (lead)",
       "modelTier": "terra-medium",
       "files": [
@@ -941,7 +941,10 @@
         "apps/desktop",
         "apps/cli",
         "docs/user",
-        "docs/development"
+        "docs/development",
+        "crates/fetchpath-core",
+        "crates/fetchpath-cache",
+        "tests/compatibility/windows/ui-cache.ps1"
       ],
       "acceptanceIds": [
         "A01",
@@ -950,7 +953,10 @@
       ],
       "acceptance": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota. Cache reuse is implemented in the session and exposed to the desktop and the terminal through the protocol.",
       "verification": "A checksum-verified desktop download completes from the local cache when present, is labelled as reused rather than given a transfer rate, and populates the cache after a verified network completion with provenance from its actual request; Settings shows usage and quota, can clear the cache, and bounds the quota.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/CACHE-AND-LAN.md",
+        "docs/development/evidence/desktop/ui-cache.json"
+      ],
       "blockedReason": null,
       "priority": "P2"
     },

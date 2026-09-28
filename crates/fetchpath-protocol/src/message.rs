@@ -5,7 +5,7 @@ use crate::SCHEMA_VERSION;
 use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
-    EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LinkInspection,
+    CacheView, EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LinkInspection,
     MediaInspection, Progress, QueueStats, Rule, SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
@@ -128,6 +128,10 @@ pub enum CommandResult {
     /// Every smart rule, in the order they are tried.
     Rules {
         rules: Vec<Rule>,
+    },
+    /// The content cache's use and bounds.
+    Cache {
+        cache: CacheView,
     },
     /// The engine is stopping after finishing in-flight work safely.
     ShuttingDown,

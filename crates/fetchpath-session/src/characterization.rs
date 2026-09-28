@@ -102,6 +102,8 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             start_engine_at_sign_in: false,
             // Added after 0.1.0 (FP-064); a 0.1.0 file has none.
             rules: Vec::new(),
+            // Added after 0.1.0 (FP-032); a 0.1.0 file has the default.
+            cache_quota_bytes: settings::DEFAULT_CACHE_QUOTA_BYTES,
         }
     );
 

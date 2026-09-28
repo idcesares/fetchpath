@@ -465,6 +465,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         theme: Theme::Dark,
         onboarding_completed: true,
         start_engine_at_sign_in: Some(true),
+        cache_quota_bytes: None,
     };
     for command in [
         Command::ApproveJob {
@@ -1581,4 +1582,111 @@ fn an_agent_job_stream_counts_only_its_own_events() {
     assert!(!cursors.is_empty());
     let expected: Vec<u64> = (1..=cursors.len() as u64).collect();
     assert_eq!(cursors, expected, "the person's five jobs show through");
+}
+
+fn checked(link: &str, destination: &Path, sha256: &str) -> Command {
+    let mut command = file(link, destination);
+    if let Command::CreateJob {
+        request: JobRequest::File {
+            expected_sha256, ..
+        },
+    } = &mut command
+    {
+        *expected_sha256 = Some(sha256.to_owned());
+    }
+    command
+}
+
+fn cache(client: &InProcessClient, command: Command) -> fetchpath_protocol::model::CacheView {
+    match send(client, command).unwrap() {
+        CommandResult::Cache { cache } => cache,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// FP-032: a checksum-verified download fills the cache, the same file again
+/// completes from it with no transfer and no rate, an agent's job never
+/// reads it, and the person bounds and clears it.
+#[test]
+fn a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_agent() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let granted = dir.path().join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    let session = Session::load_with_browser(dir.path().join("queue-v1.json"), 3, None).unwrap();
+    session.use_cache(dir.path().join("cache"));
+    let engine = Engine::new(Arc::new(session));
+    let (user, agent) = clients(&engine);
+    send(
+        &user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&granted)),
+        },
+    )
+    .unwrap();
+
+    let body: Vec<u8> = (0..96 * 1024).map(|i| (i % 253) as u8).collect();
+    let sha256 = format!("{:x}", Sha256::digest(&body));
+    let finished = |job: &JobSnapshot| matches!(job.state, JobState::Completed | JobState::Failed);
+    let first = job(send(
+        &user,
+        checked(
+            &serve(body.clone(), true),
+            &granted.join("first.bin"),
+            &sha256,
+        ),
+    )
+    .unwrap());
+    let first = wait_for(&engine, &user, &first.job_id, finished);
+    assert_eq!(first.state, JobState::Completed);
+    assert!(!first.reused_from_cache);
+    // The copy into the cache follows the completion.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while cache(&user, Command::CacheStatus).entries == 0 && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let status = cache(&user, Command::CacheStatus);
+    assert_eq!((status.entries, status.bytes), (1, body.len() as u64));
+
+    // Nothing listens here: only the cache can complete these.
+    let dead = "http://127.0.0.1:9/file.bin";
+    let again = job(send(&user, checked(dead, &granted.join("again.bin"), &sha256)).unwrap());
+    let again = wait_for(&engine, &user, &again.job_id, finished);
+    assert_eq!(again.state, JobState::Completed, "{:?}", again.error);
+    assert!(again.reused_from_cache);
+    assert_eq!(again.progress.rate_bytes_per_second, None);
+    assert_eq!(std::fs::read(granted.join("again.bin")).unwrap(), body);
+
+    let asked = job(send(&agent, checked(dead, &granted.join("agent.bin"), &sha256)).unwrap());
+    let asked = wait_for(&engine, &agent, &asked.job_id, finished);
+    assert_eq!(
+        asked.state,
+        JobState::Failed,
+        "an agent must not read the cache"
+    );
+    assert!(!granted.join("agent.bin").exists());
+    assert_eq!(
+        code(send(&agent, Command::CacheStatus)),
+        code(send(&agent, Command::ListRules))
+    );
+    assert!(send(&agent, Command::ClearCache).is_err());
+
+    // The quota is clamped to its bounds.
+    let mut settings = match send(&user, Command::GetSettings).unwrap() {
+        CommandResult::Settings { view } => view.settings,
+        other => panic!("{other:?}"),
+    };
+    settings.cache_quota_bytes = Some(1);
+    send(&user, Command::UpdateSettings { settings }).unwrap();
+    let status = cache(&user, Command::CacheStatus);
+    assert_eq!(status.quota_bytes, status.min_quota_bytes);
+
+    let cleared = cache(&user, Command::ClearCache);
+    assert_eq!((cleared.entries, cleared.bytes), (0, 0));
+    assert_eq!(
+        std::fs::read(granted.join("first.bin")).unwrap(),
+        body,
+        "saved files stay"
+    );
 }

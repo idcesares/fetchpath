@@ -624,6 +624,63 @@ fn insert_into_cache(
     let _ = cache.insert(&id, &result.destination, verification, provenance);
 }
 
+/// Publishes a checksum-verified file job from the local cache (FP-032).
+///
+/// `None` means the job downloads as usual: no checksum, no entry, an
+/// unreadable store, bytes that fail the check (they are evicted) or a
+/// publication that could not complete. The cache is never a reason to fail.
+pub(crate) fn reuse_for_file(
+    request: &DownloadRequest,
+    cache: &mut ContentCache,
+) -> Option<crate::DownloadedFile> {
+    let id = ContentId::from_expected_sha256(request.expected_sha256.as_deref()?)?;
+    let mut verified = VerifiedDownloadRequest::new(
+        vec![MirrorSource::new(request.url.clone())],
+        request.destination.clone(),
+    );
+    verified.cancellation = request.cancellation.clone();
+    verified.cancel_cleanup = request.cancel_cleanup;
+    verified.context = request.context.clone();
+    verified.expected_sha256 = request.expected_sha256.clone();
+    let done = reuse_from_cache(&verified, cache, &id).ok()??;
+    Some(crate::DownloadedFile {
+        destination: done.destination,
+        bytes: done.bytes,
+        observed_sha256: done.observed_sha256,
+        staging_cleanup_pending: done.staging_cleanup_pending,
+    })
+}
+
+/// Remembers a file a checksum-verified job just published from the network.
+/// It is shareable with paired devices only when nothing private reached the
+/// request: no cookies or referrer, no query or fragment, no user name.
+pub(crate) fn remember_file(request: &DownloadRequest, published: &Path, cache: &mut ContentCache) {
+    let Some(id) = request
+        .expected_sha256
+        .as_deref()
+        .and_then(ContentId::from_expected_sha256)
+    else {
+        return;
+    };
+    let authority = request.url.split_once("://").map_or("", |(_, rest)| {
+        rest.split(['/', '?', '#']).next().unwrap_or("")
+    });
+    let public = request.context.is_credential_free()
+        && !request.url.contains(['?', '#'])
+        && !authority.contains('@');
+    let provenance = if public {
+        Provenance::Public
+    } else {
+        Provenance::Credentialed
+    };
+    let _ = cache.insert(
+        &id,
+        published,
+        CachedVerification::FinalHashOnly,
+        provenance,
+    );
+}
+
 /// Downloads one representation from a mirror list, verifying it against
 /// trusted digests and repairing selectively where piece hashes allow it.
 pub fn download_verified(

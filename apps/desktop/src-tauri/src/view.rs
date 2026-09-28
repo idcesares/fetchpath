@@ -39,6 +39,8 @@ pub struct JobView {
     /// Why it waits for the person: `outside_granted_folders`, `size_limit`
     /// or `rate_limit`.
     pub approval_reasons: Vec<&'static str>,
+    /// Completed from this computer's cache, not transferred (FP-032).
+    pub reused_from_cache: bool,
 }
 
 fn ms(at: Timestamp) -> u64 {
@@ -112,6 +114,7 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
             _ => "file",
         },
         quality_label: job.quality_label.clone(),
+        reused_from_cache: job.reused_from_cache,
         agent: job.principal.agent().map(ToString::to_string),
         approval_reasons: job
             .approval
@@ -286,6 +289,8 @@ pub struct Settings {
     pub confirm_remove_completed: bool,
     pub theme: String,
     pub onboarding_completed: bool,
+    #[serde(default)]
+    pub cache_quota_bytes: Option<u64>,
 }
 
 impl Settings {
@@ -307,6 +312,7 @@ impl Settings {
             }
             .into(),
             onboarding_completed: settings.onboarding_completed,
+            cache_quota_bytes: settings.cache_quota_bytes,
         }
     }
 
@@ -330,6 +336,7 @@ impl Settings {
             },
             onboarding_completed: self.onboarding_completed,
             start_engine_at_sign_in: None,
+            cache_quota_bytes: self.cache_quota_bytes,
         }
     }
 }
@@ -527,6 +534,7 @@ mod tests {
                 "qualityLabel": null,
                 "agent": null,
                 "approvalReasons": [],
+                "reusedFromCache": false,
             })
         );
     }
@@ -613,6 +621,7 @@ mod tests {
             theme: Theme::Dark,
             onboarding_completed: true,
             start_engine_at_sign_in: Some(true),
+            cache_quota_bytes: Some(1 << 30),
         };
         let shown = Settings::from_engine(&engine);
         assert_eq!(serde_json::to_value(&shown).unwrap()["theme"], "dark");

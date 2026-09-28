@@ -1,0 +1,19 @@
+{
+  "application": "C:\\Users\\idces\\IDCODES\\fetchpath\\target\\release\\fetchpath-desktop.exe",
+  "cacheAfterFirst": {
+    "bytes": 262144,
+    "entries": 1,
+    "quota_bytes": 2147483648,
+    "min_quota_bytes": 268435456,
+    "max_quota_bytes": 274877906944
+  },
+  "reusedSha256": "81d0141af58569f91edf2d036b67a6b82c062d1829fd93aec50ed96b4773d225",
+  "rowLabel": "Reused from this computer's cache",
+  "rowShowsSpeed": false,
+  "usage": "256.0 KB in 1 file, of 2.00 GB.",
+  "quotaField": "2",
+  "unnamedCacheControls": [],
+  "usageAfterClear": "Empty. It keeps up to 2.00 GB.",
+  "failures": [],
+  "passed": true
+}

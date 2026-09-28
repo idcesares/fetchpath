@@ -171,6 +171,7 @@ enum Outcome {
     Settings,
     AgentPolicies,
     Rules,
+    Cache(fetchpath_protocol::model::CacheView),
     ShuttingDown,
 }
 
@@ -179,9 +180,11 @@ impl Outcome {
         match self {
             Self::Job(id) | Self::Control(_, id) | Self::Removed(id) => HashSet::from([id.clone()]),
             Self::Jobs(ids) => ids.iter().cloned().collect(),
-            Self::Settings | Self::AgentPolicies | Self::Rules | Self::ShuttingDown => {
-                HashSet::new()
-            }
+            Self::Settings
+            | Self::AgentPolicies
+            | Self::Rules
+            | Self::Cache(_)
+            | Self::ShuttingDown => HashSet::new(),
         }
     }
 }
@@ -381,6 +384,9 @@ impl Engine {
             }),
             Outcome::Rules => Ok(CommandResult::Rules {
                 rules: self.session.rules(),
+            }),
+            Outcome::Cache(cache) => Ok(CommandResult::Cache {
+                cache: cache.clone(),
             }),
             Outcome::ShuttingDown => Ok(CommandResult::ShuttingDown),
         };
@@ -807,6 +813,7 @@ impl Engine {
                 session.remove_rule(*rule_id).map_err(input)?;
                 Ok(Outcome::Rules)
             }
+            Command::ClearCache => session.clear_cache().map(Outcome::Cache).map_err(input),
             Command::EngineShutdown => {
                 session.cancel_all_and_join();
                 Ok(Outcome::ShuttingDown)
@@ -1041,6 +1048,11 @@ impl Engine {
             Command::ListRules => Ok(CommandResult::Rules {
                 rules: self.session.rules(),
             }),
+            Command::CacheStatus => self
+                .session
+                .cache_status()
+                .map(|cache| CommandResult::Cache { cache })
+                .map_err(input),
             // An agent sees only its own access (D3), the default when the
             // person has not configured it; the person sees every agent.
             Command::GetAgentPolicies => Ok(CommandResult::AgentPolicies {

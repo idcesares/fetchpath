@@ -1,7 +1,7 @@
-//! `fetchpath lan …`, `fetchpath cache status` and `fetchpath fetch-verified`.
+//! `fetchpath lan …` and `fetchpath fetch-verified`.
 //!
 //! State lives under `%LOCALAPPDATA%\Fetchpath`, or `FETCHPATH_DATA_DIR` when
-//! set. LAN mode is off until `lan enable` is run. Nothing here prints a
+//! set; the cache is the engine's, at [`cache_root`]. LAN mode is off until `lan enable` is run. Nothing here prints a
 //! signing key, and the pairing code is printed only by `pair-host`, whose
 //! whole purpose is to show it.
 
@@ -31,7 +31,6 @@ const MAX_SESSIONS: usize = 4;
 pub const USAGE: &str = "usage:
   fetchpath download URL DESTINATION
   fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... URL DESTINATION
-  fetchpath cache status
   fetchpath lan id | enable | disable | peers
   fetchpath lan unpair KEY
   fetchpath lan pair-host [BIND]
@@ -44,6 +43,29 @@ fn data_dir() -> Result<PathBuf, String> {
     }
     std::env::var_os("LOCALAPPDATA")
         .map(|base| PathBuf::from(base).join("Fetchpath"))
+        .ok_or_else(|| "cli.no_data_dir".to_owned())
+}
+
+/// The content cache the engine fills and `lan serve` shares (FP-032):
+/// `FETCHPATH_DATA_DIR\cache` when set, the engine's own folder when it was
+/// moved with `FETCHPATH_APP_DATA_DIR`, and otherwise
+/// `%LOCALAPPDATA%\app.fetchpath.desktop\cache`, local rather than roaming
+/// and removed with the rest of Fetchpath's data when the person asks.
+pub(crate) fn cache_root() -> Result<PathBuf, String> {
+    if let Some(dir) = std::env::var_os("FETCHPATH_DATA_DIR") {
+        return Ok(PathBuf::from(dir).join("cache"));
+    }
+    if let Ok(home) = fetchpath_protocol::launch::EngineHome::from_env()
+        && !home.is_default()
+    {
+        return Ok(home.dir().join("cache"));
+    }
+    std::env::var_os("LOCALAPPDATA")
+        .map(|base| {
+            PathBuf::from(base)
+                .join("app.fetchpath.desktop")
+                .join("cache")
+        })
         .ok_or_else(|| "cli.no_data_dir".to_owned())
 }
 
@@ -76,7 +98,7 @@ fn pins() -> Result<PinStore, String> {
 
 fn cache() -> Result<ContentCache, String> {
     ContentCache::open(
-        &data_dir()?.join("cache"),
+        &cache_root()?,
         CacheConfig::new(CACHE_QUOTA_BYTES, CACHE_MAX_ENTRY_BYTES),
     )
     .map_err(|error| format!("cache.unavailable:{error}"))
@@ -254,20 +276,6 @@ fn serve(bind: SocketAddr) -> Result<Value, String> {
     ));
     server.run(listener, Arc::new(AtomicBool::new(false)), MAX_SESSIONS);
     Ok(json!({ "serving": false }))
-}
-
-pub fn cache_status() -> Result<Value, String> {
-    let cache = cache()?;
-    let entries = cache.entries();
-    let shareable = entries.iter().filter(|entry| entry.is_shareable()).count();
-    let config = cache.config();
-    Ok(json!({
-        "entries": entries.len(),
-        "shareable_entries": shareable,
-        "bytes": cache.total_bytes(),
-        "quota_bytes": config.quota_bytes,
-        "max_entry_bytes": config.max_entry_bytes,
-    }))
 }
 
 /// Adapts the LAN client to the core's peer interface. Every failure is

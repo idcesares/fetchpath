@@ -267,6 +267,10 @@ pub struct JobSnapshot {
     /// Present while the job is `awaiting_approval`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalRequest>,
+    /// Completed by copying verified bytes from this computer's cache rather
+    /// than by a transfer, so it has no rate (FP-032).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reused_from_cache: bool,
 }
 
 /// One byte range in flight: received into memory, not yet written.
@@ -474,6 +478,21 @@ pub struct EngineSettings {
     /// setting cannot turn it off by accident.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_engine_at_sign_in: Option<bool>,
+    /// The most the content cache may hold. Absent from an update means
+    /// "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_quota_bytes: Option<u64>,
+}
+
+/// The content cache: verified files kept so a download whose checksum
+/// matches completes without a transfer (FP-032).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CacheView {
+    pub bytes: u64,
+    pub entries: u64,
+    pub quota_bytes: u64,
+    pub min_quota_bytes: u64,
+    pub max_quota_bytes: u64,
 }
 
 /// Settings as stored plus the limits the engine enforces.

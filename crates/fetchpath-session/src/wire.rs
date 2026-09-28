@@ -128,6 +128,7 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
         finished_at: view.finished_at_ms.map(timestamp),
         quality_label: view.quality_label.clone(),
         principal: record.principal.clone(),
+        reused_from_cache: view.reused_from_cache,
         approval: record.awaiting_approval().then(|| ApprovalRequest {
             reasons: record
                 .approval
@@ -207,6 +208,7 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
         },
         onboarding_completed: settings.onboarding_completed,
         start_engine_at_sign_in: Some(settings.start_engine_at_sign_in),
+        cache_quota_bytes: Some(settings.cache_quota_bytes),
     }
 }
 
@@ -235,6 +237,7 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             .unwrap_or(current.start_engine_at_sign_in),
         // Rules change only through their own commands.
         rules: current.rules.clone(),
+        cache_quota_bytes: wire.cache_quota_bytes.unwrap_or(current.cache_quota_bytes),
     }
 }
 

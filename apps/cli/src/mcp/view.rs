@@ -437,6 +437,7 @@ mod tests {
             not_before: None,
             finished_at: None,
             quality_label: None,
+            reused_from_cache: false,
             principal: Principal::try_from("agent:helper").unwrap(),
             approval: None,
         }

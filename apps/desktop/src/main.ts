@@ -50,6 +50,17 @@ interface JobSnapshot {
   agent: string | null;
   /** Why it waits for the person's approval. */
   approvalReasons: ApprovalReason[];
+  /** Finished by copying verified bytes from the cache, not by a transfer. */
+  reusedFromCache?: boolean;
+}
+
+/** The content cache, as the engine reports it. */
+interface CacheView {
+  bytes: number;
+  entries: number;
+  quota_bytes: number;
+  min_quota_bytes: number;
+  max_quota_bytes: number;
 }
 
 type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "unknown";
@@ -110,6 +121,7 @@ interface Settings {
   confirmRemoveCompleted: boolean;
   theme: "system" | "light" | "dark";
   onboardingCompleted: boolean;
+  cacheQuotaBytes?: number | null;
 }
 
 interface SettingsView {
@@ -395,7 +407,7 @@ settingsForm.addEventListener("submit", (event) => event.preventDefault());
 async function showSettings(): Promise<void> {
   clearError(settingsError);
   openDialog(settingsDialog, settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents(), refreshRules()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache()]);
 }
 
 /* Rules (FP-075) -------------------------------------------------------------
@@ -418,6 +430,54 @@ const ruleTestLink = required<HTMLInputElement>("rule-test-link");
 const ruleTest = required<HTMLButtonElement>("rule-test");
 const ruleTestResult = required<HTMLUListElement>("rule-test-result");
 let rules: RuleView[] = [];
+const cacheUsage = required<HTMLParagraphElement>("cache-usage");
+const cacheQuotaInput = required<HTMLInputElement>("setting-cache-quota");
+const cacheQuotaHint = required<HTMLParagraphElement>("setting-cache-quota-hint");
+const cacheClear = required<HTMLButtonElement>("cache-clear");
+const GB = 1024 ** 3;
+
+function renderCache(cache: CacheView): void {
+  cacheUsage.textContent = cache.entries
+    ? `${formatBytes(cache.bytes)} in ${cache.entries} ${cache.entries === 1 ? "file" : "files"}, of ${formatBytes(cache.quota_bytes)}.`
+    : `Empty. It keeps up to ${formatBytes(cache.quota_bytes)}.`;
+  cacheQuotaInput.min = String(cache.min_quota_bytes / GB);
+  cacheQuotaInput.max = String(cache.max_quota_bytes / GB);
+  cacheQuotaInput.value = String(Math.round((cache.quota_bytes / GB) * 100) / 100);
+  cacheQuotaHint.textContent = `Between ${formatBytes(cache.min_quota_bytes)} and ${formatBytes(cache.max_quota_bytes)}. The oldest files go first when it is full.`;
+  cacheClear.disabled = cache.entries === 0;
+}
+
+async function refreshCache(): Promise<void> {
+  try {
+    renderCache(await invoke<CacheView>("cache_status"));
+  } catch (error) {
+    cacheUsage.textContent = "The cache cannot be read right now.";
+    showError(settingsError, error);
+  }
+}
+
+cacheQuotaInput.addEventListener("change", async () => {
+  const gigabytes = Number(cacheQuotaInput.value);
+  if (!Number.isFinite(gigabytes) || gigabytes <= 0) {
+    await refreshCache();
+    return;
+  }
+  // The engine clamps the quota to its bounds; the form then shows what it kept.
+  await changeSetting({ cacheQuotaBytes: Math.round(gigabytes * GB) }, "Cache size updated.");
+  await refreshCache();
+});
+
+cacheClear.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    renderCache(await invoke<CacheView>("clear_cache"));
+    settingsStatus.textContent = "Cache cleared. Your saved downloads are not affected.";
+    settingsStatus.hidden = false;
+    announce(settingsStatus.textContent);
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
 
 async function refreshRules(): Promise<void> {
   try {
@@ -2169,6 +2229,8 @@ function metricSpans(job: JobSnapshot): HTMLElement[] {
     add(`${formatBytes(job.bytesReceived)} received`, true);
     if (job.state === "running") add("total size unknown");
   }
+  // A copy from the cache is not a transfer, so it has no speed to report.
+  if (job.reusedFromCache && job.state === "completed") add("Reused from this computer's cache");
   // Speed and time left describe motion; a stopped row keeps neither.
   const moving = job.state === "running";
   if (moving && job.bytesPerSecond) add(`${formatBytes(job.bytesPerSecond)}/s`);

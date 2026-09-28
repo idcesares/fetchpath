@@ -185,6 +185,11 @@ pub enum Command {
         rule_id: u32,
     },
 
+    // The content cache (FP-032). The person only.
+    CacheStatus,
+    /// Removes every cached file. Downloads already saved are not touched.
+    ClearCache,
+
     // Event streams (contract §8).
     /// Replays durable events after `after_seq`, or answers with a snapshot
     /// boundary when they were compacted, then streams new ones.
@@ -237,6 +242,8 @@ impl Command {
             Self::ListRules => "ListRules",
             Self::AddRule { .. } => "AddRule",
             Self::RemoveRule { .. } => "RemoveRule",
+            Self::CacheStatus => "CacheStatus",
+            Self::ClearCache => "ClearCache",
             Self::SubscribeJob { .. } => "SubscribeJob",
             Self::SubscribeQueue { .. } => "SubscribeQueue",
             Self::EngineStatus => "EngineStatus",
@@ -264,6 +271,7 @@ impl Command {
                 | Self::GetSettings
                 | Self::GetAgentPolicies
                 | Self::ListRules
+                | Self::CacheStatus
                 | Self::SubscribeJob { .. }
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus

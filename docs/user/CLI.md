@@ -13,7 +13,8 @@ fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | e
 fetchpath approvals | approve JOB... | deny JOB... | agents ...
 fetchpath mcp [--agent NAME]
 fetchpath tools [install [--yes] | use FOLDER]
-fetchpath lan ... | fetch-verified ... | cache status
+fetchpath cache [status | clear]
+fetchpath lan ... | fetch-verified ...
 fetchpath --version
 fetchpath --help
 ```
@@ -69,6 +70,18 @@ and Fetchpath exits with code 5, printing both values.
 Without `--sha256`, Fetchpath prints the SHA-256 of what it received. That
 fingerprint was computed on your computer. It says which bytes you have, not
 who published them.
+
+### The cache
+
+A download with `--sha256` (`fetchpath download`, `add`, the terminal or the
+desktop) leaves a verified copy in Fetchpath's cache. The same file
+queued again, even from another link, is copied from the cache and checked
+against its checksum again instead of being downloaded; `ls` shows it as
+`from cache`. `fetchpath cache` shows how much the cache holds,
+`fetchpath cache clear` empties it without touching saved files, and
+`fetchpath settings cache-quota-bytes BYTES` sets its size (256 MiB to
+256 GiB, 2 GiB to start). The oldest copies go first when it is full.
+Agents' downloads never use the cache.
 
 ## For scripts
 
@@ -438,5 +451,6 @@ way. Devices are not discovered automatically; you give the address. Windows
 Firewall may ask whether to allow Fetchpath on your network the first time you
 run `serve`.
 
-`fetchpath cache status` shows how much the local content cache holds. These
-commands print JSON and are meant for people comfortable with a terminal. The desktop app does not show them yet.
+Paired devices share from the same cache the queue fills (see [The
+cache](#the-cache)), and only copies downloaded from a plain link with no
+sign-in. These commands print JSON and are meant for people comfortable with a terminal. The desktop app does not show them yet.

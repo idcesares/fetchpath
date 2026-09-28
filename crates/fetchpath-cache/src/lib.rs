@@ -326,6 +326,22 @@ impl ContentCache {
         self.unpin(id);
     }
 
+    /// Evicts least-recently-used entries until the store fits its quota, as
+    /// it must after the quota is lowered. Entries this handle holds stay.
+    pub fn trim(&mut self) -> io::Result<()> {
+        let _lock = self.exclusive()?;
+        self.make_room_for(0).map(drop)
+    }
+
+    /// Removes every entry this handle does not hold.
+    pub fn clear(&mut self) -> io::Result<()> {
+        let _lock = self.exclusive()?;
+        for entry in self.index.entries() {
+            self.evict_locked(&entry.id)?;
+        }
+        Ok(())
+    }
+
     pub fn evict(&mut self, id: &ContentId) -> io::Result<bool> {
         let _lock = self.exclusive()?;
         self.evict_locked(id)
