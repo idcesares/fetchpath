@@ -639,23 +639,31 @@ impl Engine {
                                 .push(fetchpath_protocol::principal::ApprovalReason::PeerUpload);
                         }
                     }
-                    let JobInput::Url { url } = source else {
-                        return Err(unsupported("Creating a torrent from a stored request"));
+                    let policy = TorrentPolicy {
+                        discover_peers: *discover_peers,
+                        upload: *upload,
                     };
-                    let job = session
-                        .enqueue_torrent_for(
+                    let due = not_before.map(millis).transpose()?;
+                    let job = match source {
+                        JobInput::Url { url } => session.enqueue_torrent_for(
                             TorrentDraft {
                                 source: url.expose().to_owned(),
                                 destination: destination.path.clone(),
-                                not_before_ms: not_before.map(millis).transpose()?,
-                                policy: TorrentPolicy {
-                                    discover_peers: *discover_peers,
-                                    upload: *upload,
-                                },
+                                not_before_ms: due,
+                                policy,
                             },
                             &origin,
-                        )
-                        .map_err(input)?;
+                        ),
+                        JobInput::TorrentFile { path } => session.enqueue_torrent_file_for(
+                            std::path::Path::new(path),
+                            &destination.path,
+                            due,
+                            policy,
+                            &origin,
+                        ),
+                        _ => return Err(unsupported("Creating a torrent from a stored request")),
+                    }
+                    .map_err(input)?;
                     self.created(principal);
                     Ok(Outcome::Job(job.job_id))
                 }

@@ -623,6 +623,32 @@ fn reveal_extension_folder(app: AppHandle) -> Result<(), String> {
     browser_setup::reveal_extension_folder(app.path().resource_dir().ok().as_deref())
 }
 
+/// Opens only Fetchpath's own project page in the system browser.
+#[tauri::command]
+fn open_project_page() -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let url: Vec<u16> = "https://github.com/idcesares/fetchpath"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            url.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err("Could not open the project page in your browser.".into());
+    }
+    Ok(())
+}
+
 /// The media helpers live in the engine's data folder, where it looks.
 fn media_tools_install_dir() -> Result<PathBuf, String> {
     EngineHome::from_env()
@@ -1012,6 +1038,7 @@ pub fn run() {
             browser_setup_status,
             cli_path,
             reveal_extension_folder,
+            open_project_page,
             approve_download,
             deny_download,
             list_agents,

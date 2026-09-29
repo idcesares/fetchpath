@@ -28,7 +28,9 @@ use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const QUEUE_SCHEMA_VERSION: u32 = 1;
+const QUEUE_SCHEMA_VERSION: u32 = 2;
+const ENGINE_SCHEMA_VERSION: u32 = 1;
+const MAX_TORRENT_METADATA_BYTES: u64 = 4 * 1024 * 1024;
 pub const DEFAULT_MAX_ACTIVE: usize = 3;
 /// Upper bound for an inter-process address. Long enough for real signed links,
 /// short enough that a malformed renderer message cannot force unbounded work.
@@ -51,6 +53,9 @@ pub struct Session {
     /// The ledger, the event log and the subscribers (FP-051). Locked after
     /// `inner`, never before it.
     durable: Mutex<Durable>,
+    /// Metadata copies retired by a source change or removal. Delete only
+    /// after the queue rename commits, including deferred Engine commands.
+    retired_torrent_metadata: Mutex<Vec<PathBuf>>,
     /// Set when the engine stops: no job starts any more (FP-053).
     halted: std::sync::atomic::AtomicBool,
     /// Set when the queue was written by a newer Fetchpath (FP-070): the
@@ -249,6 +254,8 @@ struct QueueRecord {
     media_variant_id: Option<String>,
     media_quality: Option<String>,
     torrent_policy: Option<TorrentPolicy>,
+    torrent_metadata_sha256: Option<String>,
+    torrent_metadata_path: Option<PathBuf>,
     job: Option<JobHandle>,
     /// Live only. Deliberately not persisted: a rate measured before a restart
     /// describes a transfer that is no longer running.
@@ -504,6 +511,8 @@ struct PersistedRecord {
     media_quality: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     torrent_policy: Option<TorrentPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    torrent_metadata_sha256: Option<String>,
     #[serde(flatten, default)]
     durable: RecordDurable,
     /// Absent for the person's own jobs, so a 0.1.0 file writes back
@@ -564,6 +573,7 @@ impl Session {
                             now,
                             browser_store.as_ref(),
                             media_tools.as_ref(),
+                            &state_path,
                         )
                     })
                     .collect()
@@ -600,6 +610,7 @@ impl Session {
                 committed: generation,
                 ..Durable::default()
             }),
+            retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(read_only.is_some()),
             read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
@@ -627,6 +638,7 @@ impl Session {
             browser_download_dir: None,
             media_tools: Mutex::new(None),
             durable: Mutex::new(Durable::default()),
+            retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(false),
             read_only: None,
             agents: Mutex::new(BTreeMap::new()),
@@ -1083,6 +1095,78 @@ impl Session {
         Ok(find_record(&state, &id)?.view.clone())
     }
 
+    pub(crate) fn enqueue_torrent_file_for(
+        &self,
+        source: &Path,
+        destination: &str,
+        not_before_ms: Option<u64>,
+        policy: TorrentPolicy,
+        origin: &Origin,
+    ) -> Result<JobSnapshot, String> {
+        if !policy.discover_peers {
+            return Err("Enable peer discovery explicitly for this torrent.".into());
+        }
+        if !source.is_absolute() {
+            return Err("Choose a .torrent file by its full path.".into());
+        }
+        let state_path = self
+            .state_path
+            .as_ref()
+            .ok_or("Local torrents need a saved engine queue.")?;
+        let attributes =
+            fs::symlink_metadata(source).map_err(|_| "That .torrent file could not be read.")?;
+        if !attributes.file_type().is_file()
+            || attributes.len() > MAX_TORRENT_METADATA_BYTES
+            || !source
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".torrent"))
+        {
+            return Err("Choose a regular .torrent file of at most 4 MiB.".into());
+        }
+        let bytes = fs::read(source).map_err(|_| "That .torrent file could not be read.")?;
+        if bytes.len() as u64 > MAX_TORRENT_METADATA_BYTES {
+            return Err("Choose a .torrent file of at most 4 MiB.".into());
+        }
+        use sha2::{Digest, Sha256};
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let destination = validated_destination(destination)?;
+        let source_name = source.file_name().unwrap().to_string_lossy().into_owned();
+        let synthetic_source = format!("local-torrent:{hash}");
+        let mut record =
+            QueueRecord::new_torrent(synthetic_source.clone(), destination, not_before_ms, policy);
+        record.display_url = source_name.clone();
+        record.view.source = source_name;
+        record.restart_url = Some(synthetic_source.clone());
+        let snapshot = torrent_metadata_path(state_path, &record.id)
+            .ok_or("The torrent metadata path could not be made.")?;
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        self.reconcile_locked(&mut state);
+        fs::create_dir_all(snapshot.parent().unwrap()).map_err(|error| error.to_string())?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&snapshot)
+            .map_err(|error| format!("Could not save torrent metadata: {error}"))?;
+        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&snapshot);
+            return Err(format!("Could not save torrent metadata: {error}"));
+        }
+        drop(file);
+        record.torrent_metadata_sha256 = Some(hash);
+        record.torrent_metadata_path = Some(snapshot);
+        if !record.destination.exists() {
+            record.job = Some(torrent_job(&record, synthetic_source, policy));
+        }
+        record.apply(origin);
+        let id = record.id.clone();
+        state.records.push(record);
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)?;
+        Ok(find_record(&state, &id)?.view.clone())
+    }
+
     pub(crate) fn enqueue_media_for(
         &self,
         draft: MediaDraft,
@@ -1338,7 +1422,15 @@ impl Session {
             job.cancel();
             job.join();
         }
+        let mut retired_metadata = None;
         if let Some(url) = url {
+            if record.torrent_metadata_sha256.take().is_some() {
+                retired_metadata = record.torrent_metadata_path.take().or_else(|| {
+                    self.state_path
+                        .as_ref()
+                        .and_then(|path| torrent_metadata_path(path, &record.id))
+                });
+            }
             record.display_url = display_url(&url);
             record.view.source = record.display_url.clone();
             record.restart_url = restartable_url(&url);
@@ -1404,6 +1496,12 @@ impl Session {
         record.approval = None;
         if !hold.is_empty() {
             record.hold(hold);
+        }
+        if let Some(path) = retired_metadata {
+            self.retired_torrent_metadata
+                .lock()
+                .expect("torrent cleanup poisoned")
+                .push(path);
         }
         self.reconcile_locked(&mut state);
         self.save_locked(&mut state)?;
@@ -1538,7 +1636,19 @@ impl Session {
             job.cancel();
             job.join();
         }
-        self.save_locked(&mut state)
+        if record.torrent_metadata_sha256.is_some()
+            && let Some(path) = self
+                .state_path
+                .as_ref()
+                .and_then(|state_path| torrent_metadata_path(state_path, &record.id))
+        {
+            self.retired_torrent_metadata
+                .lock()
+                .expect("torrent cleanup poisoned")
+                .push(path);
+        }
+        self.save_locked(&mut state)?;
+        Ok(())
     }
 
     /// Lets a job that waits for approval run (contract D1). A size stop is
@@ -2230,7 +2340,7 @@ impl Session {
         if let Some(path) = self.state_path.as_ref() {
             if durable.engine_changed {
                 let mut engine = durable.engine.clone();
-                engine.schema_version = QUEUE_SCHEMA_VERSION;
+                engine.schema_version = ENGINE_SCHEMA_VERSION;
                 engine.generation = durable.pending_generation();
                 let engine_path = path.with_file_name(ENGINE_FILE);
                 write_json_atomically(&engine_path, &engine).map_err(|error| {
@@ -2254,6 +2364,51 @@ impl Session {
                     path.display()
                 )
             })?;
+            let mut retired = self
+                .retired_torrent_metadata
+                .lock()
+                .expect("torrent cleanup poisoned");
+            if !retired.is_empty() {
+                // The previous queue remains as a recovery backup. Do not
+                // remove metadata it still names; the next successful save
+                // rotates that reference away.
+                let backup_refs = match fs::read(path.with_extension("json.bak")) {
+                    Ok(bytes) => {
+                        serde_json::from_slice::<PersistedQueue>(&bytes)
+                            .ok()
+                            .map(|queue| {
+                                queue
+                                    .records
+                                    .into_iter()
+                                    .filter(|record| record.torrent_metadata_sha256.is_some())
+                                    .map(|record| record.id)
+                                    .collect::<HashSet<_>>()
+                            })
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Some(HashSet::new()),
+                    Err(_) => None,
+                };
+                if let Some(backup_refs) = backup_refs {
+                    retired.retain(|snapshot| {
+                        let id = snapshot
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or_default();
+                        if backup_refs.contains(id)
+                            || state.records.iter().any(|record| {
+                                record.id == id && record.torrent_metadata_sha256.is_some()
+                            })
+                        {
+                            return true;
+                        }
+                        match fs::remove_file(snapshot) {
+                            Ok(()) => false,
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+                            Err(_) => true,
+                        }
+                    });
+                }
+            }
         } else if durable.engine_changed {
             // Nothing to write to: everything in memory counts as committed.
             durable.engine.generation = durable.pending_generation();
@@ -2501,6 +2656,8 @@ impl QueueRecord {
             media_variant_id: None,
             media_quality: None,
             torrent_policy: None,
+            torrent_metadata_sha256: None,
+            torrent_metadata_path: None,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2580,6 +2737,8 @@ impl QueueRecord {
             media_variant_id: Some(variant_id),
             media_quality: Some(quality_label.clone()),
             torrent_policy: None,
+            torrent_metadata_sha256: None,
+            torrent_metadata_path: None,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2643,7 +2802,19 @@ impl QueueRecord {
         now: u64,
         browser_store: Option<&BridgeStore>,
         media_tools: Option<&MediaTools>,
+        state_path: &Path,
     ) -> Self {
+        let metadata = saved.torrent_metadata_sha256.as_ref().map(|hash| {
+            let path = torrent_metadata_path(state_path, &saved.id)
+                .ok_or("The saved torrent metadata could not be located.")?;
+            verify_torrent_metadata(&path, hash)
+                .map_err(|_| "The saved torrent metadata is missing or changed.")?;
+            Ok::<PathBuf, &'static str>(path)
+        });
+        let metadata_error = metadata
+            .as_ref()
+            .and_then(|result| result.as_ref().err().copied());
+        let metadata_path = metadata.and_then(Result::ok);
         let terminal = is_terminal(&saved.view.state);
         let browser_secret = saved
             .credential_ref
@@ -2674,7 +2845,9 @@ impl QueueRecord {
             .approval
             .as_ref()
             .is_some_and(|approval| !approval.denied);
-        let (job, state, error, action, retryable) = if awaiting_approval {
+        let (job, state, error, action, retryable) = if let Some(problem) = metadata_error {
+            (None, "failed".into(), Some(problem.into()), None, false)
+        } else if awaiting_approval {
             (None, "awaiting_approval".into(), None, None, false)
         } else if paused && live_url.is_some() {
             (None, "paused".into(), None, None, false)
@@ -2709,15 +2882,25 @@ impl QueueRecord {
                 "queued"
             };
             let job = if let Some(policy) = saved.torrent_policy {
-                Some(JobHandle::Torrent(TorrentJob::create(
-                    fetchpath_torrent::request(
+                let request = match (&metadata_path, &saved.torrent_metadata_sha256) {
+                    (Some(path), Some(hash)) => fetchpath_torrent::request_local(
+                        url.clone(),
+                        path.clone(),
+                        hash.clone(),
+                        PathBuf::from(&saved.destination),
+                        saved.id.clone(),
+                        policy.discover_peers,
+                        policy.upload,
+                    ),
+                    _ => fetchpath_torrent::request(
                         url.clone(),
                         PathBuf::from(&saved.destination),
                         saved.id.clone(),
                         policy.discover_peers,
                         policy.upload,
                     ),
-                )))
+                };
+                Some(JobHandle::Torrent(TorrentJob::create(request)))
             } else if let Some(variant_id) = saved.media_variant_id.clone() {
                 media_tools.map(|tools| {
                     JobHandle::Media(MediaJob::create(
@@ -2812,6 +2995,8 @@ impl QueueRecord {
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
             torrent_policy: saved.torrent_policy,
+            torrent_metadata_sha256: saved.torrent_metadata_sha256,
+            torrent_metadata_path: metadata_path,
             job,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -2853,6 +3038,8 @@ impl QueueRecord {
             media_variant_id: saved.media_variant_id,
             media_quality: saved.media_quality,
             torrent_policy: saved.torrent_policy,
+            torrent_metadata_sha256: saved.torrent_metadata_sha256,
+            torrent_metadata_path: None,
             job: None,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -3029,13 +3216,28 @@ fn file_job(
 }
 
 fn torrent_job(record: &QueueRecord, source: String, policy: TorrentPolicy) -> JobHandle {
-    JobHandle::Torrent(TorrentJob::create(fetchpath_torrent::request(
-        source,
-        record.destination.clone(),
-        record.id.clone(),
-        policy.discover_peers,
-        policy.upload,
-    )))
+    let request = match (
+        &record.torrent_metadata_path,
+        &record.torrent_metadata_sha256,
+    ) {
+        (Some(path), Some(hash)) => fetchpath_torrent::request_local(
+            source,
+            path.clone(),
+            hash.clone(),
+            record.destination.clone(),
+            record.id.clone(),
+            policy.discover_peers,
+            policy.upload,
+        ),
+        _ => fetchpath_torrent::request(
+            source,
+            record.destination.clone(),
+            record.id.clone(),
+            policy.discover_peers,
+            policy.upload,
+        ),
+    };
+    JobHandle::Torrent(TorrentJob::create(request))
 }
 
 fn recovery_action(snapshot: &JobSnapshot) -> (Option<String>, bool) {
@@ -3438,6 +3640,43 @@ fn restartable_url(url: &str) -> Option<String> {
     (!url.contains(['?', '#'])).then(|| url.to_owned())
 }
 
+fn torrent_metadata_path(state_path: &Path, id: &str) -> Option<PathBuf> {
+    uuid::Uuid::parse_str(id).ok()?;
+    Some(
+        state_path
+            .parent()?
+            .join("torrent-metadata")
+            .join(format!("{id}.torrent")),
+    )
+}
+
+fn verify_torrent_metadata(path: &Path, expected: &str) -> io::Result<()> {
+    use sha2::{Digest, Sha256};
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid metadata hash",
+        ));
+    }
+    let attributes = fs::symlink_metadata(path)?;
+    if !attributes.file_type().is_file() || attributes.len() > MAX_TORRENT_METADATA_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid metadata file",
+        ));
+    }
+    let bytes = fs::read(path)?;
+    if bytes.len() as u64 > MAX_TORRENT_METADATA_BYTES
+        || format!("{:x}", Sha256::digest(bytes)) != expected.to_ascii_lowercase()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "metadata hash changed",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn save_persisted(path: &Path, state: &QueueState) -> io::Result<()> {
     write_queue(path, state, 0, 0)
@@ -3452,7 +3691,7 @@ fn load_engine(path: &Path) -> DurableEngine {
     File::open(path)
         .ok()
         .and_then(|file| serde_json::from_reader::<_, DurableEngine>(io::BufReader::new(file)).ok())
-        .filter(|engine| engine.schema_version == QUEUE_SCHEMA_VERSION)
+        .filter(|engine| engine.schema_version == ENGINE_SCHEMA_VERSION)
         .unwrap_or_default()
 }
 
@@ -3501,6 +3740,7 @@ fn write_queue(
                 media_variant_id: record.media_variant_id.clone(),
                 media_quality: record.media_quality.clone(),
                 torrent_policy: record.torrent_policy,
+                torrent_metadata_sha256: record.torrent_metadata_sha256.clone(),
                 durable: record.durable.clone(),
                 principal: record.principal.clone(),
                 approval: record.approval.clone(),
@@ -3575,7 +3815,9 @@ fn version_of(text: &[u8]) -> Version {
     match value.get("schemaVersion") {
         None | Some(serde_json::Value::Null) => Version::Unreadable,
         Some(version) => match version.as_u64() {
-            Some(number) if number == u64::from(QUEUE_SCHEMA_VERSION) => Version::Current,
+            Some(number) if (1..=u64::from(QUEUE_SCHEMA_VERSION)).contains(&number) => {
+                Version::Current
+            }
             Some(number) if number > u64::from(QUEUE_SCHEMA_VERSION) => {
                 Version::Newer(Some(number))
             }
@@ -3985,19 +4227,123 @@ mod tests {
             media_variant_id: None,
             media_quality: None,
             torrent_policy: None,
+            torrent_metadata_sha256: None,
             durable: RecordDurable::default(),
             principal: Principal::User,
             approval: None,
             size_approved: false,
             view,
         };
-        let restored = QueueRecord::restore(saved, now_ms(), None, None);
+        let restored =
+            QueueRecord::restore(saved, now_ms(), None, None, Path::new("queue-v1.json"));
         assert!(
             restored.job.is_none(),
             "never a job that downloads unchecked"
         );
         assert_eq!(restored.view.state, "failed");
         assert_eq!(restored.view.action.as_deref(), Some("check_checksum"));
+    }
+
+    #[test]
+    fn local_torrent_snapshot_survives_original_deletion_and_rejects_tampering() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("queue-v1.json");
+        let original = dir.path().join("debian.torrent");
+        fs::write(&original, b"d4:infod4:name6:debian6:lengthi0eee").unwrap();
+        let destination = dir.path().join("debian");
+        let policy = TorrentPolicy {
+            discover_peers: true,
+            upload: false,
+        };
+        let id = {
+            let session = Session::load(queue.clone(), 1).unwrap();
+            session
+                .enqueue_torrent_file_for(
+                    &original,
+                    &destination.display().to_string(),
+                    Some(now_ms() + 3_600_000),
+                    policy,
+                    &Origin::default(),
+                )
+                .unwrap()
+                .job_id
+        };
+        fs::remove_file(&original).unwrap();
+        let restored = Session::load(queue.clone(), 1).unwrap();
+        assert_eq!(restored.snapshot(&id).unwrap().state, "scheduled");
+        assert_eq!(restored.snapshot(&id).unwrap().source, "debian.torrent");
+        drop(restored);
+        fs::write(
+            dir.path()
+                .join("torrent-metadata")
+                .join(format!("{id}.torrent")),
+            b"tampered",
+        )
+        .unwrap();
+        let tampered = Session::load(queue, 1).unwrap();
+        assert_eq!(tampered.snapshot(&id).unwrap().state, "failed");
+    }
+
+    #[test]
+    fn refreshing_a_local_torrent_retires_its_metadata_before_using_the_new_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("queue-v1.json");
+        let original = dir.path().join("first.torrent");
+        fs::write(&original, b"d4:infod4:name5:first6:lengthi0eee").unwrap();
+        let destination = dir.path().join("output");
+        let session = Session::load(queue.clone(), 1).unwrap();
+        let id = session
+            .enqueue_torrent_file_for(
+                &original,
+                &destination.display().to_string(),
+                Some(now_ms() + 3_600_000),
+                TorrentPolicy {
+                    discover_peers: true,
+                    upload: false,
+                },
+                &Origin::default(),
+            )
+            .unwrap()
+            .job_id;
+        let snapshot = torrent_metadata_path(&queue, &id).unwrap();
+        assert!(snapshot.exists());
+        session.cancel(&id).unwrap();
+        fs::create_dir(&destination).unwrap();
+        session.durable.lock().unwrap().defer = true;
+        session
+            .retry(
+                &id,
+                Some("https://example.test/second.torrent".into()),
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(
+            snapshot.exists(),
+            "deferred save must keep metadata referenced by the old queue"
+        );
+        let persisted = load_persisted(&queue).unwrap().current().unwrap();
+        assert!(persisted.records[0].torrent_metadata_sha256.is_some());
+        let state = session.inner.lock().unwrap();
+        let record = find_record(&state, &id).unwrap();
+        assert_eq!(
+            record.live_url.as_deref(),
+            Some("https://example.test/second.torrent")
+        );
+        assert!(record.torrent_metadata_sha256.is_none());
+        assert!(record.torrent_metadata_path.is_none());
+        let mut durable = session.durable.lock().unwrap();
+        durable.defer = false;
+        session.write_locked(&state, &mut durable).unwrap();
+        assert!(
+            snapshot.exists(),
+            "the backup queue still names the old metadata"
+        );
+        let backup: PersistedQueue =
+            serde_json::from_slice(&fs::read(queue.with_extension("json.bak")).unwrap()).unwrap();
+        assert!(backup.records[0].torrent_metadata_sha256.is_some());
+        session.write_locked(&state, &mut durable).unwrap();
+        assert!(!snapshot.exists());
     }
 
     #[test]

@@ -141,6 +141,45 @@ FunctionEnd
 
   !insertmacro FETCHPATH_USER_PATH Add
   Delete "${FETCHPATH_UPDATE_HOLD}"
+
+  ; Tauri calls this hook after the installed files are in place. Its finish
+  ; page already uses both checkboxes (desktop shortcut and launch app), so an
+  ; interactive setup asks here. Quiet and passive setup must never download
+  ; optional software without a person choosing it.
+  ${IfNot} ${Silent}
+  ${AndIf} $PassiveMode != 1
+    ; The guided installer puts all three executables in this data folder.
+    ; An upgrade with them already present needs no new choice or download.
+    ${If} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\yt-dlp.exe"
+      ${If} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\ffmpeg.exe"
+      ${AndIf} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\ffprobe.exe"
+        Goto fetchpath_media_done
+      ${EndIf}
+      ${If} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\bin\ffmpeg.exe"
+      ${AndIf} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\bin\ffprobe.exe"
+        Goto fetchpath_media_done
+      ${EndIf}
+    ${EndIf}
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Set up video and audio tools now?$\r$\n$\r$\nFetchpath will download yt-dlp and FFmpeg (including ffprobe) over the internet. These third-party tools have their own licenses (Unlicense and GPL-3.0-or-later). Fetchpath checks their pinned SHA-256 values before using them. You can do this later in Settings." IDNO fetchpath_media_done
+    DetailPrint "Setting up optional video and audio tools; download progress appears here."
+    nsExec::ExecToLog '"$INSTDIR\fetchpath.exe" tools install --yes'
+    Pop $R9
+    StrCmp $R9 0 fetchpath_media_done
+    DetailPrint "Media tools could not be set up (exit $R9). Fetchpath is installed; retry from Settings."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Fetchpath is installed, but the optional video and audio tools could not be set up. You can retry from Settings."
+    fetchpath_media_done:
+
+    ; Chrome and Edge require the person to add an unpacked extension in the
+    ; browser. Opening this folder only starts those steps; it grants no browser
+    ; permission and automatic capture remains off until enabled in the popup.
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Show how to add the optional Fetchpath browser extension to Chrome or Edge?$\r$\n$\r$\nYour browser will ask you to load it. You can also find these steps later in Fetchpath Settings." IDNO fetchpath_browser_done
+    ExecShell "open" "$INSTDIR\browser-extension"
+    ${If} ${Errors}
+      DetailPrint "Could not open the browser extension folder. Open it from Fetchpath Settings later."
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONINFORMATION "In Chrome, open chrome://extensions; in Edge, open edge://extensions. Turn on Developer mode, choose Load unpacked, then select the browser-extension folder that Setup opened. To check the connection later, open Fetchpath Settings > Browser extension."
+    fetchpath_browser_done:
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

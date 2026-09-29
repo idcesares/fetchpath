@@ -47,6 +47,10 @@ option, sets the terms for using Fetchpath.
    The first line printed must be the same as the long code at the start of
    the second. If they differ, delete both files and download them again.
 3. Double-click `Fetchpath_0.1.0_x64-setup.exe` and follow the installer.
+   In an interactive setup, you can choose whether to download the video and
+   audio tools. You can also choose to open the bundled browser extension
+   folder and see the Chrome or Edge setup steps. Both choices default to No;
+   silent setup skips them. The browser still asks you to load the extension.
    Fetchpath installs just for you, doesn't ask for administrator rights,
    and goes into `%LOCALAPPDATA%\Fetchpath`. If your PC doesn't have the
    Microsoft Edge WebView2 Runtime (almost every Windows 11 PC does), the
@@ -177,7 +181,7 @@ This works for one file at a time, not for a batch.
 Fetchpath keeps a copy of each file that matched its checksum. If you download
 the same file again with the same checksum, it is copied from that copy and
 checked again, without using the network, and the row says **Reused from this
-computer's cache**. **Settings → Cache** shows how much it holds, sets its
+computer's cache**. **Settings → Storage and sharing → Cache** shows how much it holds, sets its
 size and clears it.
 
 ## Models and datasets from Hugging Face
@@ -196,7 +200,8 @@ Fetchpath can save video and audio from pages that the free tool `yt-dlp`
 supports, and lets you choose the quality. It needs two programs, `yt-dlp` and
 `ffmpeg`, which don't come with Fetchpath.
 
-**Set them up once:** open **Settings → Video and audio** and choose
+**Set them up once:** choose the optional setup step in the installer, or open
+**Settings → Integrations → Video and audio** and choose
 **Download and set up**. Fetchpath downloads specific versions from their
 publishers' official releases and installs them only if they match the
 checksums recorded in this version of Fetchpath. It shows each program's
@@ -231,13 +236,14 @@ sticks for that link.
 
 ## Sending links from your browser
 
-The Fetchpath installer connects Fetchpath to Chrome and Microsoft Edge. You
-add the extension to your browser once:
+The Fetchpath installer registers the local bridge for Chrome and Microsoft
+Edge, and can open the extension folder with setup instructions. You add the
+extension to your browser once:
 
 The [browser extension privacy page](BROWSER-PRIVACY.md) explains what the
 extension reads, sends to the local app, and keeps on your computer.
 
-1. Open **Settings → Browser extension**. It should say Fetchpath is
+1. Open **Settings → Integrations → Browser extension**. It should say Fetchpath is
    connected to Chrome and Edge.
 2. Choose **Copy Chrome address** or **Copy Edge address**, paste it into
    your browser's address bar, and press <kbd>Enter</kbd>.
@@ -289,7 +295,9 @@ supported in this version.
 ## Settings
 
 Open Settings with the **Settings** button or <kbd>Ctrl</kbd>+<kbd>,</kbd>.
-Changes save straight away.
+Choose General, Downloads, Integrations, Agents and rules, or Storage and
+sharing. Changes save straight away. The footer links to the Fetchpath project
+on GitHub.
 
 | Setting | What it does |
 | --- | --- |
@@ -370,8 +378,8 @@ extensions page.
 | **"Send again from browser"** | The download needed your browser sign-in, and it has expired. Send the link from your browser again. |
 | **Connection or server errors** | Choose **Retry**. Turn on automatic retry in Settings to have Fetchpath retry these for you. |
 | **Checksum doesn't match** | See [Checking a download against a checksum](#checking-a-download-against-a-checksum). |
-| **"Media tools are not set up yet"** | Open **Settings → Video and audio** and choose **Download and set up**. |
-| **Send link to Fetchpath is missing** | Check the extension is added and turned on in your browser's extensions page, and that **Settings → Browser extension** shows a check mark. |
+| **"Media tools are not set up yet"** | Open **Settings → Integrations → Video and audio** and choose **Download and set up**. |
+| **Send link to Fetchpath is missing** | Check the extension is added and turned on in your browser's extensions page, and that **Settings → Integrations → Browser extension** shows a check mark. |
 | **The toolbar popup says "Fetchpath isn't answering"** | Fetchpath must be installed with its installer on this computer. Reinstall it, then close and reopen the popup. |
 | **The `fetchpath` command isn't found** | Open a new terminal after installing. If it still isn't found, your PATH was too long to change safely; add `%LOCALAPPDATA%\Fetchpath` to it yourself. |
 | **A download doesn't resume after a restart** | The website may not support resuming, or the file changed. Fetchpath starts again rather than joining two different files. |

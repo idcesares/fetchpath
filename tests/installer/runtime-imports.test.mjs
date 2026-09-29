@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 const shipped = [
   fileURLToPath(new URL('../../target/release/fetchpath.exe', import.meta.url)),
   fileURLToPath(new URL('../../apps/desktop/src-tauri/binaries/fetchpath-x86_64-pc-windows-msvc.exe', import.meta.url)),
+  fileURLToPath(new URL('../../target/release/fetchpath-torrent-helper.exe', import.meta.url)),
+  fileURLToPath(new URL('../../apps/desktop/src-tauri/binaries/fetchpath-torrent-helper-x86_64-pc-windows-msvc.exe', import.meta.url)),
 ];
 
 /** Names of the DLLs a PE32+ image imports. */

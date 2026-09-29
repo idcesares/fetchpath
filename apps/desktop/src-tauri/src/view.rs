@@ -293,10 +293,16 @@ impl MediaDraft {
 
 impl TorrentDraft {
     pub fn request(&self) -> Result<JobRequest, String> {
+        let source = self.url.trim();
+        let input = if source.starts_with("magnet:?") || source.starts_with("https://") {
+            JobInput::Url { url: link(source)? }
+        } else {
+            JobInput::TorrentFile {
+                path: source.to_owned(),
+            }
+        };
         Ok(JobRequest::Torrent {
-            input: JobInput::Url {
-                url: link(&self.url)?,
-            },
+            input,
             destination: destination(&self.destination),
             not_before: at(self.not_before_ms),
             discover_peers: self.discover_peers,
@@ -513,6 +519,35 @@ pub struct CancelResponse {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn torrent_draft_preserves_local_file_as_a_torrent_input() {
+        let draft = TorrentDraft {
+            url: r"C:\Downloads\debian.torrent".into(),
+            destination: r"C:\Downloads\debian".into(),
+            not_before_ms: None,
+            discover_peers: true,
+            upload: false,
+        };
+        assert!(matches!(
+            draft.request().unwrap(),
+            JobRequest::Torrent {
+                input: JobInput::TorrentFile { .. },
+                ..
+            }
+        ));
+        let url = TorrentDraft {
+            url: "magnet:?xt=urn:btih:abc".into(),
+            ..draft
+        };
+        assert!(matches!(
+            url.request().unwrap(),
+            JobRequest::Torrent {
+                input: JobInput::Url { .. },
+                ..
+            }
+        ));
+    }
 
     fn snapshot(fields: serde_json::Value) -> JobSnapshot {
         let mut base = json!({

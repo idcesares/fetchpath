@@ -360,6 +360,29 @@ fn credentials_and_replacement_are_refused_outright_not_offered_for_approval() {
 }
 
 #[test]
+fn an_agent_cannot_use_a_local_torrent_file_as_a_read_path() {
+    let s = setup(granting);
+    let result = send(
+        &s.agent,
+        Command::CreateJob {
+            request: JobRequest::Torrent {
+                input: JobInput::TorrentFile {
+                    path: s.granted.join("private.torrent").display().to_string(),
+                },
+                destination: DestinationIntent {
+                    path: s.granted.join("torrent-output").display().to_string(),
+                    conflict: ConflictPolicy::Ask,
+                },
+                not_before: None,
+                discover_peers: true,
+                upload: false,
+            },
+        },
+    );
+    assert_eq!(code(result), "policy.not_permitted");
+}
+
+#[test]
 fn an_agent_sees_and_controls_only_the_jobs_it_created() {
     let s = setup(granting);
     let mine = job(send(&s.agent, later(&s.granted.join("mine.bin"))).unwrap());

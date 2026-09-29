@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-27",
+  "updated": "2026-09-29",
   "tasks": [
     {
       "id": "FP-001",
@@ -2478,6 +2478,74 @@
         "extensions/browser/README.md",
         "docs/development/BROWSER-CAPTURE.md"
       ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-079",
+      "title": "Make the torrent helper run on a clean Windows install",
+      "milestone": "M13",
+      "dependsOn": ["FP-021"],
+      "status": "in_progress",
+      "owner": "codex (lead)",
+      "priority": "P0",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": ["adapters/torrent/build.rs", "tests/installer/runtime-imports.test.mjs", "docs/development/TORRENTS.md", "docs/tasks/backlog.json"],
+      "acceptanceIds": ["A04", "A10"],
+      "acceptance": "The installed torrent helper starts on a clean supported Windows 11 x64 image without a separately installed Visual C++ redistributable. The package includes the helper beside fetchpath.exe, and a regression check catches a renewed VCRUNTIME or MSVCP import.",
+      "verification": "Inspect the helper PE imports in a fresh release build, check the staged and installed package, then repeat the owner's Windows Sandbox launch path. Obtain an independent strong review of the runtime and packaging boundary.",
+      "evidence": ["docs/development/TORRENTS.md"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-080",
+      "title": "Accept torrent links and local metadata naturally in every client",
+      "milestone": "M13",
+      "dependsOn": ["FP-021"],
+      "status": "in_progress",
+      "owner": "codex (lead)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": ["adapters/torrent", "crates/fetchpath-session", "crates/fetchpath-protocol", "apps/cli", "apps/desktop", "docs/development/TORRENTS.md", "docs/user/CLI.md", "docs/tasks/backlog.json"],
+      "acceptanceIds": ["A02", "A09", "A10"],
+      "acceptance": "Pasting a magnet or HTTPS .torrent link selects Torrent in the desktop and terminal add flows; the command line and desktop also accept a local .torrent file. Peer discovery and upload remain explicit, agent and path boundaries remain intact, and all clients create the same engine job.",
+      "verification": "Behavioral parsing and integration tests for each input type and client, protocol schema check if changed, desktop typecheck and a real installed-app pass.",
+      "evidence": ["docs/development/TORRENTS.md"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-081",
+      "title": "Offer optional browser and media setup during installation",
+      "milestone": "M13",
+      "dependsOn": ["FP-069"],
+      "status": "in_progress",
+      "owner": "codex packaging agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": ["apps/desktop/src-tauri/installer-hooks.nsh", "apps/desktop/src-tauri", "extensions/browser", "docs/user/GUIDE.md", "docs/development/WINDOWS-PACKAGING.md", "docs/tasks/backlog.json"],
+      "acceptanceIds": ["A07", "A10", "A12"],
+      "acceptance": "Setup clearly offers optional browser extension and media-tool steps without enabling browser capture or downloading helpers implicitly. The browser flow obeys store identity and browser consent requirements; the media flow uses the existing pinned helper installer. Both remain discoverable after installation.",
+      "verification": "Inspect generated NSIS pages and quiet-install behavior; exercise each choice on a clean Windows image and check extension identity, pinned helper verification, and cancellation.",
+      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/BROWSER-CAPTURE.md", "docs/development/MEDIA-INTEGRATION.md"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-082",
+      "title": "Make desktop settings responsive and add project attribution",
+      "milestone": "M13",
+      "dependsOn": ["FP-055"],
+      "status": "in_progress",
+      "owner": "codex desktop agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": ["apps/desktop/index.html", "apps/desktop/src/styles.css", "apps/desktop/src/main.ts", "apps/desktop/src-tauri/Cargo.toml", "apps/desktop/src-tauri/src/lib.rs", "Cargo.lock", "docs/development/WINDOWS-PACKAGING.md", "docs/tasks/backlog.json"],
+      "acceptanceIds": ["A09", "A12"],
+      "acceptance": "Settings have one clear vertical scroll path, controls remain reachable and editable as the window narrows or zoom increases, related settings are easy to find, and a discreet project link opens the official GitHub repository in a browser.",
+      "verification": "Desktop typecheck and real window review at several sizes and zoom levels, including keyboard navigation and the external link.",
+      "evidence": ["docs/development/WINDOWS-PACKAGING.md"],
       "blockedReason": null
     }
   ]

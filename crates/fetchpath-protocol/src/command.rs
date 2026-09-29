@@ -364,6 +364,11 @@ pub enum JobInput {
     Url {
         url: SensitiveUrl,
     },
+    /// A user's local torrent metadata file. The engine snapshots it before
+    /// creating a job; the helper never reads this original path.
+    TorrentFile {
+        path: String,
+    },
     /// A request already held by the engine, such as a browser capture. The
     /// secret stays where it is stored.
     CredentialRef {

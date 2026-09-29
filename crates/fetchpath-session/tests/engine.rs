@@ -926,7 +926,7 @@ fn a_queue_from_a_newer_build_is_served_read_only_and_never_written() {
     let path = dir.path().join("queue-v1.json");
     let saved = format!(
         concat!(
-            "{{\"schemaVersion\": 2, \"records\": [{{\"id\": \"00000000-0000-4000-8000-0000000000aa\", ",
+            "{{\"schemaVersion\": 3, \"records\": [{{\"id\": \"00000000-0000-4000-8000-0000000000aa\", ",
             "\"restartUrl\": \"https://example.test/a.bin\", \"displayUrl\": \"https://example.test/a.bin\", ",
             "\"destination\": {dest}, \"createdAtMs\": 1790000000000, \"futureField\": [1, 2], ",
             "\"view\": {{\"jobId\": \"00000000-0000-4000-8000-0000000000aa\", \"source\": \"https://example.test/a.bin\", ",

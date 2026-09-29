@@ -132,6 +132,10 @@ pub(crate) fn has_userinfo(url: &str) -> bool {
 pub(crate) fn check_agent_input(input: &JobInput) -> Result<(), ProtocolError> {
     match input {
         JobInput::CredentialRef { .. } => Err(credentials_not_allowed()),
+        JobInput::TorrentFile { .. } => Err(policy_error(
+            "policy.not_permitted",
+            "An agent cannot read a local torrent file. Ask the person to add it.",
+        )),
         JobInput::Url { url } if has_userinfo(url.expose()) => Err(credentials_not_allowed()),
         JobInput::Url { .. } => Ok(()),
     }

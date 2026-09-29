@@ -170,7 +170,25 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     let session = Session::new_with_opts(stage.clone(), options)
         .await
         .map_err(|_| "torrent.engine_unavailable")?;
-    let metadata = if request.source.starts_with("https://") {
+    let metadata = if let (Some(path), Some(expected_hash)) = (
+        request.metadata_path.as_deref(),
+        request.metadata_sha256.as_deref(),
+    ) {
+        let path = Path::new(path);
+        let attributes = fs::symlink_metadata(path).map_err(|_| "torrent.metadata_unavailable")?;
+        if !attributes.file_type().is_file()
+            || attributes.file_type().is_symlink()
+            || attributes.len() > 4 * 1024 * 1024
+        {
+            return Err("torrent.metadata_invalid");
+        }
+        let bytes = fs::read(path).map_err(|_| "torrent.metadata_unavailable")?;
+        if bytes.len() > 4 * 1024 * 1024 || format!("{:x}", Sha256::digest(&bytes)) != expected_hash
+        {
+            return Err("torrent.metadata_invalid");
+        }
+        Some(bytes)
+    } else if request.source.starts_with("https://") {
         let response = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))

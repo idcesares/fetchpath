@@ -231,6 +231,7 @@ const mediaOptions = required<HTMLElement>("media-options");
 const torrentOptions = required<HTMLElement>("torrent-options");
 const torrentDiscovery = required<HTMLInputElement>("torrent-discovery");
 const torrentUpload = required<HTMLInputElement>("torrent-upload");
+const torrentPickFile = required<HTMLButtonElement>("torrent-pick-file");
 const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
 const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
 const mediaOpenSettings = required<HTMLButtonElement>("media-open-settings");
@@ -444,9 +445,32 @@ settingsDialog.addEventListener("close", () => restoreDialogFocus(openSettingsBu
 // submission, which navigates the webview away from the application.
 settingsForm.addEventListener("submit", (event) => event.preventDefault());
 
-async function showSettings(): Promise<void> {
+const settingsCategories = [...settingsDialog.querySelectorAll<HTMLButtonElement>("[data-settings-category]")];
+for (const button of settingsCategories) {
+  button.addEventListener("click", () => {
+    const category = button.dataset.settingsCategory;
+    for (const choice of settingsCategories) choice.setAttribute("aria-pressed", String(choice === button));
+    for (const panel of settingsForm.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
+      panel.hidden = panel.dataset.settingsPanel !== category;
+    }
+    settingsForm.setAttribute("aria-label", `${button.textContent} settings`);
+    settingsForm.scrollTop = 0;
+  });
+}
+required<HTMLAnchorElement>("project-attribution").addEventListener("click", async (event) => {
+  event.preventDefault();
   clearError(settingsError);
-  openDialog(settingsDialog, settingsCloseButton);
+  try {
+    await invoke("open_project_page");
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+async function showSettings(category?: string): Promise<void> {
+  if (category) settingsCategories.find((button) => button.dataset.settingsCategory === category)?.click();
+  clearError(settingsError);
+  openDialog(settingsDialog, settingsCategories.find((button) => button.getAttribute("aria-pressed") === "true") ?? settingsCloseButton);
   await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache(), refreshLan()]);
 }
 
@@ -1272,8 +1296,8 @@ dismissOnboarding.addEventListener("click", () => {
   addOpenButton.focus({ preventScroll: true });
 });
 
-onboardingOpenMedia.addEventListener("click", () => void showSettings());
-mediaOpenSettings.addEventListener("click", () => void showSettings());
+onboardingOpenMedia.addEventListener("click", () => void showSettings("integrations"));
+mediaOpenSettings.addEventListener("click", () => void showSettings("integrations"));
 
 /** Settings changed from outside the dialog, where there is no form to update. */
 async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<void> {
@@ -1400,6 +1424,26 @@ kindChooser.addEventListener("change", () => {
   renderPreview();
 });
 
+torrentPickFile.addEventListener("click", async () => {
+  clearError(formError);
+  try {
+    const selected = await open({
+      title: "Choose a .torrent file",
+      multiple: false,
+      filters: [{ name: "Torrent metadata", extensions: ["torrent"] }],
+    });
+    if (typeof selected !== "string") return;
+    urlInput.value = selected;
+    analyzedUrl = selected;
+    destinationIsSuggested = true;
+    destinationInput.value = "";
+    renderPreview();
+    destinationInput.focus();
+  } catch (error) {
+    showError(formError, error);
+  }
+});
+
 inspectMediaButton.addEventListener("click", () => {
   clearError(formError);
   const urls = parseUrls();
@@ -1480,13 +1524,15 @@ const MEDIA_HOSTS = [
 const FILE_EXTENSIONS = new Set([
   "7z", "aab", "apk", "appx", "bin", "bz2", "cab", "csv", "deb", "dmg", "doc", "docx", "epub", "exe", "flac",
   "gz", "img", "iso", "jar", "json", "m4a", "mkv", "mobi", "mov", "mp3", "mp4", "msi", "msix", "ogg", "pdf",
-  "pkg", "ppt", "pptx", "rar", "rpm", "svg", "tar", "tgz", "torrent", "txt", "wav", "webm", "xls", "xlsx",
+  "pkg", "ppt", "pptx", "rar", "rpm", "svg", "tar", "tgz", "txt", "wav", "webm", "xls", "xlsx",
   "xml", "xz", "zip", "zst", "png", "jpg", "jpeg", "gif", "webp",
 ]);
 
-type LinkKind = "file" | "media" | "unknown";
+type LinkKind = "file" | "media" | "torrent" | "unknown";
 
 function classifyLink(value: string): LinkKind {
+  if (/^magnet:\?/i.test(value.trim())) return "torrent";
+  if (/^(?:[a-zA-Z]:[\\/]|\\\\).*\.torrent$/i.test(value.trim())) return "torrent";
   let url: URL;
   try {
     url = new URL(value);
@@ -1496,6 +1542,7 @@ function classifyLink(value: string): LinkKind {
   const host = url.hostname.toLowerCase().replace(/^www\.|^m\.|^music\./, "");
   const lastSegment = url.pathname.split("/").pop() ?? "";
   const extension = lastSegment.includes(".") ? lastSegment.split(".").pop()!.toLowerCase() : "";
+  if (url.protocol === "https:" && extension === "torrent") return "torrent";
   // A direct file on a media site (an .mp4 on archive.org) is still a file.
   if (FILE_EXTENSIONS.has(extension)) return "file";
   if (MEDIA_HOSTS.some((media) => host === media || host.endsWith(`.${media}`))) return "media";
@@ -1507,7 +1554,7 @@ let settingKindAutomatically = false;
 let analysisTimer = 0;
 let analyzedUrl = "";
 
-function setKind(kind: "file" | "media"): void {
+function setKind(kind: "file" | "media" | "torrent"): void {
   if (downloadKind() === kind) return;
   const radio = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${kind}"]`);
   if (!radio) return;
@@ -1586,6 +1633,10 @@ async function analyzeLink(): Promise<void> {
   const kind = classifyLink(url);
   if (kind === "file") {
     setKind("file");
+    return;
+  }
+  if (kind === "torrent") {
+    setKind("torrent");
     return;
   }
   if (kind === "media") {
@@ -1950,7 +2001,7 @@ jobList.addEventListener("click", async (event) => {
         setQueueSummary("Open the source in your browser and choose Send link to Fetchpath again.");
         return;
       case "configure-media":
-        await showSettings();
+        await showSettings("integrations");
         return;
       case "open-folder":
         await invoke("reveal_download", { jobId });

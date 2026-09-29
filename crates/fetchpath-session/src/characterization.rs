@@ -51,7 +51,10 @@ fn the_0_1_0_queue_file_is_exactly_what_the_queue_writes() {
     // value: nothing in the file is ignored, and nothing the writer emits is
     // missing from it.
     assert_eq!(serde_json::to_value(&parsed).unwrap(), as_written);
-    assert_eq!(parsed.schema_version, QUEUE_SCHEMA_VERSION);
+    assert_eq!(
+        parsed.schema_version, 1,
+        "the original fixture stays readable after the v2 queue migration"
+    );
     assert_eq!(parsed.records.len(), 14);
 }
 
@@ -59,7 +62,7 @@ fn the_0_1_0_queue_file_is_exactly_what_the_queue_writes() {
 fn a_non_ascii_destination_survives_a_save_and_load() {
     let dir = tempfile::tempdir().unwrap();
     let saved = fixture_record(dir.path(), &id(1));
-    let restored = QueueRecord::restore(saved, NOW, None, None);
+    let restored = QueueRecord::restore(saved, NOW, None, None, Path::new("queue-v1.json"));
     let path = dir.path().join("queue.json");
     let state = QueueState {
         records: vec![restored],
@@ -256,7 +259,8 @@ fn every_saved_state_comes_back_after_a_restart_as_it_did_in_0_1_0() {
     for (saved, expected) in queue.records.into_iter().zip(&table) {
         assert_eq!(saved.id, id(expected.record), "fixture order");
         let saved_view = saved.view.clone();
-        let restored = QueueRecord::restore(saved, NOW, Some(&store), None);
+        let restored =
+            QueueRecord::restore(saved, NOW, Some(&store), None, Path::new("queue-v1.json"));
         let row = format!("record {}", expected.record);
         assert_eq!(restored.view.state, expected.state, "{row}: state");
         assert_eq!(
@@ -305,12 +309,23 @@ fn every_saved_state_comes_back_after_a_restart_as_it_did_in_0_1_0() {
 fn a_private_link_is_never_restored_as_a_live_source() {
     let dir = tempfile::tempdir().unwrap();
     for record in [4, 6] {
-        let restored =
-            QueueRecord::restore(fixture_record(dir.path(), &id(record)), NOW, None, None);
+        let restored = QueueRecord::restore(
+            fixture_record(dir.path(), &id(record)),
+            NOW,
+            None,
+            None,
+            &dir.path().join("queue-v1.json"),
+        );
         assert_eq!(restored.live_url, None, "record {record}");
         assert_eq!(restored.restart_url, None, "record {record}");
     }
-    let public = QueueRecord::restore(fixture_record(dir.path(), &id(7)), NOW, None, None);
+    let public = QueueRecord::restore(
+        fixture_record(dir.path(), &id(7)),
+        NOW,
+        None,
+        None,
+        &dir.path().join("queue-v1.json"),
+    );
     assert_eq!(
         public.live_url.as_deref(),
         Some("https://example.test/files/scheduled.bin")

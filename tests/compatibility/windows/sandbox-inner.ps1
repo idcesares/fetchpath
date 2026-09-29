@@ -172,6 +172,7 @@ try {
         desktopExecutable = (Test-Path -LiteralPath (Join-Path $installDirectory 'fetchpath-desktop.exe'))
         cliExecutable = (Test-Path -LiteralPath (Join-Path $installDirectory 'fetchpath.exe'))
         browserHostExecutable = (Test-Path -LiteralPath (Join-Path $installDirectory "fetchpath-browser-host.exe"))
+        torrentHelperExecutable = (Test-Path -LiteralPath (Join-Path $installDirectory "fetchpath-torrent-helper.exe"))
         installDirectoryOnUserPath = (Test-PathListContains (Get-UserPath) $installDirectory)
         nativeHostKeysRegistered = @($nativeHostKeys | Where-Object { Test-Path -LiteralPath $_ }).Count
     }
@@ -179,9 +180,17 @@ try {
     Assert-True (@($observation.install.uninstallEntries).Count -eq 1) 'Expected exactly one per-user uninstall entry.'
     Assert-True $observation.install.desktopExecutable 'fetchpath-desktop.exe was not installed.'
     Assert-True $observation.install.cliExecutable 'fetchpath.exe was not installed.'
+    Assert-True $observation.install.torrentHelperExecutable 'fetchpath-torrent-helper.exe was not installed.'
     Assert-True $observation.install.installDirectoryOnUserPath 'The install directory was not added to the user PATH.'
     Assert-True ($observation.install.nativeHostKeysRegistered -eq 3) `
         "Expected the browser host registered for Chrome, Edge and Firefox; found $($observation.install.nativeHostKeysRegistered)."
+
+    # Empty input must reach the helper's own JSON error path. A missing MSVC
+    # runtime instead prevents Windows from entering the helper at all.
+    $helperSmoke = Invoke-FromNewTerminal 'torrent-helper' "`"$installDirectory\fetchpath-torrent-helper.exe`" <NUL" 30
+    $observation.install.torrentHelperSmoke = $helperSmoke
+    Assert-True ($helperSmoke.exitCode -eq 1 -and $helperSmoke.output -match 'request.invalid') `
+        "The torrent helper did not start cleanly: $($helperSmoke.output)"
 
     # ------------------------------------------------ CLI in a new terminal ---
     Write-Progress-Line "installed with exit code $($observation.install.exitCode); CLI"

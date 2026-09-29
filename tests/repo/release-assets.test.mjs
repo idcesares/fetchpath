@@ -73,9 +73,10 @@ test('uninstall asks one question about user data and reverses what install adde
   const source = await readFile(hookPath, 'utf8');
 
   // User data is the bundler's single, unticked "Delete the application data"
-  // checkbox. A second prompt here once contradicted it: ticking the box and
-  // answering No still deleted the data. The hook must neither ask nor delete.
-  assert.doesNotMatch(source, /^\s*MessageBox/m, 'the hook must not ask a second question about user data');
+  // checkbox. A second uninstall prompt once contradicted it. An unrelated
+  // install-time media choice is allowed, but uninstall must not ask again.
+  const uninstall = source.slice(source.indexOf('!macro NSIS_HOOK_PREUNINSTALL'));
+  assert.doesNotMatch(uninstall, /^\s*MessageBox/m, 'uninstall must not ask a second question about user data');
   assert.doesNotMatch(source, /^\s*RMDir/m, 'the hook must not delete user data itself');
 
   // What install added, uninstall removes: the PATH entry, while the script

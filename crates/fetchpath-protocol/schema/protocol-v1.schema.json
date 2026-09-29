@@ -2230,6 +2230,23 @@
           "type": "object"
         },
         {
+          "description": "A user's local torrent metadata file. The engine snapshots it before\ncreating a job; the helper never reads this original path.",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "type": {
+              "const": "torrent_file",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A request already held by the engine, such as a browser capture. The\nsecret stays where it is stored.",
           "properties": {
             "credential_ref": {

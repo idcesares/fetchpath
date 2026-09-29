@@ -143,7 +143,7 @@
           placeholder="https://example.com/archive.zip"
         ></textarea>
         <p id="url-hint" class="hint field-note">
-          Paste one link, or several for a batch. Fetchpath tells files and videos apart for you. <kbd>Esc</kbd> closes this and keeps what you typed.
+          Paste one link, or several for a batch. Fetchpath detects torrent links and video pages for you. <kbd>Esc</kbd> closes this and keeps what you typed.
         </p>
 
         <section id="media-options" class="media-options" aria-labelledby="media-options-heading" hidden>
@@ -177,6 +177,7 @@
 
         <section id="torrent-options" class="media-options" aria-label="Torrent network options" hidden>
           <p class="hint">A torrent contacts peers who can see your network address. Choose a new destination folder; Fetchpath will not replace one that exists.</p>
+          <button id="torrent-pick-file" class="secondary" type="button">Choose a .torrent file…</button>
           <label><input id="torrent-discovery" type="checkbox" /> Contact peers and discovery services for this torrent</label>
           <label><input id="torrent-upload" type="checkbox" /> Upload verified pieces to peers (limited to 128 KiB/s)</label>
         </section>
@@ -331,8 +332,16 @@
         saved again.
       </p>
 
-      <form id="settings-form" class="settings-form">
-        <fieldset class="settings-group">
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings categories">
+          <button type="button" data-settings-category="general" aria-pressed="true">General</button>
+          <button type="button" data-settings-category="downloads" aria-pressed="false">Downloads</button>
+          <button type="button" data-settings-category="integrations" aria-pressed="false">Integrations</button>
+          <button type="button" data-settings-category="automation" aria-pressed="false">Agents and rules</button>
+          <button type="button" data-settings-category="storage" aria-pressed="false">Storage and sharing</button>
+        </nav>
+      <form id="settings-form" class="settings-form" aria-label="General settings">
+        <fieldset class="settings-group" data-settings-panel="downloads" hidden>
           <legend>Downloads</legend>
 
           <label for="setting-concurrency">
@@ -359,7 +368,7 @@
           <button id="setting-clear-destination" class="quiet" type="button">Use the Windows Downloads folder</button>
         </fieldset>
 
-        <fieldset class="settings-group">
+        <fieldset class="settings-group" data-settings-panel="downloads" hidden>
           <legend>When a download fails</legend>
           <label class="check">
             <input id="setting-auto-retry" type="checkbox" />
@@ -376,7 +385,7 @@
           </div>
         </fieldset>
 
-        <fieldset class="settings-group">
+        <fieldset class="settings-group" data-settings-panel="integrations" hidden>
           <legend>Video and audio</legend>
           <p id="media-tools-state" class="field-note">Checking…</p>
           <p id="media-tools-detail" class="hint field-note"></p>
@@ -387,7 +396,7 @@
           <p id="media-tools-licence" class="hint field-note"></p>
         </fieldset>
 
-        <fieldset class="settings-group">
+        <fieldset class="settings-group" data-settings-panel="integrations" hidden>
           <legend>Browser extension</legend>
           <p id="browser-setup-state" class="field-note">Checking…</p>
           <p id="browser-setup-detail" class="hint field-note"></p>
@@ -405,7 +414,7 @@
           </div>
         </fieldset>
 
-        <fieldset class="settings-group" id="agents-group">
+        <fieldset class="settings-group" id="agents-group" data-settings-panel="automation" hidden>
           <legend>AI agents</legend>
           <p class="hint field-note">
             Agents such as Claude Code download through <code>fetchpath mcp --agent NAME</code>. What an agent saves
@@ -421,7 +430,7 @@
           <p id="agent-new-name-hint" class="hint field-note">Lowercase letters, digits, dots, dashes or underscores.</p>
         </fieldset>
 
-        <fieldset class="settings-group" id="rules-group">
+        <fieldset class="settings-group" id="rules-group" data-settings-panel="automation" hidden>
           <legend>Rules</legend>
           <p class="hint field-note">
             Rules choose where a new download goes and how, by its site, file type or size. They are tried in order and
@@ -480,7 +489,7 @@
           <ul id="rule-test-result" class="rule-test-result" aria-live="polite"></ul>
         </fieldset>
 
-        <fieldset class="settings-group" id="cache-group">
+        <fieldset class="settings-group" id="cache-group" data-settings-panel="storage" hidden>
           <legend>Cache</legend>
           <p class="hint field-note">
             When you give a checksum, Fetchpath keeps a copy of the verified file. Downloading the same file again
@@ -496,7 +505,7 @@
           <p id="setting-cache-quota-hint" class="hint field-note"></p>
         </fieldset>
 
-        <fieldset class="settings-group" id="lan-group">
+        <fieldset class="settings-group" id="lan-group" data-settings-panel="storage" hidden>
           <legend>Paired computers</legend>
           <p class="hint field-note">
             Your own computers can give each other files instead of fetching them again from the internet: only
@@ -533,14 +542,14 @@
           </details>
         </fieldset>
 
-        <fieldset class="settings-group">
+        <fieldset class="settings-group" data-settings-panel="integrations" hidden>
           <legend>Command line</legend>
           <p id="cli-state"></p>
           <p id="cli-detail" class="hint"></p>
           <code id="cli-path" class="inline-path" hidden></code>
         </fieldset>
 
-        <fieldset class="settings-group">
+        <fieldset class="settings-group" data-settings-panel="general">
           <legend>Window and appearance</legend>
           <label class="check">
             <input id="setting-close-to-tray" type="checkbox" />
@@ -562,11 +571,14 @@
           </select>
         </fieldset>
 
+      </form>
+      </div>
+      <div class="settings-feedback">
         <p id="settings-error" class="error" hidden></p>
         <p id="settings-status" class="field-note notice" hidden></p>
-      </form>
-
-      <div class="dialog-actions">
+      </div>
+      <div class="dialog-actions settings-footer">
+        <a id="project-attribution" href="https://github.com/idcesares/fetchpath" target="_blank" rel="noopener noreferrer">Fetchpath by idcesares · GitHub<span class="sr-only"> (opens in your browser)</span></a>
         <button id="settings-close" type="button">Done</button>
       </div>
     </dialog>

@@ -97,14 +97,14 @@ pub const COMMANDS: &[Spec] = &[
     Spec {
         name: "add",
         aliases: &[],
-        usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q]",
+        usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q] [--discover-peers] [--upload]",
         summary: "Look at links and confirm to download (or just paste one)",
         takes: Takes::Links,
     },
     Spec {
         name: "torrent",
         aliases: &[],
-        usage: "/torrent MAGNET|HTTPS_TORRENT --to NEW_FOLDER --discover-peers [--upload]",
+        usage: "/torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE --to NEW_FOLDER --discover-peers [--upload]",
         summary: "Add a torrent; peer discovery and upload are explicit",
         takes: Takes::Links,
     },
@@ -449,7 +449,14 @@ fn execute(
         return rules(engine, spec, args, reply);
     }
     let flags: &[&str] = match spec.name {
-        "add" => &["--to", "--at", "--sha256", "--quality"],
+        "add" => &[
+            "--to",
+            "--at",
+            "--sha256",
+            "--quality",
+            "--discover-peers",
+            "--upload",
+        ],
         "torrent" => &["--to", "--discover-peers", "--upload"],
         "queue" => &["--active", "--failed"],
         "history" => &["--limit"],
@@ -460,7 +467,10 @@ fn execute(
         "add" => add(engine, spec, &parsed, reply),
         "torrent" => {
             let [source] = parsed.words.as_slice() else {
-                return Err(usage_error(spec, "give one magnet or HTTPS torrent link"));
+                return Err(usage_error(
+                    spec,
+                    "give one magnet, HTTPS torrent link, or local .torrent file",
+                ));
             };
             let destination = parsed
                 .to
@@ -719,6 +729,21 @@ fn add(
             "A checksum describes one file; add links with --sha256 one at a time.",
         ));
     }
+    if let Some(destination) = torrent_add_destination(spec, parsed)? {
+        let source = &parsed.words[0];
+        let job = queue::create_torrent_job(
+            engine,
+            source,
+            destination,
+            parsed.discover_peers,
+            parsed.upload,
+        )?;
+        reply.say(
+            Tone::Good,
+            format!("Added torrent {}  {destination}", client::short_id(&job)),
+        );
+        return Ok(());
+    }
     let at = parsed
         .at
         .as_deref()
@@ -752,6 +777,35 @@ fn add(
         }
     }
     Ok(())
+}
+
+fn torrent_add_destination<'a>(
+    spec: &Spec,
+    parsed: &'a queue::Args,
+) -> Result<Option<&'a str>, ProtocolError> {
+    if !parsed.words.iter().any(|word| queue::is_torrent_link(word)) {
+        return Ok(None);
+    }
+    if parsed.words.len() != 1 {
+        return Err(usage_error(spec, "add torrents one at a time"));
+    }
+    if !parsed.discover_peers {
+        return Err(usage_error(
+            spec,
+            "add --discover-peers to contact the swarm",
+        ));
+    }
+    if parsed.sha256.is_some() || parsed.quality.is_some() || parsed.at.is_some() {
+        return Err(usage_error(
+            spec,
+            "torrents cannot use --sha256, --quality, or --at",
+        ));
+    }
+    parsed
+        .to
+        .as_deref()
+        .map(Some)
+        .ok_or_else(|| usage_error(spec, "choose a new folder with --to"))
 }
 
 fn help(topic: Option<&str>, reply: &mut Reply) {
@@ -1046,6 +1100,35 @@ mod tests {
         assert_eq!(parse("/").unwrap().0.name, "help");
         assert_eq!(parse("/nope").unwrap().0.name, "");
         assert!(parse("   ").is_none());
+    }
+
+    #[test]
+    fn torrent_add_requires_peer_consent_and_a_new_folder() {
+        let spec = find("add").unwrap();
+        let without_consent = queue::parse(
+            &[
+                "magnet:?xt=urn:btih:abc".into(),
+                "--to".into(),
+                r"C:\Downloads\debian".into(),
+            ],
+            &["--to"],
+        )
+        .unwrap();
+        assert!(torrent_add_destination(spec, &without_consent).is_err());
+        let allowed = queue::parse(
+            &[
+                "https://example.test/debian.torrent".into(),
+                "--to".into(),
+                r"C:\Downloads\debian".into(),
+                "--discover-peers".into(),
+            ],
+            &["--to", "--discover-peers"],
+        )
+        .unwrap();
+        assert_eq!(
+            torrent_add_destination(spec, &allowed).unwrap(),
+            Some(r"C:\Downloads\debian")
+        );
     }
 
     #[test]

@@ -9,15 +9,22 @@ wait for approval for discovery or upload. Browser captures cannot start a
 torrent. The helper caps peers at 32, download at 32 MiB/s and upload at
 128 KiB/s, and does not listen for incoming peers.
 
-Magnet links and HTTPS metadata links are accepted. Metadata downloads are
-limited to 4 MiB; torrent file names are checked against Windows path and
+Magnet links, HTTPS metadata links, and local `.torrent` files are accepted.
+The desktop and terminal add flows select Torrent for these inputs; the
+terminal and CLI require explicit `--discover-peers`, and desktop requires its
+peer-discovery checkbox. The engine snapshots local metadata (at most 4 MiB)
+under its private data directory before saving a v2 queue record. Restart
+rehashes that copy and fails closed if it is missing or changed; replacing a
+local source with a new link retires the old snapshot after the queue save.
+V1 queue files remain readable. Metadata downloads are limited to 4 MiB;
+torrent file names are checked against Windows path and
 device-name hazards. The transfer stays in a sibling staging folder, the
 helper waits for piece verification, checks for reparse points, then renames
 the folder to a new destination. Completion is reported after publication.
 An agent's byte limit is also passed to the helper. Cancellation kills the
 helper and leaves staging for a later retry.
 
-Build evidence: `cargo check --workspace --locked`,
+Build evidence for the first implementation: `cargo check --workspace --locked`,
 `cargo check -p fetchpath-torrent --features helper --locked`, desktop
 `pnpm exec tsc --noEmit`, and the package staging build. The owner waived the
 optional torrent test campaign on 28 September 2026. This is unreleased work;
@@ -30,6 +37,12 @@ the source and torrent identity before reuse. The targeted session and helper
 tests cover these cases. The protocol v1 schema was regenerated for the torrent
 job and approval reasons; `cargo test --workspace --locked`, the helper tests,
 and `cargo fmt --check` passed.
+
+The 29 September 2026 clean-Sandbox report showed the packaged helper could
+not start without `VCRUNTIME140.dll`. Its Windows MSVC helper build now links
+that runtime statically, and a PE-import regression test covers both the
+release and staged helper. A new clean-Sandbox run of the rebuilt installer is
+still pending.
 
 Current limits: torrent jobs need a new destination folder and cannot be
 paused in place. A magnet's private source may need to be supplied again

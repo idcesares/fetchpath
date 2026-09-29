@@ -388,8 +388,9 @@ platform-gated dependencies of `curl`.
   `media-tools` resource, and `adapters/media` discovers them from
   `FETCHPATH_YT_DLP` plus `FETCHPATH_FFMPEG_DIR`, from
   `FETCHPATH_MEDIA_TOOLS_DIR`, or from a `media-tools` directory an operator
-  places beside the executable. Nothing in this repository creates that
-  directory.
+  places beside the executable. Interactive NSIS setup now offers a default-off
+  choice that calls the same pinned, checksum-verified `fetchpath tools install
+  --yes` command used by Settings. Silent and passive installs skip it.
 
   This is a licensing boundary, not an accident. If a future release ships
   FFmpeg inside the installer, FFmpeg's LGPL-2.1-or-later terms - or GPL terms,
@@ -398,6 +399,16 @@ platform-gated dependencies of `curl`.
   made and must not be made implicitly by dropping binaries into `media-tools`.
 
 ## Current limits
+
+On 29 September 2026, an owner's clean Windows Sandbox run exposed a missing
+`VCRUNTIME140.dll` in the torrent helper. The helper build now links the MSVC
+runtime statically and the package check reads its PE imports; the rebuilt
+installer still needs a clean-Sandbox interaction. Interactive NSIS setup also
+offers a default-off browser extension guidance step. It opens the bundled
+extension folder and shows Chrome/Edge's Load unpacked steps; browsers must
+confirm the extension themselves because there is no store listing or ID yet.
+Settings remains the later setup path. The Settings window now has one scroll
+area with category navigation and a project link.
 
 - **No screen reader was driven end to end.** Every accessibility assertion was
   made through UI Automation, which is the tree Narrator reads, but Narrator,
@@ -417,10 +428,10 @@ platform-gated dependencies of `curl`.
   are in the markup, and the error text is verified to reach the assertive live
   region and the accessibility tree, but the association itself is unverified by
   automation.
-- **No clean-machine or ARM64 run.** Both installers were exercised on this
-  developer machine, which already had WebView2 present, so the WebView2
-  bootstrapper path was never taken. A first-install-on-a-fresh-image run and any
-  ARM64 coverage remain open.
+- **Fresh-image coverage is incomplete.** Earlier installers were exercised on
+  this developer machine, which already had WebView2. The owner's September
+  Sandbox run found the torrent helper's missing runtime; the rebuilt package
+  awaits a repeat run. The WebView2 bootstrapper path and ARM64 remain open.
 - **One display, one scale factor.** DPI awareness was read from the live
   process; no physical move between monitors of different scale was performed.
 - **Per-monitor visual review is not automated.** Reduced motion, forced colors

@@ -258,12 +258,36 @@ dialog.dialog .details-header h2 { margin-bottom: 0; overflow-wrap: anywhere; }
 .details-info code { font: .8rem/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; }
 
 /* Settings ---------------------------------------------------------------- */
-dialog.settings-dialog { width: min(980px, calc(100vw - 32px)); }
-/* The heading and the Close row stay put; only the groups scroll, and on a
-   normal window they sit in two columns so most of Settings fits at once. */
+dialog.settings-dialog { width: min(1040px, calc(100vw - 32px)); height: min(780px, calc(100dvh - 32px)); overflow: hidden; }
 dialog.settings-dialog[open] { display: flex; flex-direction: column; }
-.settings-form { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; columns: 2 400px; column-gap: 18px; }
-.settings-group { break-inside: avoid; min-width: 0; margin: 0 0 18px; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
+.settings-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 22px; flex: 1; min-height: 0; }
+.settings-nav { display: flex; flex-direction: column; gap: 6px; align-self: start; }
+.settings-nav button { background: transparent; color: var(--muted); text-align: left; border: 1px solid transparent; }
+.settings-nav button[aria-pressed="true"] { background: var(--hover); border-color: var(--line-soft); color: var(--accent); }
+.settings-form { min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 2px 8px 4px 0; container-type: inline-size; }
+.settings-group { min-width: 0; margin: 0 0 18px; padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--inset); }
+.settings-dialog h2, .settings-footer, .settings-feedback { flex: 0 0 auto; }
+.settings-footer { align-items: center; justify-content: space-between; gap: 16px; padding-top: 14px; margin-top: 12px; border-top: 1px solid var(--line); }
+.settings-footer a { color: var(--muted); font-size: .78rem; text-decoration: none; overflow-wrap: anywhere; }
+.settings-footer a:hover { color: var(--accent); text-decoration: underline; }
+.settings-footer a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.settings-feedback p { margin: 8px 0 0; }
+.settings-form input, .settings-form select, .settings-form .range-row { min-width: 0; }
+.settings-form .destination-row, .settings-form .agent-folders li { grid-template-columns: minmax(0, 1fr) auto; }
+.settings-form .agent-limits { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.settings-form .rule-row, .settings-form .lan-devices li { flex-wrap: wrap; }
+.settings-form .rule-row > *, .settings-form .lan-devices li > * { min-width: 0; overflow-wrap: anywhere; }
+@container (max-width: 460px) {
+  .settings-form .destination-row, .settings-form .agent-limits, .settings-form .agent-folders li { grid-template-columns: minmax(0, 1fr); }
+  .settings-form .destination-row button { width: 100%; }
+}
+@media (max-width: 760px) {
+  dialog.settings-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); padding: 16px; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .settings-nav button { padding: 6px 10px; min-height: 36px; font-size: .85rem; }
+  .settings-group { padding: 10px 12px 12px; }
+}
 .settings-group legend { padding: 0 6px; color: var(--accent); font-size: .72rem; font-weight: 780; letter-spacing: .14em; text-transform: uppercase; }
 .settings-group > label:first-of-type { margin-top: 4px; }
 .settings-group .quiet { margin-top: 10px; }

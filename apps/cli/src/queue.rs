@@ -141,6 +141,8 @@ pub fn add(args: &[String]) -> i32 {
         "--wait",
         "--json",
         "--quiet",
+        "--discover-peers",
+        "--upload",
     ];
     let parsed = match parse(args, &allowed) {
         Ok(parsed) => parsed,
@@ -166,7 +168,7 @@ pub fn torrent(args: &[String]) -> i32 {
         Err(message) => return usage(&message),
     };
     let [source] = parsed.words.as_slice() else {
-        return usage("torrent needs one magnet or HTTPS .torrent link");
+        return usage("torrent needs one magnet, HTTPS .torrent link, or local .torrent file");
     };
     let Some(destination) = parsed.to.as_deref() else {
         return usage("torrent needs --to with a new destination folder");
@@ -208,11 +210,20 @@ pub(crate) fn create_torrent_job(
     discover_peers: bool,
     upload: bool,
 ) -> Result<JobSnapshot, ProtocolError> {
-    let url = SensitiveUrl::try_from(source.to_owned())
-        .map_err(|_| client::input_error("That torrent link cannot be read."))?;
+    let input = if is_local_torrent_file(source) {
+        let path = std::fs::canonicalize(source)
+            .map_err(|_| client::input_error("That .torrent file could not be found."))?;
+        JobInput::TorrentFile {
+            path: path.display().to_string(),
+        }
+    } else {
+        let url = SensitiveUrl::try_from(source.to_owned())
+            .map_err(|_| client::input_error("That torrent link cannot be read."))?;
+        JobInput::Url { url }
+    };
     let created = engine.send(Command::CreateJob {
         request: JobRequest::Torrent {
-            input: JobInput::Url { url },
+            input,
             destination: DestinationIntent {
                 path: destination.to_owned(),
                 conflict: ConflictPolicy::Ask,
@@ -274,6 +285,20 @@ pub fn batch(args: &[String]) -> i32 {
 /// `look`: ask the engine what each link is first, so a video page is saved
 /// as video and a rule by size can decide.
 fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i32 {
+    if links.iter().any(|(link, _)| is_torrent_link(link)) {
+        if links.len() != 1 {
+            return usage("add torrents one at a time");
+        }
+        if !parsed.discover_peers {
+            return usage("a torrent needs --discover-peers before contacting the swarm");
+        }
+        if parsed.sha256.is_some() || parsed.quality.is_some() || parsed.at.is_some() {
+            return usage("torrent links cannot use --sha256, --quality, or --at");
+        }
+        if links[0].1.as_deref().or(parsed.to.as_deref()).is_none() {
+            return usage("a torrent needs --to with a new destination folder");
+        }
+    }
     if parsed.sha256.is_some() && links.len() > 1 {
         return usage("a checksum describes one file; add links with --sha256 one at a time");
     }
@@ -311,7 +336,18 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
             }
             continue;
         }
-        match add_one(&engine, parsed, link, target, look, not_before) {
+        let added = if is_torrent_link(link) {
+            create_torrent_job(
+                &engine,
+                link,
+                target.expect("checked above"),
+                parsed.discover_peers,
+                parsed.upload,
+            )
+        } else {
+            add_one(&engine, parsed, link, target, look, not_before)
+        };
+        match added {
             Ok(job) => {
                 if parsed.json {
                     client::print_json(&CommandResult::Job { job: job.clone() });
@@ -355,6 +391,32 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
         }
     }
     worst
+}
+
+/// Recognize torrent input before inspecting it as an ordinary HTTP file.
+pub(crate) fn is_torrent_link(source: &str) -> bool {
+    if is_local_torrent_file(source) {
+        return true;
+    }
+    if source.starts_with("magnet:?") {
+        return true;
+    }
+    let Ok(url) = url::Url::parse(source) else {
+        return false;
+    };
+    url.scheme() == "https" && url.path().to_ascii_lowercase().ends_with(".torrent")
+}
+
+fn is_local_torrent_file(source: &str) -> bool {
+    if source.starts_with("https://")
+        || source.starts_with("http://")
+        || source.starts_with("magnet:")
+    {
+        return false;
+    }
+    let path = std::path::Path::new(source);
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("torrent"))
 }
 
 /// A Hugging Face link: the engine resolves it to one commit and its files.
@@ -1335,5 +1397,43 @@ pub fn engine_status(json: bool) -> i32 {
             EXIT_ENGINE
         }
         Err(error) => client::fail(&error, json),
+    }
+}
+
+#[cfg(test)]
+mod torrent_intake_tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_only_magnets_and_https_torrent_paths() {
+        for source in [
+            "magnet:?xt=urn:btih:abc",
+            "https://example.test/debian.TORRENT",
+            "https://example.test/debian.torrent?mirror=1",
+        ] {
+            assert!(is_torrent_link(source), "{source}");
+        }
+        for source in [
+            "http://example.test/debian.torrent",
+            "https://example.test/debian.torrent.zip",
+            "https://example.test/file.iso?name=debian.torrent",
+            "https://example.test/file.iso",
+        ] {
+            assert!(!is_torrent_link(source), "{source}");
+        }
+        assert!(is_torrent_link(r"C:\Downloads\debian.torrent"));
+        assert!(is_torrent_link("debian.torrent"));
+    }
+
+    #[test]
+    fn add_requires_explicit_peer_discovery_for_detected_torrent() {
+        assert_eq!(
+            add(&[
+                "magnet:?xt=urn:btih:abc".into(),
+                "--to".into(),
+                "C:\\Downloads\\debian".into(),
+            ]),
+            EXIT_USAGE
+        );
     }
 }

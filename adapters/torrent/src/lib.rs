@@ -18,6 +18,10 @@ pub const MAX_UPLOAD_BPS: u32 = 128 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Request {
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_sha256: Option<String>,
     pub destination: String,
     pub job_id: String,
     pub discover_peers: bool,
@@ -32,8 +36,22 @@ impl Request {
         if source.is_empty() || source.len() > MAX_SOURCE_BYTES {
             return Err("source.invalid");
         }
-        if !(source.starts_with("magnet:?") || source.starts_with("https://")) {
+        let local = self.metadata_path.is_some() && self.metadata_sha256.is_some();
+        if !local && !(source.starts_with("magnet:?") || source.starts_with("https://")) {
             return Err("source.unsupported");
+        }
+        if self.metadata_path.is_some() != self.metadata_sha256.is_some() {
+            return Err("source.invalid");
+        }
+        if let Some(path) = &self.metadata_path {
+            if !std::path::Path::new(path).is_absolute()
+                || !path.to_ascii_lowercase().ends_with(".torrent")
+                || self.metadata_sha256.as_ref().is_none_or(|hash| {
+                    hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+            {
+                return Err("source.invalid");
+            }
         }
         if self.destination.is_empty() || self.destination.len() > 4096 {
             return Err("destination.invalid");
@@ -276,10 +294,27 @@ pub fn request(
 ) -> Request {
     Request {
         source,
+        metadata_path: None,
+        metadata_sha256: None,
         destination: destination.display().to_string(),
         job_id,
         discover_peers,
         upload,
         max_bytes: None,
     }
+}
+
+pub fn request_local(
+    source: String,
+    metadata_path: PathBuf,
+    metadata_sha256: String,
+    destination: PathBuf,
+    job_id: String,
+    discover_peers: bool,
+    upload: bool,
+) -> Request {
+    let mut request = request(source, destination, job_id, discover_peers, upload);
+    request.metadata_path = Some(metadata_path.display().to_string());
+    request.metadata_sha256 = Some(metadata_sha256);
+    request
 }
