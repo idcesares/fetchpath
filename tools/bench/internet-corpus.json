@@ -1,0 +1,9 @@
+{
+  "note": "Public files for a manual, one-connection reference run: node tools/bench/benchmark.mjs --corpus internet --output-dir work/bench-net --repetitions 3. An entry with sha256 null is self-recorded from the first successful run and flagged so in the artifact. This measures one connection at one moment and is not a speed claim.",
+  "probeUrl": "https://www.cloudflare.com/cdn-cgi/trace",
+  "entries": [
+    { "name": "github-release-113MB", "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.5.0/PowerShell-7.5.0-win-x64.msi", "sha256": null, "bytes": 113057792 },
+    { "name": "huggingface-440MB", "url": "https://huggingface.co/google-bert/bert-base-uncased/resolve/main/model.safetensors", "sha256": "68d45e234eb4a928074dfd868cead0219ab85354cc53d20e772753c6bb9169d3", "bytes": 440449768 },
+    { "name": "kernel-mirror-140MB", "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz", "sha256": null, "bytes": 140064536 }
+  ]
+}

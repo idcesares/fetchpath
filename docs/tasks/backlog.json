@@ -2570,7 +2570,7 @@
       "title": "Benchmark HTTP speed against curl, aria2 and a browser under shaped profiles",
       "milestone": "M14",
       "dependsOn": ["FP-018"],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude sonnet bench agent",
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -2579,7 +2579,7 @@
       "acceptanceIds": ["A05", "A09"],
       "acceptance": "The harness runs paired, randomized downloads through the engine, curl, aria2 (defaults and -x16) and wget2 where installed, on fixture profiles the server shapes itself: per-connection rate limit, per-client limit, added delay, stalls, a redirect to a second origin, and weak or absent ETags; plus a recorded internet corpus (a GitHub release asset, a Hugging Face file, a mirror). It records time to a verified file, goodput, CPU-seconds/GiB, peak memory, connections opened and a concurrent latency probe, with uncertainty; compares the transfer layer and the engine at identical limits; and measures the cost of out-of-order writes past the end of file on NTFS. The current engine's results become the recorded baseline.",
       "verification": "Fixture tests for each profile; one baseline run committed as evidence with tool versions and settings.",
-      "evidence": [],
+      "evidence": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence/http-adaptive/fp084-baseline.json"],
       "blockedReason": null
     },
     {

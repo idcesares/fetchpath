@@ -50,6 +50,40 @@ Transfer layer alone (`fetchpath-http-bench`): 7.6 s → 3.1 s with reuse →
 growing from 1 MiB: 3.5 s and 26.2 s. One run each on a home connection, 28 September 2026: evidence of the
 defects and their size, not a speed claim.
 
+## Benchmark harness and baseline (FP-084, 29 September 2026)
+
+`tools/bench/benchmark.mjs` runs paired downloads with a seeded random client order per repetition and profile. Clients: `fetchpath-http` (transfer layer, `fetchpath-http-bench`), `fetchpath-cli` (`fetchpath download`, the whole engine), curl, aria2 (defaults and `-x16 -s16 -k1M`) and wget2. A missing tool is skipped with a recorded reason. The fixture server shapes traffic itself: per-connection limit, per-client limit, delay, stalls, redirect to a second origin, weak ETag, no ETag. Per run it records time to a SHA-256-verified file, goodput, process CPU and peak memory, connections and requests seen by the server, and a probe request every 100 ms (p50, p95). Summaries give median, min, max and a bootstrap 95% interval of the median. Usage and profile parameters are in `tools/bench/README.md`. To measure a new scheduler, point `--http-bench` and `--cli` at its binaries.
+
+Both engine clients use `TransferLimits::default()` (segments 1 to 8 MiB, up to 4 lanes, 8 active requests, 32 MiB buffered), so the difference between them is engine overhead: queue, checkpointing, running SHA-256, publication.
+
+Baseline: the engine as of commit 8071460 (bench binary built from this tree, CLI from the main checkout's release build of the same day), 64 MiB, 5 repetitions, one machine (Windows 11, NTFS, SSD, loopback). Median time to verified file in seconds, with the interval in brackets. Raw data: [fp084-baseline.json](evidence/http-adaptive/fp084-baseline.json).
+
+| profile | transfer layer | engine (CLI) | curl (1 connection) |
+|---|---|---|---|
+| unshaped | 0.47 [0.40-0.57] | 0.87 [0.66-1.03] | 0.44 [0.31-0.52] |
+| per-connection-limit 8 MiB/s | 4.41 [4.37-4.44] | 4.82 [4.79-5.01] | 8.25 [8.22-8.28] |
+| per-client-limit 16 MiB/s | 4.29 [4.23-4.31] | 4.80 [4.73-4.87] | 4.22 [4.21-4.27] |
+| delay 50 ms, 32 MiB/s per connection | 1.66 [1.62-1.68] | 2.09 [1.93-2.22] | 2.33 [2.26-2.35] |
+| stall (every 4th range pauses 3 s) | 6.58 [6.47-6.64] | 6.95 [6.93-7.24] | 0.38 [0.37-0.44] (never stalled) |
+| redirect | 0.51 [0.47-0.59] | 0.94 [0.83-1.17] | 0.33 [0.28-0.40] |
+| weak-etag | fails: needs strong ETag | 0.73 [0.63-0.80] | 0.41 [0.39-0.50] |
+| no-etag | fails: needs strong ETag | 0.87 [0.77-0.94] | 0.40 [0.32-0.45] |
+
+What it shows about the current engine:
+
+- Per-connection limit: about 1.9x curl, from up to 4 lanes. Per-client limit: no gain over curl, as expected, and about 14% slower through the engine.
+- Stall: the 11 range requests hit two 3 s pauses, so both engine clients take about 6.6 s against 0.47 s unshaped, because each round waits for its slowest range. This is the straggler cost the FP-083 scheduler targets.
+- Unshaped and redirect loopback: the engine takes about 1.9x the transfer layer and 2 to 3x curl. The engine's share is about 0.4 s per 64 MiB. On shaped profiles the overhead is 6 to 25%.
+- Weak or absent validators: the transfer-layer binary returns "segmentation requires a strong ETag" and does not fall back to a single stream; the engine does fall back, at about 2x curl's time on loopback.
+- The probe p95 stayed at 17 to 28 ms for every client on loopback; no client starved the probe here.
+- CPU per GiB is not comparable across the two Fetchpath clients: the CLI number covers only the small command process, the engine runs in another process. Windows CPU time has about 15.6 ms resolution, so short runs are coarse. Peak memory has the same scope.
+
+Internet corpus, one home connection, 3 runs each, 29 September 2026 (not a speed claim; [fp084-internet.json](evidence/http-adaptive/fp084-internet.json)). Median seconds to verified file: GitHub release 113 MB: transfer layer 3.07, engine 3.93, curl 2.05. Hugging Face 440 MB: 22.1, 23.5, 9.5 (curl's interval 9.2 to 18.8). Kernel mirror 140 MB: transfer layer fails (no strong ETag), engine 3.9 (interval 3.2 to 43.0), curl 2.6. The GitHub and mirror hashes are self-recorded from the first successful run; the Hugging Face hash is the published one. aria2 and wget2 are not installed on this machine, so no rows exist for them.
+
+NTFS write order (`tools/bench/ntfs-write.mjs`, 256 MiB in 1 MiB positional writes plus fsync, median of 3, [fp084-ntfs-write.json](evidence/http-adaptive/fp084-ntfs-write.json)): sequential 216 ms; out-of-order in 4 interleaved lanes 281 ms; out-of-order in shuffled 8 MiB segments 268 ms; the same two after `ftruncate` to full size 254 ms and 303 ms. Out-of-order writes cost about 25 to 40% more here, and setting the end of file first did not help, since NTFS still zero-fills up to the valid data length. Absolute times are small because this is a fast SSD and the cache absorbs most of the writes; a slower disk may show a larger gap.
+
+Harness limits: application-level shaping only (no packet loss, no real congestion or RTT); a single-request client is never stalled; loopback timings compare builds and are not internet speeds; five runs give intervals that understate uncertainty; the Node fixture and the tools share one machine.
+
 ## Limits carried forward
 
 No speed advantage is claimed. Loopback does not model RTT, loss, congestion, blocked UDP, slow storage, or competing traffic, and five pairs cannot establish tail percentiles. Each lane keeps its own easy handle; ranges are fetched in lock-step rounds, each waiting for its slowest range, and every range on Hugging Face still follows the redirect to the CDN, which keeps a 440 MB Xet-backed file at about 2.6× curl's time. H2 is negotiated but one multiplexed H2 connection is not shared across ranges. A packaged HTTP/3 backend, controlled H3 endpoint, and blocked-UDP fallback run remain required before any H3 support claim.
