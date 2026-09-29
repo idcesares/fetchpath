@@ -402,13 +402,24 @@ platform-gated dependencies of `curl`.
 
 On 29 September 2026, an owner's clean Windows Sandbox run exposed a missing
 `VCRUNTIME140.dll` in the torrent helper. The helper build now links the MSVC
-runtime statically and the package check reads its PE imports; the rebuilt
-installer still needs a clean-Sandbox interaction. Interactive NSIS setup also
-offers a default-off browser extension guidance step. It opens the bundled
-extension folder and shows Chrome/Edge's Load unpacked steps; browsers must
-confirm the extension themselves because there is no store listing or ID yet.
-Settings remains the later setup path. The Settings window now has one scroll
-area with category navigation and a project link.
+runtime statically and the package check reads its PE imports. The rebuilt
+installer (SHA-256 `d1a90be5...596f`) then passed the automated clean-Sandbox
+lifecycle without the Visual C++ redistributable present, including a helper
+start ([evidence](evidence/windows/sandbox-lifecycle.json)), and the owner's
+interactive Sandbox pass of the setup choices, torrent intake and Settings
+window found no defect (FP-079 to FP-082).
+
+Interactive NSIS setup offers two default-off steps: media tools through the
+pinned `fetchpath tools install`, and browser extension guidance that opens the
+bundled extension folder and shows Chrome/Edge's Load unpacked steps; browsers
+must confirm the extension themselves because there is no store listing or ID
+yet. Silent and passive setup skip both, and Settings remains the later setup
+path. Once the media download starts, Setup's Cancel cannot stop it; it
+finishes or reports a failure and points to Settings. The hook does not clear
+the NSIS error flag before opening the extension folder, so an earlier error
+could log a false "could not open" line; fix with the next installer change.
+The Settings window has one scroll area with category navigation and a project
+link.
 
 - **No screen reader was driven end to end.** Every accessibility assertion was
   made through UI Automation, which is the tree Narrator reads, but Narrator,
@@ -431,7 +442,7 @@ area with category navigation and a project link.
 - **Fresh-image coverage is incomplete.** Earlier installers were exercised on
   this developer machine, which already had WebView2. The owner's September
   Sandbox run found the torrent helper's missing runtime; the rebuilt package
-  awaits a repeat run. The WebView2 bootstrapper path and ARM64 remain open.
+  passed a repeat run. The WebView2 bootstrapper path and ARM64 remain open.
 - **One display, one scale factor.** DPI awareness was read from the live
   process; no physical move between monitors of different scale was performed.
 - **Per-monitor visual review is not automated.** Reduced motion, forced colors

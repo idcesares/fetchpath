@@ -41,8 +41,10 @@ and `cargo fmt --check` passed.
 The 29 September 2026 clean-Sandbox report showed the packaged helper could
 not start without `VCRUNTIME140.dll`. Its Windows MSVC helper build now links
 that runtime statically, and a PE-import regression test covers both the
-release and staged helper. A new clean-Sandbox run of the rebuilt installer is
-still pending.
+release and staged helper. The rebuilt installer passed the automated
+clean-Sandbox lifecycle, where the helper started without the redistributable,
+and the owner added torrents from a magnet, an HTTPS `.torrent` link and a local
+`.torrent` file in the desktop, command line and terminal of that clean install.
 
 Current limits: torrent jobs need a new destination folder and cannot be
 paused in place. A magnet's private source may need to be supplied again
