@@ -174,6 +174,16 @@
           "const": "rate_limit",
           "description": "The agent asked for more new downloads per hour than it may.",
           "type": "string"
+        },
+        {
+          "const": "peer_discovery",
+          "description": "A torrent request would contact peers, trackers or the DHT.",
+          "type": "string"
+        },
+        {
+          "const": "peer_upload",
+          "description": "A torrent request would serve pieces to other peers.",
+          "type": "string"
         }
       ]
     },
@@ -2242,6 +2252,7 @@
       "enum": [
         "file",
         "media",
+        "torrent",
         "unknown"
       ],
       "type": "string"
@@ -2322,6 +2333,46 @@
             "destination",
             "variant_id",
             "quality_label"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "destination": {
+              "$ref": "#/$defs/DestinationIntent"
+            },
+            "discover_peers": {
+              "description": "Peer discovery contacts trackers and/or the DHT. It is explicit.",
+              "type": "boolean"
+            },
+            "input": {
+              "$ref": "#/$defs/JobInput"
+            },
+            "kind": {
+              "const": "torrent",
+              "type": "string"
+            },
+            "not_before": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "upload": {
+              "description": "Serving pieces to peers is separately explicit and capped.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "input",
+            "destination",
+            "discover_peers",
+            "upload"
           ],
           "type": "object"
         }

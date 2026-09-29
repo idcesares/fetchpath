@@ -3,6 +3,7 @@ use fetchpath_torrent::{
 };
 use futures_util::StreamExt;
 use librqbit::{AddTorrent, AddTorrentOptions, Session, SessionOptions, limits::LimitsConfig};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU32;
@@ -15,14 +16,33 @@ fn emit(event: Event) {
     }
 }
 
-fn stage_path(destination: &Path, job_id: &str) -> Result<PathBuf, &'static str> {
+fn stage_path(destination: &Path, job_id: &str, source: &str) -> Result<PathBuf, &'static str> {
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err("destination.invalid");
     }
     let name = destination.file_name().ok_or("destination.invalid")?;
     let mut stage_name = name.to_os_string();
-    stage_name.push(format!(".fetchpath-{job_id}.part"));
+    let source_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
+    stage_name.push(format!(".fetchpath-{job_id}-{}.part", &source_hash[..32]));
     Ok(destination.with_file_name(stage_name))
+}
+
+fn bind_stage(stage: &Path, fresh: bool, info_hash: &str) -> Result<(), &'static str> {
+    let mut name = stage.file_name().ok_or("stage.invalid")?.to_os_string();
+    name.push(".infohash");
+    let marker = stage.with_file_name(name);
+    if fresh {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(marker)
+            .map_err(|_| "stage.invalid")?;
+        file.write_all(info_hash.as_bytes())
+            .map_err(|_| "stage.invalid")?;
+    } else if fs::read_to_string(marker).map_err(|_| "stage.invalid")? != info_hash {
+        return Err("stage.invalid");
+    }
+    Ok(())
 }
 
 fn safe_tree(root: &Path) -> io::Result<()> {
@@ -112,7 +132,7 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     if destination.exists() {
         return Err("destination.conflict");
     }
-    let stage = stage_path(&destination, &request.job_id)?;
+    let stage = stage_path(&destination, &request.job_id, &request.source)?;
     if stage.exists()
         && (!stage.is_dir()
             || stage
@@ -123,7 +143,8 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     {
         return Err("stage.invalid");
     }
-    if stage.exists() {
+    let fresh_stage = !stage.exists();
+    if !fresh_stage {
         safe_tree(&stage).map_err(|_| "stage.invalid")?;
     }
     let parent = destination.parent().ok_or("destination.invalid")?;
@@ -196,6 +217,8 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     let librqbit::AddTorrentResponse::ListOnly(list) = listed else {
         return Err("torrent.metadata_invalid");
     };
+    let identity = format!("{:x}", Sha256::digest(list.info_hash.0));
+    bind_stage(&stage, fresh_stage, &identity)?;
     for file in list.info.iter_file_details() {
         let components: Vec<_> = file.filename.iter_components_bytes().collect();
         if components.is_empty() || components.iter().any(|segment| !safe_name(segment)) {
@@ -285,5 +308,32 @@ async fn main() {
             emit(Event::Failed { code: code.into() });
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_is_bound_to_the_source_and_stable_for_retry() {
+        let destination = Path::new("C:\\downloads\\album");
+        let job_id = "01234567-89ab-cdef-0123-456789abcdef";
+        let a = stage_path(destination, job_id, "magnet:?xt=urn:btih:aaaa").unwrap();
+        let a_retry = stage_path(destination, job_id, "magnet:?xt=urn:btih:aaaa").unwrap();
+        let b = stage_path(destination, job_id, "magnet:?xt=urn:btih:bbbb").unwrap();
+        assert_eq!(a, a_retry);
+        assert_ne!(a, b, "another torrent must not reuse staged files");
+    }
+
+    #[test]
+    fn staged_files_require_the_same_torrent_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let stage = temp.path().join("download.part");
+        fs::create_dir(&stage).unwrap();
+        bind_stage(&stage, false, "hash-a").unwrap_err();
+        bind_stage(&stage, true, "hash-a").unwrap();
+        bind_stage(&stage, false, "hash-a").unwrap();
+        assert!(bind_stage(&stage, false, "hash-b").is_err());
     }
 }

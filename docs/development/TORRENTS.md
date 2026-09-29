@@ -23,6 +23,14 @@ Build evidence: `cargo check --workspace --locked`,
 optional torrent test campaign on 28 September 2026. This is unreleased work;
 the 0.1.0 installer does not contain the helper.
 
+Commit-tree verification on 29 September fixed a missed persisted-record test
+field, and a review found two retry boundaries: refreshing an agent torrent now
+asks again for peer discovery and upload approval, and staged files are tied to
+the source and torrent identity before reuse. The targeted session and helper
+tests cover these cases. The protocol v1 schema was regenerated for the torrent
+job and approval reasons; `cargo test --workspace --locked`, the helper tests,
+and `cargo fmt --check` passed.
+
 Current limits: torrent jobs need a new destination folder and cannot be
 paused in place. A magnet's private source may need to be supplied again
 after an engine restart. There is no per-file selection or seeding after

@@ -12,6 +12,7 @@ helper = ["dep:librqbit", "dep:tokio", "dep:reqwest", "dep:futures-util"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10.9"
 librqbit = { version = "=9.0.1", default-features = false, features = ["rust-tls", "disable-upload"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"], optional = true }
@@ -21,3 +22,6 @@ futures-util = { version = "0.3", optional = true }
 name = "fetchpath-torrent-helper"
 path = "src/main.rs"
 required-features = ["helper"]
+
+[dev-dependencies]
+tempfile = "3"

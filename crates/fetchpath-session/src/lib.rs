@@ -1308,6 +1308,16 @@ impl Session {
                 }
             })
             .transpose()?;
+        if url.is_some() && !by.is_user() {
+            if let Some(policy) = record.torrent_policy {
+                if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
+                    hold.push(ApprovalReason::PeerDiscovery);
+                }
+                if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
+                    hold.push(ApprovalReason::PeerUpload);
+                }
+            }
+        }
         let destination = destination
             .map(|destination| validated_destination(&destination))
             .transpose()?;
@@ -3974,6 +3984,7 @@ mod tests {
             finished_at_ms: None,
             media_variant_id: None,
             media_quality: None,
+            torrent_policy: None,
             durable: RecordDurable::default(),
             principal: Principal::User,
             approval: None,
@@ -3987,6 +3998,52 @@ mod tests {
         );
         assert_eq!(restored.view.state, "failed");
         assert_eq!(restored.view.action.as_deref(), Some("check_checksum"));
+    }
+
+    #[test]
+    fn an_agent_refreshing_a_torrent_waits_for_peer_approval_again() {
+        let output = tempfile::tempdir().unwrap();
+        let agent = AgentName::try_from("helper").unwrap();
+        let principal = Principal::Agent(agent);
+        let jobs = Session::in_memory(1);
+        let mut record = QueueRecord::new_torrent(
+            "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            output.path().join("torrent"),
+            None,
+            TorrentPolicy {
+                discover_peers: true,
+                upload: true,
+            },
+        );
+        record.principal = principal.clone();
+        record.view.state = "failed".into();
+        let job_id = record.id.clone();
+        jobs.inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .records
+            .push(record);
+
+        let refreshed = jobs
+            .retry_as(
+                &job_id,
+                Some("magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+                None,
+                None,
+                &principal,
+                Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(refreshed.state, "awaiting_approval");
+        let state = jobs.inner.lock().expect("desktop jobs poisoned");
+        let reasons = &find_record(&state, &job_id)
+            .unwrap()
+            .approval
+            .as_ref()
+            .unwrap()
+            .reasons;
+        assert!(reasons.contains(&ApprovalReason::PeerDiscovery));
+        assert!(reasons.contains(&ApprovalReason::PeerUpload));
     }
 
     #[test]
