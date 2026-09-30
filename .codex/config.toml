@@ -1,0 +1,14 @@
+model = "gpt-6.1-sol"
+model_reasoning_effort = "low"
+
+[agents]
+default_subagent_model = "gpt-6.1-sol"
+default_subagent_reasoning_effort = "medium"
+
+[agents.bounded_reviewer]
+description = "Independent recheck of named repairs using existing review findings and passing evidence."
+config_file = "agents/bounded_reviewer.toml"
+
+[mcp_servers.serena]
+command = "serena"
+args = ["start-mcp-server", "--context=codex", "--project-from-cwd"]

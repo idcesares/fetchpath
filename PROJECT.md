@@ -6,7 +6,7 @@ Updated 28 September 2026. Phase: **post-release hardening.** Fetchpath 0.1.0 is
 
 Build a general-purpose Windows download manager with exceptional usability for ordinary users and optional advanced controls for power users. Compatibility ambition is comparable to IDM and related tools. Video/audio downloading and quality selection are confirmed requirements for the first public release. Keep the production core portable.
 
-The user builds with agents in Codex (Astra High lead, Terra Medium for bounded work) and Claude Code, and explicitly permits smaller agents for bounded work. The backlog's `modelTier` names a role, mapped to concrete models per tool in [building with agents](docs/development/WORKFLOW.md); the pairing is a trial, not evidence of a globally optimal model choice.
+The user builds with agents in Codex and Claude Code, using proportional model effort and bounded reviews. Project launch defaults live in `.codex/config.toml`; explicit user selections take precedence. The backlog's `modelTier` names a role, mapped to models and review scope in [building with agents](docs/development/WORKFLOW.md). These choices are not evidence of globally optimal cost or quality.
 
 ## Source of truth
 

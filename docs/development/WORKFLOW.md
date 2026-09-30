@@ -1,7 +1,9 @@
 # Task workflow
 
-The lead is the strongest model the user selected (Astra High in Codex, Opus in
-Claude Code). Both tools read `AGENTS.md`.
+Preserve the model the user explicitly selected. Otherwise Codex starts with
+GPT-6.1 Sol/low, using medium for substantive implementation and Astra/low for
+difficult judgment or consequential review. Claude Code keeps Opus for lead work.
+Both tools read `AGENTS.md`.
 
 1. `node tools/tasks.mjs next` lists active work, then ready tasks by priority
    (P0 blocks the phase, P1 is a headline outcome, P2 next, P3 later or
@@ -9,28 +11,49 @@ Claude Code). Both tools read `AGENTS.md`.
 2. `node tools/tasks.mjs show FP-XXX`; read only the contracts and source it
    names. Record status `in_progress`, owner and file area in the backlog.
 3. Build the smallest working behavior with the tests that guard its contract.
-4. Tasks marked `review: "strong"` get an independent lead-tier review that
-   derives failure cases from the contract before the task is done. Other
-   tasks get the lead's own check; no review ceremony for routine edits.
+4. Tasks marked `review: "strong"` get an independent boundary review before
+   done. Use Astra/low for the first integrity, persistence, unsafe/FFI or
+   credential assessment. After that, named repairs normally get one independent
+   Sol/medium recheck (Sonnet in Claude Code), escalating only a concrete
+   unresolved boundary question. Other tasks get the lead's own check.
 5. Run the affected checks, update the task's record and evidence, mark it
    done, commit, and take the next task.
 
 After two failed repair attempts, return the evidence to the lead instead of
 retrying.
 
+Write review packets with prior findings, exact changed symbols, affected
+invariants and existing passing evidence. Review only that scope and necessary
+dependencies. Return one concise verdict and concrete blockers; reopen only
+affected findings after a repair. Do not restart an architecture audit or
+repeat passed checks without changed code or a specific unresolved concern.
+
+Each performance check must name the acceptance claim and decision it supports.
+Reuse recorded paired runs; run only a missing targeted comparison, then read
+its compact summary. Remove or explicitly defer unproven optimizations rather
+than investigate indefinitely. Record limitations and adjust the relevant
+contract openly if a deferral changes acceptance; never silently waive a gate.
+
 ## Model tiers
 
 The backlog's `modelTier` names a role. Record the model that actually did the
-work.
+work. Legacy backlog tier labels identify roles; they do not force an obsolete model.
 
 | `modelTier` | Role | Codex | Claude Code |
 |---|---|---|---|
-| `astra-high` | Lead: contracts, persistence, security, integration | Astra High | Opus |
-| `terra-medium` | Bounded implementation against frozen interfaces | Terra Medium | Sonnet |
-| (mechanical) | Docs, fixtures, formatting | smaller fast model | Haiku |
+| `astra-high` | Lead: contracts, persistence, security, integration | GPT-6 Astra/low; high when justified or selected | Opus |
+| `terra-medium` | Bounded implementation against frozen interfaces | GPT-6.1 Sol/medium | Sonnet |
+| (repair recheck) | Independent recheck after the initial boundary review | GPT-6.1 Sol/medium | Sonnet |
+| (mechanical) | Docs, fixtures, formatting | GPT-6 Luna/high | Haiku |
 
 Choose by cost per accepted change, not tokens; make no savings claim without
 measured usage. No model call belongs in the download data path.
+
+The project `.codex/config.toml` sets Sol/low for ordinary launches and Sol/medium
+for default children and the `bounded_reviewer` role. Explicit user selections
+take precedence. These launch defaults do not change the active root model.
+Setting names follow the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
+(checked 30 September 2026).
 
 ## Keeping the tree small
 

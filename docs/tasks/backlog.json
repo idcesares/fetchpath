@@ -2609,7 +2609,13 @@
         "tools/bench/interruption.mjs",
         "docs/architecture/specs/2026-09-29-stream-first-http-scheduler-design.md",
         "docs/development/evidence/http-adaptive",
-        "docs/architecture/REPOSITORY.md"
+        "docs/architecture/REPOSITORY.md",
+        "AGENTS.md",
+        "PROJECT.md",
+        "docs/development/WORKFLOW.md",
+        "docs/tasks/TEMPLATE.md",
+        ".codex/config.toml",
+        ".codex/agents/bounded_reviewer.toml"
       ],
       "acceptanceIds": [
         "A02",
@@ -2619,7 +2625,7 @@
         "A09"
       ],
       "acceptance": "The FP-083 scheduler replaces the round loop. Existing identity, resume and fault-injection tests pass unchanged; new tests cover range splitting, stalled-lane hedging with its byte budget, cancellation races and late writes to a reassigned range. On FP-084 profiles each kept mechanism meets the plan's gate (at least 10% median gain where it targets, no unexplained common-case regression over 5%), within memory and connection budgets.",
-      "verification": "Affected Rust tests pass (169, four external-fixture skips); fmt and clippy with warnings denied pass. Main Node run passes 56/57; its sole pre-existing failure was the unmapped local .codex directory. Added its map entry and all six structure checks pass on rerun. Fresh 64 MiB/five-repetition paired run verifies all 80 new transfer/engine outputs; targeted transfer gains 37% per-connection, 48% stall and 15% delay, no common-case median regression above 5%. Small-file stream-first run and forced process-kill/checkpoint-resume pass. Independent Astra review findings repaired; final review closure, separately timed resume and isolated receive-buffer/flush-handle gates remain outstanding, so task stays in_progress.",
+      "verification": "Reuse linked evidence: 169 Rust tests, fmt/clippy, repaired Node checks, 64 MiB/five-pair benchmark (80 new-client hashes, 37%/48%/15% target gains, no common-case regression above 5%), small-file and process-kill/resume checks. Next: one independent bounded_reviewer pass (Sol/medium; Sonnet in Claude Code) on the repairs in 75aaa0d, using prior findings in ADAPTIVE-HTTP.md. Scope: scheduler.rs plan_claim/extend/write/tick/detect_stalls/requeue/on_error; checkpoint.rs PrefixTracker/CommitQueue; transfer.rs download_with_faults/perform_scheduled_attempt; corresponding regression tests. Check run-ahead/clipping, progress-sensitive retries, first-byte allowance, completed claims, write-before-checkpoint ordering, cleanup cancellation and complete-prefix publication. Follow only necessary dependencies. Initial strong review is already performed; escalate only a concrete unresolved boundary question. Return one verdict; reopen only affected findings. Do not repeat passed suites/full benchmarks without changed behavior or a specific concern. Remaining resume/buffer/flush measurements must answer a named acceptance claim; remove or explicitly defer unproven optimizations and record contract changes. Keep in_progress until acceptance and the bounded recheck pass; follow WORKFLOW.md stop rules.",
       "evidence": [
         "docs/development/ADAPTIVE-HTTP.md",
         "docs/development/CHECKPOINT-RECOVERY.md",

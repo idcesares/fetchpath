@@ -18,11 +18,13 @@ If graph tools are unavailable or fail, report it once, use Serena symbolic tool
 
 Use isolated worktrees when a committed baseline exists; otherwise disjoint file ownership. Agents never commit or change files outside their packet unless the lead expands scope. Return exact changed files, checks actually run, results, and remaining limitations.
 
+Review packets name prior findings, exact changed symbols, affected invariants and passing evidence to reuse. After an initial boundary review, use one independent Sol/medium (Sonnet) repair recheck; escalate only concrete unresolved boundary questions. Return one verdict, reopen only affected findings, and do not repeat passed checks or restart a broad audit without new evidence. Each benchmark must answer a named acceptance question; remove or explicitly defer unproven optimizations without silently weakening acceptance. See docs/development/WORKFLOW.md.
+
 Mark done only with reachable evidence and passing acceptance; never mark a whole milestone done because a prototype exists. Keep blocked tasks' reasons and next actions explicit. Escalate after two failed repair attempts or any ambiguity in identity, persistence ordering, secrets, or public contracts.
 
 ## Model routing
 
-Lead: the user-selected strongest model (Astra High in Codex, Opus in Claude Code) for design, planning, difficult debugging, and integration. Terra Medium or Sonnet is the bounded implementation candidate; smaller models may handle mechanical edits. Strong-model review is required for integrity/persistence/unsafe/FFI and credential boundaries. Evaluate cost per accepted change; no unmeasured savings claims. No model calls belong in the download data path.
+Lead: preserve the user-selected model; otherwise use GPT-6.1 Sol/low in Codex, increasing to medium for substantive implementation. Use GPT-6 Astra/low for difficult diagnosis, design judgment, and consequential review; use high for exceptional complexity or an explicit user selection. GPT-6.1 Sol/medium is the bounded Codex implementation candidate and GPT-6 Luna/high handles mechanical work. Claude Code keeps Opus for lead work and Sonnet for implementation. An initial independent strong-model review is required for integrity/persistence/unsafe/FFI and credential boundaries; bounded repair rechecks follow the rule above. Evaluate cost per accepted change; no unmeasured savings claims. No model calls belong in the download data path.
 
 ## Checks and invariants
 
@@ -39,3 +41,7 @@ Every committed file costs tokens in later sessions. Spend effort on the engine 
 Keep required rules here, reusable project decisions in repository docs with source paths/dates, and global memory updates only when directly requested by the user. Before dependencies are installed, ensure package-manager scope and lockfiles stay within this repository. Do not edit global Codex configuration as an incidental project task.
 
 Finish authorized work and report evidence concisely. Local development does not imply publishing, paid provisioning, external messages, or destructive actions; reuse existing authorization and ask only for a genuinely missing decision.
+
+## Codex delegation
+
+Codex may proactively delegate independent subtasks when useful. Use bounded context, at most three children by default, and exclusive ownership of edited paths. Route exploration to GPT-6 Luna/high, implementation and repair rechecks to GPT-6.1 Sol/medium, and first consequential boundary reviews or unresolved difficult findings to GPT-6 Astra/low. The project config provides a bounded_reviewer role; load its TOML before use. Keep explicit user model selections and the project's stronger verification requirements. The parent integrates and performs final relevant validation; avoid recursive delegation.
