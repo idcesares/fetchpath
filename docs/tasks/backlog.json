@@ -2632,6 +2632,23 @@
       "verification": "Re-run of FP-084 on the final build with raw observations committed; independent strong review of every claim against its evidence.",
       "evidence": [],
       "blockedReason": null
+    },
+    {
+      "id": "FP-088",
+      "title": "Start and settle engine jobs without waiting for the reconcile tick",
+      "milestone": "M14",
+      "dependsOn": ["FP-085"],
+      "status": "todo",
+      "owner": null,
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": ["crates/fetchpath-session", "apps/cli/src/engine", "apps/cli/src/wait.rs", "docs/development/ENGINE-SESSION.md", "docs/tasks/backlog.json"],
+      "acceptanceIds": ["A04", "A09"],
+      "acceptance": "A job created, resumed or finished through the engine is scheduled and reconciled as soon as its command or transfer completes, not on the next 250 ms tick (crates/fetchpath-session/src/engine.rs TICK_INTERVAL, apps/cli/src/engine/mod.rs), and the command line learns of completion from the event instead of a poll. The tick stays as a fallback for timers and progress sampling. On the FP-084 unshaped profile, engine time minus in-process core time falls by at least half from about 0.6 s per download; persistence ordering and event durability are unchanged.",
+      "verification": "Session and engine tests for immediate scheduling and completion; FP-084 paired runs engine against in-process core; independent strong review of persistence ordering.",
+      "evidence": [],
+      "blockedReason": null
     }
   ]
 }
