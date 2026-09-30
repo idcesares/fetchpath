@@ -1,4 +1,6 @@
-use fetchpath_http::{GlobalBudget, RequestContext, TransferLimits, transfer_adaptive};
+use fetchpath_http::{
+    GlobalBudget, RequestContext, ResumePoint, SegmentMonitor, TransferLimits, transfer_resumable,
+};
 use serde_json::json;
 use std::fs::OpenOptions;
 use std::io;
@@ -35,15 +37,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if http2_prior_knowledge {
         args.remove(0);
     }
+    let resume = if args.first().is_some_and(|arg| arg == "--resume") {
+        if args.len() != 7 {
+            return Err("usage: --resume OFFSET ETAG TOTAL PREFIX URL OUTPUT".into());
+        }
+        let point = ResumePoint {
+            offset: args[1].parse()?,
+            strong_etag: args[2].clone(),
+            expected_total: Some(args[3].parse()?),
+        };
+        let prefix = PathBuf::from(&args[4]);
+        if std::fs::metadata(&prefix)?.len() != point.offset {
+            return Err("prefix length differs from resume offset".into());
+        }
+        args.drain(..5);
+        Some((point, prefix))
+    } else {
+        None
+    };
     if args.len() != 2 {
-        return Err("usage: fetchpath-http-bench [--http2-prior-knowledge] URL OUTPUT".into());
+        return Err("usage: fetchpath-http-bench [--http2-prior-knowledge] [--resume OFFSET ETAG TOTAL PREFIX] URL OUTPUT".into());
     }
     let destination = PathBuf::from(&args[1]);
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .create_new(true)
         .read(true)
         .write(true)
         .open(&destination)?;
+    if let Some((_, prefix)) = &resume {
+        io::copy(&mut std::fs::File::open(prefix)?, &mut file)?;
+    }
     let mut limits = TransferLimits::default();
     // Benchmark-only overrides, to compare receive buffers and concurrency.
     if let Some(kib) = std::env::var("FETCHPATH_BENCH_BUFFER_KIB")
@@ -59,7 +82,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         limits.max_concurrency = lanes;
     }
     let budget = GlobalBudget::new(limits.max_active_requests, limits.max_buffered_bytes)?;
-    let report = transfer_adaptive(
+    let report = transfer_resumable(
         &args[0],
         &RequestContext {
             http2_prior_knowledge,
@@ -67,6 +90,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         limits,
         &budget,
+        &SegmentMonitor::default(),
+        resume.as_ref().map(|(point, _)| point),
         || false,
         |chunk| write_all_at(&file, chunk.bytes, chunk.offset),
     )?;

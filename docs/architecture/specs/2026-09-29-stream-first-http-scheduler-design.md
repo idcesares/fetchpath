@@ -219,7 +219,8 @@ owner keeps delivering after its claim shrinks.
 
 All lanes of a download are easy handles in one curl multi handle, driven by
 one thread per download, with a commit thread beside it (4.5). The receive
-buffer rises from 16 KiB to what FP-084 shows best, probably 64–256 KiB.
+buffer stays at 16 KiB: the 16/64/128/256 KiB trials did not establish a
+CPU gain, so the larger default is not retained.
 
 A multi handle multiplexes HTTP/2 by default, and HTTPS already prefers h2.
 That would put every lane on one connection with one congestion window, and
@@ -258,7 +259,11 @@ paired runs pass. FP-087 deletes it and lists it in
 ## 5. What each mechanism must show
 
 The plan's gate: at least 10% median gain where the mechanism is aimed, no
-unexplained common-case regression above 5%, and budgets held.
+unexplained common-case regression above 5%, and budgets held. Mandatory
+identity, recovery and quiescence repairs are correctness requirements, not
+optional speed optimizations; their individual speed is not claimed. The
+combined engine/transfer comparison and interruption checks validate the
+write-path change without a separate flush-handle speed claim.
 
 | Mechanism | Must win on | Must not regress |
 | --- | --- | --- |
@@ -268,7 +273,7 @@ unexplained common-case regression above 5%, and budgets held.
 | Stall replacement, retry budget | `stall` | `per-connection-limit` |
 | Positional writes, commit thread, 1 s cadence | Engine versus transfer layer at equal limits | Crash and pause loss bound |
 | Scheduler on resume | A resumed large file | Resume fault tests |
-| Larger receive buffer | CPU-seconds per GiB | None |
+| Larger receive buffer (not retained) | Reconsider only with a demonstrated CPU gain | None |
 | Redirect pinning (FP-086) | `redirect`, Hugging Face file | Credential tests |
 
 ## 6. Tests FP-085 must add

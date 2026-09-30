@@ -138,7 +138,7 @@ pub struct TransferLimits {
 pub const SEGMENT_SECONDS: f64 = 1.5;
 
 /// The default libcurl receive buffer. FP-085 measured 64, 128 and 256 KiB.
-pub const RECEIVE_BUFFER_BYTES: usize = 128 * 1024;
+pub const RECEIVE_BUFFER_BYTES: usize = 16 * 1024;
 
 impl Default for TransferLimits {
     fn default() -> Self {

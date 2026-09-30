@@ -57,3 +57,12 @@ without a graceful checkpoint drain, then resumes a paced 256 MiB fixture and
 checks the final hash, resume offset and lost-byte envelope. The JSON record
 is in that scratch directory. It does not touch an installed engine, and does
 not establish OS-crash or power-loss durability.
+
+## Resumed transfer comparison
+
+`node tools/bench/resume.mjs work/bench-resume` needs an empty scratch directory
+and the release benchmark binary. It seeds the same 8 MiB prefix of a 64 MiB
+fixture and runs five alternating one-lane/adaptive pairs on the per-connection
+limit, checking every full-file hash. The one-lane baseline isolates the
+benefit of parallel scheduling on resume; it is not a historical core build.
+The binary also accepts `--resume OFFSET ETAG TOTAL PREFIX URL OUTPUT`.

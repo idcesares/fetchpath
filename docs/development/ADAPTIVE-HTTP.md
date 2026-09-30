@@ -16,7 +16,7 @@ Acceptance: A02, A03, A04, A05, A06, A09
 - **Core.** Writes are positional; the prefix digest is extended by read-back; checkpoints every second and 64 KiB on a commit thread with an independently opened flush handle; a resume uses the scheduler, and a fully retained file goes straight to verification and publication. At most two transfer attempts are made. See [checkpoint recovery](CHECKPOINT-RECOVERY.md).
 - **Round scheduler kept behind a switch.** `FETCHPATH_HTTP_SCHEDULER=rounds` selects the FP-015 scheduler for a fresh download, only so the benchmark can compare. FP-087 deletes it.
 - The static libcurl build includes nghttp2. HTTPS prefers h2; controlled cleartext h2 uses prior knowledge. HTTP/3 is unavailable in the packaged build, so the policy records `http3_unavailable`.
-- One receive buffer per lane, 128 KiB (was 16 KiB); `max_buffered_bytes` now budgets these buffers.
+- One receive buffer per lane, 16 KiB; `max_buffered_bytes` now budgets these buffers.
 
 ## Verification
 
@@ -118,7 +118,7 @@ open at 0.19 s against rounds at 0.32 s (about 40% faster), with one request
 instead of two; five paired repetitions, all hashes match
 ([small-file evidence](evidence/http-adaptive/fp085-small.json)).
 
-Peak transfer memory is about 6.5 MiB against 22–30 MiB for rounds. The
+Peak transfer memory in the 128 KiB experiment is about 6.5 MiB against 22 to 30 MiB for rounds. The
 configured four-lane cap is held. aria2 x16 is still faster on the
 per-connection limit and delay; on stalls its median is 3.28 s against 3.27 s
 for the new transfer layer. Some stall runs encounter a second fixture pause,
@@ -130,10 +130,34 @@ measures the combined scheduler/core repairs, including the independently
 opened flush handle; it does not isolate that handle's performance. FP-088
 covers the remaining engine reconcile/poll delay. A larger receive buffer has
 not independently demonstrated a CPU gain: earlier 16/64/128/256 KiB trials
-were within noise. The 128 KiB setting is retained as a bounded tuning choice,
-with no speed claim attributed to it. A separate timed resume comparison and
-an Internet rerun remain unmeasured; resume correctness and parallel operation
-are exercised by tests and the interruption harness.
+were within noise. The default is restored to 16 KiB; the unproven larger
+buffer optimization is not retained. The table above records the earlier
+128 KiB run; a targeted final-default comparison is recorded below. The
+separate flush handle is a reviewed correctness repair, with no isolated
+speed claim. An Internet rerun remains unmeasured.
+
+
+Final-default checks retain the 16 KiB buffer. On 64 MiB/five paired repetitions,
+transfer medians are 0.46 versus 0.47 s unshaped, 2.80 versus 4.42 s under the
+per-connection limit (37% faster), and 4.34 versus 4.29 s under the per-client
+limit (1% slower). Engine per-client medians are 4.62 versus 4.79 s. All 30
+new-client hashes match; lane and buffer budgets hold
+([final-default raw pairs](evidence/http-adaptive/fp085-default.json)).
+The initial fast-engine sample was 1.08 versus 0.99 s (9% slower), with
+overlapping intervals. One quiet targeted recheck after native checks completed
+was 0.96 versus 1.00 s (4% faster), again with overlapping intervals
+([quiet engine pairs](evidence/http-adaptive/fp085-engine-quiet.json)).
+The deviation is not stable across samples. The existing 250 ms engine
+reconcile/poll timing remains FP-088; no fast-engine speed claim rests on this
+variation. A diagnostic sample that overlapped compilation is excluded from
+performance decisions. No further reruns are needed for this gate.
+
+A 64 MiB resumed transfer with the same 8 MiB retained prefix takes 2.71 s
+adaptively against 7.43 s with one lane (63% faster). Five alternating pairs
+verify all ten full-file hashes and enforce the requested lane ceiling
+([resume pairs](evidence/http-adaptive/fp085-resume.json)). This isolates parallel
+scheduling on resume with the same binary; the one-lane baseline is not a
+historical core build. `node tools/bench/resume.mjs` reproduces it.
 
 A real forced process stop of a scratch engine during a paced 256 MiB download
 keeps a 90,921,813-byte checkpoint, resumes exactly at that offset and produces
@@ -154,6 +178,13 @@ completed-claim removal, a separate flush handle, overlap refusal before
 writing, cancellation cleanup despite commit failure, offline completion of
 a fully retained prefix, and a shared two-attempt budget. Retry-After values
 above 60 s are honored cancellably; extreme deadlines fail without overflow.
+
+The independent Sol/medium bounded repair recheck accepted these fixes with
+no blocking findings, reusing existing evidence. Its focused follow-up accepted
+the 16 KiB default and resumed benchmark path. After those edits, HTTP tests,
+strict HTTP clippy, formatting and repository/backlog checks pass. Optional
+buffer tuning is removed; mandatory flush/cancellation/identity repairs have
+no individually attributed speed claim. The initial strong review is reused.
 
 ## Limits carried forward
 

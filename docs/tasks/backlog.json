@@ -2590,7 +2590,7 @@
         "FP-083",
         "FP-084"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "codex lead",
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -2615,7 +2615,8 @@
         "docs/development/WORKFLOW.md",
         "docs/tasks/TEMPLATE.md",
         ".codex/config.toml",
-        ".codex/agents/bounded_reviewer.toml"
+        ".codex/agents/bounded_reviewer.toml",
+        "tools/bench/resume.mjs"
       ],
       "acceptanceIds": [
         "A02",
@@ -2625,14 +2626,17 @@
         "A09"
       ],
       "acceptance": "The FP-083 scheduler replaces the round loop. Existing identity, resume and fault-injection tests pass unchanged; new tests cover range splitting, stalled-lane hedging with its byte budget, cancellation races and late writes to a reassigned range. On FP-084 profiles each kept mechanism meets the plan's gate (at least 10% median gain where it targets, no unexplained common-case regression over 5%), within memory and connection budgets.",
-      "verification": "Reuse linked evidence: 169 Rust tests, fmt/clippy, repaired Node checks, 64 MiB/five-pair benchmark (80 new-client hashes, 37%/48%/15% target gains, no common-case regression above 5%), small-file and process-kill/resume checks. Next: one independent bounded_reviewer pass (Sol/medium; Sonnet in Claude Code) on the repairs in 75aaa0d, using prior findings in ADAPTIVE-HTTP.md. Scope: scheduler.rs plan_claim/extend/write/tick/detect_stalls/requeue/on_error; checkpoint.rs PrefixTracker/CommitQueue; transfer.rs download_with_faults/perform_scheduled_attempt; corresponding regression tests. Check run-ahead/clipping, progress-sensitive retries, first-byte allowance, completed claims, write-before-checkpoint ordering, cleanup cancellation and complete-prefix publication. Follow only necessary dependencies. Initial strong review is already performed; escalate only a concrete unresolved boundary question. Return one verdict; reopen only affected findings. Do not repeat passed suites/full benchmarks without changed behavior or a specific concern. Remaining resume/buffer/flush measurements must answer a named acceptance claim; remove or explicitly defer unproven optimizations and record contract changes. Keep in_progress until acceptance and the bounded recheck pass; follow WORKFLOW.md stop rules.",
+      "verification": "Initial strong boundary review and independent Sol/medium bounded repair recheck accepted; focused follow-up accepted the 16 KiB default and resume benchmark path. Existing 169 Rust/core/storage checks reused; after final edits HTTP tests, strict clippy and fmt pass. Existing paired stall/delay/small-file and forced process-kill recovery evidence retained. Final-default five-pair comparisons verify 30 new-client hashes, preserve 37% per-connection gain and 1% per-client transfer difference. Fast-engine initial 9% difference reverses to 4% gain on one quiet targeted recheck; both raw samples/overlapping intervals recorded, no fast-engine speed claim, existing engine-tick limitation remains FP-088. Resume five alternating pairs: 63% gain versus one lane, ten hashes verified. Unproven larger-buffer default removed. Mandatory independent flush/cancellation/identity repairs have no isolated speed claim; spec clarifies their correctness gate. Backlog and repository checks pass.",
       "evidence": [
         "docs/development/ADAPTIVE-HTTP.md",
         "docs/development/CHECKPOINT-RECOVERY.md",
         "docs/development/evidence/http-adaptive/fp085-comparison.json",
         "docs/development/evidence/http-adaptive/fp085-small.json",
         "docs/development/evidence/http-adaptive/fp085-interruption.json",
-        "crates/fetchpath-http/tests/scheduler.rs"
+        "crates/fetchpath-http/tests/scheduler.rs",
+        "docs/development/evidence/http-adaptive/fp085-default.json",
+        "docs/development/evidence/http-adaptive/fp085-engine-quiet.json",
+        "docs/development/evidence/http-adaptive/fp085-resume.json"
       ],
       "blockedReason": null
     },
