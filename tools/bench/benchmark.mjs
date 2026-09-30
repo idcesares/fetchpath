@@ -299,6 +299,14 @@ try {
           connections: server?.connectionsUsed ?? null, connectionsAccepted: server?.connectionsAccepted ?? null, requests: server?.requests ?? null, rangeRequests: server?.rangeRequests ?? null,
           redirects: server?.redirects ?? null, stalledRequests: server?.stalledRequests ?? null, probe: probeResult, transfer: transferSummary(client, result.stdout),
         };
+        // Store only bounded counters from opt-in scheduler traces, never URLs or raw stderr.
+        if (client.startsWith('fetchpath-http') && process.env.FETCHPATH_HTTP_TRACE === '1') {
+          const starts = [...result.stderr.matchAll(/lane (\d+) starts /g)].map(match => match[1]);
+          const replacements = result.stderr.split('\n').filter(line => line.includes('replace '));
+          run.schedulerTrace = { truncated: result.stderr.length >= 65536, redirectHops: starts.length - new Set(starts).size,
+            replacements: replacements.length, stoppedDelivering: replacements.filter(line => line.includes('stopped delivering')).length,
+            prefixStarvation: replacements.filter(line => line.includes('prefix')).length };
+        }
         if (observed && outputBytes) run.cpuSecondsPerGiB = round(observed.cpuSeconds / (outputBytes / (1024 * MIB)), 2);
         runs.push(run); await appendFile(join(outputDir, 'runs.jsonl'), `${JSON.stringify(run)}
 `);

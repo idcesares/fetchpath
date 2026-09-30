@@ -27,7 +27,8 @@ use std::io;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use url::Url;
 
 /// A range that fails this many times without progress ends the attempt.
 const RETRY_BUDGET: u32 = 3;
@@ -76,13 +77,12 @@ fn retry_deadline(now: Instant, wait: Duration) -> Result<Instant, TransferError
 type SinkFn<'a> = dyn FnMut(Chunk<'_>) -> io::Result<()> + 'a;
 type CancelFn<'a> = dyn Fn() -> bool + Sync + 'a;
 
-/// The one multi handle of a download. Multiplexing is off so that every lane
-/// keeps its own connection and congestion window (spec 4.7); an origin that
-/// limits each connection would otherwise see one connection instead of many.
+/// One connection cache for the download. HTTP/2 streams may share a socket;
+/// HTTP/1 lanes still use separate sockets while their requests overlap.
 pub(crate) fn new_multi() -> Result<Multi, TransferError> {
     let mut multi = Multi::new();
     multi
-        .pipelining(false, false)
+        .pipelining(false, true)
         .map_err(|error| TransferError::Transport(error.to_string()))?;
     Ok(multi)
 }
@@ -469,6 +469,163 @@ struct Shared<'a> {
     written: Cell<u64>,
     ttfbs: RefCell<VecDeque<Duration>>,
     state: RefCell<State>,
+    pin: RefCell<Option<Target>>,
+}
+
+#[derive(Clone)]
+struct Target {
+    url: Url,
+    credentials: bool,
+    expires: Option<SystemTime>,
+    cookie_lines: Vec<String>,
+}
+
+#[derive(Clone)]
+struct Request {
+    target: Target,
+    hops: u32,
+    range: Option<String>,
+    if_range: Option<String>,
+    fresh: bool,
+    resolving: bool,
+}
+
+fn target_expiry(url: &Url, max_age: Option<u64>) -> Option<SystemTime> {
+    let cache = max_age.and_then(|age| SystemTime::now().checked_add(Duration::from_secs(age)));
+    let mut signed = url
+        .query_pairs()
+        .find_map(|(name, value)| {
+            name.eq_ignore_ascii_case("expires")
+                .then(|| value.parse::<u64>().ok())
+                .flatten()
+        })
+        .and_then(|epoch| UNIX_EPOCH.checked_add(Duration::from_secs(epoch)));
+    let mut date = None;
+    let mut duration = None;
+    for (name, value) in url.query_pairs() {
+        if name.eq_ignore_ascii_case("x-amz-date") || name.eq_ignore_ascii_case("x-goog-date") {
+            date = signing_date(&value);
+        } else if name.eq_ignore_ascii_case("x-amz-expires")
+            || name.eq_ignore_ascii_case("x-goog-expires")
+        {
+            duration = value.parse::<u64>().ok();
+        }
+    }
+    if let (Some(date), Some(duration)) = (date, duration) {
+        let expiry = date.checked_add(Duration::from_secs(duration));
+        signed = match (signed, expiry) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+    }
+    match (cache, signed) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+fn earliest_expiry(a: Option<SystemTime>, b: Option<SystemTime>) -> Option<SystemTime> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// UTC basic ISO timestamp used by AWS and Google signed URLs.
+fn signing_date(value: &str) -> Option<SystemTime> {
+    if !value.is_ascii() || value.len() != 16 || &value[8..9] != "T" || &value[15..] != "Z" {
+        return None;
+    }
+    let year = value[..4].parse::<u64>().ok()?;
+    let month = value[4..6].parse::<usize>().ok()?;
+    let day = value[6..8].parse::<u64>().ok()?;
+    let hour = value[9..11].parse::<u64>().ok()?;
+    let minute = value[11..13].parse::<u64>().ok()?;
+    let second = value[13..15].parse::<u64>().ok()?;
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let months = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    if year < 1970
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > months[month - 1]
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+    let leaps_before = |year: u64| (year - 1) / 4 - (year - 1) / 100 + (year - 1) / 400;
+    let days = (year - 1970) * 365 + leaps_before(year) - leaps_before(1970)
+        + months[..month - 1].iter().sum::<u64>()
+        + day
+        - 1;
+    UNIX_EPOCH.checked_add(Duration::from_secs(
+        days * 86400 + hour * 3600 + minute * 60 + second,
+    ))
+}
+
+fn initial_target(url: &str) -> Result<Target, TransferError> {
+    let url = Url::parse(url).map_err(|_| TransferError::Rejected("invalid HTTP URL".into()))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(TransferError::Rejected(
+            "redirect protocol is not HTTP or HTTPS".into(),
+        ));
+    }
+    Ok(Target {
+        url,
+        credentials: true,
+        expires: None,
+        cookie_lines: Vec::new(),
+    })
+}
+
+fn redirect_target(from: &Target, location: &str) -> Result<Target, TransferError> {
+    let mut url = from
+        .url
+        .join(location)
+        .map_err(|_| TransferError::Rejected("invalid redirect URL".into()))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(TransferError::Rejected(
+            "redirect protocol is not HTTP or HTTPS".into(),
+        ));
+    }
+    let credentials = from.credentials && url.origin() == from.url.origin();
+    // A Location must not introduce credentials, even on the original origin.
+    url.set_username(if credentials { from.url.username() } else { "" })
+        .ok();
+    url.set_password(if credentials {
+        from.url.password()
+    } else {
+        None
+    })
+    .ok();
+    Ok(Target {
+        url,
+        credentials,
+        expires: from.expires,
+        cookie_lines: if credentials {
+            from.cookie_lines.clone()
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn redirect_status(status: Option<u32>) -> bool {
+    matches!(status, Some(301 | 302 | 303 | 307 | 308))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -487,12 +644,35 @@ struct LaneHandler<'a> {
     verdict: Option<Verdict>,
     etag: Option<String>,
     total: Option<u64>,
+    request: Request,
+    location: Option<String>,
+    max_age: Option<u64>,
 }
 
 impl Handler for LaneHandler<'_> {
     fn header(&mut self, data: &[u8]) -> bool {
         if !self.frozen {
             self.headers.ingest(data);
+            if let Ok(line) = std::str::from_utf8(data) {
+                if line.trim().is_empty() && redirect_status(self.headers.status) {
+                    self.frozen = true;
+                }
+                if line.starts_with("HTTP/") {
+                    self.location = None;
+                    self.max_age = None;
+                } else if let Some((name, value)) = line.trim().split_once(':') {
+                    if name.eq_ignore_ascii_case("location") {
+                        self.location = Some(value.trim().into());
+                    } else if name.eq_ignore_ascii_case("cache-control") {
+                        self.max_age = value.split(',').find_map(|directive| {
+                            let (name, value) = directive.trim().split_once('=')?;
+                            name.eq_ignore_ascii_case("max-age")
+                                .then(|| value.trim_matches('"').parse().ok())
+                                .flatten()
+                        });
+                    }
+                }
+            }
         }
         true
     }
@@ -502,6 +682,11 @@ impl Handler for LaneHandler<'_> {
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        // Redirect bodies are never file bytes. Finish this response so its
+        // connection remains reusable before issuing the next hop.
+        if redirect_status(self.headers.status) {
+            return Ok(data.len());
+        }
         let started = Instant::now();
         let written = self.write_clipped(data);
         let shared = &self.shared;
@@ -521,6 +706,12 @@ impl LaneHandler<'_> {
             if let Err(verdict) = self.accept() {
                 self.verdict = Some(verdict);
                 return 0;
+            }
+            if self.request.resolving && self.shared.state.borrow().phase == Phase::Ranged {
+                let mut target = self.request.target.clone();
+                target.expires =
+                    earliest_expiry(target.expires, target_expiry(&target.url, self.max_age));
+                *self.shared.pin.borrow_mut() = Some(target);
             }
         }
         if self.verdict.is_some() || self.claim.retired.get() {
@@ -745,6 +936,21 @@ struct Window {
     length: Duration,
 }
 
+#[derive(Clone, Copy)]
+enum PoolPolicy {
+    Eligible,
+    Pending {
+        baseline: f64,
+    },
+    Trial {
+        baseline: f64,
+        good: u8,
+        deadline: Instant,
+    },
+    Independent,
+    Shared,
+}
+
 struct Engine<'a> {
     // Handles go before the multi handle so they detach first.
     lanes: Vec<Lane<'a>>,
@@ -788,6 +994,8 @@ struct Engine<'a> {
     block_replacements: u32,
     requests: u32,
     connections: u32,
+    pool_policy: PoolPolicy,
+    pool_width: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -827,6 +1035,7 @@ pub(crate) fn run<'a>(
             first_claim: 0,
             largest_claim: limits.min_segment_bytes as u64,
         }),
+        pin: RefCell::new(None),
     });
     let mut engine = Engine {
         lanes: Vec::new(),
@@ -867,6 +1076,8 @@ pub(crate) fn run<'a>(
         block_replacements: 0,
         requests: 0,
         connections: 0,
+        pool_policy: PoolPolicy::Eligible,
+        pool_width: 0,
     };
     engine.drive()
 }
@@ -986,6 +1197,39 @@ impl<'a> Engine<'a> {
         if_range: Option<String>,
         fresh: bool,
     ) -> Result<(), TransferError> {
+        let target = self.shared.pin.borrow().clone();
+        let resolving = target.is_none();
+        let mut target = target.unwrap_or(initial_target(self.url)?);
+        if resolving {
+            target.cookie_lines = self.context.cookie_lines.clone();
+        }
+        let request = Request {
+            target,
+            hops: 0,
+            range,
+            if_range,
+            fresh,
+            resolving,
+        };
+        let id = self.next_lane;
+        self.next_lane += 1;
+        let handle = self.make_request(Rc::clone(&claim), role, request, id)?;
+        self.shared
+            .state
+            .borrow_mut()
+            .claims
+            .push(Rc::clone(&claim));
+        self.lanes.push(Lane { id, handle, claim });
+        Ok(())
+    }
+
+    fn make_request(
+        &mut self,
+        claim: Rc<Claim>,
+        role: Role,
+        request: Request,
+        id: usize,
+    ) -> Result<Easy2Handle<LaneHandler<'a>>, TransferError> {
         let handler = LaneHandler {
             shared: Rc::clone(&self.shared),
             claim: Rc::clone(&claim),
@@ -995,51 +1239,55 @@ impl<'a> Engine<'a> {
             verdict: None,
             etag: None,
             total: None,
+            request: request.clone(),
+            location: None,
+            max_age: None,
         };
         let mut easy = Easy2::new(handler);
-        easy.url(self.url).map_err(curl_error)?;
+        easy.url(request.target.url.as_str()).map_err(curl_error)?;
         http_only(easy.raw())?;
-        easy.follow_location(true).map_err(curl_error)?;
+        easy.follow_location(false).map_err(curl_error)?;
         easy.fail_on_error(true).map_err(curl_error)?;
         easy.ssl_verify_peer(true).map_err(curl_error)?;
         easy.ssl_verify_host(true).map_err(curl_error)?;
         easy.buffer_size(self.limits.receive_buffer_bytes)
             .map_err(curl_error)?;
         easy.progress(true).map_err(curl_error)?;
-        easy.http_version(http_version_for(self.url, self.context, &self.decision))
-            .map_err(curl_error)?;
-        for cookie in &self.context.cookie_lines {
-            easy.cookie_list(cookie).map_err(curl_error)?;
+        easy.http_version(http_version_for(
+            request.target.url.as_str(),
+            self.context,
+            &self.decision,
+        ))
+        .map_err(curl_error)?;
+        easy.pipewait(true).map_err(curl_error)?;
+        if request.target.credentials {
+            easy.cookie_file("").map_err(curl_error)?;
+            for cookie in &request.target.cookie_lines {
+                easy.cookie_list(cookie).map_err(curl_error)?;
+            }
+            if let Some(referer) = &self.context.referer {
+                easy.referer(referer).map_err(curl_error)?;
+            }
         }
-        if let Some(referer) = &self.context.referer {
-            easy.referer(referer).map_err(curl_error)?;
-        }
-        if let Some(range) = &range {
+        if let Some(range) = &request.range {
             easy.range(range).map_err(curl_error)?;
         }
-        easy.http_headers(request_headers(if_range.as_deref())?)
+        easy.http_headers(request_headers(request.if_range.as_deref())?)
             .map_err(curl_error)?;
-        if fresh {
+        if request.fresh {
             easy.fresh_connect(true).map_err(curl_error)?;
         }
-        let id = self.next_lane;
-        self.next_lane += 1;
         self.trace(|| {
             format!(
-                "lane {id} starts {} fresh={fresh}",
-                range.as_deref().unwrap_or("(plain)")
+                "lane {id} starts {} fresh={}",
+                request.range.as_deref().unwrap_or("(plain)"),
+                request.fresh
             )
         });
         let mut handle = self.multi.add2(easy).map_err(multi_error)?;
         handle.set_token(id).map_err(curl_error)?;
-        self.shared
-            .state
-            .borrow_mut()
-            .claims
-            .push(Rc::clone(&claim));
-        self.lanes.push(Lane { id, handle, claim });
         self.requests += 1;
-        Ok(())
+        Ok(handle)
     }
 
     // -- finishing requests -------------------------------------------------
@@ -1083,6 +1331,47 @@ impl<'a> Engine<'a> {
         let Some(index) = self.lanes.iter().position(|lane| lane.id == id) else {
             return Ok(());
         };
+        let handler = self.lanes[index].handle.get_ref();
+        if redirect_status(handler.headers.status) {
+            if self.cancelled() {
+                return Err(TransferError::Cancelled);
+            }
+            let mut request = handler.request.clone();
+            if request.hops >= 10 {
+                return Err(TransferError::Rejected("too many HTTP redirects".into()));
+            }
+            let location = handler
+                .location
+                .as_deref()
+                .ok_or_else(|| TransferError::Rejected("redirect without Location".into()))?;
+            request.target = redirect_target(&request.target, location)?;
+            request.target.expires = earliest_expiry(
+                request.target.expires,
+                handler
+                    .max_age
+                    .and_then(|age| SystemTime::now().checked_add(Duration::from_secs(age))),
+            );
+            request.hops += 1;
+            // A redirected pin is refreshed only after this response passes
+            // the existing strong-validator and total-size checks.
+            request.resolving = true;
+            let role = handler.role;
+            let Lane { handle, claim, .. } = self.lanes.remove(index);
+            let mut easy = self.multi.remove2(handle).map_err(multi_error)?;
+            self.connections += easy.num_connects().unwrap_or(0) as u32;
+            if request.target.credentials {
+                request.target.cookie_lines = easy
+                    .cookies()
+                    .map_err(curl_error)?
+                    .iter()
+                    .filter_map(|line| std::str::from_utf8(line).ok().map(str::to_owned))
+                    .collect();
+            }
+            drop(easy);
+            let handle = self.make_request(Rc::clone(&claim), role, request, id)?;
+            self.lanes.push(Lane { id, handle, claim });
+            return Ok(());
+        }
         let (claim, mut easy) = self.detach(index)?;
         self.trace(|| {
             format!(
@@ -1114,6 +1403,32 @@ impl<'a> Engine<'a> {
                 handler.headers.clone(),
             )
         };
+        if matches!(status, Some(403 | 404 | 410))
+            && easy.get_ref().request.target.url != initial_target(self.url)?.url
+        {
+            let mut pin = self.shared.pin.borrow_mut();
+            if pin
+                .as_ref()
+                .is_some_and(|target| target.url == easy.get_ref().request.target.url)
+            {
+                *pin = None;
+            }
+            drop(pin);
+            return match role {
+                Role::Range => self.requeue(&claim, "the pinned URL was rejected", false),
+                Role::First { plain } => {
+                    self.open_failures += 1;
+                    if self.open_failures > RETRY_BUDGET {
+                        return Err(TransferError::Rejected(
+                            "the resolved URL was repeatedly rejected".into(),
+                        ));
+                    }
+                    self.pending_open = Some(plain);
+                    self.retried += 1;
+                    Ok(())
+                }
+            };
+        }
         if let Some(verdict) = verdict {
             return self.on_verdict(verdict, role, &claim);
         }
@@ -1231,6 +1546,12 @@ impl<'a> Engine<'a> {
         if throttled {
             self.throttles += 1;
             self.pause_until = Some(retry_deadline(now, wait)?);
+            if matches!(
+                self.pool_policy,
+                PoolPolicy::Eligible | PoolPolicy::Pending { .. }
+            ) {
+                self.pool_policy = PoolPolicy::Shared;
+            }
             if self.ramped {
                 self.controller.throttled();
                 self.slot.set_growing(false);
@@ -1350,6 +1671,7 @@ impl<'a> Engine<'a> {
         self.sample_rates(now);
         self.detect_stalls(now)?;
         self.resize_lanes();
+        self.pool_step(now)?;
         self.assign(now)?;
         self.window_step(now);
         let state = self.shared.state.borrow();
@@ -1513,6 +1835,10 @@ impl<'a> Engine<'a> {
 
     fn resize_lanes(&mut self) {
         let width = self.controller.width();
+        // The initial width still needs its permits even when it already
+        // equals the configured ceiling (and no width probe is possible).
+        self.slot
+            .set_growing(self.controller.growing() || self.permits.len() < width);
         while self.permits.len() < width {
             match self.slot.try_reserve(self.limits.receive_buffer_bytes) {
                 Some(permit) => self.permits.push(permit),
@@ -1525,6 +1851,8 @@ impl<'a> Engine<'a> {
         while self.permits.len() > width.max(self.lanes.len()).max(1) {
             self.permits.pop();
         }
+        self.slot
+            .set_growing(self.controller.growing() || self.permits.len() < width);
     }
 
     /// Gives every idle lane work: a claim from the frontier, or half of
@@ -1542,6 +1870,26 @@ impl<'a> Engine<'a> {
             return Ok(());
         }
         while self.lanes.len() < capacity {
+            {
+                let mut pin = self.shared.pin.borrow_mut();
+                if pin.as_ref().is_some_and(|target| {
+                    target
+                        .expires
+                        .is_some_and(|expiry| SystemTime::now() >= expiry)
+                }) {
+                    *pin = None;
+                }
+                // Only one lane resolves an invalidated target. Existing
+                // validated streams may continue until the new identity is checked.
+                if pin.is_none()
+                    && self.lanes.iter().any(|lane| {
+                        let handler = lane.handle.get_ref();
+                        handler.request.resolving && handler.etag.is_none()
+                    })
+                {
+                    break;
+                }
+            }
             if !self.fill_one(now, capacity)? {
                 self.starved = true;
                 break;
@@ -1723,7 +2071,44 @@ impl<'a> Engine<'a> {
             elapsed_ms: seconds * 1000.0,
         });
         self.window = None;
+        if let PoolPolicy::Trial {
+            baseline,
+            good,
+            deadline,
+        } = self.pool_policy
+        {
+            if !backpressure && goodput >= baseline * crate::controller::GROWTH_GAIN {
+                if good >= 1 {
+                    self.pool_policy = PoolPolicy::Independent;
+                    self.trace(|| {
+                        "pool trial kept separate connections after two 15% gains".into()
+                    });
+                } else {
+                    self.pool_policy = PoolPolicy::Trial {
+                        baseline,
+                        good: good + 1,
+                        deadline,
+                    };
+                }
+            } else {
+                // Rollback is done outside callbacks, on the next tick.
+                self.pool_policy = PoolPolicy::Trial {
+                    baseline,
+                    good: 0,
+                    deadline: now,
+                };
+            }
+            return;
+        }
         let outcome = self.controller.window(goodput, backpressure);
+        if (backpressure || matches!(outcome.change, Some(Change::Halved(_))))
+            && matches!(
+                self.pool_policy,
+                PoolPolicy::Eligible | PoolPolicy::Pending { .. }
+            )
+        {
+            self.pool_policy = PoolPolicy::Shared;
+        }
         self.trace(|| {
             format!(
                 "window width={width} goodput={:.1} MiB/s busy={:.2} -> {:?}",
@@ -1741,6 +2126,87 @@ impl<'a> Engine<'a> {
             }
             self.slot.set_growing(self.controller.growing());
         }
+        if matches!(self.pool_policy, PoolPolicy::Eligible)
+            && !self.controller.growing()
+            && self.controller.width() >= 2
+            && !backpressure
+            && !matches!(outcome.change, Some(Change::Halved(_)))
+            && self
+                .lanes
+                .iter()
+                .all(|lane| lane.handle.get_ref().headers.protocol == Protocol::Http2)
+        {
+            self.pool_policy = PoolPolicy::Pending { baseline: goodput };
+        }
+    }
+
+    /// One connection-policy experiment per download, at the current width.
+    /// More streams on one socket may not add capacity. Only measured gain
+    /// justifies keeping independent sockets; no origin limit is assumed.
+    fn pool_step(&mut self, now: Instant) -> Result<(), TransferError> {
+        match self.pool_policy {
+            PoolPolicy::Pending { baseline } => {
+                let width = self.controller.width();
+                if width < 2 || self.pause_until.is_some_and(|until| now < until) {
+                    self.pool_policy = PoolPolicy::Shared;
+                    return Ok(());
+                }
+                // Wait for the width probe's surplus lanes to drain. The
+                // experiment never reserves a lane beyond the normal budget.
+                if self.lanes.len() != width || self.permits.len() < width {
+                    return Ok(());
+                }
+                self.multi.pipelining(false, false).map_err(multi_error)?;
+                self.pool_width = width;
+                self.pool_policy = PoolPolicy::Trial {
+                    baseline,
+                    good: 0,
+                    deadline: now + Duration::from_secs(10),
+                };
+                let index = self.lanes.len() - 1;
+                self.return_pool_lane(index, true)?;
+                self.window = None;
+                self.trace(|| "pool trial starts one independent socket at unchanged width".into());
+            }
+            PoolPolicy::Trial { deadline, .. }
+                if now >= deadline
+                    || self.controller.width() != self.pool_width
+                    || self.pause_until.is_some_and(|until| now < until) =>
+            {
+                // Recreate only the cache after detaching all owners. This
+                // closes trial sockets, so they cannot silently become the
+                // default after a failed experiment. Received bytes survive.
+                while !self.lanes.is_empty() {
+                    self.return_pool_lane(self.lanes.len() - 1, false)?;
+                }
+                self.multi = new_multi()?;
+                self.pool_policy = PoolPolicy::Shared;
+                self.window = None;
+                self.trace(|| {
+                    "pool trial ends without gain; shared cache restored, no more probes".into()
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn return_pool_lane(&mut self, index: usize, fresh: bool) -> Result<(), TransferError> {
+        let (claim, easy) = self.detach(index)?;
+        claim.retired.set(true);
+        drop(easy);
+        if claim.pos() < claim.end() {
+            self.shared
+                .state
+                .borrow_mut()
+                .frontier
+                .insert(claim.pos(), claim.end());
+            self.retries.insert(claim.pos(), claim.attempts);
+            if fresh {
+                self.fresh.insert(claim.pos());
+            }
+        }
+        Ok(())
     }
 
     fn report(&mut self) -> Result<TransferReport, TransferError> {
@@ -2104,6 +2570,7 @@ mod tests {
             written: Cell::new(0),
             ttfbs: RefCell::new(VecDeque::new()),
             state: RefCell::new(state),
+            pin: RefCell::new(None),
         });
         shared.state.borrow_mut().claims.push(Rc::clone(&claim));
         LaneHandler {
@@ -2115,6 +2582,16 @@ mod tests {
             verdict: None,
             etag: Some("\"e\"".into()),
             total: Some(100 * MIB),
+            request: Request {
+                target: initial_target("http://localhost/").unwrap(),
+                hops: 0,
+                range: None,
+                if_range: None,
+                fresh: false,
+                resolving: false,
+            },
+            location: None,
+            max_age: None,
         }
     }
 
@@ -2435,7 +2912,64 @@ mod tests {
         assert_eq!(position, total);
     }
 
-    // -- HTTP/2 multiplexing is off (spec 4.7) ----------------------------------
+    #[test]
+    fn signed_expiry_and_origin_boundaries_are_explicit() {
+        let date = signing_date("20260930T120000Z").unwrap();
+        assert_eq!(
+            date.duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            1790769600
+        );
+        assert!(signing_date("20260230T120000Z").is_none());
+        assert!(signing_date("20260930T240000Z").is_none());
+        for prefix in ["X-Amz", "X-Goog"] {
+            let url = Url::parse(&format!(
+                "https://example.invalid/file?{prefix}-Date=20260930T120000Z&{prefix}-Expires=3600"
+            ))
+            .unwrap();
+            assert_eq!(
+                target_expiry(&url, None),
+                date.checked_add(Duration::from_secs(3600))
+            );
+        }
+        let from = initial_target("http://user:secret@example.invalid:80/file").unwrap();
+        let same = redirect_target(&from, "/next").unwrap();
+        assert!(same.credentials);
+        for location in [
+            "https://example.invalid/next",
+            "http://example.invalid:81/next",
+            "http://other.invalid/next",
+        ] {
+            let next = redirect_target(&from, location).unwrap();
+            assert!(!next.credentials);
+            assert!(next.url.username().is_empty());
+            assert!(next.url.password().is_none());
+            assert!(
+                !redirect_target(&next, from.url.as_str())
+                    .unwrap()
+                    .credentials
+            );
+        }
+        assert!(redirect_target(&from, "ftp://example.invalid/file").is_err());
+    }
+
+    // -- HTTP/2 multiplexing -------------------------------------------------
+
+    #[test]
+    fn redirect_trailers_cannot_replace_the_location_or_expiry() {
+        let mut sink = |_: Chunk<'_>| panic!("redirect bytes reached the sink");
+        let cancelled = || false;
+        let mut lane = lane(&mut sink, &cancelled, ranged_state(100), 0, 100, 100);
+        lane.frozen = false;
+        lane.header(b"HTTP/1.1 302 Found\r\n");
+        lane.header(b"Location: /checked\r\n");
+        lane.header(b"Cache-Control: max-age=60\r\n");
+        lane.header(b"\r\n");
+        assert_eq!(lane.write(b"redirect body").unwrap(), 13);
+        lane.header(b"Location: /trailer\r\n");
+        lane.header(b"Cache-Control: max-age=0\r\n");
+        assert_eq!(lane.location.as_deref(), Some("/checked"));
+        assert_eq!(lane.max_age, Some(60));
+    }
 
     struct Collector;
 
@@ -2554,7 +3088,7 @@ mod tests {
     }
 
     #[test]
-    fn two_requests_in_flight_use_two_http2_connections_because_multiplexing_is_off() {
+    fn two_requests_in_flight_share_one_http2_connection() {
         let connections = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (url, stop) = h2c_server(Arc::clone(&connections));
         let multi = new_multi().unwrap();
@@ -2564,6 +3098,7 @@ mod tests {
             easy.url(&url).unwrap();
             easy.http_version(curl::easy::HttpVersion::V2PriorKnowledge)
                 .unwrap();
+            easy.pipewait(true).unwrap();
             handles.push(multi.add2(easy).unwrap());
             // Let the first request reach the server before the second is
             // added, as a lane that starts later does.
@@ -2589,14 +3124,10 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         assert_eq!(done, 2, "both requests succeeded");
         let streams = connections.lock().unwrap().clone();
-        assert_eq!(
-            streams.len(),
-            2,
-            "two connections, one per request: {streams:?}"
-        );
+        assert_eq!(streams.len(), 1, "one shared connection: {streams:?}");
         assert!(
-            streams.iter().all(|&count| count == 1),
-            "each connection carried one stream: {streams:?}"
+            streams == [2],
+            "the connection carried both streams: {streams:?}"
         );
     }
 }

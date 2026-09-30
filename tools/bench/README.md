@@ -38,6 +38,7 @@ The fixture runs in a worker thread. Each request is recorded with connection id
 - `goodputMiBps`: output bytes over `wallMs`.
 - `cpuSeconds` and `peakMemoryMiB`: user plus kernel CPU and peak working set of the directly spawned process, polled every 20 ms from a PowerShell observer on Windows. Windows CPU time has about 15.6 ms resolution, so short runs are coarse. Child processes and the separate engine process behind `fetchpath-cli` are not included. On other platforms the values are null with a recorded reason.
 - A probe request every 100 ms to a tiny endpoint while the tool runs: p50, p95 and max response time. In internet mode it is a request to the Cloudflare trace endpoint.
+- With `FETCHPATH_HTTP_TRACE=1`, transfer runs record bounded counters for redirect hops and replacement reasons, plus whether trace capture was truncated; raw stderr and URLs are not added to successful-run artifacts.
 - Per client and profile: median, min, max and a seeded percentile-bootstrap 95% interval of the median (2000 resamples, from 3 runs up). With 5 runs the interval understates the true uncertainty.
 
 The raw JSON is `fetchpath-benchmark-raw.json` in the output directory, with a markdown table printed to stdout.
