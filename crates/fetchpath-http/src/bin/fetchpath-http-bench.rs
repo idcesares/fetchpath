@@ -1,8 +1,24 @@
 use fetchpath_http::{GlobalBudget, RequestContext, TransferLimits, transfer_adaptive};
 use serde_json::json;
 use std::fs::OpenOptions;
-use std::io::{Seek, SeekFrom, Write};
+use std::io;
 use std::path::PathBuf;
+
+/// Positional write that loops until every byte is written, like the engine's.
+fn write_all_at(file: &std::fs::File, mut bytes: &[u8], mut offset: u64) -> io::Result<()> {
+    while !bytes.is_empty() {
+        #[cfg(windows)]
+        let written = std::os::windows::fs::FileExt::seek_write(file, bytes, offset)?;
+        #[cfg(unix)]
+        let written = std::os::unix::fs::FileExt::write_at(file, bytes, offset)?;
+        if written == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        bytes = &bytes[written..];
+        offset += written as u64;
+    }
+    Ok(())
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -23,12 +39,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("usage: fetchpath-http-bench [--http2-prior-knowledge] URL OUTPUT".into());
     }
     let destination = PathBuf::from(&args[1]);
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .create_new(true)
         .read(true)
         .write(true)
         .open(&destination)?;
-    let limits = TransferLimits::default();
+    let mut limits = TransferLimits::default();
+    // Benchmark-only overrides, to compare receive buffers and concurrency.
+    if let Some(kib) = std::env::var("FETCHPATH_BENCH_BUFFER_KIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        limits.receive_buffer_bytes = kib * 1024;
+    }
+    if let Some(lanes) = std::env::var("FETCHPATH_BENCH_MAX_LANES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        limits.max_concurrency = lanes;
+    }
     let budget = GlobalBudget::new(limits.max_active_requests, limits.max_buffered_bytes)?;
     let report = transfer_adaptive(
         &args[0],
@@ -39,10 +68,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         limits,
         &budget,
         || false,
-        |chunk| {
-            file.seek(SeekFrom::Start(chunk.offset))?;
-            file.write_all(chunk.bytes)
-        },
+        |chunk| write_all_at(&file, chunk.bytes, chunk.offset),
     )?;
     file.sync_all()?;
     println!(
@@ -56,6 +82,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "usedRanges": report.used_ranges,
             "adaptive": report.adaptive,
             "peakConcurrency": report.peak_concurrency,
+            "splits": report.splits,
+            "replacements": report.replacements,
+            "retries": report.retries,
+            "throttles": report.throttles,
+            "requests": report.requests,
+            "connectionsOpened": report.connections_opened,
+            "scheduler": format!("{:?}", limits.scheduler),
+            "receiveBufferBytes": limits.receive_buffer_bytes,
             "budget": {
                 "maxActiveRequests": limits.max_active_requests,
                 "maxBufferedBytes": limits.max_buffered_bytes,

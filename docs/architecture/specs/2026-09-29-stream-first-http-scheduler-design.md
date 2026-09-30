@@ -93,8 +93,8 @@ is frozen at the first write so trailers cannot change the ETag used.
 | 416 at `O = 0` | Retry once with a plain GET (an empty resource) |
 | 416 at `O > 0` | Identity restart |
 
-`S0` is `max(min_segment_bytes, total / 16)`, bounded by the claim-size rule
-in 4.2. When lane 0 reaches `S0` and the next bytes are unclaimed, it extends
+`S0` is bounded to twice `min_segment_bytes` until a rate is known; file
+size does not enlarge the initial claim. When lane 0 reaches `S0` and the next bytes are unclaimed, it extends
 its claim and keeps streaming.
 
 ### 4.2 Frontier, claims and stealing
@@ -107,8 +107,10 @@ finishes a claim takes the next extent at the front immediately.
   goes, because positional writes remove the buffering it protected. Near the
   end, a claim is at most `remaining / active_lanes`, so lanes finish together.
 - **Claims may run ahead of the prefix only by `max_ahead`**, which is
-  `aggregate_goodput × 3 s`, with a floor of `lanes × min_segment_bytes`.
-  This bounds what a pause or crash discards (4.5).
+  `recent_aggregate_goodput × 3 s`, with a 64 KiB floor. Non-prefix claim ends and
+  callback writes also respect this limit; a minimum range size cannot enlarge
+  it. Slow links stream on the prefix lane until there is room for another
+  minimum range. This bounds what a pause or crash discards (4.5).
 - **Stealing:** an idle lane with an empty frontier takes part of the
   in-flight claim with the most time left. That claim must have more than
   `2T` left at its owner's rate and at least `2 × min_segment_bytes`
@@ -151,8 +153,8 @@ owner keeps delivering after its claim shrinks.
   most 2 attempts and at most 1 identity restart. An attempt that fails
   without an identity change resumes from its committed prefix with the
   scheduler.
-- A 429 or 503 halves the lanes. `Retry-After` is honored up to 60 s;
-  longer, the job waits and says so.
+- A 429 or 503 halves the lanes. `Retry-After` is honored in a cancellable wait, including values above
+  60 s. A client-visible waiting reason remains a follow-up.
 
 ### 4.5 Write path, prefix, checkpoints and loss
 

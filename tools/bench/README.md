@@ -3,16 +3,16 @@
 Paired, seeded-random-order downloads of one generated object through the Fetchpath engine and baseline tools, on fixture profiles that the Node fixture server shapes itself, or on a small recorded internet corpus.
 
 ```powershell
-cargo build --release -p fetchpath-http --bin fetchpath-http-bench   # and -p fetchpath-cli for the CLI client
+cargo build --release -p fetchpath-http --bin fetchpath-http-bench -p fetchpath --bin fetchpath --locked
 node tools/bench/benchmark.mjs --output-dir work/bench --size 64m --repetitions 5
 node tools/bench/benchmark.mjs --output-dir work/bench --profile per-connection-limit,stall?every=3&ms=1000 --clients fetchpath-http,curl,aria2-x16
 node tools/bench/benchmark.mjs --output-dir work/bench-net --corpus internet --repetitions 3
 node --test tests/bench/fixture-server.test.mjs
 ```
 
-Options: `--profile` (comma list of `name[?param=value&...]`, default `unshaped` plus every shaped profile), `--size` (bytes, or with k/m/g suffix, up to 1 GiB), `--repetitions` (1 to 50), `--seed`, `--clients` (`fetchpath-http`, `fetchpath-cli`, `curl`, `aria2`, `aria2-x16`, `wget2`; default `fetchpath-http,curl`), `--timeout-s`, `--keep-files`, `--corpus fixture|internet`, `--corpus-file`.
+Options: `--profile` (comma list of `name[?param=value&...]`, default `unshaped` plus every shaped profile), `--size` (bytes, or with k/m/g suffix, up to 1 GiB), `--repetitions` (1 to 50), `--seed`, `--clients` (`fetchpath-http`, `fetchpath-http-rounds`, `fetchpath-cli`, `fetchpath-cli-rounds`, `curl`, `aria2`, `aria2-x16`, `wget2`; default `fetchpath-http,curl`), `--timeout-s`, `--keep-files`, `--corpus fixture|internet`, `--corpus-file`.
 
-Point it at any build with `--http-bench PATH` (or `FETCHPATH_HTTP_BENCH`), `--cli PATH` (`FETCHPATH_CLI`), `--aria2c PATH` (`ARIA2C`), `--wget2 PATH` (`WGET2`). Defaults are `target/release/fetchpath-http-bench`, `target/release/fetchpath`, and `aria2c` or `wget2` on PATH. A client whose tool is missing is skipped and the reason is recorded in the artifact and printed; it never fails the run. `fetchpath-cli` runs `fetchpath download LINK DEST --json` against an engine started with `FETCHPATH_APP_DATA_DIR` set to `<output-dir>/cli-data`, after one unmeasured warm-up download that starts the engine. aria2 runs are `aria2c` with defaults, and with `-x16 -s16 -k1M`. curl is one plain HTTP/1.1 connection that follows redirects.
+Point it at any build with `--http-bench PATH` (or `FETCHPATH_HTTP_BENCH`), `--cli PATH` (`FETCHPATH_CLI`), `--aria2c PATH` (`ARIA2C`), `--wget2 PATH` (`WGET2`). Defaults are `target/release/fetchpath-http-bench`, `target/release/fetchpath`, and `aria2c` or `wget2` on PATH. A client whose tool is missing is skipped and the reason is recorded in the artifact and printed; it never fails the run. The `-rounds` clients run the same binaries with `FETCHPATH_HTTP_SCHEDULER=rounds`, the FP-015 round scheduler that FP-085 kept behind a switch for comparison; the CLI variants start their own engine in `<output-dir>/<client>-data` and stop it at the end. `FETCHPATH_BENCH_BUFFER_KIB` and `FETCHPATH_BENCH_MAX_LANES` (read by `fetchpath-http-bench` only) override the receive buffer and the lane cap, and `FETCHPATH_HTTP_TRACE=1` prints the scheduler's events to standard error. The artifact and the console name repository paths relative to the repository and any other tool by file name, so raw output can be committed. `fetchpath-cli` runs `fetchpath download LINK DEST --json` against an engine started with `FETCHPATH_APP_DATA_DIR` set to `<output-dir>/cli-data`, after one unmeasured warm-up download that starts the engine. aria2 runs are `aria2c` with defaults, and with `-x16 -s16 -k1M`. curl is one plain HTTP/1.1 connection that follows redirects.
 
 ## Fixture profiles
 
@@ -48,3 +48,12 @@ The raw JSON is `fetchpath-benchmark-raw.json` in the output directory, with a m
 - Loopback timings compare scheduling behavior between builds. They are not an Internet speed claim. Internet mode is one connection at one moment.
 - The harness and the tools share one machine, so CPU-bound differences show up in timing.
 - The protocol matrix (`protocol-matrix.mjs`) is separate and unchanged: it exercises HTTP/1.1 and cleartext HTTP/2 prior knowledge.
+
+## Process interruption
+
+After building the CLI, run `node tools/bench/interruption.mjs work/http-interruption`
+with an empty scratch directory. It starts its own engine, kills that process
+without a graceful checkpoint drain, then resumes a paced 256 MiB fixture and
+checks the final hash, resume offset and lost-byte envelope. The JSON record
+is in that scratch directory. It does not touch an installed engine, and does
+not establish OS-crash or power-loss durability.

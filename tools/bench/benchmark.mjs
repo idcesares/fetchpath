@@ -2,12 +2,34 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PROFILES, startFixtureWorker } from './fixture-server.mjs';
 
 const MIB = 1024 * 1024;
-const ALL_CLIENTS = ['fetchpath-http', 'fetchpath-cli', 'curl', 'aria2', 'aria2-x16', 'wget2'];
+// The `-rounds` clients run the same binary with the FP-015 round scheduler (FETCHPATH_HTTP_SCHEDULER=rounds), for comparison.
+const ALL_CLIENTS = ['fetchpath-http', 'fetchpath-http-rounds', 'fetchpath-cli', 'fetchpath-cli-rounds', 'curl', 'aria2', 'aria2-x16', 'wget2'];
 const exe = name => (process.platform === 'win32' ? `${name}.exe` : name);
+const isCli = client => client.startsWith('fetchpath-cli');
+const isHttpBench = client => client.startsWith('fetchpath-http');
+const schedulerEnv = client => (client.endsWith('-rounds') ? { FETCHPATH_HTTP_SCHEDULER: 'rounds' } : {});
+const cliDataDir = (config, client) => join(resolve(config.outputDir), client === 'fetchpath-cli' ? 'cli-data' : `${client}-data`);
+
+// Nothing in the artifact or the console may name a folder of this machine: a path inside the repository is
+// recorded relative to it, a tool from elsewhere by file name only, and paths in tool output are replaced.
+const forward = text => text.split(sep).join('/');
+function displayPath(path) {
+  if (!path) return path;
+  const absolute = resolve(path); const inside = relative(process.cwd(), absolute);
+  return inside && !inside.startsWith('..') && !isAbsolute(inside) ? forward(inside) : `<external>/${basename(absolute)}`;
+}
+function scrub(text, outputDir) {
+  if (typeof text !== 'string') return text;
+  const replacements = [[outputDir, '<output-dir>'], [process.cwd(), '<repo>'], [homedir(), '<home>']];
+  let result = text;
+  for (const [from, to] of replacements) for (const variant of new Set([from, forward(from), JSON.stringify(from ?? "").slice(1, -1)])) if (variant) result = result.split(variant).join(to);
+  return result;
+}
 
 function parseSize(text) {
   const match = /^(\d+)(b|k|kib|m|mib|g|gib)?$/i.exec(text ?? '');
@@ -178,14 +200,14 @@ async function resolveTools(config) {
   };
   for (const client of config.clients) {
     if (client === 'curl') { if (curl) tools.curl = curl; else skipped.curl = 'not installed (curl was not found on PATH)'; }
-    else if (client === 'fetchpath-http') {
+    else if (isHttpBench(client)) {
       const path = resolve(config.httpBench ?? join('target', 'release', exe('fetchpath-http-bench')));
-      if (existsSync(path)) tools[client] = { command: path, version: `${path} (${(await stat(path)).size} bytes, modified ${(await stat(path)).mtime.toISOString()})` };
-      else skipped[client] = `binary not found at ${path}; build with: cargo build --release -p fetchpath-http --bin fetchpath-http-bench, or pass --http-bench`;
-    } else if (client === 'fetchpath-cli') {
+      if (existsSync(path)) tools[client] = { command: path, version: `${displayPath(path)} (${(await stat(path)).size} bytes, modified ${(await stat(path)).mtime.toISOString()})` };
+      else skipped[client] = `binary not found at ${displayPath(path)}; build with: cargo build --release -p fetchpath-http --bin fetchpath-http-bench, or pass --http-bench`;
+    } else if (isCli(client)) {
       const path = resolve(config.cli ?? join('target', 'release', exe('fetchpath')));
-      if (existsSync(path)) tools[client] = { command: path, version: (await firstLine(path, ['--version'])) ?? `${path} (${(await stat(path)).size} bytes, modified ${(await stat(path)).mtime.toISOString()})` };
-      else skipped[client] = `binary not found at ${path}; build with: cargo build --release -p fetchpath-cli, or pass --cli`;
+      if (existsSync(path)) { const info = await stat(path); const version = (await firstLine(path, ['--version'])) ?? displayPath(path); tools[client] = { command: path, version: `${version} (${displayPath(path)}, ${info.size} bytes, modified ${info.mtime.toISOString()})` }; }
+      else skipped[client] = `binary not found at ${displayPath(path)}; build with: cargo build --release -p fetchpath --bin fetchpath, or pass --cli`;
     } else if (client === 'aria2' || client === 'aria2-x16') {
       if (!tools.aria2Base && !skipped.aria2Base) { const command = config.aria2c ?? 'aria2c'; const v = await firstLine(command, ['--version']); if (v) tools.aria2Base = { command, version: v }; else skipped.aria2Base = 'not installed (aria2c not on PATH; set ARIA2C or --aria2c)'; }
       if (tools.aria2Base) tools[client] = tools.aria2Base; else skipped[client] = skipped.aria2Base;
@@ -197,8 +219,8 @@ async function resolveTools(config) {
 
 function clientCommand(client, tool, url, file, config) {
   const timeout = String(config.timeoutS);
-  if (client === 'fetchpath-http') return { command: tool.command, args: [url, file] };
-  if (client === 'fetchpath-cli') return { command: tool.command, args: ['download', url, file, '--json'], env: { ...process.env, FETCHPATH_APP_DATA_DIR: join(resolve(config.outputDir), 'cli-data') } };
+  if (isHttpBench(client)) return { command: tool.command, args: [url, file], env: { ...process.env, ...schedulerEnv(client) } };
+  if (isCli(client)) return { command: tool.command, args: ['download', url, file, '--json'], env: { ...process.env, ...schedulerEnv(client), FETCHPATH_APP_DATA_DIR: cliDataDir(config, client) } };
   if (client === 'curl') return { command: tool.command, args: ['--disable', '--noproxy', '*', '--max-time', timeout, '--http1.1', '--location', '--silent', '--show-error', '--output', file, url] };
   const dirAndName = ['--dir', resolve(file, '..'), '--out', file.split(/[\\/]/).pop()];
   const aria2 = ['--no-conf=true', '--all-proxy=', '--console-log-level=error', '--summary-interval=0', '--download-result=hide', '--allow-overwrite=true', '--auto-file-renaming=false', `--timeout=${timeout}`, ...dirAndName];
@@ -210,8 +232,8 @@ function clientCommand(client, tool, url, file, config) {
 function transferSummary(client, stdout) {
   try {
     const json = JSON.parse(stdout);
-    if (client === 'fetchpath-http') return { usedRanges: json.usedRanges, adaptive: json.adaptive, peakConcurrency: json.peakConcurrency, negotiatedProtocol: json.negotiatedProtocol, peakBufferedBytes: json.budget?.peakBufferedBytes };
-    return json;
+    if (isHttpBench(client)) return { usedRanges: json.usedRanges, adaptive: json.adaptive, peakConcurrency: json.peakConcurrency, negotiatedProtocol: json.negotiatedProtocol, peakBufferedBytes: json.budget?.peakBufferedBytes, scheduler: json.scheduler, requests: json.requests, connectionsOpened: json.connectionsOpened, splits: json.splits, replacements: json.replacements, retries: json.retries, throttles: json.throttles,receiveBufferBytes: json.receiveBufferBytes };
+    return JSON.parse(scrub(JSON.stringify(json), resolve(config.outputDir)));
   } catch { return undefined; }
 }
 
@@ -239,13 +261,13 @@ if (config.corpus === 'fixture') {
   targets = corpus.entries.map(entry => ({ name: entry.name, url: entry.url, expectedSha256: entry.sha256 ?? null, selfRecorded: false, probeUrl: corpus.probeUrl }));
 }
 
-if (tools['fetchpath-cli']) await mkdir(join(outputDir, 'cli-data'), { recursive: true });
+for (const client of activeClients) if (isCli(client)) await mkdir(cliDataDir(config, client), { recursive: true });
 const runs = []; const failuresLog = [];
 try {
-  if (tools['fetchpath-cli'] && fixture) {
+  if (fixture) for (const client of activeClients.filter(isCli)) {
     // The first CLI call starts the engine process; keep that cold start out of the measured runs.
     const warm = join(outputDir, 'warmup.bin'); await rm(warm, { force: true });
-    const spec = clientCommand('fetchpath-cli', tools['fetchpath-cli'], targets[0].url, warm, config);
+    const spec = clientCommand(client, tools[client], targets[0].url, warm, config);
     await measureProcess(spec.command, spec.args, { sidecar: { watch: async () => null }, timeoutMs: config.timeoutS * 1000, env: spec.env });
     await rm(warm, { force: true });
   }
@@ -270,7 +292,7 @@ try {
         const observed = result.observed && !result.observed.error ? result.observed : null;
         const run = {
           rep, profile: target.name, client, order: order.indexOf(client), ok: result.code === 0 && verified && !result.timedOut, exitCode: result.code,
-          timedOut: result.timedOut || undefined, error: result.spawnError ?? undefined, stderr: result.code === 0 ? undefined : result.stderr.slice(0, 300) || undefined,
+          timedOut: result.timedOut || undefined, error: scrub(result.spawnError ?? undefined, outputDir), stderr: result.code === 0 ? undefined : scrub(result.stderr.slice(0, 300), outputDir) || undefined,
           wallMs: round(result.wallMs, 1), verifyMs: round(verifyMs, 1), timeToVerifiedMs: round(result.wallMs + verifyMs, 1),
           goodputMiBps: round(size / MIB / (result.wallMs / 1000), 2), outputBytes, verified,
           cpuSeconds: observed ? round(observed.cpuSeconds, 3) : null, peakMemoryMiB: observed?.peakBytes ? round(observed.peakBytes / MIB, 1) : null,
@@ -281,11 +303,15 @@ try {
         runs.push(run); await appendFile(join(outputDir, 'runs.jsonl'), `${JSON.stringify(run)}
 `);
         if (!config.keepFiles) await rm(file, { force: true });
-        if (!run.ok) failuresLog.push(`${client} on ${target.name} rep ${rep}: exit ${result.code}${result.timedOut ? ' (timed out)' : ''}${verified ? '' : ', output not verified'} ${result.stderr.slice(0, 120).trim()}`);
+        if (!run.ok) failuresLog.push(scrub(`${client} on ${target.name} rep ${rep}: exit ${result.code}${result.timedOut ? ' (timed out)' : ''}${verified ? '' : ', output not verified'} ${result.stderr.slice(0, 120).trim()}`, outputDir));
       }
     }
   }
-} finally { sidecar.close(); if (fixture) await fixture.close(); }
+} finally {
+  sidecar.close(); if (fixture) await fixture.close();
+  // Stop the engines this run started (each has its own data folder, so a user's own engine is untouched).
+  for (const client of activeClients.filter(isCli)) { const spec = { command: tools[client].command, env: { ...process.env, FETCHPATH_APP_DATA_DIR: cliDataDir(config, client) } }; try { await run(spec.command, ['engine', 'stop'], { env: spec.env }); } catch { /* best effort */ } }
+}
 
 const cpuReason = sidecar.reason ?? (runs.some(r => r.cpuSeconds !== null) ? null : 'observer returned no readings');
 const summary = [];
@@ -313,7 +339,7 @@ const artifact = {
   purpose: config.corpus === 'fixture'
     ? 'Paired loopback runs on application-shaped fixture profiles. Loopback timings support relative comparison of scheduling behavior only, not an Internet speed claim. Packet loss is not emulated.'
     : 'Recorded internet corpus from one home connection. Not a speed claim.',
-  config: { ...config, outputDir: undefined, profiles: config.corpus === 'fixture' ? config.profiles : undefined },
+  config: { ...config, outputDir: undefined, httpBench: displayPath(config.httpBench), cli: displayPath(config.cli), aria2c: displayPath(config.aria2c), wget2: displayPath(config.wget2), corpusFile: displayPath(config.corpusFile), profiles: config.corpus === 'fixture' ? config.profiles : undefined },
   tools: Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, tool.version])), skipped,
   measurement: {
     order: 'per repetition and profile, clients shuffled with a seeded PRNG (--seed)',
@@ -325,7 +351,7 @@ const artifact = {
   host: { platform: process.platform, node: process.version, git: gitRev ? `${gitRev}${gitDirty ? '+dirty' : ''}` : null },
   fixture: fixture ? { size: fixture.size, stableSha256: fixture.hashes.stable } : undefined,
   corpusHashes: config.corpus === 'internet' ? targets.map(t => ({ name: t.name, sha256: t.expectedSha256, selfRecorded: t.selfRecorded })) : undefined,
-  limits: 'fetchpath-http and fetchpath-cli both use TransferLimits::default() (segment 8 MiB max, 1 MiB min, 4 lanes max, 8 active requests, 32 MiB buffered); the engine applies max_connections only when a rule sets it',
+  limits: 'fetchpath-http and fetchpath-cli use TransferLimits::default(): stream-first scheduler, claims sized 1.5 s of lane rate with a 1 MiB floor, 2 lanes to start and 4 at most, 8 active requests, one receive buffer per lane; the -rounds clients run the FP-015 scheduler (probe byte, rounds of ranges up to 8 MiB, 4 lanes, 16 KiB buffer). The engine applies max_connections only when a rule sets it',
   engineOverhead, failures: failuresLog, summary, runs,
 };
 const artifactPath = join(outputDir, 'fetchpath-benchmark-raw.json');
@@ -338,7 +364,7 @@ for (const s of summary) lines.push(`| ${s.profile} | ${s.client} | ${s.ok}/${s.
 process.stdout.write(`${lines.join('\n')}\n`);
 if (engineOverhead) process.stdout.write(`engine vs transfer layer (median time to verified, ms): ${engineOverhead.map(e => `${e.profile} ${e.transferLayerMs} -> ${e.engineMs} (x${e.ratio})`).join('; ')}
 `);
-for (const [name, reason] of Object.entries(skipped)) process.stdout.write(`skipped ${name}: ${reason}\n`);
+for (const [name, reason] of Object.entries(skipped)) process.stdout.write(`skipped ${name}: ${scrub(reason, outputDir)}\n`);
 if (cpuReason) process.stdout.write(`cpu/memory not recorded: ${cpuReason}\n`);
 for (const failure of failuresLog) process.stdout.write(`failed: ${failure}\n`);
-process.stdout.write(`${artifactPath}\n`);
+process.stdout.write(`${forward(relative(process.cwd(), artifactPath))}\n`);

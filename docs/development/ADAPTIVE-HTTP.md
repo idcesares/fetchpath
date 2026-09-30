@@ -1,26 +1,28 @@
-# FP-015 measured adaptive HTTP transfers
+# Adaptive HTTP transfers (FP-015, FP-084, FP-085)
 
-Date: 21 September 2026  
-Acceptance: A03, A05, A06, A09
+Updated 30 September 2026
+
+Acceptance: A02, A03, A04, A05, A06, A09
 
 ## Delivered behavior
 
-`fetchpath-http` now owns bounded HTTP protocol selection, identity probing, adaptive range scheduling, and raw transfer diagnostics. The core feeds its existing checkpoint and publication contract from verified, ascending chunks:
+`fetchpath-http` owns protocol selection, identity checks, range scheduling and raw transfer diagnostics. The core feeds its checkpoint and publication contract from the pieces the scheduler delivers. The design is [the stream-first scheduler spec](../architecture/specs/2026-09-29-stream-first-http-scheduler-design.md).
 
-- A one-byte `Range` probe establishes exact length and a strong ETag. A server that returns `200` instead streams sequentially without buffering the full object.
-- Every segmented request uses `Accept-Encoding: identity`, an exact byte range, and `If-Range` with the probe's strong ETag. Status, `Content-Range`, ETag, and actual byte count must all match.
-- The controller starts at one request, requires two healthy observations before growing, reduces concurrency after a measured 20% rate regression, and applies a two-observation cooldown.
-- One process-wide budget caps active requests at 8 and buffered range bytes at 32 MiB (8 MiB before 28 September 2026). Ranges start at 1 MiB and grow to at most 8 MiB, sized to about 1.5 s of each lane's measured rate. Each buffered segment reserves its full capacity before a request starts and releases it through RAII on success, failure, panic propagation, or cancellation.
-- Chunks are sorted and passed to the core only in ascending order. Adaptive protocol/range failure resets the unpublished staging file before the established sequential path runs; sink, cancellation, checkpoint, and publication errors do not take that fallback.
-- The static libcurl build now includes nghttp2. Automatic HTTPS requests prefer H2 and may negotiate lower; controlled cleartext H2 uses an explicit prior-knowledge mode. The packaged build still reports HTTP/3 unavailable, so the policy records `http3_unavailable` and does not claim or simulate an H3 attempt.
+- **No probe.** The first request asks for `Range: bytes=O-` (O is 0, or the resume offset with `If-Range`). Its first write classifies the response: 200 at zero streams on one request; 206 with a strong ETag, the requested start and a known total is accepted; a capped 206, `bytes 0-9/*`, a 206 without a strong ETag, and 416 each have a rule; a 200 or 416 on a resume, another validator or another total restarts from byte zero once. The rules are the table in spec 4.1, one test per row.
+- **One event loop per download.** All lanes are easy handles in one curl multi handle with `CURLMOPT_PIPELINING` off, so each lane keeps its own connection (a test starts two requests on an HTTP/2 server and counts connections). A lane owns a claim `[start, end)`. Every write is clipped at the claim's current end, so a claim can be split or replaced while its owner is mid-transfer. A clipped short write is a deliberate stop, not a failure.
+- **Claims.** Sized by time (1.5 s of a lane's rate, 1 MiB floor, at most four times the longest so far, an even share of what is unreceived near the end). Non-prefix claim ends and callback writes are limited to `max_ahead` past the contiguous prefix: 3 s of recent goodput with a 64 KiB floor. The initial claim is bounded to twice the minimum segment size, and slow links retain the prefix stream until another minimum range fits. Placement is near the prefix; the file is not preallocated. An idle lane takes the front of the frontier, or splits the claim with the most time left. If every lane is parked behind the prefix lane for a second, that lane is replaced.
+- **Controller.** Two lanes to start, then double when two consecutive valid windows (1 s or 4 times the median time to first byte, only with every lane delivering and no lane idle for lack of work) each gain 15%; otherwise go back and never probe again. Halve on 429 or 503, on two windows of backpressure, or on a sustained 30% drop. The default cap stays at 4 lanes. Lanes take permits from `GlobalBudget` without waiting; each download can always get its first lane, and extra lanes are shared among downloads that are still growing.
+- **Stalls and retries.** A lane with no bytes for 3 s (or under 10% of the median lane rate over 3 s while it holds the prefix) is dropped. Its unreceived bytes go back to the front of the frontier and are fetched on a fresh connection. A range that fails 3 times without substantial transport progress (64 KiB) ends the attempt; crawl and prefix-starvation replacements count only when they delivered no bytes. Before a range receives its first byte, the stall allowance also accounts for measured response latency. `Retry-After` is honored in a cancellable wait, including values above 60 s; clients do not yet show a separate waiting reason. Later lanes must return the same strong ETag, start and total; another one is an identity change. A 200 with the same ETag counts as a node that ignores ranges (after two, lanes drop to one).
+- **Core.** Writes are positional; the prefix digest is extended by read-back; checkpoints every second and 64 KiB on a commit thread with an independently opened flush handle; a resume uses the scheduler, and a fully retained file goes straight to verification and publication. At most two transfer attempts are made. See [checkpoint recovery](CHECKPOINT-RECOVERY.md).
+- **Round scheduler kept behind a switch.** `FETCHPATH_HTTP_SCHEDULER=rounds` selects the FP-015 scheduler for a fresh download, only so the benchmark can compare. FP-087 deletes it.
+- The static libcurl build includes nghttp2. HTTPS prefers h2; controlled cleartext h2 uses prior knowledge. HTTP/3 is unavailable in the packaged build, so the policy records `http3_unavailable`.
+- One receive buffer per lane, 128 KiB (was 16 KiB); `max_buffered_bytes` now budgets these buffers.
 
 ## Verification
 
-The Rust suites cover strict range parsing, controller hysteresis/cooldown, impossible reservations, concurrent global budget enforcement, the existing interruption/publication adversarial cases, and a 5 MiB multi-request reassembly through the production core. The Node fixture suite retains Range, validator, refusal, source-change, and truncation coverage.
+Validation uses `cargo test -p fetchpath-http -p fetchpath-core -p fetchpath-storage --locked` and `node --test`. New tests cover: clipping (a buffer that straddles a split point, a claim end that shrinks between two callbacks, a late callback of a replaced claim); every first-response row; a later lane that sees another representation; a node that ignores ranges; a stalled lane replaced without a byte written twice; a server that never sends a body ending the attempt; a 429 and a 503 with `Retry-After`; cancellation at eight different moments; multiplexing off (h2c server); claim planning (time size, growth cap, no overlap under random claims and returns, `max_ahead`); controller rules; budget fairness; and the core tests listed in [checkpoint recovery](CHECKPOINT-RECOVERY.md).
 
-The controlled protocol matrix produced matching 5 MiB hashes over both H1 and H2-prior-knowledge. H1 recorded preferred H2, negotiated HTTP/1.1, and explicit H3/lower-protocol fallback. H2 recorded negotiated `h2`; H3 was not attempted because the packaged capability is false. Raw observations are in [the protocol matrix](evidence/http-adaptive/fp015-protocol-matrix.json).
-
-The paired pilot used five deterministically randomized 8 MiB loopback pairs. Every Fetchpath and curl output matched SHA-256 `a9407298d138c39f01e2067ad330ea65db7fa553a7cb541fd8bfd243c5405c45`. Fetchpath's wall-clock median was 81.3978 ms and curl's was 56.8628 ms. Fetchpath was therefore slower in this pilot; the first Fetchpath sample also showed a large startup outlier. Peak observed Fetchpath concurrency was 2, peak active requests was 2, and peak buffered bytes was 2,097,152, all within the configured global limits. See [the raw paired observations](evidence/http-adaptive/fp015-loopback-pilot.json).
+The controlled protocol matrix produced matching 5 MiB hashes over both H1 and H2-prior-knowledge. H1 recorded preferred H2, negotiated HTTP/1.1, and explicit H3/lower-protocol fallback. H2 recorded negotiated `h2`; H3 was not attempted because the packaged capability is false. Raw observations are in [the protocol matrix](evidence/http-adaptive/fp015-protocol-matrix.json). The FP-015 pilot (five 8 MiB loopback pairs) was slower than curl; see [the raw paired observations](evidence/http-adaptive/fp015-loopback-pilot.json).
 
 ## Internet throughput (28 September 2026)
 
@@ -84,6 +86,75 @@ NTFS write order (`tools/bench/ntfs-write.mjs`, 256 MiB in 1 MiB positional writ
 
 Harness limits: application-level shaping only (no packet loss, no real congestion or RTT); a single-request client is never stalled; loopback timings compare builds and are not internet speeds; five runs give intervals that understate uncertainty; the Node fixture and the tools share one machine.
 
+## Stream-first scheduler results (FP-085, 30 September 2026)
+
+Fresh release builds, Windows/NTFS loopback, 64 MiB, five paired repetitions
+with seeded client order. Both scheduler choices run the same binaries and
+core; build sizes and modification times are recorded for both Fetchpath
+clients. Median seconds to a verified file; intervals and all runs are in
+[fp085-comparison.json](evidence/http-adaptive/fp085-comparison.json).
+
+| profile | new transfer | rounds transfer | new engine | rounds engine | curl | aria2 x16 |
+|---|---|---|---|---|---|---|
+| unshaped | 0.25 | 0.28 | 0.51 | 0.61 | 0.26 | 0.31 |
+| per-connection-limit | 2.68 | 4.25 | 2.98 | 4.55 | 8.09 | 0.71 |
+| per-client-limit | 4.13 | 4.12 | 4.46 | 4.37 | 4.10 | 4.16 |
+| delay | 1.26 | 1.48 | 1.61 | 1.76 | 2.17 | 0.44 |
+| stall | 3.27 | 6.32 | 3.54 | 6.58 | 0.23 | 3.28 |
+| redirect | 0.21 | 0.30 | 0.65 | 0.69 | 0.22 | 0.32 |
+| weak-etag | 0.25 | fails | 0.47 | 0.53 | 0.25 | 0.32 |
+| no-etag | 0.25 | fails | 0.48 | 0.52 | 0.22 | 0.34 |
+
+Against paired rounds, the transfer layer improves 37% on the per-connection
+limit, 48% on stalls and 15% on delay. The unshaped median improves 10%;
+per-client limiting is unchanged. The engine improves 35%, 46% and 8% on
+those shaped profiles, respectively. Its unshaped median is 16% lower; the
+per-client median is 2% higher. No common-case median regresses above 5% in
+this run. All 80 new-scheduler transfer/engine outputs match the fixture hash.
+The ten failures are the old transfer-only rounds path on weak/no ETags.
+
+A separate 1 MiB fixture with 100 ms response delay shows the stream-first
+open at 0.19 s against rounds at 0.32 s (about 40% faster), with one request
+instead of two; five paired repetitions, all hashes match
+([small-file evidence](evidence/http-adaptive/fp085-small.json)).
+
+Peak transfer memory is about 6.5 MiB against 22–30 MiB for rounds. The
+configured four-lane cap is held. aria2 x16 is still faster on the
+per-connection limit and delay; on stalls its median is 3.28 s against 3.27 s
+for the new transfer layer. Some stall runs encounter a second fixture pause,
+so the new transfer interval extends to 6.26 s. Controller probing and
+stealing are not isolated by these profiles.
+
+Engine minus transfer medians range from about 0.26 to 0.44 s. This run
+measures the combined scheduler/core repairs, including the independently
+opened flush handle; it does not isolate that handle's performance. FP-088
+covers the remaining engine reconcile/poll delay. A larger receive buffer has
+not independently demonstrated a CPU gain: earlier 16/64/128/256 KiB trials
+were within noise. The 128 KiB setting is retained as a bounded tuning choice,
+with no speed claim attributed to it. A separate timed resume comparison and
+an Internet rerun remain unmeasured; resume correctness and parallel operation
+are exercised by tests and the interruption harness.
+
+A real forced process stop of a scratch engine during a paced 256 MiB download
+keeps a 90,921,813-byte checkpoint, resumes exactly at that offset and produces
+the fixture hash. The conservative served-byte loss upper bound is 37,632,455
+bytes (about 1.1 s at the origin's recent served rate), inside the four-second
+envelope. This includes completed out-of-order extents and avoids graceful
+commit draining ([interruption evidence](evidence/http-adaptive/fp085-interruption.json));
+run it with `node tools/bench/interruption.mjs` as described in the benchmark
+README. This is one controlled process-kill check, not OS-crash or power-loss
+proof. Fault-injection coverage also snapshots the durable checkpoint before
+unwinding and counts all staged bytes, rather than active lanes alone.
+
+Independent Astra review examined the representation, callback clipping,
+retry, cancellation, prefix and checkpoint boundaries. Its findings led to
+hard run-ahead limits including callback enforcement after a slowdown,
+progress-sensitive crawl replacement, measured first-byte allowances,
+completed-claim removal, a separate flush handle, overlap refusal before
+writing, cancellation cleanup despite commit failure, offline completion of
+a fully retained prefix, and a shared two-attempt budget. Retry-After values
+above 60 s are honored cancellably; extreme deadlines fail without overflow.
+
 ## Limits carried forward
 
-No speed advantage is claimed. Loopback does not model RTT, loss, congestion, blocked UDP, slow storage, or competing traffic, and five pairs cannot establish tail percentiles. Each lane keeps its own easy handle; ranges are fetched in lock-step rounds, each waiting for its slowest range, and every range on Hugging Face still follows the redirect to the CDN, which keeps a 440 MB Xet-backed file at about 2.6Ã— curl's time. H2 is negotiated but one multiplexed H2 connection is not shared across ranges. A packaged HTTP/3 backend, controlled H3 endpoint, and blocked-UDP fallback run remain required before any H3 support claim.
+No speed advantage over curl is claimed on one unthrottled connection: loopback shows parity within noise, and the engine adds a fixed cost that FP-085 did not remove. Loopback does not model RTT, loss, congestion, blocked UDP, slow storage or competing traffic. aria2 with 16 connections is faster than four lanes wherever a per-connection limit or a delay dominates. The default cap of 4 lanes is unchanged, and doubling to 8 needs more 1 s windows than a 64 MiB file lasts. Every range on Hugging Face still follows the redirect to the CDN, and h2 is not shared across ranges (FP-086). With timely checkpoint completion, an interruption loses about 4 s of recent transfer, or 64 KiB, whichever is larger; storage stalls can extend checkpoint lag. A packaged HTTP/3 backend, controlled H3 endpoint, and blocked-UDP fallback run remain required before any H3 support claim.

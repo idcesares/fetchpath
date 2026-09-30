@@ -217,6 +217,14 @@ Progress is derived from committed facts:
 - `network_bytes`: optional transport measurement and may exceed useful bytes.
 - `phase`: probe, receive, verify, mux/process, or publish.
 
+HTTP recovery retains only the contiguous checkpointed prefix. The stream-first
+scheduler limits out-of-order bytes beyond the contiguous written prefix to
+about three seconds of recent
+goodput, with a 64 KiB floor. With checkpoints completing at the one-second
+cadence, interruption discards about four seconds of transfer or 64 KiB,
+whichever is larger; storage stalls can extend the checkpoint lag. These are
+recoverable-process estimates, not a power-loss durability guarantee.
+
 Rates and remaining time are estimates with a sampling window and `confidence` (`low`, `medium`, `high`). A client displays no ETA when total or confidence is unavailable. Media component progress cannot be summed unless the adapter supplies a normalized total.
 
 ## 8. Events and snapshots

@@ -1,0 +1,21 @@
+{
+  "profile": "256 MiB, per-connection 8 MiB/s, process killed after a durable checkpoint",
+  "method": "SIGKILL/TerminateProcess of explicitly spawned scratch engine; no graceful commit drain",
+  "bytesServedUpperBound": 128554268,
+  "checkpointBeforeKill": {
+    "generation": 4,
+    "committed": 90921813
+  },
+  "checkpointAfterKill": {
+    "generation": 4,
+    "committed": 90921813
+  },
+  "lossUpperBound": 37632455,
+  "originRecentGoodput": 33212949.18032787,
+  "lossEnvelope": 132851796.72131148,
+  "resumeOffset": 90921813,
+  "verified": true,
+  "resumedFromCheckpoint": true,
+  "elapsedS": 12.118,
+  "limits": "Served bytes conservatively include socket buffers and clipped bytes; rate is an origin-served useful-byte proxy, not receiver goodput. One controlled process-kill run; no OS-crash or power-loss claim."
+}

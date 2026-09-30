@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FORMAT_VERSION: u32 = 1;
@@ -83,6 +84,10 @@ pub struct CheckpointStore {
     metadata_prefix: String,
     parent: PathBuf,
     source_key: String,
+    /// The generation this store last wrote, so a commit does not scan the
+    /// directory for it. `None` until the first commit, and again after the
+    /// metadata is removed.
+    last_generation: Arc<Mutex<Option<u64>>>,
 }
 
 impl CheckpointStore {
@@ -120,6 +125,7 @@ impl CheckpointStore {
             metadata_prefix: format!("{base}.checkpoint."),
             parent,
             source_key: source_key.to_owned(),
+            last_generation: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -187,9 +193,39 @@ impl CheckpointStore {
         file.write_all(bytes)
     }
 
+    /// Writes `bytes` at `offset` without moving a file cursor, looping until
+    /// every byte is written. Several lanes can share one handle this way.
+    pub fn write_payload_at(
+        &self,
+        file: &File,
+        offset: u64,
+        bytes: &[u8],
+        faults: &dyn FaultInjector,
+    ) -> io::Result<()> {
+        faults.check(FaultPoint::PayloadWrite)?;
+        write_all_at(file, offset, bytes)
+    }
+
     pub fn sync_payload(&self, file: &mut File, faults: &dyn FaultInjector) -> io::Result<()> {
         faults.check(FaultPoint::PayloadFlush)?;
         file.flush()?;
+        file.sync_all()
+    }
+
+    /// Flushes the staging file through a handle of its own. The transfer
+    /// keeps writing through another handle meanwhile, avoiding serialization
+    /// on the same Windows file object. Filesystem or device contention remains.
+    pub fn sync_payload_reopened(&self, faults: &dyn FaultInjector) -> io::Result<()> {
+        faults.check(FaultPoint::PayloadFlush)?;
+        OpenOptions::new()
+            .write(true)
+            .open(&self.staging)?
+            .sync_all()
+    }
+
+    /// [`Self::sync_payload`] for a shared handle.
+    pub fn sync_payload_shared(&self, file: &File, faults: &dyn FaultInjector) -> io::Result<()> {
+        faults.check(FaultPoint::PayloadFlush)?;
         file.sync_all()
     }
 
@@ -198,7 +234,14 @@ impl CheckpointStore {
         mut record: CheckpointRecord,
         faults: &dyn FaultInjector,
     ) -> io::Result<CheckpointRecord> {
-        let latest_generation = self.latest()?.map_or(0, |current| current.generation);
+        let remembered = *self
+            .last_generation
+            .lock()
+            .expect("generation lock poisoned");
+        let latest_generation = match remembered {
+            Some(generation) => generation,
+            None => self.latest()?.map_or(0, |current| current.generation),
+        };
         record.generation = latest_generation
             .checked_add(1)
             .ok_or_else(|| io::Error::other("checkpoint generation overflow"))?;
@@ -240,7 +283,21 @@ impl CheckpointStore {
             let _ = fs::remove_file(&temporary);
             return result.map(|_| record);
         }
-        self.remove_generations_before(record.generation);
+        match remembered {
+            // The one generation this store wrote before is the only older
+            // file to remove; no directory scan.
+            Some(previous) => {
+                let _ = fs::remove_file(
+                    self.parent
+                        .join(format!("{}{previous}", self.metadata_prefix)),
+                );
+            }
+            None => self.remove_generations_before(record.generation),
+        }
+        *self
+            .last_generation
+            .lock()
+            .expect("generation lock poisoned") = Some(record.generation);
         Ok(record)
     }
 
@@ -261,6 +318,10 @@ impl CheckpointStore {
     }
 
     pub fn remove_metadata(&self) -> io::Result<()> {
+        *self
+            .last_generation
+            .lock()
+            .expect("generation lock poisoned") = None;
         if !self.parent.exists() {
             return Ok(());
         }
@@ -369,6 +430,38 @@ impl CheckpointStore {
             }
         }
     }
+}
+
+/// Writes all of `bytes` at `offset`, looping over short writes.
+pub fn write_all_at(file: &File, mut offset: u64, mut bytes: &[u8]) -> io::Result<()> {
+    while !bytes.is_empty() {
+        #[cfg(windows)]
+        let written = std::os::windows::fs::FileExt::seek_write(file, bytes, offset)?;
+        #[cfg(unix)]
+        let written = std::os::unix::fs::FileExt::write_at(file, bytes, offset)?;
+        if written == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        offset += written as u64;
+        bytes = &bytes[written..];
+    }
+    Ok(())
+}
+
+/// Fills `buffer` from `offset` without moving a file cursor.
+pub fn read_exact_at(file: &File, mut offset: u64, mut buffer: &mut [u8]) -> io::Result<()> {
+    while !buffer.is_empty() {
+        #[cfg(windows)]
+        let read = std::os::windows::fs::FileExt::seek_read(file, buffer, offset)?;
+        #[cfg(unix)]
+        let read = std::os::unix::fs::FileExt::read_at(file, buffer, offset)?;
+        if read == 0 {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        offset += read as u64;
+        buffer = &mut buffer[read..];
+    }
+    Ok(())
 }
 
 pub fn sha256_file(path: &Path) -> io::Result<String> {
@@ -612,6 +705,62 @@ mod tests {
             PublicationRecovery::Completed
         );
         assert!(!store.staging().exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn metadata_files(dir: &Path) -> usize {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".checkpoint."))
+            .count()
+    }
+
+    #[test]
+    fn a_store_remembers_its_generation_and_keeps_one_metadata_file() {
+        let dir = temp_dir("remembered-generation");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        for expected in 1..=4 {
+            let committed = store.commit(record("source", b"abc"), &NoFaults).unwrap();
+            assert_eq!(committed.generation, expected);
+            assert_eq!(metadata_files(&dir), 1, "the previous generation is gone");
+        }
+        assert_eq!(store.latest().unwrap().unwrap().generation, 4);
+        // A fresh store finds the newest generation on disk once, then continues.
+        let reopened = CheckpointStore::new(&destination, "source").unwrap();
+        let next = reopened
+            .commit(record("source", b"abcd"), &NoFaults)
+            .unwrap();
+        assert_eq!(next.generation, 5);
+        assert_eq!(metadata_files(&dir), 1);
+        // Removing the metadata forgets the generation, so numbering restarts.
+        reopened.remove_metadata().unwrap();
+        assert_eq!(metadata_files(&dir), 0);
+        let restarted = reopened.commit(record("source", b"a"), &NoFaults).unwrap();
+        assert_eq!(restarted.generation, 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn positional_writes_land_out_of_order_and_read_back() {
+        let dir = temp_dir("positional");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        let file = store.open_staging().unwrap();
+        // Later bytes first, then the ones before them, on one shared handle.
+        store
+            .write_payload_at(&file, 6, b"world", &NoFaults)
+            .unwrap();
+        store
+            .write_payload_at(&file, 0, b"hello ", &NoFaults)
+            .unwrap();
+        store.sync_payload_shared(&file, &NoFaults).unwrap();
+        assert_eq!(fs::read(store.staging()).unwrap(), b"hello world");
+        let mut buffer = [0_u8; 5];
+        read_exact_at(&file, 6, &mut buffer).unwrap();
+        assert_eq!(&buffer, b"world");
+        assert!(read_exact_at(&file, 8, &mut [0_u8; 9]).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 }

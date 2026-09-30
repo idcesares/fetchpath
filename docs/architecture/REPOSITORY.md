@@ -48,6 +48,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | `tests/installer` | Installer PATH, runtime-import and engine-stop checks |
 | `tests/compatibility` | On-machine browser/media/protocol/Windows harnesses with explicit supported/partial/unsupported/untested states |
 | `.github` | CI (`node tools/tasks.mjs check` and `node --test`) and the pull request template |
+| `.codex` | Project-local Codex tool configuration; no product runtime behavior |
 
 ## Local-only areas (ignored)
 

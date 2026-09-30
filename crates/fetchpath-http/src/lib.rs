@@ -1,13 +1,17 @@
 use curl::easy::{Easy, HttpVersion, List};
-use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 mod compatibility;
+mod controller;
+mod frontier;
 mod link;
+mod rounds;
+mod scheduler;
 
 pub use link::{LinkFacts, disposition_file_name, fetch_small, inspect_link};
 
@@ -86,23 +90,55 @@ pub struct RequestContext {
     pub http2_prior_knowledge: bool,
 }
 
+/// Which scheduler drives a fresh download. `Rounds` is the FP-015 scheduler,
+/// kept only so the benchmark can compare it with the stream-first one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scheduler {
+    Stream,
+    Rounds,
+    /// One plain GET without `Range` on one connection. A download that has
+    /// just restarted after an identity change uses it.
+    Plain,
+}
+
+impl Scheduler {
+    /// `Stream` unless `FETCHPATH_HTTP_SCHEDULER=rounds` is set. The variable
+    /// exists for benchmark comparison and is not a user setting.
+    pub fn from_env() -> Self {
+        match std::env::var("FETCHPATH_HTTP_SCHEDULER").as_deref() {
+            Ok("rounds") => Self::Rounds,
+            _ => Self::Stream,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TransferLimits {
     pub max_active_requests: usize,
+    /// Memory the download may hold for receive buffers: one buffer per lane.
     pub max_buffered_bytes: usize,
     pub max_concurrency: usize,
-    /// The largest range. Ranges start at `min_segment_bytes` and grow toward
-    /// this as fast as each lane moves, so a range holds about
-    /// [`SEGMENT_SECONDS`] of data: large enough that connection and redirect
-    /// costs vanish on a fast link, small enough that progress and a crash's
-    /// loss stay bounded in time on a slow one.
+    /// The largest range of the legacy round scheduler. The stream-first
+    /// scheduler sizes claims by time and has no byte cap.
     pub segment_bytes: usize,
+    /// The smallest claim, except near the end of the file.
     pub min_segment_bytes: usize,
+    /// Files smaller than this run on one lane.
     pub min_adaptive_bytes: u64,
+    /// libcurl receive buffer per lane.
+    pub receive_buffer_bytes: usize,
+    /// A lane that delivers no bytes for this long is replaced.
+    pub stall_timeout: Duration,
+    /// How long the first request may take to deliver a byte.
+    pub open_timeout: Duration,
+    pub scheduler: Scheduler,
 }
 
 /// How much time one range should take on its lane.
 pub const SEGMENT_SECONDS: f64 = 1.5;
+
+/// The default libcurl receive buffer. FP-085 measured 64, 128 and 256 KiB.
+pub const RECEIVE_BUFFER_BYTES: usize = 128 * 1024;
 
 impl Default for TransferLimits {
     fn default() -> Self {
@@ -113,6 +149,10 @@ impl Default for TransferLimits {
             segment_bytes: 8 * 1024 * 1024,
             min_segment_bytes: 1024 * 1024,
             min_adaptive_bytes: 4 * 1024 * 1024,
+            receive_buffer_bytes: RECEIVE_BUFFER_BYTES,
+            stall_timeout: Duration::from_secs(3),
+            open_timeout: Duration::from_secs(30),
+            scheduler: Scheduler::from_env(),
         }
     }
 }
@@ -126,6 +166,10 @@ impl TransferLimits {
             || self.min_segment_bytes == 0
             || self.min_segment_bytes > self.segment_bytes
             || self.segment_bytes > self.max_buffered_bytes
+            || self.receive_buffer_bytes == 0
+            || self.receive_buffer_bytes > self.max_buffered_bytes
+            || self.stall_timeout.is_zero()
+            || self.open_timeout.is_zero()
         {
             return Err(TransferError::InvalidLimits);
         }
@@ -147,6 +191,13 @@ struct BudgetState {
     buffered_bytes: usize,
     peak_active_requests: usize,
     peak_buffered_bytes: usize,
+    downloads: HashMap<u64, DownloadState>,
+    next_download: u64,
+}
+
+struct DownloadState {
+    lanes: usize,
+    growing: bool,
 }
 
 pub struct GlobalBudget {
@@ -180,6 +231,15 @@ impl GlobalBudget {
     where
         C: Fn() -> bool + Sync,
     {
+        self.reserve_for(None, buffered_bytes, cancelled)
+    }
+
+    fn reserve_for(
+        &self,
+        download: Option<u64>,
+        buffered_bytes: usize,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<BudgetPermit<'_>, TransferError> {
         if buffered_bytes > self.max_buffered_bytes {
             return Err(TransferError::InvalidLimits);
         }
@@ -196,14 +256,44 @@ impl GlobalBudget {
                 .unwrap()
                 .0;
         }
+        Ok(self.grant(&mut state, download, buffered_bytes))
+    }
+
+    fn grant(
+        &self,
+        state: &mut BudgetState,
+        download: Option<u64>,
+        buffered_bytes: usize,
+    ) -> BudgetPermit<'_> {
         state.active_requests += 1;
         state.buffered_bytes += buffered_bytes;
         state.peak_active_requests = state.peak_active_requests.max(state.active_requests);
         state.peak_buffered_bytes = state.peak_buffered_bytes.max(state.buffered_bytes);
-        Ok(BudgetPermit {
+        if let Some(slot) = download.and_then(|id| state.downloads.get_mut(&id)) {
+            slot.lanes += 1;
+        }
+        BudgetPermit {
             budget: self,
             buffered_bytes,
-        })
+            download,
+        }
+    }
+
+    /// Registers one download so lanes are shared fairly between downloads.
+    /// Each registered download can always get its first lane; extra lanes
+    /// are split evenly among the downloads still growing.
+    pub fn register_download(&self) -> DownloadSlot<'_> {
+        let mut state = self.state.lock().unwrap();
+        let id = state.next_download;
+        state.next_download += 1;
+        state.downloads.insert(
+            id,
+            DownloadState {
+                lanes: 0,
+                growing: true,
+            },
+        );
+        DownloadSlot { budget: self, id }
     }
 
     pub fn snapshot(&self) -> BudgetSnapshot {
@@ -217,9 +307,98 @@ impl GlobalBudget {
     }
 }
 
+/// One registered download's view of the [`GlobalBudget`].
+pub struct DownloadSlot<'a> {
+    budget: &'a GlobalBudget,
+    id: u64,
+}
+
+impl<'a> DownloadSlot<'a> {
+    /// Waits for a lane. A download uses this for its first lane, so a
+    /// download beyond the request limit waits in the queue.
+    pub fn reserve(
+        &self,
+        buffered_bytes: usize,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<BudgetPermit<'a>, TransferError> {
+        self.budget
+            .reserve_for(Some(self.id), buffered_bytes, cancelled)
+    }
+
+    /// An extra lane, or `None` at once when the budget or this download's
+    /// fair share is used up. It never waits, so an event loop can call it.
+    pub fn try_reserve(&self, buffered_bytes: usize) -> Option<BudgetPermit<'a>> {
+        let budget = self.budget;
+        let mut state = budget.state.lock().unwrap();
+        if state.active_requests >= budget.max_active_requests
+            || state.buffered_bytes + buffered_bytes > budget.max_buffered_bytes
+        {
+            return None;
+        }
+        let mine = state.downloads.get(&self.id)?;
+        if !mine.growing {
+            return None;
+        }
+        let my_lanes = mine.lanes;
+        // A download that has no lane yet must still find room for its first.
+        let waiting = state
+            .downloads
+            .values()
+            .filter(|download| download.lanes == 0)
+            .count();
+        if state.active_requests + waiting >= budget.max_active_requests {
+            return None;
+        }
+        let settled: usize = state
+            .downloads
+            .iter()
+            .filter(|(id, download)| **id != self.id && !download.growing)
+            .map(|(_, download)| download.lanes)
+            .sum();
+        let growing = state
+            .downloads
+            .values()
+            .filter(|download| download.growing)
+            .count()
+            .max(1);
+        let share = budget
+            .max_active_requests
+            .saturating_sub(settled)
+            .div_ceil(growing)
+            .max(1);
+        if my_lanes >= share {
+            return None;
+        }
+        Some(budget.grant(&mut state, Some(self.id), buffered_bytes))
+    }
+
+    /// Says whether this download still wants more lanes. A download that
+    /// has stopped probing keeps what it has and leaves the rest to others.
+    pub fn set_growing(&self, growing: bool) {
+        if let Some(download) = self
+            .budget
+            .state
+            .lock()
+            .unwrap()
+            .downloads
+            .get_mut(&self.id)
+        {
+            download.growing = growing;
+        }
+    }
+}
+
+impl Drop for DownloadSlot<'_> {
+    fn drop(&mut self) {
+        self.budget.state.lock().unwrap().downloads.remove(&self.id);
+        self.budget.changed.notify_all();
+    }
+}
+
 pub struct BudgetPermit<'a> {
     budget: &'a GlobalBudget,
     buffered_bytes: usize,
+    download: Option<u64>,
 }
 
 impl Drop for BudgetPermit<'_> {
@@ -227,6 +406,9 @@ impl Drop for BudgetPermit<'_> {
         let mut state = self.budget.state.lock().unwrap();
         state.active_requests -= 1;
         state.buffered_bytes -= self.buffered_bytes;
+        if let Some(slot) = self.download.and_then(|id| state.downloads.get_mut(&id)) {
+            slot.lanes = slot.lanes.saturating_sub(1);
+        }
         self.budget.changed.notify_all();
     }
 }
@@ -245,6 +427,17 @@ struct ResponseHeaders {
     etag: Option<String>,
     content_length: Option<u64>,
     content_range: Option<ContentRange>,
+    /// The same header, but a total of `*` is allowed and stays unknown.
+    open_range: Option<OpenRange>,
+    retry_after: Option<Duration>,
+}
+
+/// A `Content-Range` whose total may be unknown (`bytes 0-9/*`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OpenRange {
+    pub start: u64,
+    pub end: u64,
+    pub total: Option<u64>,
 }
 
 impl ResponseHeaders {
@@ -268,6 +461,8 @@ impl ResponseHeaders {
             self.etag = None;
             self.content_length = None;
             self.content_range = None;
+            self.open_range = None;
+            self.retry_after = None;
             return;
         }
         let Some((name, value)) = line.split_once(':') else {
@@ -280,8 +475,30 @@ impl ResponseHeaders {
             self.content_length = value.parse().ok();
         } else if name.eq_ignore_ascii_case("content-range") {
             self.content_range = parse_content_range(value);
+            self.open_range = parse_open_range(value);
+        } else if name.eq_ignore_ascii_case("retry-after") {
+            // A date form is ignored: the lanes back off on the status alone.
+            self.retry_after = value.parse().ok().map(Duration::from_secs);
         }
     }
+}
+
+fn parse_open_range(value: &str) -> Option<OpenRange> {
+    let value = value.strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start: u64 = start.parse().ok()?;
+    let end: u64 = end.parse().ok()?;
+    let total = if total == "*" {
+        None
+    } else {
+        Some(total.parse::<u64>().ok()?)
+    };
+    (start <= end && total.is_none_or(|total| end < total)).then_some(OpenRange {
+        start,
+        end,
+        total,
+    })
 }
 
 fn parse_content_range(value: &str) -> Option<ContentRange> {
@@ -313,61 +530,87 @@ pub struct Chunk<'a> {
 pub struct SegmentProgress {
     /// First byte of the range.
     pub start: u64,
-    /// Last byte of the range, inclusive.
+    /// Last byte of the range, inclusive. It shrinks when another lane takes
+    /// the tail of the range.
     pub end: u64,
-    /// Bytes of this range received so far. They are held in memory, not yet
-    /// written, until every range in the batch has arrived.
+    /// Bytes of this range received so far. With the stream-first scheduler
+    /// they are already written; the legacy round scheduler holds them in
+    /// memory until the round ends.
     pub received: u64,
 }
 
-struct LiveSegment {
-    start: u64,
-    end: u64,
-    received: AtomicU64,
+pub(crate) struct LiveSegment {
+    pub(crate) start: u64,
+    /// One past the last byte the lane may still write.
+    pub(crate) end: AtomicU64,
+    pub(crate) received: AtomicU64,
+}
+
+impl LiveSegment {
+    pub(crate) fn new(start: u64, end: u64) -> Arc<Self> {
+        Arc::new(Self {
+            start,
+            end: AtomicU64::new(end),
+            received: AtomicU64::new(0),
+        })
+    }
 }
 
 /// A read-only view of the ranges a segmented transfer has in flight.
 ///
 /// Observation only: it never changes what is requested or written. The
-/// transfer takes the lock once when a batch starts and once when it ends; each
-/// write adds to one atomic counter.
+/// transfer takes the lock when a range starts and when it ends; each write
+/// adds to one atomic counter.
 #[derive(Default)]
 pub struct SegmentMonitor {
     live: Mutex<Vec<Arc<LiveSegment>>>,
 }
 
 impl SegmentMonitor {
-    /// The ranges in flight now, in file order. Empty between batches and for
-    /// a transfer that is not segmented.
+    /// The ranges in flight now, in file order. Empty between transfers and
+    /// for a transfer that is not segmented.
     pub fn snapshot(&self) -> Vec<SegmentProgress> {
-        self.live
+        let mut ranges: Vec<_> = self
+            .live
             .lock()
             .expect("segment monitor poisoned")
             .iter()
             .map(|segment| SegmentProgress {
                 start: segment.start,
-                end: segment.end,
+                end: segment.end.load(Ordering::Relaxed).saturating_sub(1),
                 received: segment.received.load(Ordering::Relaxed),
             })
-            .collect()
+            .collect();
+        ranges.sort_by_key(|range| range.start);
+        ranges
     }
 
-    fn begin(&self, specs: &[(u64, u64)]) -> Vec<Arc<LiveSegment>> {
+    pub(crate) fn begin(&self, specs: &[(u64, u64)]) -> Vec<Arc<LiveSegment>> {
         let segments: Vec<_> = specs
             .iter()
-            .map(|&(start, end)| {
-                Arc::new(LiveSegment {
-                    start,
-                    end,
-                    received: AtomicU64::new(0),
-                })
-            })
+            .map(|&(start, end)| LiveSegment::new(start, end + 1))
             .collect();
         *self.live.lock().expect("segment monitor poisoned") = segments.clone();
         segments
     }
 
-    fn clear(&self) {
+    pub(crate) fn add(&self, start: u64, end: u64) -> Arc<LiveSegment> {
+        let segment = LiveSegment::new(start, end);
+        self.live
+            .lock()
+            .expect("segment monitor poisoned")
+            .push(Arc::clone(&segment));
+        segment
+    }
+
+    pub(crate) fn remove(&self, segment: &Arc<LiveSegment>) {
+        self.live
+            .lock()
+            .expect("segment monitor poisoned")
+            .retain(|live| !Arc::ptr_eq(live, segment));
+    }
+
+    pub(crate) fn clear(&self) {
         self.live.lock().expect("segment monitor poisoned").clear();
     }
 }
@@ -382,6 +625,7 @@ impl Drop for ClearOnDrop<'_> {
     }
 }
 
+/// One measurement window of the concurrency controller.
 #[derive(Clone, Debug)]
 pub struct BatchObservation {
     pub concurrency: usize,
@@ -389,8 +633,9 @@ pub struct BatchObservation {
     pub elapsed_ms: f64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TransferReport {
+    /// The length of the file after the transfer, resumed prefix included.
     pub bytes: u64,
     pub total_bytes: Option<u64>,
     pub strong_etag: Option<String>,
@@ -400,8 +645,37 @@ pub struct TransferReport {
     pub used_ranges: bool,
     pub adaptive: bool,
     pub peak_concurrency: usize,
+    /// Valid controller windows for the stream-first scheduler; rounds for
+    /// the legacy one.
     pub observations: Vec<BatchObservation>,
     pub budget: BudgetSnapshot,
+    /// Claims split to feed an idle lane.
+    pub splits: u32,
+    /// Lanes stopped for stalling or for holding back the prefix.
+    pub replacements: u32,
+    /// Requests re-issued after a failure or a replacement.
+    pub retries: u32,
+    /// Answers of 429 or 503, each of which halves the lanes.
+    pub throttles: u32,
+    /// Lanes replaced because they held the prefix while every other lane
+    /// waited behind the `max_ahead` limit.
+    pub block_replacements: u32,
+    /// Lanes the controller wanted when the transfer ended.
+    pub final_concurrency: usize,
+    /// Requests sent, and how many of them opened a new connection.
+    pub requests: u32,
+    pub connections_opened: u32,
+}
+
+/// Where a resumed transfer continues.
+#[derive(Clone, Debug)]
+pub struct ResumePoint {
+    /// First byte to fetch: the length of the verified prefix.
+    pub offset: u64,
+    /// The strong ETag the prefix came from; sent as `If-Range`.
+    pub strong_etag: String,
+    /// The total the checkpoint recorded, when it recorded one.
+    pub expected_total: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -413,7 +687,15 @@ pub enum TransferError {
     Certificate(String),
     HostKey(String),
     ResumeRejected(String),
+    /// The legacy round scheduler cannot continue; start again from byte
+    /// zero with the stream-first scheduler.
     RestartSequential(String),
+    /// The source is not the representation the bytes so far came from.
+    /// The caller discards them and starts again from byte zero.
+    IdentityChanged(String),
+    /// The source answered in a way retrying will not fix: an error status,
+    /// or a response that breaks the range rules.
+    Rejected(String),
     Transport(String),
     Sink(io::Error),
 }
@@ -431,6 +713,8 @@ impl fmt::Display for TransferError {
             Self::HostKey(detail) => write!(formatter, "host-key verification failed: {detail}"),
             Self::ResumeRejected(detail) => write!(formatter, "resume rejected: {detail}"),
             Self::RestartSequential(detail) => formatter.write_str(detail),
+            Self::IdentityChanged(detail) => write!(formatter, "source changed: {detail}"),
+            Self::Rejected(detail) => formatter.write_str(detail),
             Self::Transport(detail) => formatter.write_str(detail),
             Self::Sink(error) => write!(formatter, "destination write failed: {error}"),
         }
@@ -438,58 +722,6 @@ impl fmt::Display for TransferError {
 }
 
 impl std::error::Error for TransferError {}
-
-struct AdaptiveController {
-    current: usize,
-    maximum: usize,
-    previous_rate: Option<f64>,
-    healthy_streak: usize,
-    cooldown: usize,
-}
-
-impl AdaptiveController {
-    fn new(maximum: usize) -> Self {
-        Self {
-            current: 1,
-            maximum,
-            previous_rate: None,
-            healthy_streak: 0,
-            cooldown: 0,
-        }
-    }
-
-    fn concurrency(&self) -> usize {
-        self.current
-    }
-
-    fn observe(&mut self, bytes: u64, elapsed: Duration, backpressure: bool) {
-        let rate = bytes as f64 / elapsed.as_secs_f64().max(0.000_001);
-        if backpressure
-            || self
-                .previous_rate
-                .is_some_and(|previous| rate < previous * 0.80)
-        {
-            self.current = self.current.saturating_sub(1).max(1);
-            self.healthy_streak = 0;
-            self.cooldown = 2;
-        } else if self.cooldown > 0 {
-            self.cooldown -= 1;
-        } else {
-            self.healthy_streak += 1;
-            if self.healthy_streak >= 2 && self.current < self.maximum {
-                self.current += 1;
-                self.healthy_streak = 0;
-            }
-        }
-        self.previous_rate = Some(rate);
-    }
-}
-
-struct ProbeResult {
-    headers: ResponseHeaders,
-    buffered: Vec<u8>,
-    streamed: u64,
-}
 
 pub fn transfer_adaptive<F, C>(
     url: &str,
@@ -515,6 +747,31 @@ pub fn transfer_adaptive_observed<F, C>(
     budget: &GlobalBudget,
     monitor: &SegmentMonitor,
     cancelled: C,
+    sink: F,
+) -> Result<TransferReport, TransferError>
+where
+    F: FnMut(Chunk<'_>) -> io::Result<()>,
+    C: Fn() -> bool + Sync + Send,
+{
+    transfer_resumable(url, context, limits, budget, monitor, None, cancelled, sink)
+}
+
+/// Downloads `url`, or the rest of it after `resume`.
+///
+/// The sink gets each piece at its file offset. With the stream-first
+/// scheduler, pieces of different lanes arrive in any order, never overlap,
+/// and cover every byte from the start offset to the end once. The sink must
+/// write at `offset` (positionally) and keep its own record of which bytes it
+/// has. Each lane delivers its own bytes in order.
+#[allow(clippy::too_many_arguments)]
+pub fn transfer_resumable<F, C>(
+    url: &str,
+    context: &RequestContext,
+    limits: TransferLimits,
+    budget: &GlobalBudget,
+    monitor: &SegmentMonitor,
+    resume: Option<&ResumePoint>,
+    cancelled: C,
     mut sink: F,
 ) -> Result<TransferReport, TransferError>
 where
@@ -523,197 +780,30 @@ where
 {
     let _clear = ClearOnDrop(monitor);
     let limits = limits.validate()?;
-    let capabilities = ProtocolCapabilities::detect();
-    let decision = decide_protocol(capabilities);
-    let probe = probe(url, context, &decision, budget, &cancelled, &mut sink)?;
-    if probe.headers.status == Some(200) {
-        if let Some(expected) = probe.headers.content_length
-            && expected != probe.streamed
-        {
-            return Err(TransferError::Transport(format!(
-                "response declared {expected} bytes but delivered {}",
-                probe.streamed
-            )));
-        }
-        let mut fallback_reasons = decision.fallback_reasons;
-        if decision.preferred != probe.headers.protocol {
-            fallback_reasons.push("negotiated_lower_protocol");
-        }
-        return Ok(TransferReport {
-            bytes: probe.streamed,
-            total_bytes: probe.headers.content_length,
-            strong_etag: strong_etag(probe.headers.etag.as_deref()),
-            preferred_protocol: decision.preferred,
-            negotiated_protocol: probe.headers.protocol,
-            fallback_reasons,
-            used_ranges: false,
-            adaptive: false,
-            peak_concurrency: 1,
-            observations: Vec::new(),
-            budget: budget.snapshot(),
-        });
+    if limits.scheduler == Scheduler::Rounds && resume.is_none() {
+        return rounds::run(url, context, limits, budget, monitor, cancelled, sink);
     }
-
-    let range = probe
-        .headers
-        .content_range
-        .filter(|range| range.start == 0 && range.end == 0)
-        .ok_or_else(|| {
-            TransferError::RestartSequential("probe returned an invalid Content-Range".into())
-        })?;
-    let etag = strong_etag(probe.headers.etag.as_deref()).ok_or_else(|| {
-        TransferError::RestartSequential("segmentation requires a strong ETag".into())
-    })?;
-    if probe.buffered.len() != 1 {
-        return Err(TransferError::Transport(format!(
-            "one-byte probe delivered {} bytes",
-            probe.buffered.len()
-        )));
-    }
-    sink(Chunk {
-        offset: 0,
-        bytes: &probe.buffered,
-        strong_etag: Some(&etag),
-        total_bytes: Some(range.total),
-    })
-    .map_err(TransferError::Sink)?;
-
-    let mut next = 1_u64;
-    let mut observations = Vec::new();
-    let adaptive_maximum = if range.total >= limits.min_adaptive_bytes {
-        limits.max_concurrency.min(limits.max_active_requests)
-    } else {
-        1
-    };
-    let mut controller = AdaptiveController::new(adaptive_maximum);
-    // One handle per lane, kept across rounds, so each lane reuses its
-    // connections (and its redirect's) instead of opening new ones per range.
-    let mut lanes: Vec<Easy> = (0..adaptive_maximum).map(|_| Easy::new()).collect();
-    let mut segment = limits.min_segment_bytes;
-    let mut peak_concurrency = 1;
-    while next < range.total {
-        if cancelled() {
-            return Err(TransferError::Cancelled);
-        }
-        let remaining_chunks = (range.total - next).div_ceil(segment as u64) as usize;
-        let concurrency = controller.concurrency().min(remaining_chunks);
-        peak_concurrency = peak_concurrency.max(concurrency);
-        let mut specs = Vec::with_capacity(concurrency);
-        for _ in 0..concurrency {
-            if next >= range.total {
-                break;
-            }
-            let end = (next + segment as u64 - 1).min(range.total - 1);
-            specs.push((next, end));
-            next = end + 1;
-        }
-        let started = Instant::now();
-        let decision_ref = &decision;
-        let cancelled_ref = &cancelled;
-        let live = monitor.begin(&specs);
-        let results = std::thread::scope(|scope| {
-            let handles: Vec<_> = specs
-                .iter()
-                .zip(&live)
-                .zip(lanes.iter_mut())
-                .map(|((&(start, end), segment), easy)| {
-                    let etag = etag.clone();
-                    scope.spawn(move || {
-                        fetch_range(
-                            easy,
-                            url,
-                            context,
-                            decision_ref,
-                            budget,
-                            cancelled_ref,
-                            start,
-                            end,
-                            range.total,
-                            &etag,
-                            &segment.received,
-                        )
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|handle| {
-                    let result = handle.join().map_err(|_| {
-                        TransferError::RestartSequential("range worker panicked".into())
-                    })?;
-                    result.map_err(|error| match error {
-                        TransferError::Cancelled => TransferError::Cancelled,
-                        other => TransferError::RestartSequential(other.to_string()),
-                    })
-                })
-                .collect::<Result<Vec<_>, TransferError>>()
-        })?;
-        let elapsed = started.elapsed();
-        let mut results = results;
-        results.sort_by_key(|chunk| chunk.start);
-        let batch_bytes = results.iter().map(|chunk| chunk.bytes.len() as u64).sum();
-        for chunk in &results {
-            sink(Chunk {
-                offset: chunk.start,
-                bytes: &chunk.bytes,
-                strong_etag: Some(&etag),
-                total_bytes: Some(range.total),
-            })
-            .map_err(TransferError::Sink)?;
-        }
-        // Written, so no longer in flight.
-        monitor.clear();
-        observations.push(BatchObservation {
-            concurrency,
-            bytes: batch_bytes,
-            elapsed_ms: elapsed.as_secs_f64() * 1000.0,
-        });
-        controller.observe(batch_bytes, elapsed, false);
-        // Each lane's rate sizes the next ranges.
-        let lane_rate = batch_bytes as f64 / concurrency as f64 / elapsed.as_secs_f64().max(0.001);
-        segment = ((lane_rate * SEGMENT_SECONDS) as usize)
-            .clamp(limits.min_segment_bytes, limits.segment_bytes);
-    }
-    let mut fallback_reasons = decision.fallback_reasons;
-    if decision.preferred != probe.headers.protocol {
-        fallback_reasons.push("negotiated_lower_protocol");
-    }
-    Ok(TransferReport {
-        bytes: range.total,
-        total_bytes: Some(range.total),
-        strong_etag: Some(etag),
-        preferred_protocol: decision.preferred,
-        negotiated_protocol: probe.headers.protocol,
-        fallback_reasons,
-        used_ranges: true,
-        adaptive: range.total >= limits.min_adaptive_bytes && peak_concurrency > 1,
-        peak_concurrency,
-        observations,
-        budget: budget.snapshot(),
-    })
+    scheduler::run(
+        url, context, limits, budget, monitor, resume, &cancelled, &mut sink,
+    )
 }
 
-fn configure(
+pub(crate) fn configure(
     easy: &mut Easy,
     url: &str,
     context: &RequestContext,
     decision: &ProtocolDecision,
 ) -> Result<(), TransferError> {
     easy.url(url).map_err(curl_error)?;
-    http_only(easy)?;
+    http_only(easy.raw())?;
     easy.follow_location(true).map_err(curl_error)?;
     easy.fail_on_error(true).map_err(curl_error)?;
     easy.ssl_verify_peer(true).map_err(curl_error)?;
     easy.ssl_verify_host(true).map_err(curl_error)?;
     easy.buffer_size(16 * 1024).map_err(curl_error)?;
     easy.progress(true).map_err(curl_error)?;
-    let version = match decision.preferred {
-        Protocol::Http2 if context.http2_prior_knowledge => HttpVersion::V2PriorKnowledge,
-        Protocol::Http3 => HttpVersion::V3,
-        Protocol::Http2 if url.starts_with("https://") => HttpVersion::V2TLS,
-        Protocol::Http2 | Protocol::Http1 | Protocol::Unknown => HttpVersion::Any,
-    };
-    easy.http_version(version).map_err(curl_error)?;
+    easy.http_version(http_version_for(url, context, decision))
+        .map_err(curl_error)?;
     for cookie in &context.cookie_lines {
         easy.cookie_list(cookie).map_err(curl_error)?;
     }
@@ -723,19 +813,32 @@ fn configure(
     Ok(())
 }
 
+pub(crate) fn http_version_for(
+    url: &str,
+    context: &RequestContext,
+    decision: &ProtocolDecision,
+) -> HttpVersion {
+    match decision.preferred {
+        Protocol::Http2 if context.http2_prior_knowledge => HttpVersion::V2PriorKnowledge,
+        Protocol::Http3 => HttpVersion::V3,
+        Protocol::Http2 if url.starts_with("https://") => HttpVersion::V2TLS,
+        Protocol::Http2 | Protocol::Http1 | Protocol::Unknown => HttpVersion::Any,
+    }
+}
+
 /// Limits the request and every redirect it follows to HTTP and HTTPS.
 /// libcurl otherwise follows a redirect to FTP, which this path neither
 /// expects nor ranges correctly. The curl crate has no safe setter for these.
-fn http_only(easy: &mut Easy) -> Result<(), TransferError> {
+pub(crate) fn http_only(handle: *mut curl_sys::CURL) -> Result<(), TransferError> {
     const HTTP_AND_HTTPS: std::os::raw::c_long =
         (curl_sys::CURLPROTO_HTTP | curl_sys::CURLPROTO_HTTPS) as std::os::raw::c_long;
     for option in [
         curl_sys::CURLOPT_PROTOCOLS,
         curl_sys::CURLOPT_REDIR_PROTOCOLS,
     ] {
-        // SAFETY: `easy.raw()` is the live handle owned by `easy`, and both
+        // SAFETY: `handle` is a live easy handle owned by the caller, and both
         // options take a long bitmask by value.
-        let code = unsafe { curl_sys::curl_easy_setopt(easy.raw(), option, HTTP_AND_HTTPS) };
+        let code = unsafe { curl_sys::curl_easy_setopt(handle, option, HTTP_AND_HTTPS) };
         if code != curl_sys::CURLE_OK {
             return Err(curl_error(curl::Error::new(code)));
         }
@@ -743,7 +846,7 @@ fn http_only(easy: &mut Easy) -> Result<(), TransferError> {
     Ok(())
 }
 
-fn request_headers(if_range: Option<&str>) -> Result<List, TransferError> {
+pub(crate) fn request_headers(if_range: Option<&str>) -> Result<List, TransferError> {
     let mut headers = List::new();
     headers
         .append("Accept-Encoding: identity")
@@ -756,187 +859,7 @@ fn request_headers(if_range: Option<&str>) -> Result<List, TransferError> {
     Ok(headers)
 }
 
-fn probe<F, C>(
-    url: &str,
-    context: &RequestContext,
-    decision: &ProtocolDecision,
-    budget: &GlobalBudget,
-    cancelled: &C,
-    sink: &mut F,
-) -> Result<ProbeResult, TransferError>
-where
-    F: FnMut(Chunk<'_>) -> io::Result<()>,
-    C: Fn() -> bool + Sync,
-{
-    let _permit = budget.reserve(1, cancelled)?;
-    let mut easy = Easy::new();
-    configure(&mut easy, url, context, decision)?;
-    easy.range("0-0").map_err(curl_error)?;
-    easy.http_headers(request_headers(None)?)
-        .map_err(curl_error)?;
-    let headers = RefCell::new(ResponseHeaders::default());
-    let buffered = RefCell::new(Vec::with_capacity(1));
-    let streamed = Cell::new(0_u64);
-    let sink_error = RefCell::new(None);
-    let result = {
-        let mut transfer = easy.transfer();
-        transfer
-            .header_function(|line| {
-                headers.borrow_mut().ingest(line);
-                true
-            })
-            .map_err(curl_error)?;
-        transfer
-            .write_function(|data| {
-                if headers.borrow().status == Some(200) {
-                    let offset = streamed.get();
-                    let headers = headers.borrow();
-                    if let Err(error) = sink(Chunk {
-                        offset,
-                        bytes: data,
-                        strong_etag: strong_etag(headers.etag.as_deref()).as_deref(),
-                        total_bytes: headers.content_length,
-                    }) {
-                        *sink_error.borrow_mut() = Some(error);
-                        return Ok(0);
-                    }
-                    streamed.set(offset + data.len() as u64);
-                    Ok(data.len())
-                } else {
-                    let mut body = buffered.borrow_mut();
-                    if body.len() + data.len() > 1 {
-                        return Ok(0);
-                    }
-                    body.extend_from_slice(data);
-                    Ok(data.len())
-                }
-            })
-            .map_err(curl_error)?;
-        transfer
-            .progress_function(|_, _, _, _| !cancelled())
-            .map_err(curl_error)?;
-        transfer.perform()
-    };
-    if let Some(error) = sink_error.into_inner() {
-        return Err(TransferError::Sink(error));
-    }
-    if cancelled() {
-        return Err(TransferError::Cancelled);
-    }
-    if let Err(error) = result {
-        let callback_status = headers.borrow().status;
-        let easy_status = easy.response_code().ok();
-        if callback_status == Some(206) {
-            return Err(TransferError::Transport("HTTP status 206".into()));
-        }
-        if let Some(status) = callback_status
-            .or(easy_status)
-            .filter(|status| *status >= 400)
-        {
-            return Err(TransferError::Transport(format!("HTTP status {status}")));
-        }
-        return Err(curl_error(error));
-    }
-    let headers = headers.into_inner();
-    if !matches!(headers.status, Some(200 | 206)) {
-        return Err(TransferError::Transport(format!(
-            "HTTP status {}",
-            headers.status.unwrap_or_default()
-        )));
-    }
-    Ok(ProbeResult {
-        headers,
-        buffered: buffered.into_inner(),
-        streamed: streamed.get(),
-    })
-}
-
-struct RangeChunk {
-    start: u64,
-    bytes: Vec<u8>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fetch_range<C>(
-    easy: &mut Easy,
-    url: &str,
-    context: &RequestContext,
-    decision: &ProtocolDecision,
-    budget: &GlobalBudget,
-    cancelled: &C,
-    start: u64,
-    end: u64,
-    total: u64,
-    etag: &str,
-    progress: &AtomicU64,
-) -> Result<RangeChunk, TransferError>
-where
-    C: Fn() -> bool + Sync,
-{
-    let expected = (end - start + 1) as usize;
-    let _permit = budget.reserve(expected, cancelled)?;
-    configure(easy, url, context, decision)?;
-    easy.range(&format!("{start}-{end}")).map_err(curl_error)?;
-    easy.http_headers(request_headers(Some(etag))?)
-        .map_err(curl_error)?;
-    let headers = RefCell::new(ResponseHeaders::default());
-    let body = RefCell::new(Vec::with_capacity(expected));
-    let overflow = Cell::new(false);
-    let result = {
-        let mut transfer = easy.transfer();
-        transfer
-            .header_function(|line| {
-                headers.borrow_mut().ingest(line);
-                true
-            })
-            .map_err(curl_error)?;
-        transfer
-            .write_function(|data| {
-                let mut body = body.borrow_mut();
-                if body.len() + data.len() > expected {
-                    overflow.set(true);
-                    return Ok(0);
-                }
-                body.extend_from_slice(data);
-                progress.fetch_add(data.len() as u64, Ordering::Relaxed);
-                Ok(data.len())
-            })
-            .map_err(curl_error)?;
-        transfer
-            .progress_function(|_, _, _, _| !cancelled())
-            .map_err(curl_error)?;
-        transfer.perform()
-    };
-    if cancelled() {
-        return Err(TransferError::Cancelled);
-    }
-    if overflow.get() {
-        return Err(TransferError::Transport(
-            "range exceeded its reservation".into(),
-        ));
-    }
-    result.map_err(curl_error)?;
-    let headers = headers.into_inner();
-    let returned = headers.content_range;
-    if headers.status != Some(206)
-        || returned != Some(ContentRange { start, end, total })
-        || strong_etag(headers.etag.as_deref()).as_deref() != Some(etag)
-    {
-        return Err(TransferError::Transport(format!(
-            "range {start}-{end} did not preserve status, bounds, and identity"
-        )));
-    }
-    let body = body.into_inner();
-    if body.len() != expected {
-        return Err(TransferError::Transport(format!(
-            "range {start}-{end} declared {expected} bytes but delivered {}",
-            body.len()
-        )));
-    }
-    Ok(RangeChunk { start, bytes: body })
-}
-
-fn curl_error(error: curl::Error) -> TransferError {
+pub(crate) fn curl_error(error: curl::Error) -> TransferError {
     TransferError::Transport(error.to_string())
 }
 
@@ -964,24 +887,6 @@ mod tests {
             })
             .preferred,
             Protocol::Http1
-        );
-    }
-
-    #[test]
-    fn controller_grows_with_hysteresis_and_decreases_on_regression() {
-        let mut controller = AdaptiveController::new(4);
-        controller.observe(1000, Duration::from_secs(1), false);
-        assert_eq!(controller.concurrency(), 1);
-        controller.observe(1100, Duration::from_secs(1), false);
-        assert_eq!(controller.concurrency(), 2);
-        controller.observe(100, Duration::from_secs(1), false);
-        assert_eq!(controller.concurrency(), 1);
-        controller.observe(2000, Duration::from_secs(1), false);
-        controller.observe(2100, Duration::from_secs(1), false);
-        assert_eq!(
-            controller.concurrency(),
-            1,
-            "cooldown prevents immediate oscillation"
         );
     }
 
@@ -1034,5 +939,75 @@ mod tests {
                 peak_buffered_bytes: 1024,
             }
         );
+    }
+
+    const LANE: usize = 128 * 1024;
+
+    fn take_all<'a>(slot: &DownloadSlot<'a>) -> Vec<BudgetPermit<'a>> {
+        let mut permits = Vec::new();
+        while let Some(permit) = slot.try_reserve(LANE) {
+            permits.push(permit);
+        }
+        permits
+    }
+
+    #[test]
+    fn extra_lanes_never_wait_for_the_budget() {
+        let budget = GlobalBudget::new(2, 2 * LANE).unwrap();
+        let slot = budget.register_download();
+        let first = slot.reserve(LANE, &|| false).unwrap();
+        let started = std::time::Instant::now();
+        let second = slot.try_reserve(LANE);
+        assert!(second.is_some());
+        assert!(slot.try_reserve(LANE).is_none(), "the budget is used up");
+        assert!(started.elapsed() < Duration::from_millis(500));
+        drop((first, second));
+        assert_eq!(budget.snapshot().active_requests, 0);
+    }
+
+    #[test]
+    fn downloads_get_at_least_one_lane_and_split_the_extra_ones_evenly() {
+        let budget = GlobalBudget::new(8, 8 * LANE).unwrap();
+        let one = budget.register_download();
+        let two = budget.register_download();
+        let mut lanes = vec![one.reserve(LANE, &|| false).unwrap()];
+        lanes.push(two.reserve(LANE, &|| false).unwrap());
+        let first = take_all(&one);
+        let second = take_all(&two);
+        // Each keeps its first lane and gains extras up to an even share of 8.
+        assert_eq!(1 + first.len(), 4);
+        assert_eq!(1 + second.len(), 4);
+        assert_eq!(budget.snapshot().active_requests, 8);
+        drop((lanes, first, second));
+    }
+
+    #[test]
+    fn a_download_that_stopped_growing_leaves_the_rest_to_the_others() {
+        let budget = GlobalBudget::new(8, 8 * LANE).unwrap();
+        let settled = budget.register_download();
+        let growing = budget.register_download();
+        let mut held = vec![settled.reserve(LANE, &|| false).unwrap()];
+        held.push(growing.reserve(LANE, &|| false).unwrap());
+        // The settled download keeps 2 lanes and stops asking.
+        held.extend(settled.try_reserve(LANE));
+        settled.set_growing(false);
+        assert!(settled.try_reserve(LANE).is_none());
+        let extra = take_all(&growing);
+        assert_eq!(1 + extra.len(), 6, "8 lanes minus the 2 that are settled");
+        drop((held, extra));
+    }
+
+    #[test]
+    fn extra_lanes_leave_room_for_a_download_still_waiting_for_its_first() {
+        let budget = GlobalBudget::new(4, 4 * LANE).unwrap();
+        let busy = budget.register_download();
+        let waiting = budget.register_download();
+        // Not growing, so it does not count in the even share; only the
+        // guard for its first lane is left.
+        waiting.set_growing(false);
+        let mut held = vec![busy.reserve(LANE, &|| false).unwrap()];
+        held.extend(take_all(&busy));
+        assert_eq!(held.len(), 3, "one lane stays free for the newcomer");
+        assert!(budget.reserve(LANE, &|| false).is_ok());
     }
 }
