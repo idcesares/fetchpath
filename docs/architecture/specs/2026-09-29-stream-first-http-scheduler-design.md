@@ -1,8 +1,8 @@
 # Stream-first, work-stealing HTTP scheduler
 
 FP-083, 29 September 2026. Status: **accepted by independent strong review**
-(29 September 2026, re-checked after revision). FP-085 starts after the
-owner accepts the loss bound in 7.1. Implements
+(29 September 2026, re-checked after revision). The owner accepted the
+loss bound in 7.1 on 29 September 2026. Implements
 in FP-085; connection sharing and redirect pinning in FP-086; measured by
 FP-084.
 
@@ -292,8 +292,7 @@ unexplained common-case regression above 5%, and budgets held.
 ## 7. Open questions
 
 1. The loss bound changes from one round in memory to about 4 s of transfer
-   (or 64 KiB, whichever is larger). The
-   owner accepts this before FP-085 is marked done. Power-loss durability
+   (or 64 KiB, whichever is larger). The owner accepted this on 29 September 2026. Power-loss durability
    stays deferred (FP-077).
 2. NTFS zero-fill (4.5): FP-084 measures which placement avoids double
    writes.
