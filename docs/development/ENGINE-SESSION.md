@@ -391,10 +391,10 @@ it has no package behavioral tests. Formatting and diff checks pass.
 
 Independent Astra/low review approved the persistence and concurrency
 boundary without findings. Media/torrent callback execution and sustained
-wakeup sampling were checked statically. Strict Clippy is blocked by two
-pre-existing `collapsible_if` warnings in torrent request validation and
-helper stdin handling (also present in `3f4f9ed`); the affected-package
-all-target check passes with only that lint disabled.
+wakeup sampling were checked statically. The PR readiness pass collapsed
+three existing nested conditions in torrent request validation, helper stdin
+handling and session torrent approval. Strict workspace all-target Clippy
+now passes without lint exceptions; the conditions retain their ordering.
 
 The release benchmark uses the FP-084 unshaped 64 MiB fixture, five seeded
 pairs per build, a warmed engine and independent output verification.

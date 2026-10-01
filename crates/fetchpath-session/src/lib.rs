@@ -1420,14 +1420,15 @@ impl Session {
                 }
             })
             .transpose()?;
-        if url.is_some() && !by.is_user() {
-            if let Some(policy) = record.torrent_policy {
-                if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
-                    hold.push(ApprovalReason::PeerDiscovery);
-                }
-                if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
-                    hold.push(ApprovalReason::PeerUpload);
-                }
+        if url.is_some()
+            && !by.is_user()
+            && let Some(policy) = record.torrent_policy
+        {
+            if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
+                hold.push(ApprovalReason::PeerDiscovery);
+            }
+            if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
+                hold.push(ApprovalReason::PeerUpload);
             }
         }
         let destination = destination

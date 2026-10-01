@@ -43,15 +43,14 @@ impl Request {
         if self.metadata_path.is_some() != self.metadata_sha256.is_some() {
             return Err("source.invalid");
         }
-        if let Some(path) = &self.metadata_path {
-            if !std::path::Path::new(path).is_absolute()
+        if let Some(path) = &self.metadata_path
+            && (!std::path::Path::new(path).is_absolute()
                 || !path.to_ascii_lowercase().ends_with(".torrent")
                 || self.metadata_sha256.as_ref().is_none_or(|hash| {
                     hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-                })
-            {
-                return Err("source.invalid");
-            }
+                }))
+        {
+            return Err("source.invalid");
         }
         if self.destination.is_empty() || self.destination.len() > 4096 {
             return Err("destination.invalid");
@@ -180,11 +179,11 @@ impl TorrentJob {
             let _ = child.kill();
             return Err("torrent.request_invalid");
         }
-        if let Some(mut stdin) = child.stdin.take() {
-            if stdin.write_all(&payload).is_err() {
-                let _ = child.kill();
-                return Err("torrent.helper_unavailable");
-            }
+        if let Some(mut stdin) = child.stdin.take()
+            && stdin.write_all(&payload).is_err()
+        {
+            let _ = child.kill();
+            return Err("torrent.helper_unavailable");
         }
         let stdout = child.stdout.take().ok_or("torrent.helper_unavailable")?;
         let process = Arc::new(Mutex::new(child));
