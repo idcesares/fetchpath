@@ -1,0 +1,443 @@
+{
+  "task": "FP-088",
+  "measuredOn": "2026-10-01",
+  "baselineCommit": "3f4f9ed",
+  "sourceNotes": "Baseline binaries built before source edits (dirty backlog only). Changed binaries built from the FP-088 patch on the same baseline.",
+  "acceptance": "Halve engine-minus-core latency on FP-084 unshaped 64 MiB profile; all outputs independently verified.",
+  "baseline": {
+    "host": {
+      "platform": "win32",
+      "node": "v24.20.0",
+      "git": "3f4f9ed+dirty"
+    },
+    "tools": {
+      "fetchpath-http": "work/fp088-baseline/bin/fetchpath-http-bench.exe (1536512 bytes, modified 2026-10-01T15:04:21.931Z)",
+      "fetchpath-cli": "fetchpath 0.1.0 (work/fp088-baseline/bin/fetchpath.exe, 11196928 bytes, modified 2026-10-01T15:05:42.624Z)"
+    },
+    "config": {
+      "repetitions": 5,
+      "size": 67108864,
+      "seed": 15015,
+      "corpus": "fixture",
+      "profiles": [
+        "unshaped"
+      ],
+      "clients": [
+        "fetchpath-http",
+        "fetchpath-cli"
+      ],
+      "httpBench": "work/fp088-baseline/bin/fetchpath-http-bench.exe",
+      "cli": "work/fp088-baseline/bin/fetchpath.exe",
+      "aria2c": null,
+      "wget2": null,
+      "chrome": null,
+      "keepFiles": false,
+      "timeoutS": 120,
+      "corpusFile": null
+    },
+    "fixture": {
+      "size": 67108864,
+      "stableSha256": "fb085f7e68f5d7f8161474955e4623ce4e9496c21051d60af725ed8e3ef2061d"
+    },
+    "failures": [],
+    "summary": [
+      {
+        "client": "fetchpath-http",
+        "ok": 5,
+        "runs": 5,
+        "wallMs": {
+          "n": 5,
+          "median": 341.6,
+          "min": 295.3,
+          "max": 579.4,
+          "ci95": [
+            295.3,
+            579.4
+          ]
+        },
+        "timeToVerifiedMs": {
+          "n": 5,
+          "median": 497.3,
+          "min": 451.1,
+          "max": 774,
+          "ci95": [
+            451.1,
+            774
+          ]
+        }
+      },
+      {
+        "client": "fetchpath-cli",
+        "ok": 5,
+        "runs": 5,
+        "wallMs": {
+          "n": 5,
+          "median": 821.5,
+          "min": 742.6,
+          "max": 895.8,
+          "ci95": [
+            742.6,
+            895.8
+          ]
+        },
+        "timeToVerifiedMs": {
+          "n": 5,
+          "median": 954.6,
+          "min": 937.3,
+          "max": 1085,
+          "ci95": [
+            937.3,
+            1085
+          ]
+        }
+      }
+    ],
+    "runs": [
+      {
+        "rep": 0,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 742.6,
+        "verifyMs": 194.7,
+        "timeToVerifiedMs": 937.3
+      },
+      {
+        "rep": 0,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 579.4,
+        "verifyMs": 194.6,
+        "timeToVerifiedMs": 774
+      },
+      {
+        "rep": 1,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 821.5,
+        "verifyMs": 133.1,
+        "timeToVerifiedMs": 954.6
+      },
+      {
+        "rep": 1,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 295.3,
+        "verifyMs": 155.8,
+        "timeToVerifiedMs": 451.1
+      },
+      {
+        "rep": 2,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 779.7,
+        "verifyMs": 167.8,
+        "timeToVerifiedMs": 947.5
+      },
+      {
+        "rep": 2,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 341.6,
+        "verifyMs": 155.6,
+        "timeToVerifiedMs": 497.3
+      },
+      {
+        "rep": 3,
+        "client": "fetchpath-http",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 333.2,
+        "verifyMs": 147.1,
+        "timeToVerifiedMs": 480.3
+      },
+      {
+        "rep": 3,
+        "client": "fetchpath-cli",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 860.7,
+        "verifyMs": 162,
+        "timeToVerifiedMs": 1022.7
+      },
+      {
+        "rep": 4,
+        "client": "fetchpath-http",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 385.4,
+        "verifyMs": 165.3,
+        "timeToVerifiedMs": 550.7
+      },
+      {
+        "rep": 4,
+        "client": "fetchpath-cli",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 895.8,
+        "verifyMs": 189.2,
+        "timeToVerifiedMs": 1085
+      }
+    ]
+  },
+  "changed": {
+    "host": {
+      "platform": "win32",
+      "node": "v24.20.0",
+      "git": "3f4f9ed+dirty"
+    },
+    "tools": {
+      "fetchpath-http": "work/fp088-changed/bin/fetchpath-http-bench.exe (1536512 bytes, modified 2026-10-01T15:04:21.931Z)",
+      "fetchpath-cli": "fetchpath 0.1.0 (work/fp088-changed/bin/fetchpath.exe, 11198976 bytes, modified 2026-10-01T15:17:14.004Z)"
+    },
+    "config": {
+      "repetitions": 5,
+      "size": 67108864,
+      "seed": 15015,
+      "corpus": "fixture",
+      "profiles": [
+        "unshaped"
+      ],
+      "clients": [
+        "fetchpath-http",
+        "fetchpath-cli"
+      ],
+      "httpBench": "work/fp088-changed/bin/fetchpath-http-bench.exe",
+      "cli": "work/fp088-changed/bin/fetchpath.exe",
+      "aria2c": null,
+      "wget2": null,
+      "chrome": null,
+      "keepFiles": false,
+      "timeoutS": 120,
+      "corpusFile": null
+    },
+    "fixture": {
+      "size": 67108864,
+      "stableSha256": "fb085f7e68f5d7f8161474955e4623ce4e9496c21051d60af725ed8e3ef2061d"
+    },
+    "failures": [],
+    "summary": [
+      {
+        "client": "fetchpath-http",
+        "ok": 5,
+        "runs": 5,
+        "wallMs": {
+          "n": 5,
+          "median": 225.1,
+          "min": 167.8,
+          "max": 312.1,
+          "ci95": [
+            167.8,
+            312.1
+          ]
+        },
+        "timeToVerifiedMs": {
+          "n": 5,
+          "median": 332.2,
+          "min": 296.5,
+          "max": 412,
+          "ci95": [
+            296.5,
+            412
+          ]
+        }
+      },
+      {
+        "client": "fetchpath-cli",
+        "ok": 5,
+        "runs": 5,
+        "wallMs": {
+          "n": 5,
+          "median": 385.8,
+          "min": 355.6,
+          "max": 522.9,
+          "ci95": [
+            355.6,
+            522.9
+          ]
+        },
+        "timeToVerifiedMs": {
+          "n": 5,
+          "median": 502.7,
+          "min": 441.8,
+          "max": 652.6,
+          "ci95": [
+            441.8,
+            652.6
+          ]
+        }
+      }
+    ],
+    "runs": [
+      {
+        "rep": 0,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 355.6,
+        "verifyMs": 86.2,
+        "timeToVerifiedMs": 441.8
+      },
+      {
+        "rep": 0,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 312.1,
+        "verifyMs": 99.9,
+        "timeToVerifiedMs": 412
+      },
+      {
+        "rep": 1,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 370.4,
+        "verifyMs": 117.9,
+        "timeToVerifiedMs": 488.4
+      },
+      {
+        "rep": 1,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 167.8,
+        "verifyMs": 128.8,
+        "timeToVerifiedMs": 296.5
+      },
+      {
+        "rep": 2,
+        "client": "fetchpath-cli",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 385.8,
+        "verifyMs": 116.9,
+        "timeToVerifiedMs": 502.7
+      },
+      {
+        "rep": 2,
+        "client": "fetchpath-http",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 219.8,
+        "verifyMs": 112.3,
+        "timeToVerifiedMs": 332.2
+      },
+      {
+        "rep": 3,
+        "client": "fetchpath-http",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 225.1,
+        "verifyMs": 106,
+        "timeToVerifiedMs": 331.1
+      },
+      {
+        "rep": 3,
+        "client": "fetchpath-cli",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 522.9,
+        "verifyMs": 129.6,
+        "timeToVerifiedMs": 652.6
+      },
+      {
+        "rep": 4,
+        "client": "fetchpath-http",
+        "order": 0,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 245.5,
+        "verifyMs": 108.8,
+        "timeToVerifiedMs": 354.3
+      },
+      {
+        "rep": 4,
+        "client": "fetchpath-cli",
+        "order": 1,
+        "ok": true,
+        "exitCode": 0,
+        "outputBytes": 67108864,
+        "verified": true,
+        "wallMs": 454.1,
+        "verifyMs": 130.9,
+        "timeToVerifiedMs": 585
+      }
+    ]
+  },
+  "comparison": {
+    "metric": "engine median timeToVerifiedMs minus core median timeToVerifiedMs",
+    "baselineGapMs": 457.3,
+    "changedGapMs": 170.5,
+    "reductionFraction": 0.6271594139514542,
+    "baselinePairedMedianGapMs": 503.5,
+    "changedPairedMedianGapMs": 191.9,
+    "passed": true
+  },
+  "limitations": [
+    "Loopback, Windows/NTFS, one machine, five repetitions; not an Internet throughput claim.",
+    "Verification is the fixture byte check, not publisher authenticity.",
+    "Engine process CPU and memory are outside the harness process measurements."
+  ]
+}

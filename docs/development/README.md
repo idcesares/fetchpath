@@ -11,7 +11,7 @@ one your task names.
 ## Engine platform (current phase)
 
 - [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; its task map (§11) lists every platform task.
-- [Engine session](ENGINE-SESSION.md) — FP-048/049/051/070: the queue in `fetchpath-session`, its characterization, a newer build's queue kept, and open findings.
+- [Engine session](ENGINE-SESSION.md) — FP-048/049/051/070/088: the queue in `fetchpath-session`, its characterization, durable events, immediate scheduling, and a newer build's queue kept.
 - [Engine protocol](ENGINE-PROTOCOL.md) — FP-050/052: protocol v1, `EngineClient`, the pipe.
 - [Engine host](ENGINE-HOST.md) — FP-053: `fetchpath engine`, launch or attach, idle exit; FP-056/057: browser host and installer lifecycle; FP-058: the command line through the engine.
 - [Interactive terminal](TERMINAL.md) — FP-059 to FP-063 and FP-073: inline panel, prompt and `/` commands, dashboard, flows, personalization, remembered context, plain mode, and the review of its additions.

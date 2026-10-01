@@ -141,6 +141,15 @@ impl TorrentJob {
     }
 
     pub fn start(&self) -> Result<(), &'static str> {
+        self.start_with_completion(|| {})
+    }
+
+    /// Wakes the host after the terminal snapshot, outside job locks.
+    /// The callback must be quick and must not panic; join semantics are unchanged.
+    pub fn start_with_completion(
+        &self,
+        on_complete: impl FnOnce() + Send + 'static,
+    ) -> Result<(), &'static str> {
         self.request.validate()?;
         let mut inner = self.inner.lock().expect("torrent job poisoned");
         if inner.snapshot.state != JobState::Queued {
@@ -246,6 +255,8 @@ impl TorrentJob {
                 guard.snapshot.error =
                     Some(failed.unwrap_or_else(|| "torrent.helper_failed".into()));
             }
+            drop(guard);
+            on_complete();
         }));
         Ok(())
     }

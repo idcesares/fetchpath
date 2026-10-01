@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 /// Durable events a subscriber may fall behind by before it is closed and
 /// must resubscribe from its last position.
 pub(crate) const MAX_PENDING_EVENTS: usize = 1_024;
-/// How often the in-process client reconciles and samples progress.
+/// Timer fallback for reconciliation and the progress sampling interval.
 pub const TICK_INTERVAL: Duration = Duration::from_millis(250);
 
 fn error(code: &'static str, scope: ErrorScope, message: impl Into<String>) -> ProtocolError {
@@ -428,6 +428,9 @@ impl Engine {
         self.session
             .write_locked(&state, &mut durable)
             .map_err(persistence)?;
+        drop(durable);
+        drop(state);
+        self.wake();
         Ok(result)
     }
 
@@ -1320,11 +1323,27 @@ impl Engine {
         })
     }
 
-    /// Reconciles the queue (starting, finishing and retrying jobs), commits
-    /// the resulting events, and offers a progress sample for every running
-    /// job to every subscriber. Never waits on a subscriber.
-    pub fn tick(&self) {
+    /// Reconciles the queue and commits resulting events, serialized with
+    /// ledgered commands. Never waits on a subscriber.
+    pub fn reconcile(&self) {
+        let _serial = self.commands.lock().unwrap_or_else(|p| p.into_inner());
         let _ = self.session.list();
+    }
+
+    /// Waits for a command or transfer wakeup, with the timer as fallback.
+    /// Wakeups remain pending when no driver is waiting, and coalesce.
+    pub fn wait_for_work(&self, timeout: Duration) -> bool {
+        self.session.wake.wait(timeout)
+    }
+
+    /// Wakes a waiting driver, including when its host is stopping.
+    pub fn wake(&self) {
+        self.session.wake.notify();
+    }
+
+    /// Timer fallback: reconcile and offer a progress sample per running job.
+    pub fn tick(&self) {
+        self.reconcile();
         let state = self.session.inner.lock().expect("desktop jobs poisoned");
         let mut durable = self.session.durable.lock().expect("engine state poisoned");
         durable
@@ -1510,17 +1529,27 @@ pub struct InProcessClient {
 }
 
 impl InProcessClient {
-    /// A client whose engine reconciles and samples progress every
-    /// [`TICK_INTERVAL`].
+    /// A client whose engine reconciles on command/transfer wakeups and
+    /// samples progress every [`TICK_INTERVAL`], also its timer fallback.
     pub fn new(engine: Arc<Engine>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let ticker = {
             let engine = Arc::clone(&engine);
             let stop = Arc::clone(&stop);
             std::thread::spawn(move || {
+                let mut sampled = Instant::now();
+                engine.tick();
                 while !stop.load(Ordering::SeqCst) {
-                    engine.tick();
-                    std::thread::sleep(TICK_INTERVAL);
+                    engine.wait_for_work(TICK_INTERVAL.saturating_sub(sampled.elapsed()));
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    if sampled.elapsed() >= TICK_INTERVAL {
+                        engine.tick();
+                        sampled = Instant::now();
+                    } else {
+                        engine.reconcile();
+                    }
                 }
             })
         };
@@ -1556,6 +1585,7 @@ impl InProcessClient {
 impl Drop for InProcessClient {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.engine.wake();
         if let Some(ticker) = self.ticker.take() {
             let _ = ticker.join();
         }

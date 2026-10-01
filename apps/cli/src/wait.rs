@@ -2,11 +2,13 @@
 //! `download`, `add --wait` and `watch JOB`.
 
 use crate::client::{self, Engine};
+use fetchpath_protocol::client::Subscription;
 use fetchpath_protocol::command::Command;
+use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::JobState;
-use fetchpath_protocol::{EventStream, JobSnapshot, ProtocolError, StreamItem};
+use fetchpath_protocol::{EventStream, JobId, JobSnapshot, ProtocolError, StreamItem};
 use std::io::{IsTerminal, Write};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// What Ctrl+C does while waiting.
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -23,6 +25,30 @@ pub struct Waited {
     pub left: bool,
 }
 
+/// The wait only needs these operations; keep reconnect and stream refresh
+/// together so tests can prove quiet streams never cause a state query.
+trait WaitEngine: Sized {
+    fn send(&self, command: Command) -> Result<CommandResult, ProtocolError>;
+    fn job(&self, id: &JobId) -> Result<JobSnapshot, ProtocolError>;
+    fn subscribe(&self, command: Command) -> Result<Subscription, ProtocolError>;
+    fn connect() -> Result<Self, ProtocolError>;
+}
+
+impl WaitEngine for Engine {
+    fn send(&self, command: Command) -> Result<CommandResult, ProtocolError> {
+        self.send(command)
+    }
+    fn job(&self, id: &JobId) -> Result<JobSnapshot, ProtocolError> {
+        self.job(id)
+    }
+    fn subscribe(&self, command: Command) -> Result<Subscription, ProtocolError> {
+        self.subscribe(command)
+    }
+    fn connect() -> Result<Self, ProtocolError> {
+        Self::connect()
+    }
+}
+
 /// Follows `job` until it is settled. With `live`, progress is drawn on
 /// standard error while it is a terminal, and automatic retries are noted
 /// there either way, so a script's log says why it is still waiting. If the engine goes
@@ -30,15 +56,23 @@ pub struct Waited {
 /// checkpointed.
 pub fn follow(
     engine: &mut Engine,
+    job: JobSnapshot,
+    live: bool,
+    on_interrupt: OnInterrupt,
+) -> Result<Waited, ProtocolError> {
+    follow_with(engine, job, live, on_interrupt)
+}
+
+fn follow_with<E: WaitEngine>(
+    engine: &mut E,
     mut job: JobSnapshot,
     live: bool,
     on_interrupt: OnInterrupt,
 ) -> Result<Waited, ProtocolError> {
     let mut line = Line::new(live && std::io::stderr().is_terminal());
     let notes = live;
-    let mut events = subscribe(engine, &job)?;
+    let mut events = subscribe(engine, &mut job)?;
     let mut cancel_sent = false;
-    let mut checked = Instant::now();
     let mut noted_retry = None;
     loop {
         if client::interrupted() {
@@ -66,16 +100,18 @@ pub fn follow(
                 if job.state == JobState::Running {
                     line.show(&client::progress_line(&sample.public_payload));
                 }
-                checked.elapsed() >= Duration::from_secs(1)
+                false
             }
             Ok(Some(StreamItem::Event(_))) => true,
-            Ok(None) => checked.elapsed() >= Duration::from_secs(1),
+            // Timeouts only let us observe Ctrl+C. Durable events drive
+            // state refreshes; progress and quiet streams need no polling.
+            Ok(None) => false,
             Err(_) => {
                 // The engine stopped or restarted: reach the next one and
                 // follow the job from what it has saved.
-                *engine = Engine::connect()?;
+                *engine = E::connect()?;
                 job = engine.job(&job.job_id)?;
-                events = subscribe(engine, &job)?;
+                events = subscribe(engine, &mut job)?;
                 true
             }
         };
@@ -85,14 +121,13 @@ pub fn follow(
                 // Stopping or gone between two events: the same as a broken
                 // stream, so the wait carries on with the next engine.
                 Err(error) if engine_went_away(&error) => {
-                    *engine = Engine::connect()?;
-                    let current = engine.job(&job.job_id)?;
-                    events = subscribe(engine, &current)?;
+                    *engine = E::connect()?;
+                    let mut current = engine.job(&job.job_id)?;
+                    events = subscribe(engine, &mut current)?;
                     current
                 }
                 Err(error) => return Err(error),
             };
-            checked = Instant::now();
             match job.state {
                 JobState::Running => line.show(&client::progress_line(&job.progress)),
                 _ => line.show(&waiting_text(&job)),
@@ -122,13 +157,24 @@ fn engine_went_away(error: &ProtocolError) -> bool {
     )
 }
 
-fn subscribe(engine: &Engine, job: &JobSnapshot) -> Result<Box<dyn EventStream>, ProtocolError> {
-    Ok(engine
-        .subscribe(Command::SubscribeJob {
-            job_id: job.job_id.clone(),
-            after_seq: job.last_seq,
-        })?
-        .events)
+fn subscribe(
+    engine: &impl WaitEngine,
+    job: &mut JobSnapshot,
+) -> Result<Box<dyn EventStream>, ProtocolError> {
+    let subscription = engine.subscribe(Command::SubscribeJob {
+        job_id: job.job_id.clone(),
+        after_seq: job.last_seq,
+    })?;
+    // A compacted stream starts after its snapshot. Apply that boundary
+    // before waiting, including a completion that will not be replayed.
+    if let CommandResult::SnapshotBoundary { jobs, .. } = subscription.start
+        && let Some(current) = jobs
+            .into_iter()
+            .find(|current| current.job_id == job.job_id)
+    {
+        *job = current;
+    }
+    Ok(subscription.events)
 }
 
 fn waiting_text(job: &JobSnapshot) -> String {
@@ -181,5 +227,135 @@ impl Line {
             let _ = std::io::stderr().flush();
             self.width = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fetchpath_protocol::message::{EventPayload, JobEvent, StreamPosition};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn running() -> JobSnapshot {
+        let line = include_str!("../tests/fixtures/queue-stream.jsonl")
+            .lines()
+            .nth(1)
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(line).unwrap();
+        serde_json::from_value(value["public_payload"]["job"].clone()).unwrap()
+    }
+
+    struct Fake {
+        job: JobSnapshot,
+        boundary: bool,
+        delivered: Arc<AtomicBool>,
+        queries: Arc<AtomicUsize>,
+    }
+
+    impl WaitEngine for Fake {
+        fn send(&self, _: Command) -> Result<CommandResult, ProtocolError> {
+            panic!("unexpected command")
+        }
+        fn connect() -> Result<Self, ProtocolError> {
+            panic!("unexpected reconnect")
+        }
+        fn job(&self, _: &JobId) -> Result<JobSnapshot, ProtocolError> {
+            assert!(
+                self.delivered.load(Ordering::SeqCst),
+                "quiet streams must never poll the job"
+            );
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            Ok(self.job.clone())
+        }
+        fn subscribe(&self, _: Command) -> Result<Subscription, ProtocolError> {
+            let position = StreamPosition::Job {
+                job_id: self.job.job_id.clone(),
+                after_seq: self.job.last_seq,
+            };
+            Ok(Subscription {
+                start: if self.boundary {
+                    CommandResult::SnapshotBoundary {
+                        jobs: vec![self.job.clone()],
+                        position,
+                    }
+                } else {
+                    CommandResult::Subscribed { position }
+                },
+                events: Box::new(FakeStream {
+                    job: self.job.clone(),
+                    boundary: self.boundary,
+                    quiet: true,
+                    delivered: Arc::clone(&self.delivered),
+                }),
+            })
+        }
+    }
+
+    struct FakeStream {
+        job: JobSnapshot,
+        boundary: bool,
+        quiet: bool,
+        delivered: Arc<AtomicBool>,
+    }
+
+    impl EventStream for FakeStream {
+        fn next_item(&mut self, _: Duration) -> Result<Option<StreamItem>, ProtocolError> {
+            assert!(
+                !self.boundary,
+                "a completed snapshot boundary needs no stream read"
+            );
+            if std::mem::take(&mut self.quiet) {
+                // Exceed the old one-second poll deadline deterministically.
+                std::thread::sleep(Duration::from_millis(1_050));
+                return Ok(None);
+            }
+            assert!(!self.delivered.swap(true, Ordering::SeqCst));
+            Ok(Some(StreamItem::Event(JobEvent {
+                schema_version: fetchpath_protocol::SCHEMA_VERSION,
+                job_id: self.job.job_id.clone(),
+                seq: 2,
+                cursor: 2,
+                job_revision: 2,
+                occurred_at: fetchpath_protocol::Timestamp::now(),
+                payload: EventPayload::PublicationCompleted {
+                    destination: self.job.destination.clone(),
+                    observed_sha256: None,
+                },
+                correlation: Default::default(),
+            })))
+        }
+    }
+
+    #[test]
+    fn completion_refreshes_from_an_event_without_idle_polling() {
+        let initial = running();
+        let mut completed = initial.clone();
+        completed.state = JobState::Completed;
+        let mut engine = Fake {
+            job: completed.clone(),
+            boundary: false,
+            delivered: Arc::default(),
+            queries: Arc::default(),
+        };
+        let waited = follow_with(&mut engine, initial, false, OnInterrupt::Leave).unwrap();
+        assert_eq!(waited.job, completed);
+        assert_eq!(engine.queries.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_completed_subscription_boundary_settles_without_a_poll_or_event() {
+        let initial = running();
+        let mut completed = initial.clone();
+        completed.state = JobState::Completed;
+        let mut engine = Fake {
+            job: completed.clone(),
+            boundary: true,
+            delivered: Arc::default(),
+            queries: Arc::default(),
+        };
+        let waited = follow_with(&mut engine, initial, false, OnInterrupt::Leave).unwrap();
+        assert_eq!(waited.job, completed);
+        assert_eq!(engine.queries.load(Ordering::SeqCst), 0);
     }
 }
