@@ -2664,17 +2664,37 @@
       "id": "FP-087",
       "title": "Publish measured speed results against current tools",
       "milestone": "M14",
-      "dependsOn": ["FP-085", "FP-086"],
-      "status": "todo",
-      "owner": null,
+      "dependsOn": [
+        "FP-085",
+        "FP-086"
+      ],
+      "status": "done",
+      "owner": "lead",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence", "docs/user/GUIDE.md", "README.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A09"],
+      "files": [
+        "crates/fetchpath-http",
+        "crates/fetchpath-core/src/transfer.rs",
+        "tools/bench",
+        "tests/bench",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/ARCHIVE.md",
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence",
+        "docs/user/GUIDE.md",
+        "README.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
       "acceptance": "Per-profile results against curl, aria2, wget2 and a browser (IDM only if a licensed copy is available) state where Fetchpath is faster, equal or slower, with uncertainty, settings and versions. Any public claim uses only profiles that pass the gate, reports connections used alongside speed, and includes the time to a verified file.",
       "verification": "Re-run of FP-084 on the final build with raw observations committed; independent strong review of every claim against its evidence.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence/http-adaptive/fp087-comparison.json"
+      ],
       "blockedReason": null
     },
     {

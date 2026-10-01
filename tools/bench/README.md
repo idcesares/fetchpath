@@ -10,9 +10,9 @@ node tools/bench/benchmark.mjs --output-dir work/bench-net --corpus internet --r
 node --test tests/bench/fixture-server.test.mjs
 ```
 
-Options: `--profile` (comma list of `name[?param=value&...]`, default `unshaped` plus every shaped profile), `--size` (bytes, or with k/m/g suffix, up to 1 GiB), `--repetitions` (1 to 50), `--seed`, `--clients` (`fetchpath-http`, `fetchpath-http-rounds`, `fetchpath-cli`, `fetchpath-cli-rounds`, `curl`, `aria2`, `aria2-x16`, `wget2`; default `fetchpath-http,curl`), `--timeout-s`, `--keep-files`, `--corpus fixture|internet`, `--corpus-file`.
+Options: `--profile` (comma list of `name[?param=value&...]`, default `unshaped` plus every shaped profile), `--size` (bytes, or with k/m/g suffix, up to 1 GiB), `--repetitions` (1 to 50), `--seed`, `--clients` (`fetchpath-http`, `fetchpath-cli`, `curl`, `aria2`, `aria2-x16`, `wget2`, `chrome`; default `fetchpath-http,curl`), `--timeout-s`, `--keep-files`, `--corpus fixture|internet`, `--corpus-file`.
 
-Point it at any build with `--http-bench PATH` (or `FETCHPATH_HTTP_BENCH`), `--cli PATH` (`FETCHPATH_CLI`), `--aria2c PATH` (`ARIA2C`), `--wget2 PATH` (`WGET2`). Defaults are `target/release/fetchpath-http-bench`, `target/release/fetchpath`, and `aria2c` or `wget2` on PATH. A client whose tool is missing is skipped and the reason is recorded in the artifact and printed; it never fails the run. The `-rounds` clients run the same binaries with `FETCHPATH_HTTP_SCHEDULER=rounds`, the FP-015 round scheduler that FP-085 kept behind a switch for comparison; the CLI variants start their own engine in `<output-dir>/<client>-data` and stop it at the end. `FETCHPATH_BENCH_BUFFER_KIB` and `FETCHPATH_BENCH_MAX_LANES` (read by `fetchpath-http-bench` only) override the receive buffer and the lane cap, and `FETCHPATH_HTTP_TRACE=1` prints the scheduler's events to standard error. The artifact and the console name repository paths relative to the repository and any other tool by file name, so raw output can be committed. `fetchpath-cli` runs `fetchpath download LINK DEST --json` against an engine started with `FETCHPATH_APP_DATA_DIR` set to `<output-dir>/cli-data`, after one unmeasured warm-up download that starts the engine. aria2 runs are `aria2c` with defaults, and with `-x16 -s16 -k1M`. curl is one plain HTTP/1.1 connection that follows redirects.
+Point it at any build with `--http-bench PATH` (or `FETCHPATH_HTTP_BENCH`), `--cli PATH` (`FETCHPATH_CLI`), `--aria2c PATH` (`ARIA2C`), `--wget2 PATH` (`WGET2`), `--chrome PATH` (`CHROME`). Defaults are `target/release/fetchpath-http-bench`, `target/release/fetchpath`, and `aria2c` or `wget2` on PATH. A client whose tool is missing is skipped and the reason is recorded in the artifact and printed; it never fails the run. `FETCHPATH_BENCH_BUFFER_KIB` and `FETCHPATH_BENCH_MAX_LANES` (read by `fetchpath-http-bench` only) override the receive buffer and the lane cap, and `FETCHPATH_HTTP_TRACE=1` prints the scheduler's events to standard error. The artifact and the console name repository paths relative to the repository and any other tool by file name, so raw output can be committed. `fetchpath-cli` runs `fetchpath download LINK DEST --json` against an engine started with both `FETCHPATH_APP_DATA_DIR` and `FETCHPATH_DATA_DIR` set to `<output-dir>/cli-data`, after one unmeasured warm-up download that starts the engine. aria2 runs are `aria2c` with defaults, and with `-x16 -s16 -k1M`. curl is one plain HTTP/1.1 connection that follows redirects. wget2 ignores user configuration and proxies and writes HSTS/OCSP state only inside the output directory.
 
 ## Fixture profiles
 
@@ -67,3 +67,18 @@ fixture and runs five alternating one-lane/adaptive pairs on the per-connection
 limit, checking every full-file hash. The one-lane baseline isolates the
 benefit of parallel scheduling on resume; it is not a historical core build.
 The binary also accepts `--resume OFFSET ETAG TOTAL PREFIX URL OUTPUT`.
+
+## Browser comparison
+
+`--clients chrome` uses the installed Chrome native download manager through
+a dedicated headless instance, with a fresh scratch profile/cache and disabled
+extensions for each run. Wall time includes cold startup, native download and
+shutdown, followed by the same independent SHA-256 verification. The raw
+artifact also records startup and native-download times separately. This is
+a cold-browser baseline against a warmed Fetchpath engine, not a claim about
+an already open browser. Browser process-tree CPU and memory are unmeasured.
+Use `--chrome PATH` if automatic detection cannot find Chrome. No personal
+browser profile is read or changed.
+
+FP-087 removes the legacy rounds clients and `FETCHPATH_HTTP_SCHEDULER`.
+Historical paired records remain reproducible from their named commits.

@@ -38,3 +38,13 @@ invariant, and the suites stay fast (326 Rust tests pass with 8 ignored,
 text in the backlog was left as it is, because `tasks.mjs show` reads one
 task at a time. The rules that stop this piling up again are in `AGENTS.md`
 ("Keep the tree small") and [the workflow](WORKFLOW.md).
+
+## FP-087 retirement
+
+`crates/fetchpath-http/src/rounds.rs` and its benchmark-only environment
+selector were removed on 30 September 2026. The stream scheduler has passed
+its integration gate; the old implementation and its paired evidence remain
+in history at `f6053ef`. Round-only Rust API symbols are retired too:
+`Scheduler::Rounds`, `Scheduler::from_env`, `TransferLimits::segment_bytes`,
+`ContentRange` and `TransferError::RestartSequential`. No persisted or wire
+format changes.

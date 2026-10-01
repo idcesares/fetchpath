@@ -82,6 +82,8 @@ and 0.1.0 can't be installed; see the [user guide](docs/user/GUIDE.md#install).
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 
+[Development speed measurements](docs/development/ADAPTIVE-HTTP.md#tool-comparisons-fp-087-30-september-2026) compare the full engine with curl, aria2, wget2 and Chrome, including settings, connection counts and verification time. They are local fixture results; the published installer and Internet performance are not promised by them.
+
 See the [changelog](CHANGELOG.md) for what's in this version.
 
 ## Licence

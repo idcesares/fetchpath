@@ -1,4 +1,4 @@
-# Adaptive HTTP transfers (FP-015, FP-084, FP-085, FP-086)
+# Adaptive HTTP transfers (FP-015, FP-084, FP-085, FP-086, FP-087)
 
 Updated 30 September 2026
 
@@ -14,7 +14,7 @@ Acceptance: A02, A03, A04, A05, A06, A09
 - **Controller.** Two lanes to start, then double when two consecutive valid windows (1 s or 4 times the median time to first byte, only with every lane delivering and no lane idle for lack of work) each gain 15%; otherwise go back and never probe again. Halve on 429 or 503, on two windows of backpressure, or on a sustained 30% drop. The default cap stays at 4 lanes. Lanes take permits from `GlobalBudget` without waiting; each download can always get its first lane, and extra lanes are shared among downloads that are still growing.
 - **Stalls and retries.** A lane with no bytes for 3 s (or under 10% of the median lane rate over 3 s while it holds the prefix) is dropped. Its unreceived bytes go back to the front of the frontier and are fetched on a fresh connection. A range that fails 3 times without substantial transport progress (64 KiB) ends the attempt; crawl and prefix-starvation replacements count only when they delivered no bytes. Before a range receives its first byte, the stall allowance also accounts for measured response latency. `Retry-After` is honored in a cancellable wait, including values above 60 s; clients do not yet show a separate waiting reason. Later lanes must return the same strong ETag, start and total; another one is an identity change. A 200 with the same ETag counts as a node that ignores ranges (after two, lanes drop to one).
 - **Core.** Writes are positional; the prefix digest is extended by read-back; checkpoints every second and 64 KiB on a commit thread with an independently opened flush handle; a resume uses the scheduler, and a fully retained file goes straight to verification and publication. At most two transfer attempts are made. See [checkpoint recovery](CHECKPOINT-RECOVERY.md).
-- **Round scheduler kept behind a switch.** `FETCHPATH_HTTP_SCHEDULER=rounds` selects the FP-015 scheduler for a fresh download, only so the benchmark can compare. FP-087 deletes it.
+- **One production scheduler.** FP-087 removes the FP-015 round scheduler and its benchmark-only switch after the comparative gate. Historical paired evidence remains tied to its recorded commits; stream, plain identity restart and resume remain.
 - The static libcurl build includes nghttp2. HTTPS prefers h2; controlled cleartext h2 uses prior knowledge. HTTP/3 is unavailable in the packaged build, so the policy records `http3_unavailable`.
 - One receive buffer per lane, 16 KiB; `max_buffered_bytes` now budgets these buffers.
 
@@ -212,8 +212,8 @@ return to the original origin; Location cannot introduce new URL credentials.
 Same-origin redirects preserve the cookie engine. Redirect trailers cannot
 replace the accepted Location or expiry. Pins remain in memory for this
 transfer, and their URLs are absent from routine traces. This change covers
-the production scheduler; link inspection and the legacy benchmark scheduler
-retain their existing redirect behavior.
+the production scheduler; link inspection retains its existing redirect
+behavior. FP-087 removes the legacy benchmark scheduler.
 
 Validation: HTTP/core/storage tests pass (180 tests; four real-fixture tests
 remain ignored), strict HTTP clippy and workspace formatting pass. The H2
@@ -258,6 +258,119 @@ Astra/low boundary review found one H2 throughput
 regression; the bounded Sol/medium repair recheck accepted the socket trial
 and rollback with no blockers. It reused the credential and representation
 review. No changes to public APIs or persisted formats are required.
+
+## Tool comparisons (FP-087, 30 September 2026)
+
+The full Fetchpath engine is faster than single-connection curl, default
+aria2 and wget2 on the per-connection-limit and delay fixtures. It is slower
+on unshaped, redirect, weak/no-ETag and stall workloads. With a shared client
+limit it has no gain: observed engine medians are 8–11% higher than those
+single-connection tools. aria2 at 16 connections is faster on connection
+limits and delay. No general browser or Internet speed advantage is claimed.
+
+This is a **development build**, starting at `f6053ef` with this task's
+round-scheduler retirement, not a measurement of the published 0.1.0
+installer. Fresh release CLI and transfer-layer binaries use the same source.
+Windows 11, NTFS, SSD, HTTP/1.1 loopback, 64 MiB, five repetitions per
+profile/client, seeded randomized order (15015). All **280/280** outputs
+match the fixture's SHA-256. Each time includes the independent hash pass;
+Fetchpath's column is the full engine/CLI, including its own checkpoint,
+digest and publication work. The transfer-only diagnostic remains in the raw
+artifact and is not substituted for the product column.
+
+Median **seconds to verified file / total TCP connections carrying requests**
+(not peak concurrent lanes). Connections include redirect hops and retries.
+
+| profile | Fetchpath engine | curl | aria2 default | aria2 ×16 | wget2 | Chrome cold† |
+|---|---|---|---|---|---|---|
+| unshaped | 0.69 / 3 | 0.34 / 1 | 0.43 / 1 | 0.37 / 16 | 0.39 / 1 | 1.41 / 1 |
+| per-connection-limit | 3.24 / 5 | 8.20 / 1 | 8.27 / 1 | 0.79 / 16 | 8.30 / 1 | 8.94 / 1 |
+| per-client-limit | 4.64 / 5 | 4.19 / 1 | 4.24 / 1 | 4.30 / 16 | 4.29 / 1 | 4.95 / 1 |
+| delay | 1.70 / 3 | 2.26 / 1 | 2.37 / 1 | 0.52 / 17 | 2.33 / 1 | 2.93 / 1 |
+| stall | 6.77 / 6 | 0.26 / 1 | 0.43 / 1 | 3.38 / 17 | 0.36 / 1 | 1.72 / 1 |
+| redirect | 0.82 / 4 | 0.25 / 2 | 0.43 / 2 | 0.37 / 33 | 0.39 / 2 | 1.32 / 2 |
+| weak-etag | 0.77 / 1 | 0.27 / 1 | 0.44 / 1 | 0.34 / 16 | 0.37 / 1 | 1.67 / 1 |
+| no-etag | 0.73 / 1 | 0.28 / 1 | 0.43 / 1 | 0.37 / 16 | 0.39 / 1 | 1.71 / 1 |
+
+Uncertainty is the seeded 2,000-resample bootstrap 95% interval in the
+[raw comparison](evidence/http-adaptive/fp087-comparison.json); five runs do
+not capture every source of variation. The comparative-claim gate requires
+all five files verified, at least a 10% median advantage, and disjoint
+intervals for a positive speed statement. Overlapping intervals are
+inconclusive; similar observed medians do not prove equivalence. The
+connection-limit engine/curl pair is 3.24 s [3.08–3.25] versus 8.20 s
+[8.15–8.24], using 5 versus 1 total connections. Delay is 1.70 s [1.57–1.77]
+versus 2.26 s [2.23–2.28], using 3 versus 1 connections. These two scoped
+comparisons pass that gate. Shared-client limiting shows no acceleration.
+
+† Chrome's native download manager runs in an isolated headless instance
+with a fresh profile/cache and disabled extensions/proxy. The table includes
+**cold startup and shutdown**, whereas the Fetchpath engine is warmed by an
+unmeasured download. Those columns do not establish an advantage over an
+already running browser. The following diagnostic is the median of each
+Chrome run's `nativeDownloadMs + verifyMs`, excluding startup/shutdown;
+brackets are **observed min–max**, not a confidence interval or a separately
+measured warm-browser test. The raw record retains both components.
+
+| profile | Chrome native download phase + hash, seconds [range] |
+|---|---|
+| unshaped | 0.62 [0.57–0.69] |
+| per-connection-limit | 8.27 [8.21–8.35] |
+| per-client-limit | 4.25 [4.22–4.32] |
+| delay | 2.32 [2.27–2.32] |
+| stall | 0.60 [0.52–0.66] |
+| redirect | 0.62 [0.51–0.69] |
+| weak-etag | 0.63 [0.60–0.64] |
+| no-etag | 0.62 [0.56–0.69] |
+
+The stall fixture pauses every fourth sufficiently large range; curl,
+default aria2, wget2 and Chrome use a single non-range request and encounter
+no pause. These rows are different request workloads, not proof of weaker
+recovery against an equally stalled single stream. Fetchpath can hit a
+second pause; its engine interval spans 3.74–6.79 s. aria2 ×16 requests more
+ranges and has a different pause sequence. Claims about faster stall
+recovery are withheld. The engine minus transfer-layer median ranges from
+0.34 to 0.50 s across this corpus; FP-088 addresses the remaining scheduling
+and completion-notification delay.
+
+Versions/settings: Fetchpath reports 0.1.0, with binary sizes/mtime and source
+baseline in the raw record; default 2–4 lanes and 16 KiB receive buffers.
+curl 8.21.0 uses one HTTP/1.1 connection, follows redirects and ignores user
+configuration/proxies. aria2 1.37.0 uses defaults or explicit
+`-x16 -s16 -k1M`, without user configuration/proxies. wget2 2.2.1 uses
+`--no-config --no-proxy` with its HSTS/OCSP files in scratch; this is the
+[upstream Windows asset](https://github.com/rockdaboot/wget2/releases/tag/v2.2.1),
+matched to the release asset's SHA-256
+`c65f66842888b878d1fad48294d1372553985b86613f279cf4ed9612c4f80428`.
+The newer 2.3.0 source release has no Windows executable asset in that
+upstream release; no 2.3.0 Windows result is implied. Chrome is
+154.0.8037.93. No licensed IDM copy was available to this harness, so no IDM
+row exists. CLI engines use both scratch data-directory overrides; personal
+cache, peer policy and browser profiles are not read. CPU/memory do not cover
+the CLI engine process tree; Chrome CPU/memory is unmeasured. No resource
+efficiency claim is made.
+
+Reproduce after the release build with:
+
+`node tools/bench/benchmark.mjs --output-dir work/bench-comparison --size 64m --repetitions 5 --clients fetchpath-http,fetchpath-cli,curl,aria2,aria2-x16,wget2,chrome --wget2 PATH --chrome PATH --timeout-s 120`
+
+This reruns every FP-084 fixture profile on the final build. The Internet
+Hugging Face evidence above remains a **prior transfer-layer observation**
+(192.71 s versus 37.80 s), not a new full-engine or cross-tool Internet run.
+Its prefix-starvation churn and unmet target remain disclosed. Application
+shaping on one localhost machine does not establish Internet performance,
+RTT/loss behavior or results on slower storage. The old rounds-only code and
+public Rust symbols are removed, with their last containing commit in
+[the archive](ARCHIVE.md); stream, plain identity restart and resume tests
+remain passing. No wire or persisted-format changes.
+
+Validation: 97 HTTP tests and 76 core tests passed; three HTTP protocol
+checks and one core external-mirror check remain ignored. Strict HTTP clippy,
+workspace formatting, 12 fixture tests and 12 repository/task tests passed.
+Independent GPT-6 Astra/low review recomputed all 56 time/connection groups,
+all Chrome diagnostic ranges and the six positive comparison gates from
+raw runs; no blockers. Static review also accepted scratch isolation and
+round-scheduler retirement.
 
 ## Limits carried forward
 
