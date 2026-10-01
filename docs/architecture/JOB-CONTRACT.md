@@ -15,7 +15,7 @@ This contract is the stable boundary between Fetchpath clients (desktop, CLI, br
 7. Queued network, verification, and write bytes are bounded. Backpressure is observable and propagates to adapters.
 8. Publication never silently replaces an existing destination. Completion is emitted only after required validation and the selected publication durability barrier.
 9. Secrets, cookies, authorization headers, signed URL query strings, and private filesystem paths are excluded from routine events and telemetry.
-10. Sharing, peer discovery, and upload are explicit policies. A speed profile cannot enable them implicitly.
+10. Sharing, peer discovery, and upload are policies. FP-090 supersedes the earlier rule that a person must opt in to discovery: a torrent a person submits (CLI, terminal, desktop) discovers peers by default, with a visible note that peers see the IP address, and the effective choice is stored with the job. Since a torrent cannot find peers without discovery, turning it off is refused at creation with `policy.discovery_off`. Agents, browser captures and speed profiles never enable discovery implicitly (an agent that asks needs approval). Sharing and upload stay explicit opt-ins for everyone, and a speed profile cannot enable them.
 
 These invariants protect acceptance criteria A02, A03, and A04. They also constrain later browser, media, and multi-source work.
 

@@ -374,7 +374,7 @@ fn an_agent_cannot_use_a_local_torrent_file_as_a_read_path() {
                     conflict: ConflictPolicy::Ask,
                 },
                 not_before: None,
-                discover_peers: true,
+                discover_peers: Some(true),
                 upload: false,
             },
         },
@@ -1727,7 +1727,7 @@ fn later_torrent(destination: &str) -> Command {
             not_before: Some(Timestamp::from_unix_ms(
                 Timestamp::now().unix_ms() + 3_600_000,
             )),
-            discover_peers: true,
+            discover_peers: Some(true),
             upload: false,
         },
     }
@@ -1819,4 +1819,64 @@ fn an_agents_automatic_torrent_destination_is_checked_against_its_grants() {
     set_default_folder(&s.user, Some(&s.granted));
     let inside = job(send(&s.agent, later_torrent("")).unwrap());
     assert!(!reasons(&inside).contains(&ApprovalReason::OutsideGrantedFolders));
+}
+
+fn torrent_now(destination: &Path, discover_peers: Option<bool>) -> Command {
+    let mut command = later_torrent(&destination.display().to_string());
+    if let Command::CreateJob {
+        request:
+            JobRequest::Torrent {
+                not_before,
+                discover_peers: discover,
+                ..
+            },
+    } = &mut command
+    {
+        *not_before = None;
+        *discover = discover_peers;
+    }
+    command
+}
+
+#[test]
+fn a_persons_torrent_discovers_peers_unless_they_turn_it_off() {
+    let s = setup(granting);
+    for (name, choice) in [("a", None), ("b", Some(true))] {
+        let added = send(&s.user, torrent_now(&s.outside.join(name), choice));
+        assert!(added.is_ok(), "{choice:?}: {added:?}");
+    }
+    let refused = send(&s.user, torrent_now(&s.outside.join("c"), Some(false))).unwrap_err();
+    assert_eq!(refused.code.as_str(), "policy.discovery_off");
+    assert!(refused.message.contains("Turn discovery on"));
+    assert!(
+        list(&s.user, JobFilter::All)
+            .iter()
+            .all(|job| { !job.destination.as_deref().unwrap_or("").ends_with('c') })
+    );
+}
+
+#[test]
+fn an_agent_never_gets_peer_discovery_implicitly_and_asking_needs_approval() {
+    let s = setup(granting);
+    for choice in [None, Some(false)] {
+        let refused = send(&s.agent, torrent_now(&s.granted.join("a"), choice)).unwrap_err();
+        assert_eq!(refused.code.as_str(), "policy.discovery_off");
+        assert!(refused.message.contains("discover_peers"));
+    }
+    let asked = job(send(&s.agent, torrent_now(&s.granted.join("b"), Some(true))).unwrap());
+    assert_eq!(asked.state, JobState::AwaitingApproval);
+    assert!(reasons(&asked).contains(&ApprovalReason::PeerDiscovery));
+    assert!(!reasons(&asked).contains(&ApprovalReason::PeerUpload));
+}
+
+#[test]
+fn a_browser_capture_cannot_start_a_torrent() {
+    let s = setup(granting);
+    let browser = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(Principal::Browser);
+    for discover in [None, Some(true)] {
+        assert_eq!(
+            code(send(&browser, torrent_now(&s.outside.join("t"), discover))),
+            "contract.unsupported"
+        );
+    }
 }

@@ -6,8 +6,8 @@ installing so it's found.
 ```powershell
 fetchpath [--plain]                      # the interactive terminal
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
-fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--discover-peers] [--upload] [--wait]
-fetchpath torrent MAGNET|HTTPS_LINK|TORRENT_FILE [--to NEW_FOLDER] --discover-peers [--upload] [--wait] [--json]
+fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--upload] [--wait]
+fetchpath torrent MAGNET|HTTPS_LINK|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait] [--json]
 fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
 fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history | folder
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
@@ -63,16 +63,15 @@ Links must start with `http://` or `https://`.
 
 The published 0.1.0 installer does not contain this command. In a build with
 `fetchpath-torrent-helper.exe` beside `fetchpath.exe`, add one magnet, HTTPS
-`.torrent` link, or local `.torrent` file with `fetchpath torrent SOURCE
---discover-peers`. `--to` is optional: without it the torrent goes into a
+`.torrent` link, or local `.torrent` file with `fetchpath torrent SOURCE`.
+`--to` is optional: without it the torrent goes into a
 folder named after it inside your default download folder (or the matching
 rule's folder), and a number is added if that name is taken. With `--to
 D:\Downloads\NewFolder` the folder is exactly that. `fetchpath add SOURCE --to
-D:\Downloads\NewFolder --discover-peers` and the terminal's `/add` detect
-these torrent sources too. Fetchpath never replaces or merges into an existing folder. Peer discovery is required and must be requested explicitly.
-Uploading is off unless you also pass `--upload`. The job appears in the shared
+D:\Downloads\NewFolder` and the terminal's `/add` detect
+these torrent sources too. Fetchpath never replaces or merges into an existing folder. Peer discovery is on, so peers can see your IP address (`--discover-peers` is accepted and changes nothing). Uploading is off unless you pass `--upload`. Cancelling stops all peer activity; torrents cannot be paused. The job appears in the shared
 queue and can be cancelled or retried there. An agent's request waits for your
-approval before contacting peers. The transfer has a 32-peer limit and bounded
+approval before contacting peers, and never discovers peers unless it asks. The transfer has a 32-peer limit and bounded
 download and upload rates. For a local `.torrent`, Fetchpath saves a private
 copy of its metadata so the job can survive moving or deleting the original.
 

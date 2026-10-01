@@ -71,7 +71,7 @@ impl Request {
             return Err("job.invalid");
         }
         if !self.discover_peers {
-            return Err("policy.discovery_required");
+            return Err("policy.discovery_off");
         }
         Ok(())
     }

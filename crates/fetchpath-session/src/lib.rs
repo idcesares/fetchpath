@@ -1150,7 +1150,9 @@ impl Session {
         let source = validated_torrent_source(&draft.source)?;
         let destination = validated_torrent_destination(&draft.destination, draft.auto)?;
         if !draft.policy.discover_peers {
-            return Err("Enable peer discovery explicitly for this torrent.".into());
+            return Err(
+                "policy.discovery_off: a torrent cannot find peers without discovery.".into(),
+            );
         }
         let mut record = QueueRecord::new_torrent(
             source,
@@ -1179,7 +1181,9 @@ impl Session {
         origin: &Origin,
     ) -> Result<JobSnapshot, String> {
         if !policy.discover_peers {
-            return Err("Enable peer discovery explicitly for this torrent.".into());
+            return Err(
+                "policy.discovery_off: a torrent cannot find peers without discovery.".into(),
+            );
         }
         if !source.is_absolute() {
             return Err("Choose a .torrent file by its full path.".into());
@@ -4438,6 +4442,98 @@ mod tests {
         .unwrap();
         let tampered = Session::load(queue, 1).unwrap();
         assert_eq!(tampered.snapshot(&id).unwrap().state, "failed");
+    }
+
+    #[test]
+    fn a_default_and_an_approval_hold_survive_a_restart_through_the_engine() {
+        use crate::engine::{Engine, InProcessClient};
+        use fetchpath_protocol::command::{
+            Command, ConflictPolicy, DestinationIntent, JobInput, JobRequest,
+        };
+        use fetchpath_protocol::principal::{AgentName, AgentPolicy};
+        use fetchpath_protocol::{ClientId, EngineClient, Timestamp};
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("queue-v1.json");
+        let granted = dir.path().join("granted");
+        fs::create_dir_all(&granted).unwrap();
+        let original = dir.path().join("debian.torrent");
+        fs::write(&original, b"d4:infod4:name6:debian6:lengthi0eee").unwrap();
+        let torrent = |name: &str, discover_peers, input| Command::CreateJob {
+            request: JobRequest::Torrent {
+                input,
+                destination: DestinationIntent {
+                    path: granted.join(name).display().to_string(),
+                    conflict: ConflictPolicy::Ask,
+                },
+                not_before: Some(Timestamp::from_unix_ms(now_ms() as i64 + 3_600_000)),
+                discover_peers,
+                upload: false,
+            },
+        };
+        let name = AgentName::try_from("helper").unwrap();
+        let (person, agent) = {
+            let engine = Engine::new(Arc::new(Session::load(queue.clone(), 1).unwrap()));
+            let user = InProcessClient::manual(Arc::clone(&engine));
+            let helper = InProcessClient::manual(Arc::clone(&engine))
+                .with_principal(Principal::Agent(name.clone()));
+            user.send(
+                &ClientId::random(),
+                Command::SetAgentPolicy {
+                    agent: name,
+                    policy: Some(AgentPolicy {
+                        folders: vec![granted.display().to_string()],
+                        ..AgentPolicy::default()
+                    }),
+                },
+            )
+            .unwrap();
+            let id = |client: &InProcessClient, command| match client
+                .send(&ClientId::random(), command)
+                .unwrap()
+            {
+                fetchpath_protocol::message::CommandResult::Job { job } => job.job_id.to_string(),
+                other => panic!("{other:?}"),
+            };
+            (
+                id(
+                    &user,
+                    torrent(
+                        "person",
+                        None,
+                        JobInput::TorrentFile {
+                            path: original.display().to_string(),
+                        },
+                    ),
+                ),
+                id(
+                    &helper,
+                    torrent(
+                        "agent",
+                        Some(true),
+                        JobInput::Url {
+                            url: fetchpath_protocol::SensitiveUrl::try_from(
+                                "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                    .to_owned(),
+                            )
+                            .unwrap(),
+                        },
+                    ),
+                ),
+            )
+        };
+        let restored = Session::load(queue, 1).unwrap();
+        let state = restored.inner.lock().unwrap();
+        let find = |id: &str| state.records.iter().find(|record| record.id == id).unwrap();
+        assert!(find(&person).torrent_policy.unwrap().discover_peers);
+        let held = find(&agent);
+        assert!(held.torrent_policy.unwrap().discover_peers);
+        assert!(
+            held.approval
+                .as_ref()
+                .unwrap()
+                .reasons
+                .contains(&ApprovalReason::PeerDiscovery)
+        );
     }
 
     #[test]

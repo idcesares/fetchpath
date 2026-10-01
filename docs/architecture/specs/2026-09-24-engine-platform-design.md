@@ -253,7 +253,9 @@ FP-065.
   publication barrier.
 - A locally computed hash is never presented as publisher authenticity.
 - Sharing, peer discovery and uploads are never enabled implicitly, and never
-  by an agent.
+  by an agent. FP-090 supersedes the explicit-discovery rule: a person-submitted
+  torrent discovers peers by default, while agents, browser captures and speed
+  profiles never enable it implicitly (JOB-CONTRACT item 10).
 - Secrets, cookies, signed query strings and private paths stay out of logs,
   events, prompt history, MCP results and evidence.
 - No model calls in the engine.

@@ -201,7 +201,7 @@ pub struct DownloadParams {
     /// auto (default) looks at the link first: a file is saved, a video page
     /// is saved as its video, and a web page is refused. file saves whatever
     /// the link returns; media treats it as a video or audio page; torrent
-    /// needs explicit peer discovery and, optionally, a new folder name
+    /// needs discover_peers: true (the person approves it) and, optionally, a new folder name
     /// (file_name, with folder); without one the engine names the folder.
     #[serde(default)]
     pub kind: Option<Kind>,
@@ -213,9 +213,11 @@ pub struct DownloadParams {
     /// never saved.
     #[serde(default)]
     pub sha256: Option<String>,
-    /// For torrents: allow contact with peers, trackers and/or DHT.
+    /// For torrents: ask to contact peers, trackers and/or DHT. It waits for
+    /// the person's approval. Left out, an agent's torrent does not discover
+    /// peers and cannot download.
     #[serde(default)]
-    pub discover_peers: bool,
+    pub discover_peers: Option<bool>,
     /// For torrents: allow bounded piece uploads after the person approves.
     #[serde(default)]
     pub upload: bool,
@@ -704,11 +706,6 @@ fn start(
                 "Torrent jobs do not take a media quality or flat SHA-256.",
             ));
         }
-        if !params.discover_peers {
-            return Err(client::input_error(
-                "Set discover_peers to true to request contact with the swarm.",
-            ));
-        }
         // Without a name the engine picks the folder from the torrent, inside
         // the person's default folder; a chosen folder needs a name in it.
         let destination = match (name, folder) {
@@ -724,7 +721,13 @@ fn start(
             }
             (None, _) => String::new(),
         };
-        return queue::create_torrent_job(engine, &params.url, &destination, true, params.upload);
+        return queue::create_torrent_job(
+            engine,
+            &params.url,
+            &destination,
+            params.discover_peers,
+            params.upload,
+        );
     }
     let mut flags = Vec::new();
     if let Some(quality) = &params.quality {

@@ -350,9 +350,15 @@ pub enum JobRequest {
         destination: DestinationIntent,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         not_before: Option<Timestamp>,
-        /// Peer discovery contacts trackers and/or the DHT. It is explicit.
-        discover_peers: bool,
-        /// Serving pieces to peers is separately explicit and capped.
+        /// Peer discovery contacts trackers and/or the DHT. Absent means the
+        /// default for the submitting principal: on for a person, off for an
+        /// agent. A null is treated as absent. An agent that asks for it needs
+        /// approval.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        discover_peers: Option<bool>,
+        /// Serving pieces to peers is separately explicit and capped. It
+        /// never defaults on.
+        #[serde(default)]
         upload: bool,
     },
 }

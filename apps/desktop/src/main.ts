@@ -1843,7 +1843,6 @@ form.addEventListener("submit", async (event) => {
       });
     } else if (downloadKind() === "torrent") {
       if (drafts.length !== 1) throw new Error("Add one torrent at a time.");
-      if (!torrentDiscovery.checked) throw new Error("Choose whether this torrent may contact peers and discovery services.");
       await invoke<JobSnapshot>("start_torrent_download", {
         draft: {
           url: drafts[0].url,

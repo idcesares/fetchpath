@@ -88,6 +88,20 @@ fn ruled(message: String) -> ProtocolError {
     .with_action(Action::CorrectInput)
 }
 
+/// A torrent that cannot find peers is refused rather than queued to fail.
+fn discovery_off(person: bool) -> ProtocolError {
+    error(
+        "policy.discovery_off",
+        ErrorScope::Command,
+        if person {
+            "Peer discovery is off, so this torrent cannot find peers. Turn discovery on to add it."
+        } else {
+            "Peer discovery is off for this torrent. Request discover_peers: it needs the person's approval."
+        },
+    )
+    .with_action(Action::CorrectInput)
+}
+
 fn unsupported(what: &str) -> ProtocolError {
     error(
         "contract.unsupported",
@@ -626,6 +640,13 @@ impl Engine {
                     if matches!(principal, Principal::Browser) {
                         return Err(unsupported("Browser captures cannot start peer discovery"));
                     }
+                    // A person's torrent discovers peers unless they turn it
+                    // off. An agent never gets discovery implicitly, and upload
+                    // is explicit for everyone.
+                    let discover_peers = discover_peers.unwrap_or(principal.is_user());
+                    if !discover_peers {
+                        return Err(discovery_off(principal.is_user()));
+                    }
                     if destination.conflict != ConflictPolicy::Ask {
                         return Err(unsupported("Replacing an existing torrent destination"));
                     }
@@ -660,11 +681,9 @@ impl Engine {
                     };
                     let mut origin = self.origin(principal, source, &origin_destination)?;
                     if !principal.is_user() {
-                        if *discover_peers {
-                            origin
-                                .approval
-                                .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
-                        }
+                        origin
+                            .approval
+                            .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
                         if *upload {
                             origin
                                 .approval
@@ -672,7 +691,7 @@ impl Engine {
                         }
                     }
                     let policy = TorrentPolicy {
-                        discover_peers: *discover_peers,
+                        discover_peers,
                         upload: *upload,
                     };
                     let due = not_before.map(millis).transpose()?;

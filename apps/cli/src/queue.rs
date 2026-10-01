@@ -33,7 +33,8 @@ pub(crate) struct Args {
     pub quality: Option<String>,
     pub at: Option<String>,
     pub limit: Option<u32>,
-    pub discover_peers: bool,
+    /// `None` leaves the choice to the engine: on for a person.
+    pub discover_peers: Option<bool>,
     pub upload: bool,
 }
 
@@ -54,7 +55,7 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
         quality: None,
         at: None,
         limit: None,
-        discover_peers: false,
+        discover_peers: None,
         upload: false,
     };
     let mut iter = args.iter();
@@ -101,7 +102,7 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
             "--active" => parsed.active = true,
             "--failed" => parsed.failed = true,
             "--wait" => parsed.wait = true,
-            "--discover-peers" => parsed.discover_peers = true,
+            "--discover-peers" => parsed.discover_peers = Some(true),
             "--upload" => parsed.upload = true,
             _ => unreachable!("every allowed flag is handled"),
         }
@@ -159,8 +160,8 @@ pub fn add(args: &[String]) -> i32 {
     add_links(&parsed, &links, true)
 }
 
-/// Adds a torrent with an explicit peer-discovery decision. Upload remains off
-/// unless the person asks for it in this command.
+/// Adds a torrent. Peer discovery is on for a person (`--discover-peers` is
+/// accepted and changes nothing); upload remains off unless the person asks for it in this command.
 pub fn torrent(args: &[String]) -> i32 {
     let allowed = ["--to", "--discover-peers", "--upload", "--wait", "--json"];
     let parsed = match parse(args, &allowed) {
@@ -173,20 +174,12 @@ pub fn torrent(args: &[String]) -> i32 {
     // Without --to the engine picks the folder: the default folder and rules
     // decide where, and the torrent's own name decides what.
     let destination = parsed.to.as_deref().unwrap_or("");
-    if !parsed.discover_peers {
-        return usage("torrent needs --discover-peers to contact the swarm");
-    }
     let outcome = Engine::connect().and_then(|mut engine| {
-        let job = create_torrent_job(
-            &engine,
-            source,
-            destination,
-            parsed.discover_peers,
-            parsed.upload,
-        )?;
+        let job = create_torrent_job(&engine, source, destination, Some(true), parsed.upload)?;
         if parsed.json {
             client::print_json(&CommandResult::Job { job: job.clone() });
         } else {
+            eprintln!("{}", torrent_note());
             println!(
                 "Added torrent {}  {}",
                 client::short_id(&job),
@@ -207,11 +200,16 @@ pub fn torrent(args: &[String]) -> i32 {
     }
 }
 
+/// What a person should know after adding a torrent.
+pub(crate) fn torrent_note() -> &'static str {
+    "Peers can see your IP address. Upload stays off unless you add --upload. Cancel stops all peer activity."
+}
+
 pub(crate) fn create_torrent_job(
     engine: &Engine,
     source: &str,
     destination: &str,
-    discover_peers: bool,
+    discover_peers: Option<bool>,
     upload: bool,
 ) -> Result<JobSnapshot, ProtocolError> {
     let input = if is_local_torrent_file(source) {
@@ -293,9 +291,6 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
         if links.len() != 1 {
             return usage("add torrents one at a time");
         }
-        if !parsed.discover_peers {
-            return usage("a torrent needs --discover-peers before contacting the swarm");
-        }
         if parsed.sha256.is_some() || parsed.quality.is_some() || parsed.at.is_some() {
             return usage("torrent links cannot use --sha256, --quality, or --at");
         }
@@ -342,7 +337,7 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
                 &engine,
                 link,
                 target.unwrap_or(""),
-                parsed.discover_peers,
+                Some(true),
                 parsed.upload,
             )
         } else {
@@ -350,6 +345,9 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
         };
         match added {
             Ok(job) => {
+                if !parsed.json && is_torrent_link(link) {
+                    eprintln!("{}", torrent_note());
+                }
                 if parsed.json {
                     client::print_json(&CommandResult::Job { job: job.clone() });
                 } else if parsed.quiet {
@@ -1427,14 +1425,17 @@ mod torrent_intake_tests {
     }
 
     #[test]
-    fn add_requires_explicit_peer_discovery_for_detected_torrent() {
+    fn peer_discovery_is_left_to_the_engine_unless_the_flag_is_given() {
+        let args =
+            |flags: &[&str]| -> Vec<String> { flags.iter().map(|f| (*f).to_owned()).collect() };
+        let allowed = ["--discover-peers"];
+        assert_eq!(parse(&args(&[]), &allowed).unwrap().discover_peers, None);
         assert_eq!(
-            add(&[
-                "magnet:?xt=urn:btih:abc".into(),
-                "--to".into(),
-                "C:\\Downloads\\debian".into(),
-            ]),
-            EXIT_USAGE
+            parse(&args(&["--discover-peers"]), &allowed)
+                .unwrap()
+                .discover_peers,
+            Some(true)
         );
+        assert!(parse(&args(&["--no-discover-peers"]), &allowed).is_err());
     }
 }
