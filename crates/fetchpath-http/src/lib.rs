@@ -10,7 +10,6 @@ mod compatibility;
 mod controller;
 mod frontier;
 mod link;
-mod rounds;
 mod scheduler;
 
 pub use link::{LinkFacts, disposition_file_name, fetch_small, inspect_link};
@@ -90,26 +89,13 @@ pub struct RequestContext {
     pub http2_prior_knowledge: bool,
 }
 
-/// Which scheduler drives a fresh download. `Rounds` is the FP-015 scheduler,
-/// kept only so the benchmark can compare it with the stream-first one.
+/// Which scheduler drives a fresh download.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scheduler {
     Stream,
-    Rounds,
     /// One plain GET without `Range` on one connection. A download that has
     /// just restarted after an identity change uses it.
     Plain,
-}
-
-impl Scheduler {
-    /// `Stream` unless `FETCHPATH_HTTP_SCHEDULER=rounds` is set. The variable
-    /// exists for benchmark comparison and is not a user setting.
-    pub fn from_env() -> Self {
-        match std::env::var("FETCHPATH_HTTP_SCHEDULER").as_deref() {
-            Ok("rounds") => Self::Rounds,
-            _ => Self::Stream,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -118,9 +104,6 @@ pub struct TransferLimits {
     /// Memory the download may hold for receive buffers: one buffer per lane.
     pub max_buffered_bytes: usize,
     pub max_concurrency: usize,
-    /// The largest range of the legacy round scheduler. The stream-first
-    /// scheduler sizes claims by time and has no byte cap.
-    pub segment_bytes: usize,
     /// The smallest claim, except near the end of the file.
     pub min_segment_bytes: usize,
     /// Files smaller than this run on one lane.
@@ -146,13 +129,12 @@ impl Default for TransferLimits {
             max_active_requests: 8,
             max_buffered_bytes: 32 * 1024 * 1024,
             max_concurrency: 4,
-            segment_bytes: 8 * 1024 * 1024,
             min_segment_bytes: 1024 * 1024,
             min_adaptive_bytes: 4 * 1024 * 1024,
             receive_buffer_bytes: RECEIVE_BUFFER_BYTES,
             stall_timeout: Duration::from_secs(3),
             open_timeout: Duration::from_secs(30),
-            scheduler: Scheduler::from_env(),
+            scheduler: Scheduler::Stream,
         }
     }
 }
@@ -162,10 +144,7 @@ impl TransferLimits {
         if self.max_active_requests == 0
             || self.max_buffered_bytes == 0
             || self.max_concurrency == 0
-            || self.segment_bytes == 0
             || self.min_segment_bytes == 0
-            || self.min_segment_bytes > self.segment_bytes
-            || self.segment_bytes > self.max_buffered_bytes
             || self.receive_buffer_bytes == 0
             || self.receive_buffer_bytes > self.max_buffered_bytes
             || self.stall_timeout.is_zero()
@@ -413,21 +392,13 @@ impl Drop for BudgetPermit<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ContentRange {
-    pub start: u64,
-    pub end: u64,
-    pub total: u64,
-}
-
 #[derive(Clone, Debug, Default)]
 struct ResponseHeaders {
     status: Option<u32>,
     protocol: Protocol,
     etag: Option<String>,
     content_length: Option<u64>,
-    content_range: Option<ContentRange>,
-    /// The same header, but a total of `*` is allowed and stays unknown.
+    /// A total of `*` is allowed and stays unknown.
     open_range: Option<OpenRange>,
     retry_after: Option<Duration>,
 }
@@ -460,7 +431,6 @@ impl ResponseHeaders {
             };
             self.etag = None;
             self.content_length = None;
-            self.content_range = None;
             self.open_range = None;
             self.retry_after = None;
             return;
@@ -474,7 +444,6 @@ impl ResponseHeaders {
         } else if name.eq_ignore_ascii_case("content-length") {
             self.content_length = value.parse().ok();
         } else if name.eq_ignore_ascii_case("content-range") {
-            self.content_range = parse_content_range(value);
             self.open_range = parse_open_range(value);
         } else if name.eq_ignore_ascii_case("retry-after") {
             // A date form is ignored: the lanes back off on the status alone.
@@ -501,16 +470,6 @@ fn parse_open_range(value: &str) -> Option<OpenRange> {
     })
 }
 
-fn parse_content_range(value: &str) -> Option<ContentRange> {
-    let value = value.strip_prefix("bytes ")?;
-    let (range, total) = value.split_once('/')?;
-    let (start, end) = range.split_once('-')?;
-    let start = start.parse().ok()?;
-    let end = end.parse().ok()?;
-    let total = total.parse().ok()?;
-    (start <= end && end < total).then_some(ContentRange { start, end, total })
-}
-
 fn strong_etag(value: Option<&str>) -> Option<String> {
     value
         .filter(|value| value.starts_with('"') && value.ends_with('"') && !value.starts_with("W/"))
@@ -533,9 +492,7 @@ pub struct SegmentProgress {
     /// Last byte of the range, inclusive. It shrinks when another lane takes
     /// the tail of the range.
     pub end: u64,
-    /// Bytes of this range received so far. With the stream-first scheduler
-    /// they are already written; the legacy round scheduler holds them in
-    /// memory until the round ends.
+    /// Bytes of this range received and written so far.
     pub received: u64,
 }
 
@@ -583,15 +540,6 @@ impl SegmentMonitor {
             .collect();
         ranges.sort_by_key(|range| range.start);
         ranges
-    }
-
-    pub(crate) fn begin(&self, specs: &[(u64, u64)]) -> Vec<Arc<LiveSegment>> {
-        let segments: Vec<_> = specs
-            .iter()
-            .map(|&(start, end)| LiveSegment::new(start, end + 1))
-            .collect();
-        *self.live.lock().expect("segment monitor poisoned") = segments.clone();
-        segments
     }
 
     pub(crate) fn add(&self, start: u64, end: u64) -> Arc<LiveSegment> {
@@ -645,8 +593,7 @@ pub struct TransferReport {
     pub used_ranges: bool,
     pub adaptive: bool,
     pub peak_concurrency: usize,
-    /// Valid controller windows for the stream-first scheduler; rounds for
-    /// the legacy one.
+    /// Valid measurement windows of the concurrency controller.
     pub observations: Vec<BatchObservation>,
     pub budget: BudgetSnapshot,
     /// Claims split to feed an idle lane.
@@ -687,9 +634,6 @@ pub enum TransferError {
     Certificate(String),
     HostKey(String),
     ResumeRejected(String),
-    /// The legacy round scheduler cannot continue; start again from byte
-    /// zero with the stream-first scheduler.
-    RestartSequential(String),
     /// The source is not the representation the bytes so far came from.
     /// The caller discards them and starts again from byte zero.
     IdentityChanged(String),
@@ -712,7 +656,6 @@ impl fmt::Display for TransferError {
             }
             Self::HostKey(detail) => write!(formatter, "host-key verification failed: {detail}"),
             Self::ResumeRejected(detail) => write!(formatter, "resume rejected: {detail}"),
-            Self::RestartSequential(detail) => formatter.write_str(detail),
             Self::IdentityChanged(detail) => write!(formatter, "source changed: {detail}"),
             Self::Rejected(detail) => formatter.write_str(detail),
             Self::Transport(detail) => formatter.write_str(detail),
@@ -780,9 +723,6 @@ where
 {
     let _clear = ClearOnDrop(monitor);
     let limits = limits.validate()?;
-    if limits.scheduler == Scheduler::Rounds && resume.is_none() {
-        return rounds::run(url, context, limits, budget, monitor, cancelled, sink);
-    }
     scheduler::run(
         url, context, limits, budget, monitor, resume, &cancelled, &mut sink,
     )
@@ -888,21 +828,6 @@ mod tests {
             .preferred,
             Protocol::Http1
         );
-    }
-
-    #[test]
-    fn content_ranges_are_strict() {
-        assert_eq!(
-            parse_content_range("bytes 1-9/10"),
-            Some(ContentRange {
-                start: 1,
-                end: 9,
-                total: 10,
-            })
-        );
-        assert_eq!(parse_content_range("bytes 9-1/10"), None);
-        assert_eq!(parse_content_range("bytes 1-10/10"), None);
-        assert_eq!(parse_content_range("bytes */10"), None);
     }
 
     #[test]

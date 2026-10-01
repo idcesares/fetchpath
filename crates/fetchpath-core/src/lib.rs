@@ -544,6 +544,16 @@ impl FileJob {
     }
 
     pub fn start(&self) -> Result<(), &'static str> {
+        self.start_with_completion(|| {})
+    }
+
+    /// Starts with a wakeup after the terminal snapshot is available. The
+    /// callback runs outside job locks, before optional cache population;
+    /// it must be quick and must not panic. Joining still waits for the worker.
+    pub fn start_with_completion(
+        &self,
+        on_complete: impl FnOnce() + Send + 'static,
+    ) -> Result<(), &'static str> {
         let mut inner = self.inner.lock().unwrap();
         if inner.snapshot.state != FileJobState::Queued {
             return Err("contract.invalid_transition");
@@ -631,6 +641,7 @@ impl FileJob {
                 }
             };
             drop(state);
+            on_complete();
             if let (Some(published), Some(cache)) = (remember, cache.as_mut()) {
                 verified::remember_file(&request, &published, cache);
             }

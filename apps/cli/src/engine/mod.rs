@@ -205,6 +205,7 @@ impl Host {
     fn begin_stop(&self) {
         if !self.stop.swap(true, Ordering::SeqCst) {
             let _ = std::fs::remove_file(&self.endpoint);
+            self.engine.wake();
         }
     }
 
@@ -301,9 +302,19 @@ fn serve(grace: Duration) -> Result<i32, String> {
     let ticker = {
         let host = Arc::clone(&host);
         std::thread::spawn(move || {
+            let mut sampled = Instant::now();
             while !host.stopping() {
-                host.engine.tick();
-                std::thread::sleep(TICK_INTERVAL);
+                host.engine
+                    .wait_for_work(TICK_INTERVAL.saturating_sub(sampled.elapsed()));
+                if host.stopping() {
+                    break;
+                }
+                if sampled.elapsed() >= TICK_INTERVAL {
+                    host.engine.tick();
+                    sampled = Instant::now();
+                } else {
+                    host.engine.reconcile();
+                }
             }
         })
     };

@@ -5,14 +5,13 @@ import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PROFILES, startFixtureWorker } from './fixture-server.mjs';
+import { CHROME_SETTINGS, measureChrome } from './chrome-download.mjs';
 
 const MIB = 1024 * 1024;
-// The `-rounds` clients run the same binary with the FP-015 round scheduler (FETCHPATH_HTTP_SCHEDULER=rounds), for comparison.
-const ALL_CLIENTS = ['fetchpath-http', 'fetchpath-http-rounds', 'fetchpath-cli', 'fetchpath-cli-rounds', 'curl', 'aria2', 'aria2-x16', 'wget2'];
+const ALL_CLIENTS = ['fetchpath-http', 'fetchpath-cli', 'curl', 'aria2', 'aria2-x16', 'wget2', 'chrome'];
 const exe = name => (process.platform === 'win32' ? `${name}.exe` : name);
-const isCli = client => client.startsWith('fetchpath-cli');
-const isHttpBench = client => client.startsWith('fetchpath-http');
-const schedulerEnv = client => (client.endsWith('-rounds') ? { FETCHPATH_HTTP_SCHEDULER: 'rounds' } : {});
+const isCli = client => client === 'fetchpath-cli';
+const isHttpBench = client => client === 'fetchpath-http';
 const cliDataDir = (config, client) => join(resolve(config.outputDir), client === 'fetchpath-cli' ? 'cli-data' : `${client}-data`);
 
 // Nothing in the artifact or the console may name a folder of this machine: a path inside the repository is
@@ -41,7 +40,7 @@ function parseSize(text) {
 function options(argv) {
   const values = {
     repetitions: 5, size: 8 * MIB, seed: 15015, outputDir: null, corpus: 'fixture', profiles: ['unshaped', ...PROFILES], clients: ['fetchpath-http', 'curl'],
-    httpBench: process.env.FETCHPATH_HTTP_BENCH ?? null, cli: process.env.FETCHPATH_CLI ?? null, aria2c: process.env.ARIA2C ?? null, wget2: process.env.WGET2 ?? null,
+    httpBench: process.env.FETCHPATH_HTTP_BENCH ?? null, cli: process.env.FETCHPATH_CLI ?? null, aria2c: process.env.ARIA2C ?? null, wget2: process.env.WGET2 ?? null, chrome: process.env.CHROME ?? null,
     keepFiles: false, timeoutS: 300, corpusFile: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -61,6 +60,7 @@ function options(argv) {
     else if (key === '--cli') values.cli = value;
     else if (key === '--aria2c') values.aria2c = value;
     else if (key === '--wget2') values.wget2 = value;
+    else if (key === '--chrome') values.chrome = value;
     else if (key === '--timeout-s') values.timeoutS = Number(value);
     else throw new Error(`Unknown argument: ${key}`);
   }
@@ -85,8 +85,8 @@ function run(command, args, extra = {}) {
   });
 }
 
-async function firstLine(command, args) {
-  try { const r = await run(command, args); return r.code === 0 ? (r.stdout || r.stderr).split(/\r?\n/, 1)[0].trim() : null; } catch { return null; }
+async function firstLine(command, args, env) {
+  try { const r = await run(command, args, env ? { env: { ...process.env, ...env } } : {}); return r.code === 0 ? (r.stdout || r.stderr).split(/\r?\n/, 1)[0].trim() : null; } catch { return null; }
 }
 
 /** Deterministic PRNG so pair order and bootstrap intervals are reproducible from --seed. */
@@ -211,6 +211,12 @@ async function resolveTools(config) {
     } else if (client === 'aria2' || client === 'aria2-x16') {
       if (!tools.aria2Base && !skipped.aria2Base) { const command = config.aria2c ?? 'aria2c'; const v = await firstLine(command, ['--version']); if (v) tools.aria2Base = { command, version: v }; else skipped.aria2Base = 'not installed (aria2c not on PATH; set ARIA2C or --aria2c)'; }
       if (tools.aria2Base) tools[client] = tools.aria2Base; else skipped[client] = skipped.aria2Base;
+    } else if (client === 'chrome') {
+      const command = config.chrome ?? (process.platform === 'win32' ? join(process.env.ProgramFiles ?? 'C:/Program Files', 'Google/Chrome/Application/chrome.exe') : 'google-chrome');
+      const version = process.platform === 'win32' && existsSync(command)
+        ? await firstLine('powershell', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Item -LiteralPath $env:FETCHPATH_BENCH_CHROME).VersionInfo.ProductVersion'], { FETCHPATH_BENCH_CHROME: command })
+        : await firstLine(command, ['--version']);
+      if (version) tools.chrome = { command, version }; else skipped.chrome = 'Chrome not found or version unavailable; pass --chrome with an installed executable';
     } else if (client === 'wget2') await optional('wget2', config.wget2 ?? 'wget2', ['--version'], 'not installed (wget2 not on PATH; set WGET2 or --wget2)');
   }
   delete tools.aria2Base; delete skipped.aria2Base;
@@ -219,14 +225,14 @@ async function resolveTools(config) {
 
 function clientCommand(client, tool, url, file, config) {
   const timeout = String(config.timeoutS);
-  if (isHttpBench(client)) return { command: tool.command, args: [url, file], env: { ...process.env, ...schedulerEnv(client) } };
-  if (isCli(client)) return { command: tool.command, args: ['download', url, file, '--json'], env: { ...process.env, ...schedulerEnv(client), FETCHPATH_APP_DATA_DIR: cliDataDir(config, client) } };
+  if (isHttpBench(client)) return { command: tool.command, args: [url, file], env: process.env };
+  if (isCli(client)) return { command: tool.command, args: ['download', url, file, '--json'], env: { ...process.env, FETCHPATH_APP_DATA_DIR: cliDataDir(config, client), FETCHPATH_DATA_DIR: cliDataDir(config, client) } };
   if (client === 'curl') return { command: tool.command, args: ['--disable', '--noproxy', '*', '--max-time', timeout, '--http1.1', '--location', '--silent', '--show-error', '--output', file, url] };
   const dirAndName = ['--dir', resolve(file, '..'), '--out', file.split(/[\\/]/).pop()];
   const aria2 = ['--no-conf=true', '--all-proxy=', '--console-log-level=error', '--summary-interval=0', '--download-result=hide', '--allow-overwrite=true', '--auto-file-renaming=false', `--timeout=${timeout}`, ...dirAndName];
   if (client === 'aria2') return { command: tool.command, args: [...aria2, url] };
   if (client === 'aria2-x16') return { command: tool.command, args: [...aria2, '-x16', '-s16', '-k1M', url] };
-  return { command: tool.command, args: ['--no-config', '--no-proxy', '--quiet', '--output-document', file, url] };
+  return { command: tool.command, args: ['--no-config', '--no-proxy', '--quiet', '--hsts-file', join(resolve(config.outputDir), 'wget2-hsts'), '--ocsp-file', join(resolve(config.outputDir), 'wget2-ocsp'), '--output-document', file, url] };
 }
 
 function transferSummary(client, stdout) {
@@ -279,8 +285,10 @@ try {
         await rm(file, { force: true });
         if (fixture) await fixture.reset();
         const probe = startProbe(target.probeUrl);
-        const spec = clientCommand(client, tools[client], target.url, file, config);
-        const result = await measureProcess(spec.command, spec.args, { sidecar, timeoutMs: config.timeoutS * 1000, env: spec.env });
+        const spec = client === 'chrome' ? null : clientCommand(client, tools[client], target.url, file, config);
+        const result = client === 'chrome'
+          ? await measureChrome(tools.chrome.command, target.url, file, { timeoutMs: config.timeoutS * 1000 })
+          : await measureProcess(spec.command, spec.args, { sidecar, timeoutMs: config.timeoutS * 1000, env: spec.env });
         const probeResult = await probe.stop();
         const server = fixture ? await fixture.snapshot() : null;
         const verifyStarted = process.hrtime.bigint(); let outputBytes = null; let sha = null;
@@ -299,6 +307,14 @@ try {
           connections: server?.connectionsUsed ?? null, connectionsAccepted: server?.connectionsAccepted ?? null, requests: server?.requests ?? null, rangeRequests: server?.rangeRequests ?? null,
           redirects: server?.redirects ?? null, stalledRequests: server?.stalledRequests ?? null, probe: probeResult, transfer: transferSummary(client, result.stdout),
         };
+        // Store only bounded counters from opt-in scheduler traces, never URLs or raw stderr.
+        if (client === 'fetchpath-http' && process.env.FETCHPATH_HTTP_TRACE === '1') {
+          const starts = [...result.stderr.matchAll(/lane (\d+) starts /g)].map(match => match[1]);
+          const replacements = result.stderr.split('\n').filter(line => line.includes('replace '));
+          run.schedulerTrace = { truncated: result.stderr.length >= 65536, redirectHops: starts.length - new Set(starts).size,
+            replacements: replacements.length, stoppedDelivering: replacements.filter(line => line.includes('stopped delivering')).length,
+            prefixStarvation: replacements.filter(line => line.includes('prefix')).length };
+        }
         if (observed && outputBytes) run.cpuSecondsPerGiB = round(observed.cpuSeconds / (outputBytes / (1024 * MIB)), 2);
         runs.push(run); await appendFile(join(outputDir, 'runs.jsonl'), `${JSON.stringify(run)}
 `);
@@ -310,7 +326,7 @@ try {
 } finally {
   sidecar.close(); if (fixture) await fixture.close();
   // Stop the engines this run started (each has its own data folder, so a user's own engine is untouched).
-  for (const client of activeClients.filter(isCli)) { const spec = { command: tools[client].command, env: { ...process.env, FETCHPATH_APP_DATA_DIR: cliDataDir(config, client) } }; try { await run(spec.command, ['engine', 'stop'], { env: spec.env }); } catch { /* best effort */ } }
+  for (const client of activeClients.filter(isCli)) { const spec = { command: tools[client].command, env: { ...process.env, FETCHPATH_APP_DATA_DIR: cliDataDir(config, client), FETCHPATH_DATA_DIR: cliDataDir(config, client) } }; try { await run(spec.command, ['engine', 'stop'], { env: spec.env }); } catch { /* best effort */ } }
 }
 
 const cpuReason = sidecar.reason ?? (runs.some(r => r.cpuSeconds !== null) ? null : 'observer returned no readings');
@@ -335,15 +351,17 @@ const engineOverhead = tools['fetchpath-http'] && tools['fetchpath-cli'] ? targe
 }) : undefined;
 const gitRev = (await firstLine('git', ['rev-parse', '--short', 'HEAD'])) ?? null; const gitDirty = (await run('git', ['status', '--porcelain'])).stdout.trim().length > 0;
 const artifact = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   purpose: config.corpus === 'fixture'
     ? 'Paired loopback runs on application-shaped fixture profiles. Loopback timings support relative comparison of scheduling behavior only, not an Internet speed claim. Packet loss is not emulated.'
     : 'Recorded internet corpus from one home connection. Not a speed claim.',
-  config: { ...config, outputDir: undefined, httpBench: displayPath(config.httpBench), cli: displayPath(config.cli), aria2c: displayPath(config.aria2c), wget2: displayPath(config.wget2), corpusFile: displayPath(config.corpusFile), profiles: config.corpus === 'fixture' ? config.profiles : undefined },
+  config: { ...config, outputDir: undefined, httpBench: displayPath(config.httpBench), cli: displayPath(config.cli), aria2c: displayPath(config.aria2c), wget2: displayPath(config.wget2), chrome: displayPath(config.chrome), corpusFile: displayPath(config.corpusFile), profiles: config.corpus === 'fixture' ? config.profiles : undefined },
   tools: Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, tool.version])), skipped,
   measurement: {
     order: 'per repetition and profile, clients shuffled with a seeded PRNG (--seed)',
-    timeToVerifiedMs: 'wall time of the tool process plus a SHA-256 pass over its output file after it exits',
+    timeToVerifiedMs: 'wall time of the tool process plus a SHA-256 pass over its output file after it exits; Chrome uses cold browser startup through native download completion and shutdown',
+    chrome: tools.chrome ? CHROME_SETTINGS : undefined,
+    engineWarmup: 'fetchpath-cli engine is started before fixture measurements; Chrome starts cold on every run, so startup scopes differ',
     cpuAndMemory: cpuReason ?? 'user+kernel CPU seconds and peak working set of the directly spawned process, polled every 20 ms from a PowerShell observer; child processes and a separate engine process (fetchpath-cli) are not included',
     probe: 'GET of a tiny endpoint every 100 ms while the tool runs; fixture probe is a separate listener in the fixture worker thread',
     interval: 'median with a seeded percentile bootstrap 95% interval (2000 resamples), reported from 3 runs up; with few runs it understates the real uncertainty',
@@ -351,7 +369,7 @@ const artifact = {
   host: { platform: process.platform, node: process.version, git: gitRev ? `${gitRev}${gitDirty ? '+dirty' : ''}` : null },
   fixture: fixture ? { size: fixture.size, stableSha256: fixture.hashes.stable } : undefined,
   corpusHashes: config.corpus === 'internet' ? targets.map(t => ({ name: t.name, sha256: t.expectedSha256, selfRecorded: t.selfRecorded })) : undefined,
-  limits: 'fetchpath-http and fetchpath-cli use TransferLimits::default(): stream-first scheduler, claims sized 1.5 s of lane rate with a 1 MiB floor, 2 lanes to start and 4 at most, 8 active requests, one receive buffer per lane; the -rounds clients run the FP-015 scheduler (probe byte, rounds of ranges up to 8 MiB, 4 lanes, 16 KiB buffer). The engine applies max_connections only when a rule sets it',
+  limits: 'fetchpath-http and fetchpath-cli use TransferLimits::default(): stream-first scheduler, claims sized 1.5 s of lane rate with a 1 MiB floor, 2 lanes to start and 4 at most, 8 active requests, one receive buffer per lane; the engine applies max_connections only when a rule sets it',
   engineOverhead, failures: failuresLog, summary, runs,
 };
 const artifactPath = join(outputDir, 'fetchpath-benchmark-raw.json');

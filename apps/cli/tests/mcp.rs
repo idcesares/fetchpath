@@ -330,8 +330,10 @@ fn a_flood_of_waits_and_a_huge_argument_are_refused_and_the_server_carries_on() 
     let granted = home.dir.path().join("granted");
     std::fs::create_dir_all(&granted).unwrap();
     grant(&home, "helper", &granted);
-    // About ten seconds of transfer, so the waits overlap.
-    let base = server(body(1024 * 1024), Duration::from_millis(150));
+    // Hold completion until the server has refused the seventeenth wait,
+    // independent of parallel transfer speed or process startup delays.
+    let (base, gate) = held_server(body(1024 * 1024));
+    let mut gate = Some(gate);
     let mut client = Client::start(&home, "helper");
     client.request(
         "initialize",
@@ -380,6 +382,7 @@ fn a_flood_of_waits_and_a_huge_argument_are_refused_and_the_server_carries_on() 
                 "{message}"
             );
             refused += 1;
+            drop(gate.take());
         } else {
             assert_eq!(
                 result["structuredContent"]["state"], "completed",

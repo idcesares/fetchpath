@@ -25,7 +25,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf, Prefix};
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const QUEUE_SCHEMA_VERSION: u32 = 2;
@@ -40,6 +41,9 @@ pub const MAX_DESTINATION_LENGTH: usize = 4_096;
 
 pub struct Session {
     inner: Mutex<QueueState>,
+    /// Coalesced wakeups for commands and settled transfers. No queue or
+    /// durable locks are taken by a worker's completion callback.
+    wake: Arc<ReconcileWake>,
     state_path: Option<PathBuf>,
     settings_path: Option<PathBuf>,
     /// Guarded separately from the queue so reading a setting never waits on a
@@ -77,6 +81,28 @@ pub struct Session {
     inspected_sizes: Mutex<std::collections::VecDeque<(String, u64)>>,
 }
 
+#[derive(Default)]
+struct ReconcileWake {
+    pending: Mutex<bool>,
+    ready: Condvar,
+}
+
+impl ReconcileWake {
+    fn notify(&self) {
+        *self.pending.lock().expect("reconcile wake poisoned") = true;
+        self.ready.notify_all();
+    }
+
+    fn wait(&self, timeout: Duration) -> bool {
+        let pending = self.pending.lock().expect("reconcile wake poisoned");
+        let (mut pending, _) = self
+            .ready
+            .wait_timeout_while(pending, timeout, |pending| !*pending)
+            .expect("reconcile wake poisoned");
+        std::mem::take(&mut *pending)
+    }
+}
+
 /// How many inspected sizes are remembered.
 const REMEMBERED_SIZES: usize = 64;
 
@@ -106,11 +132,11 @@ enum JobHandle {
 }
 
 impl JobHandle {
-    fn start(&self) -> Result<(), &'static str> {
+    fn start(&self, wake: Arc<ReconcileWake>) -> Result<(), &'static str> {
         match self {
-            Self::File(job) => job.start(),
-            Self::Media(job) => job.start(),
-            Self::Torrent(job) => job.start(),
+            Self::File(job) => job.start_with_completion(move || wake.notify()),
+            Self::Media(job) => job.start_with_completion(move || wake.notify()),
+            Self::Torrent(job) => job.start_with_completion(move || wake.notify()),
         }
     }
 
@@ -592,6 +618,7 @@ impl Session {
             seen.advance(record);
         }
         Ok(Self {
+            wake: Arc::default(),
             inner: Mutex::new(QueueState {
                 records,
                 ..QueueState::default()
@@ -629,6 +656,7 @@ impl Session {
         };
         stored.clamp();
         Self {
+            wake: Arc::default(),
             inner: Mutex::new(QueueState::default()),
             state_path: None,
             settings_path: None,
@@ -1392,14 +1420,15 @@ impl Session {
                 }
             })
             .transpose()?;
-        if url.is_some() && !by.is_user() {
-            if let Some(policy) = record.torrent_policy {
-                if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
-                    hold.push(ApprovalReason::PeerDiscovery);
-                }
-                if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
-                    hold.push(ApprovalReason::PeerUpload);
-                }
+        if url.is_some()
+            && !by.is_user()
+            && let Some(policy) = record.torrent_policy
+        {
+            if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
+                hold.push(ApprovalReason::PeerDiscovery);
+            }
+            if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
+                hold.push(ApprovalReason::PeerUpload);
             }
         }
         let destination = destination
@@ -2155,7 +2184,7 @@ impl Session {
                     }
                 }
             }
-            if let Err(code) = job.start() {
+            if let Err(code) = job.start(Arc::clone(&self.wake)) {
                 record.view.state = "failed".into();
                 record.view.error = Some(format!("Could not start this download ({code})."));
                 record.view.action = Some("retry".into());

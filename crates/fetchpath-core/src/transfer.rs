@@ -438,9 +438,7 @@ fn perform_scheduled_attempt(
             Err(CallbackFailure::Cancelled)
         }
         Err(TransferError::Sink(error)) => Err(CallbackFailure::Storage(error)),
-        Err(TransferError::RestartSequential(_) | TransferError::IdentityChanged(_)) => {
-            Err(CallbackFailure::RestartRequired)
-        }
+        Err(TransferError::IdentityChanged(_)) => Err(CallbackFailure::RestartRequired),
         Err(TransferError::Rejected(detail)) => Err(CallbackFailure::Rejected(detail)),
         Err(error) => Err(CallbackFailure::Transport(error.to_string())),
     }

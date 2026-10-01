@@ -14,6 +14,162 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Real h2c, with either one token bucket per TCP session or one shared
+/// bucket for the whole origin. Equal stream pacing cannot reveal which
+/// limit is in force; the production scheduler has to measure another socket.
+const H2_POOL_FIXTURE: &str = r#"
+const http2 = require('node:http2');
+const server = http2.createServer();
+const sessions = new Set();
+const perConnection = process.argv[1] === 'connection';
+// Keep the connection-limited transfer alive for baseline and two gain
+// windows even when the shared CI runner delays a measurement boundary.
+const total = (perConnection ? 16 : 8) * 1024 * 1024;
+const chunk = Buffer.alloc(16 * 1024, 7);
+server.on('session', session => {
+  const bucket = { streams: [], cursor: 0, tokens: 0, last: performance.now() };
+  session.bucket = bucket;
+  sessions.add(bucket);
+  session.on('close', () => sessions.delete(bucket));
+  session.on('error', () => {});
+});
+server.on('stream', (stream, headers) => {
+  stream.on('error', () => {});
+  const range = /^bytes=(\d+)-(\d*)$/.exec(headers.range || '');
+  const start = range ? Number(range[1]) : 0;
+  const end = range && range[2] ? Number(range[2]) : total - 1;
+  const entry = {stream, left: end - start + 1};
+  stream.respond({':status': range ? 206 : 200,
+    'content-length': entry.left, 'etag': '"pool-fixture"',
+    ...(range ? {'content-range': `bytes ${start}-${end}/${total}`} : {})});
+  stream.session.bucket.streams.push(entry);
+});
+function send(bucket) {
+  const now = performance.now();
+  bucket.tokens = Math.min(65536, bucket.tokens + (now - bucket.last) * 1048576 / 1000);
+  bucket.last = now;
+  bucket.streams = bucket.streams.filter(x => !x.stream.destroyed && x.left > 0);
+  if (!bucket.streams.length) return;
+  while (bucket.tokens >= chunk.length && bucket.streams.length) {
+    let sent = false;
+    for (let n = 0; n < bucket.streams.length; n++) {
+    const entry = bucket.streams[bucket.cursor++ % bucket.streams.length];
+    if (entry.stream.writableLength > 65536) continue;
+    const count = Math.min(chunk.length, entry.left);
+    entry.stream.write(chunk.subarray(0, count));
+    entry.left -= count;
+    bucket.tokens -= count;
+    if (!entry.left) entry.stream.end();
+    sent = true;
+    break;
+    }
+    if (!sent) break;
+    bucket.streams = bucket.streams.filter(x => !x.stream.destroyed && x.left > 0);
+  }
+}
+const globalBucket = {streams: [], cursor: 0, tokens: 0, last: performance.now()};
+setInterval(() => {
+  if (perConnection) for (const bucket of sessions) send(bucket);
+  else {
+    globalBucket.streams = [...sessions].flatMap(x => x.streams);
+    send(globalBucket);
+  }
+}, 8);
+server.listen(0, '127.0.0.1', () => console.log(`http://127.0.0.1:${server.address().port}/file`));
+"#;
+
+fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    struct Fixture(std::process::Child);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let child = Command::new("node")
+        .args(["-e", H2_POOL_FIXTURE, limit])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Node is required for the controlled HTTP/2 fixture");
+    let mut fixture = Fixture(child);
+    let mut url = String::new();
+    BufReader::new(fixture.0.stdout.take().unwrap())
+        .read_line(&mut url)
+        .unwrap();
+    let budget = GlobalBudget::new(2, 2 * MIB).unwrap();
+    let context = RequestContext {
+        http2_prior_knowledge: true,
+        ..RequestContext::default()
+    };
+    let image = RefCell::new(Image::default());
+    let started = Instant::now();
+    let report = transfer_resumable(
+        url.trim(),
+        &context,
+        TransferLimits {
+            max_concurrency: 2,
+            min_segment_bytes: MIB,
+            ..limits()
+        },
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || started.elapsed() > Duration::from_secs(25),
+        |chunk| image.borrow_mut().record(chunk.offset, chunk.bytes),
+    )
+    .unwrap();
+    (report, started.elapsed(), image.into_inner())
+}
+
+#[test]
+fn h2_per_connection_limit_gains_throughput_from_the_bounded_socket_trial() {
+    let (report, elapsed, image) = h2_pool_transfer("connection");
+    assert_eq!(image.bytes, vec![7; 16 * MIB]);
+    assert_eq!(image.overlaps, 0);
+    assert_eq!(report.budget.peak_active_requests, 2);
+    let rates: Vec<f64> = report
+        .observations
+        .iter()
+        .map(|window| window.bytes as f64 / window.elapsed_ms)
+        .collect();
+    assert!(
+        rates.len() >= 3,
+        "baseline plus two measured gains: {rates:?}"
+    );
+    assert!(
+        rates[1] >= rates[0] * 1.15 && rates[2] >= rates[0] * 1.15,
+        "two gains: {rates:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(14),
+        "independent sockets must beat the roughly 16-second single-session cap: {elapsed:?}"
+    );
+    assert_eq!(
+        report.connections_opened, 2,
+        "accepted trial reuses its two sockets"
+    );
+    assert_eq!(
+        report.replacements, 0,
+        "a pool experiment is not an unhealthy-lane replacement"
+    );
+}
+
+#[test]
+fn h2_shared_origin_limit_rejects_the_socket_trial_and_never_reprobes() {
+    let (report, _, image) = h2_pool_transfer("origin");
+    assert_eq!(image.bytes, vec![7; 8 * MIB]);
+    assert_eq!(image.overlaps, 0);
+    assert_eq!(report.budget.peak_active_requests, 2);
+    assert_eq!(
+        report.connections_opened, 3,
+        "one shared socket, one rejected trial, one shared rollback; no re-probe"
+    );
+    assert_eq!(report.replacements, 0);
+}
+
 const MIB: usize = 1024 * 1024;
 
 // -- a test server -----------------------------------------------------------
@@ -321,6 +477,167 @@ fn patterned(len: usize) -> Vec<u8> {
 // -- ranges ------------------------------------------------------------------
 
 #[test]
+fn redirects_are_resolved_once_and_ranges_use_the_pinned_target() {
+    let body = patterned(12 * MIB);
+    let served = body.clone();
+    let target = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let location = target.url.clone();
+    let origin = server(move |_| {
+        Reply::new(302, b"redirect body is not file data".to_vec()).header("Location", &location)
+    });
+    let (result, image) = fetch(&origin);
+    assert!(result.unwrap().peak_concurrency >= 2);
+    assert_eq!(origin.count(), 1);
+    assert!(target.count() >= 2);
+    assert_eq!(image.bytes, body);
+    assert_eq!(image.overlaps, 0);
+}
+
+#[test]
+fn rejected_pins_re_resolve_and_check_the_new_identity() {
+    for status in [403, 404, 410] {
+        for changed in [0, 1, 2] {
+            let body = patterned(12 * MIB);
+            let mut served = body.clone();
+            if changed == 2 {
+                served.push(1);
+            }
+            let renewed = server(move |req| {
+                honest(&served, if changed == 1 { "\"v2\"" } else { "\"v1\"" }, req).paced()
+            });
+            let old_body = body.clone();
+            let expired = server(move |req| {
+                if req.index == 0 {
+                    honest(&old_body, "\"v1\"", req).paced()
+                } else {
+                    Reply::new(status, Vec::new())
+                }
+            });
+            let (first, next) = (expired.url.clone(), renewed.url.clone());
+            let origin = server(move |req| {
+                Reply::new(302, Vec::new())
+                    .header("Location", if req.index == 0 { &first } else { &next })
+            });
+            let (result, image) = fetch(&origin);
+            if changed != 0 {
+                assert!(
+                    matches!(result, Err(TransferError::IdentityChanged(_))),
+                    "{result:?}"
+                );
+            } else {
+                result.unwrap();
+                assert_eq!(image.bytes, body);
+                assert_eq!(image.overlaps, 0);
+            }
+            assert_eq!(
+                origin.count(),
+                2,
+                "one refresh resolver for status {status}"
+            );
+            assert!(renewed.count() > 0);
+        }
+    }
+}
+
+#[test]
+fn expired_signed_url_is_refreshed_before_starting_another_range() {
+    let body = patterned(12 * MIB);
+    let served = body.clone();
+    let renewed = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let old_body = body.clone();
+    let expired = server(move |req| honest(&old_body, "\"v1\"", req).paced());
+    let (first, next) = (format!("{}?Expires=1", expired.url), renewed.url.clone());
+    let origin = server(move |req| {
+        Reply::new(302, Vec::new()).header("Location", if req.index == 0 { &first } else { &next })
+    });
+    let (result, image) = fetch(&origin);
+    result.unwrap();
+    assert_eq!(origin.count(), 2);
+    assert_eq!(
+        expired.count(),
+        1,
+        "the expired URL only carried the opening stream"
+    );
+    assert_eq!(image.bytes, body);
+}
+
+#[test]
+fn redirect_cache_expiry_is_honoured_and_repeated_rejected_targets_are_bounded() {
+    let body = patterned(12 * MIB);
+    let served = body.clone();
+    let target = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let location = target.url.clone();
+    let origin = server(move |_| {
+        Reply::new(302, Vec::new())
+            .header("Location", &location)
+            .header("Cache-Control", "private, max-age=0")
+    });
+    let (result, image) = fetch(&origin);
+    result.unwrap();
+    assert!(origin.count() >= 2, "the redirect itself expires the pin");
+    assert_eq!(image.bytes, body);
+
+    let rejected = server(move |_| Reply::new(403, Vec::new()));
+    let location = rejected.url.clone();
+    let origin = server(move |_| Reply::new(302, Vec::new()).header("Location", &location));
+    assert!(matches!(fetch(&origin).0, Err(TransferError::Rejected(_))));
+    assert_eq!(
+        origin.count(),
+        4,
+        "opening refreshes have a finite retry budget"
+    );
+    assert_eq!(rejected.count(), 4);
+}
+
+#[test]
+fn cross_origin_redirect_and_pinned_ranges_strip_credentials_cookies_and_referer() {
+    let served = patterned(12 * MIB);
+    let target = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let mut location = url::Url::parse(&target.url).unwrap();
+    location.set_username("injected").unwrap();
+    location.set_password(Some("injected")).unwrap();
+    let origin = server(move |_| {
+        Reply::new(302, Vec::new())
+            .header("Location", location.as_str())
+            .header("Set-Cookie", "response=private; Path=/")
+    });
+    let mut initial = url::Url::parse(&origin.url).unwrap();
+    initial.set_username("fixture").unwrap();
+    initial.set_password(Some("private")).unwrap();
+    let context = RequestContext {
+        cookie_lines: vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tfixture\tprivate".into()],
+        referer: Some("http://example.invalid/private".into()),
+        ..RequestContext::default()
+    };
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    transfer_resumable(
+        initial.as_str(),
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |_| Ok(()),
+    )
+    .unwrap();
+    let sent = origin.requests()[0].to_ascii_lowercase();
+    assert!(sent.contains("authorization:"));
+    assert!(sent.contains("cookie:"));
+    assert!(sent.contains("referer:"));
+    assert!(target.count() >= 2);
+    for sent in target.requests() {
+        let sent = sent.to_ascii_lowercase();
+        assert!(
+            !sent.contains("authorization:"),
+            "credentials crossed ports"
+        );
+        assert!(!sent.contains("cookie:"), "cookies crossed ports");
+        assert!(!sent.contains("referer:"));
+    }
+}
+
+#[test]
 fn lanes_split_a_file_with_no_gap_and_no_overlap() {
     let body = patterned(12 * MIB);
     let served = body.clone();
@@ -343,6 +660,93 @@ fn lanes_split_a_file_with_no_gap_and_no_overlap() {
             .all(|request| request.contains("If-Range: \"v1\"")),
         "later ranges carry the validator"
     );
+}
+
+#[test]
+fn returning_to_the_original_origin_does_not_restore_secrets() {
+    let return_url = Arc::new(Mutex::new(String::new()));
+    let shared_url = Arc::clone(&return_url);
+    let intermediate = server(move |_| {
+        Reply::new(302, Vec::new()).header("Location", shared_url.lock().unwrap().clone())
+    });
+    let other_url = intermediate.url.clone();
+    let body = patterned(12 * MIB);
+    let origin = server(move |req| {
+        if req.index == 0 {
+            Reply::new(302, Vec::new()).header("Location", &other_url)
+        } else {
+            honest(&body, "\"v1\"", req).paced()
+        }
+    });
+    *return_url.lock().unwrap() = origin.url.clone();
+    let mut initial = url::Url::parse(&origin.url).unwrap();
+    initial.set_username("fixture").unwrap();
+    initial.set_password(Some("private")).unwrap();
+    let context = RequestContext {
+        cookie_lines: vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tfixture\tprivate".into()],
+        referer: Some("http://example.invalid/private".into()),
+        ..RequestContext::default()
+    };
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    transfer_resumable(
+        initial.as_str(),
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert!(
+        origin.requests()[0]
+            .to_ascii_lowercase()
+            .contains("authorization:")
+    );
+    for sent in origin
+        .requests()
+        .into_iter()
+        .skip(1)
+        .chain(intermediate.requests())
+    {
+        let sent = sent.to_ascii_lowercase();
+        assert!(!sent.contains("authorization:"));
+        assert!(!sent.contains("cookie:"));
+        assert!(!sent.contains("referer:"));
+    }
+}
+
+#[test]
+fn same_origin_redirect_keeps_the_cookie_engine_for_the_next_hop() {
+    let origin = server(move |req| {
+        if req.index == 0 {
+            Reply::new(302, Vec::new())
+                .header("Location", "/next")
+                .header("Set-Cookie", "session=fixture; Path=/")
+        } else {
+            whole(b"file", "\"v1\"")
+        }
+    });
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let context = RequestContext {
+        cookie_lines: vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tinitial\tfixture".into()],
+        ..RequestContext::default()
+    };
+    transfer_resumable(
+        &origin.url,
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |_| Ok(()),
+    )
+    .unwrap();
+    let request = origin.requests()[1].to_ascii_lowercase();
+    assert!(request.contains("session=fixture"));
+    assert!(request.contains("initial=fixture"));
 }
 
 #[test]

@@ -361,3 +361,62 @@ in a form this build does not write is treated as newer rather than as
 damage; no progress is sampled for records saved as running; tests pin the
 saved states and the absence of download files; the record date. Left as a
 limitation: `QueueStats` counts.
+
+## FP-088: command and transfer wakeups
+
+Recorded 1 October 2026. The engine host and in-process client now wait on
+one coalesced condition-variable signal. Successful command commits and
+terminal file, media and torrent snapshots signal reconciliation; wakeups
+remain pending until a driver consumes them. The fixed 250 ms deadline
+still samples progress and catches timers, retries and browser captures.
+Reconciliation takes the command serialization lock, preserving the ledger
+commit boundary. Notifications run outside job snapshot locks; command
+notifications follow the successful engine-then-queue write. Worker joins,
+cache population and durable event delivery keep their existing ordering.
+
+The CLI refreshes job state on durable events and reconnects on stream
+failure. A quiet stream no longer causes a one-second `GetJob` poll. It
+applies subscription snapshot boundaries before waiting, including a
+completion whose event was compacted before subscription.
+
+Validation: the no-ticker session test proves command wakeup coalescing,
+completion, starting a resumed job in the freed slot, and completion on disk
+before its publication event is read. Two CLI tests prove event-driven
+completion after a quiet interval and completion from a subscription
+boundary without a query or stream read. The full session suite passes
+(78 unit, 16 engine, 1 LAN and 29 policy tests). CLI engine/queue suites
+pass (9 and 10 tests), core 76 and media 17 pass; three existing tests requiring
+external fixtures remain ignored. Torrent compilation and doc checks pass;
+it has no package behavioral tests. Formatting and diff checks pass.
+
+Independent Astra/low review approved the persistence and concurrency
+boundary without findings. Media/torrent callback execution and sustained
+wakeup sampling were checked statically. The PR readiness pass collapsed
+three existing nested conditions in torrent request validation, helper stdin
+handling and session torrent approval. Strict workspace all-target Clippy
+now passes without lint exceptions; the conditions retain their ordering.
+
+The release benchmark uses the FP-084 unshaped 64 MiB fixture, five seeded
+pairs per build, a warmed engine and independent output verification.
+Against unchanged `3f4f9ed`, median time to verified file changes from
+497.3/954.6 ms (core/engine) to 332.2/502.7 ms. The engine-minus-core gap
+falls from 457.3 to 170.5 ms (62.7%), passing the required halving. Median
+within-pair gaps fall from 503.5 to 191.9 ms. Raw timing samples and settings:
+[fp088-latency.json](evidence/engine-session/fp088-latency.json).
+This is a five-repetition Windows/NTFS loopback comparison, with observed
+timing noise, not an Internet throughput claim. Release build passed.
+Repository checks pass: `node --test` (57 tests) and
+`node tools/tasks.mjs check` (88 task contracts and reachable evidence).
+The PR readiness pass also replaces timed fixtures in the CLI cancellation,
+pause/resume/watch and MCP wait-capacity tests with guarded body gates.
+Completion waits for cancellation, a watch subscription, or the excess-wait
+refusal, respectively. This removes slow-runner races without weakening
+exit-130, publication, event, byte-content or capacity assertions. All 10
+queue tests, 3 MCP tests and their strict Clippy checks pass after those
+test-only repairs; independent bounded reviews approve them. CI uses the
+validated Rust 1.98.1 toolchain.
+The HTTP/2 per-connection fixture uses 16 MiB so delayed CI sampling can
+observe its baseline and both required 15% gains. Its proportional speed
+target, two-request/socket limits and exact-content assertions are retained.
+Both HTTP/2 scheduler tests and strict scheduler Clippy pass; an independent
+bounded review approves the test-only adjustment.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-29",
+  "updated": "2026-09-30",
   "tasks": [
     {
       "id": "FP-001",
@@ -2645,33 +2645,56 @@
       "title": "Share connections and pin redirects per download",
       "milestone": "M14",
       "dependsOn": ["FP-085"],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "lead",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["crates/fetchpath-http", "docs/development/ADAPTIVE-HTTP.md", "docs/tasks/backlog.json"],
+      "files": ["crates/fetchpath-http", "docs/development/ADAPTIVE-HTTP.md",
+        "SECURITY.md",
+        "tools/bench/benchmark.mjs",
+        "tools/bench/README.md", "docs/development/evidence/http-adaptive", "docs/tasks/backlog.json"],
       "acceptanceIds": ["A03", "A06", "A07", "A09"],
       "acceptance": "Ranges share one curl connection pool (HTTP/2 multiplexing where negotiated, separate connections where the origin limits each one), and a redirect is resolved once per download and pinned while the size and strong ETag still match, re-resolved on 403, 404, 410 or expiry. Credentials and cookies never follow a redirect to another origin, and the Hugging Face file comes within 10% of curl's median in the FP-084 corpus or the record states why not.",
       "verification": "Tests for pinned-URL expiry, identity change after a redirect, and cross-origin credential stripping; FP-084 paired runs; independent strong review of the redirect and credential boundary.",
-      "evidence": [],
+      "evidence": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence/http-adaptive/fp086-fixture.json", "docs/development/evidence/http-adaptive/fp086-internet.json"],
       "blockedReason": null
     },
     {
       "id": "FP-087",
       "title": "Publish measured speed results against current tools",
       "milestone": "M14",
-      "dependsOn": ["FP-085", "FP-086"],
-      "status": "todo",
-      "owner": null,
+      "dependsOn": [
+        "FP-085",
+        "FP-086"
+      ],
+      "status": "done",
+      "owner": "lead",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence", "docs/user/GUIDE.md", "README.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A09"],
+      "files": [
+        "crates/fetchpath-http",
+        "crates/fetchpath-core/src/transfer.rs",
+        "tools/bench",
+        "tests/bench",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/ARCHIVE.md",
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence",
+        "docs/user/GUIDE.md",
+        "README.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
       "acceptance": "Per-profile results against curl, aria2, wget2 and a browser (IDM only if a licensed copy is available) state where Fetchpath is faster, equal or slower, with uncertainty, settings and versions. Any public claim uses only profiles that pass the gate, reports connections used alongside speed, and includes the time to a verified file.",
       "verification": "Re-run of FP-084 on the final build with raw observations committed; independent strong review of every claim against its evidence.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence/http-adaptive/fp087-comparison.json"
+      ],
       "blockedReason": null
     },
     {
@@ -2679,16 +2702,16 @@
       "title": "Start and settle engine jobs without waiting for the reconcile tick",
       "milestone": "M14",
       "dependsOn": ["FP-085"],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "Codex (Sol/medium implementation; Astra/low independent review)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["crates/fetchpath-session", "apps/cli/src/engine", "apps/cli/src/wait.rs", "docs/development/ENGINE-SESSION.md", "docs/tasks/backlog.json"],
+      "files": ["crates/fetchpath-session", "crates/fetchpath-core/src/lib.rs", "adapters/media/src/lib.rs", "adapters/torrent/src/lib.rs", "apps/cli/src/engine", "apps/cli/src/wait.rs", "docs/development/ENGINE-SESSION.md", "docs/tasks/backlog.json"],
       "acceptanceIds": ["A04", "A09"],
       "acceptance": "A job created, resumed or finished through the engine is scheduled and reconciled as soon as its command or transfer completes, not on the next 250 ms tick (crates/fetchpath-session/src/engine.rs TICK_INTERVAL, apps/cli/src/engine/mod.rs), and the command line learns of completion from the event instead of a poll. The tick stays as a fallback for timers and progress sampling. On the FP-084 unshaped profile, engine time minus in-process core time falls by at least half from about 0.6 s per download; persistence ordering and event durability are unchanged.",
       "verification": "Session and engine tests for immediate scheduling and completion; FP-084 paired runs engine against in-process core; independent strong review of persistence ordering.",
-      "evidence": [],
+      "evidence": ["docs/development/ENGINE-SESSION.md", "docs/development/evidence/engine-session/fp088-latency.json", "crates/fetchpath-session/tests/engine.rs", "apps/cli/src/wait.rs"],
       "blockedReason": null
     }
   ]

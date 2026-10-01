@@ -288,6 +288,15 @@ impl MediaJob {
     }
 
     pub fn start(&self) -> Result<(), &'static str> {
+        self.start_with_completion(|| {})
+    }
+
+    /// Wakes the host after the terminal snapshot, outside job locks.
+    /// The callback must be quick and must not panic; join semantics are unchanged.
+    pub fn start_with_completion(
+        &self,
+        on_complete: impl FnOnce() + Send + 'static,
+    ) -> Result<(), &'static str> {
         let mut worker = self.inner.worker.lock().expect("media worker poisoned");
         if worker.is_some() || self.snapshot().state != MediaJobState::Queued {
             return Err("invalid_state");
@@ -324,6 +333,7 @@ impl MediaJob {
                 }),
             }
             job.inner.active_pid.store(0, Ordering::Release);
+            on_complete();
         }));
         Ok(())
     }

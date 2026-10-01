@@ -446,6 +446,131 @@ fn serve(body: Vec<u8>) -> String {
 }
 
 #[test]
+fn completion_wakes_reconciliation_and_starts_a_resumed_job_without_a_tick() {
+    use std::sync::{Condvar, Mutex};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let engine = InProcessClient::manual(Engine::new(Arc::new(
+        Session::load_with_browser(path.clone(), 1, None).unwrap(),
+    )));
+    let gates = Arc::new((Mutex::new([false; 2]), Condvar::new()));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server_gates = Arc::clone(&gates);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let gates = Arc::clone(&server_gates);
+            thread::spawn(move || {
+                let mut request = [0; 2048];
+                let length = stream.read(&mut request).unwrap();
+                let index =
+                    usize::from(String::from_utf8_lossy(&request[..length]).contains("/two"));
+                let open = gates.0.lock().unwrap();
+                let _open = gates.1.wait_while(open, |open| !open[index]).unwrap();
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndata",
+                );
+            });
+        }
+    });
+    let mut events = engine
+        .subscribe(&CommandEnvelope::new(
+            client(),
+            Command::SubscribeQueue { after_cursor: 0 },
+        ))
+        .unwrap()
+        .events;
+    let first = job_of(
+        &engine
+            .send(
+                &client(),
+                create(&format!("{base}/one"), dir.path().join("one.bin")),
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        first.state,
+        JobState::Running,
+        "creation starts synchronously"
+    );
+    let second = job_of(
+        &engine
+            .send(
+                &client(),
+                create(&format!("{base}/two"), dir.path().join("two.bin")),
+            )
+            .unwrap(),
+    );
+    assert_eq!(second.state, JobState::Queued);
+    engine
+        .send(
+            &client(),
+            Command::Pause {
+                job_id: second.job_id.clone(),
+            },
+        )
+        .unwrap();
+    let resumed = job_of(
+        &engine
+            .send(
+                &client(),
+                Command::Resume {
+                    job_id: second.job_id.clone(),
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(resumed.state, JobState::Queued);
+    assert!(
+        engine.engine().wait_for_work(Duration::ZERO),
+        "committed commands wake the driver"
+    );
+    assert!(
+        !engine.engine().wait_for_work(Duration::ZERO),
+        "command wakeups coalesce"
+    );
+    gates.0.lock().unwrap()[0] = true;
+    gates.1.notify_all();
+    assert!(
+        engine.engine().wait_for_work(Duration::from_secs(15)),
+        "completion must wake a driver with no timer"
+    );
+    engine.engine().reconcile();
+    let received = drain(&mut events);
+    assert!(received.iter().any(|event| event.job_id == first.job_id
+        && matches!(event.payload, EventPayload::PublicationCompleted { .. })));
+    assert!(
+        received.iter().any(|event| event.job_id == second.job_id
+            && matches!(
+                event.payload,
+                EventPayload::StateChanged {
+                    state: JobState::Running,
+                    ..
+                }
+            )),
+        "a freed slot starts the resumed job in that reconciliation"
+    );
+    // The event is visible only with the completed queue snapshot on disk.
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|job| job["id"] == first.job_id.as_str())
+            .unwrap()["view"]["state"],
+        "completed"
+    );
+    gates.0.lock().unwrap()[1] = true;
+    gates.1.notify_all();
+    assert!(engine.engine().wait_for_work(Duration::from_secs(15)));
+    engine.engine().reconcile();
+    engine.engine().session().cancel_all_and_join();
+}
+
+#[test]
 fn a_subscriber_that_never_reads_cannot_hold_up_the_queue() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue-v1.json");

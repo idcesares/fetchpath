@@ -329,6 +329,15 @@ agent is told. Nothing is downloaded while it waits. Taking a folder away or
 revoking an agent in Settings sends its unfinished downloads there back to
 waiting.
 
+## Download speed
+
+Speed depends on the website and your connection. More connections cannot
+remove a limit shared by the whole download. Fetchpath makes no blanket
+promise to beat your browser. The [development comparisons](../development/ADAPTIVE-HTTP.md#tool-comparisons-fp-087-30-september-2026)
+show the full engine against curl, aria2, wget2 and Chrome, with the settings,
+connections used and slower cases. They do not describe every website or
+promise the same result from the released installer.
+
 ## The command line
 
 The installer also adds a `fetchpath` command. Open a **new** terminal and run:

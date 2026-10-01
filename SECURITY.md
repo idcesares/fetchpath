@@ -27,6 +27,7 @@ Only the latest release receives security fixes.
 - Torrent metadata that escapes the chosen folder, peer discovery or uploading
   without the person's consent, or a torrent marked complete before its files
   are checked and published safely.
+- HTTP download redirects exposing source credentials or cookies to another origin.
 - Secrets or private URLs written to logs.
 
 ## Out of scope
