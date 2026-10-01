@@ -7,7 +7,7 @@ mod common;
 
 use common::*;
 use serde_json::Value;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -151,7 +151,7 @@ fn a_download_cancelled_from_another_client_exits_130() {
 #[test]
 fn queue_commands_control_jobs_by_index_and_id_prefix() {
     let home = Home::new();
-    let base = server(body(3_000_000), Duration::from_millis(15));
+    let (base, gate) = held_server(body(3_000_000));
 
     // A scheduled job, then a running one: the newest is number 1.
     let (exit, lines) = home.json(&["add", &format!("{base}/later.bin"), "--at", "+1h", "--json"]);
@@ -185,8 +185,27 @@ fn queue_commands_control_jobs_by_index_and_id_prefix() {
     assert_eq!(lines[0]["type"], "Job");
 
     // watch follows it to the end as protocol messages.
-    let (exit, lines) = home.json(&["watch", &now[..8], "--json"]);
-    assert_eq!(exit, 0);
+    let mut watch = home
+        .command(&["watch", &now[..8], "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(watch.stdout.take().unwrap());
+    let mut first = String::new();
+    reader.read_line(&mut first).unwrap();
+    // Subscribe before permitting completion, so event assertions do not
+    // depend on a transfer being slower than CLI process startup.
+    drop(gate);
+    let mut rest = String::new();
+    reader.read_to_string(&mut rest).unwrap();
+    let watched = watch.wait_with_output().unwrap();
+    assert_eq!(code(&watched), 0, "{}", text(&watched.stderr));
+    let lines: Vec<Value> = first
+        .lines()
+        .chain(rest.lines())
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
     assert!(matches!(
         lines[0]["type"].as_str(),
         Some("Subscribed" | "SnapshotBoundary")

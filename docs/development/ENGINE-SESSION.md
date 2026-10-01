@@ -407,8 +407,11 @@ This is a five-repetition Windows/NTFS loopback comparison, with observed
 timing noise, not an Internet throughput claim. Release build passed.
 Repository checks pass: `node --test` (57 tests) and
 `node tools/tasks.mjs check` (88 task contracts and reachable evidence).
-The PR readiness pass also replaces the CLI cancellation test's timed
-fixture with a guarded body gate: publication stays impossible until both
-clients report cancellation. This removes the slow-runner race without
-weakening exit-130 assertions. All 10 queue tests and strict queue Clippy
-pass after that test-only repair. CI uses the validated Rust 1.98.1 toolchain.
+The PR readiness pass also replaces timed fixtures in the CLI cancellation,
+pause/resume/watch and MCP wait-capacity tests with guarded body gates.
+Completion waits for cancellation, a watch subscription, or the excess-wait
+refusal, respectively. This removes slow-runner races without weakening
+exit-130, publication, event, byte-content or capacity assertions. All 10
+queue tests, 3 MCP tests and their strict Clippy checks pass after those
+test-only repairs; independent bounded reviews approve them. CI uses the
+validated Rust 1.98.1 toolchain.
