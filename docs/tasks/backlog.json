@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-09-30",
+  "updated": "2026-10-01",
   "tasks": [
     {
       "id": "FP-001",
@@ -2712,6 +2712,285 @@
       "acceptance": "A job created, resumed or finished through the engine is scheduled and reconciled as soon as its command or transfer completes, not on the next 250 ms tick (crates/fetchpath-session/src/engine.rs TICK_INTERVAL, apps/cli/src/engine/mod.rs), and the command line learns of completion from the event instead of a poll. The tick stays as a fallback for timers and progress sampling. On the FP-084 unshaped profile, engine time minus in-process core time falls by at least half from about 0.6 s per download; persistence ordering and event durability are unchanged.",
       "verification": "Session and engine tests for immediate scheduling and completion; FP-084 paired runs engine against in-process core; independent strong review of persistence ordering.",
       "evidence": ["docs/development/ENGINE-SESSION.md", "docs/development/evidence/engine-session/fp088-latency.json", "crates/fetchpath-session/tests/engine.rs", "apps/cli/src/wait.rs"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-089",
+      "title": "Use the shared download folder by default for torrents",
+      "milestone": "M13",
+      "dependsOn": [
+        "FP-080"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "adapters/torrent",
+        "apps/desktop",
+        "apps/cli",
+        "docs/product/UX.md",
+        "docs/development/TORRENTS.md",
+        "docs/user/CLI.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A13"
+      ],
+      "acceptance": "A torrent added without a destination uses the same engine-owned default download root and applicable folder rules as other downloads; desktop and TUI do not require a Save as field. The engine chooses a safe torrent-specific child folder from metadata, including magnets whose name arrives later, and handles collisions without overwriting or merging existing content. A person may optionally choose another root before submission or change the default in settings. Agent defaults still resolve within granted folders or wait for approval. Post-start relocation is separate scope. An omitted destination has consistent engine-owned semantics across all clients; each surface shows the resolved host and destination before submission where a preview exists, and in job details afterward.",
+      "verification": "Test omitted and explicit destinations through desktop, CLI/TUI and MCP; metadata-late magnets, malicious names, duplicate names and destination races; verify staged publication and agent folder grants. Desktop typecheck and an installed-app walkthrough reproduce and resolve the empty Save as rejection reported on 1 October 2026. Independent strong review of path and publication boundaries. Check that equivalent requests across surfaces resolve to the same engine folder policy without client-owned queue or default logic.",
+      "evidence": ["docs/development/TORRENTS.md", "adapters/torrent/src/main.rs", "crates/fetchpath-session/tests/policy.rs"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-090",
+      "title": "Start peer discovery automatically for user-submitted torrents",
+      "milestone": "M13",
+      "dependsOn": [
+        "FP-080"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "apps/cli",
+        "apps/desktop",
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/product/UX.md",
+        "docs/development/TORRENTS.md",
+        "docs/user/CLI.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Pasting a magnet or HTTPS .torrent link, or adding local metadata in the TUI, recognizes a torrent and starts normal peer discovery without requiring --discover-peers. Define and apply the same user-submission default across desktop and CLI, with a visible explanation of peer address exposure and a way to disable discovery. Explicitly supersede the previous user discovery opt-in contract; do not silently reinterpret it. Upload and seeding remain separate opt-in choices. MCP agents still require the person's approval for discovery or upload, and no browser capture or speed profile gains that permission implicitly. Persist the effective policy for retry and restart. An obvious stop control ends peer activity. Supported pause/cancel behavior and unsupported torrent actions are explained consistently across surfaces.",
+      "verification": "Test pasted links, magnets and local metadata with no discovery flag, explicit discovery-off, desktop parity, retry/restart and agent requests. Installed TUI walkthrough resolves the rejection shown on 1 October 2026. Independent strong review of principal classification, consent and persistence; update affected contracts and guides together. Verify discovery-off and stopping peer activity; confirm no agent surface bypasses the same engine policy.",
+      "evidence": ["docs/development/TORRENTS.md", "docs/architecture/JOB-CONTRACT.md", "crates/fetchpath-session/tests/policy.rs"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-091",
+      "title": "Design unified instance access and an optional remote download hub",
+      "milestone": "M15",
+      "dependsOn": [
+        "FP-047",
+        "FP-067"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "docs/architecture/specs",
+        "docs/architecture/REPOSITORY.md",
+        "docs/architecture/JOB-CONTRACT.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09",
+        "A13"
+      ],
+      "acceptance": "Produce a bounded design extending the existing single-owner engine to explicitly selected local or remote instances without separate surface-owned queues. Specify stable instance identity, endpoint selection, version negotiation, authenticated principals, revocation, reconnect/event replay and command deduplication. Treat paths and folder defaults as belonging to the selected host. Compare a private-network gateway (Tailscale is the user's candidate) with direct public exposure; prefer private access for the first slice and make all remote serving opt-in. Address remote credentials, browser-origin protections, secret/path redaction, connection loss and engine lifetime while serving an idle hub. Separate remote control from delivery of completed files; specify a minimal browser client and agent adapter, and decisions still needing the person. No deployment or network exposure in this design task. Structure the design and implementation gates as local usability, remote control, completed-file retrieval, then optional automatic delivery. Give each instance a stable identity plus a readable user-assigned name, require explicit endpoint selection, and display the selected host and host-owned folder for consequential actions. Design an explicit opt-in hub mode that remains reachable while idle, restores serving and persisted jobs after reboot under the supported user-session lifecycle, and distinguishes disconnected, sleeping and offline/unknown states without claiming reachability it cannot establish. Downloads continue on client disconnect; reconnect replays events and retried commands remain idempotent. Define separate grants for viewing jobs, submitting downloads, approving requests and retrieving selected completed outputs; agents cannot self-approve. Specify a reachable human approval surface, pending/rejected/expired request behavior and an unattended path within pre-granted limits. Define engine-owned disk capacity limits, incomplete/staged-file accounting, concurrent-job limits and retention controls; deletion of completed downloads requires explicit user policy rather than inferred cleanup permission. The minimal browser surface is queue, add, job details and approvals, with retrieval added in a later slice rather than all desktop settings. Direct browser control must work without an agent; agents are optional clients for interpretation and coordination. Treat independent background operation as a first-class product feature: the engine owns downloads while desktop, terminal and agents connect or disconnect. Define the optional desktop tray as a management client rather than engine lifetime ownership. Specify engine status, active-work summary, remote-access status and pending approvals, with unambiguous separate actions for hiding/closing the interface, disabling remote access and stopping the engine. Preserve headless operation without any tray process; hub mode keeps serving when the desktop exits. Distinguish ordinary idle shutdown from opt-in hub lifetime and explain supported sign-in/reboot behavior without implying a system service.",
+      "verification": "Trace the design to current engine/protocol and agent-policy contracts; walkthrough local desktop plus remote browser plus remote agent controlling one home queue. Independent strong review of authentication, authorization, replay and browser boundaries; record concrete implementation gates and deferred choices. Walk through wrong-host prevention, idle serving, supported reboot recovery, disconnect during a transfer, sleeping/unreachable host, remotely reachable approval and a full disk. Name measurable implementation gates for lifecycle, resource budgets and each separate permission; retain unresolved choices explicitly. Walk through close-to-tray, desktop Quit with active downloads, headless CLI/MCP operation, explicit engine stop and hub serving after desktop exit; verify labels describe the actual scope of each action.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-092",
+      "title": "Build an opt-in private web client for the home engine",
+      "milestone": "M15",
+      "dependsOn": [
+        "FP-091",
+        "FP-089",
+        "FP-090",
+        "FP-094"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps",
+        "crates/fetchpath-protocol",
+        "crates/fetchpath-session",
+        "docs/architecture/REPOSITORY.md",
+        "docs/user/GUIDE.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09",
+        "A13"
+      ],
+      "acceptance": "After FP-091 resolves its design gates, implement its minimal authenticated gateway and browser client over the existing engine: add downloads to home-host folders, list progress, pause/resume/cancel supported job kinds, and handle approvals according to principal policy. Local desktop and remote browser observe the same jobs. Remote serving is explicitly enabled with revocable access and documented private-network setup; default installation exposes no network listener. File delivery, public hosting and paid infrastructure are excluded. An unresolved design choice remains a gate rather than an invented default. Ship remote control first: queue, add, job details and human approvals, with clear instance name, connection state and host-owned destination. Browser use requires no agent. Implement the approved opt-in hub lifecycle, supported reboot recovery, disk/resource limits and retention controls. Keep download execution in the engine when the browser disconnects; reconnect recovers state and resubmission creates no duplicate job. Expose torrent discovery/upload choices and supported stop controls under the same policy as local clients; before remote torrent submission is enabled, upload has explicit byte/rate/time or ratio limits defined by the approved policy (moved from FP-090 on 1 October 2026). Job visibility, submission and approval are independently authorized; approval remains reachable remotely without granting an agent self-approval. Completed-file retrieval and automatic delivery are subsequent slices. Apply FP-094 semantic tokens, visual identity and reusable control/state patterns to the minimal web client, with responsive layouts, accessible keyboard/focus behavior, clear host identity and light/dark/high-contrast support as defined by the design system. Do not build a separate visual language or expand into every desktop setting. Implement the approved independent-background and hub lifetime behavior with engine/remote-access status and a way for the local desktop to manage hub access. Remote serving must not depend on a desktop window or tray process; turning remote access off and stopping the engine are distinct actions with separate effects.",
+      "verification": "End-to-end local desktop and remote browser walkthrough against one engine, including reconnect and duplicate submissions; negative authentication, revoked access, browser-origin and folder-policy tests. Independent strong review before completion. Verify turning remote access off stops new access without losing the local queue. Verify idle reachability in hub mode, supported reboot recovery, offline/sleep presentation, wrong-instance prevention, client disconnect during active work, remote human approval, permission separation, disk exhaustion and configured retention without unauthorized deletion. Reuse torrent default and peer-policy evidence from FP-089/FP-090. Review queue, add, details and approval surfaces at desktop and narrow browser widths, 200% scaling and supported themes; check contrast, non-color state cues and keyboard focus. Verify hub availability after desktop/tray exit and verify disabling remote access preserves active local downloads while explicit engine stop saves progress.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-093",
+      "title": "Design remote agent control and delivery of completed files",
+      "milestone": "M15",
+      "dependsOn": [
+        "FP-091",
+        "FP-092"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P3",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "docs/architecture/specs",
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/architecture/REPOSITORY.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Design how an agent away from home selects and authenticates to the home instance, submits a download under existing grants, observes completion and optionally delivers the published result to another authorized device. Resolve the recipient device and folder with the person before implementation; the 1 October idea does not specify that destination. Model download-to-home and delivery as distinct permissions and operations, with source publication required before delivery, bounded bytes/rates, verification at the recipient, interrupted-transfer recovery, destination conflicts, revocation and expiring access. Compare recipient pull with sender push; do not equate private-network membership with file-access authorization or enable general file browsing or sharing by default. Choose an MCP transport/adapter compatible with the accepted remote gateway. No transfer service deployment in this design task. Use the verified remote-control slice as the baseline. Define recipient-initiated retrieval of selected published job outputs as the first file-transfer slice, available directly in the browser without an agent; design optional automatic push afterward with recipient availability, destination grants, retries and conflicts explicit. Retrieval is separately authorized from queue control and does not expose arbitrary local filesystem browsing; include multi-file torrent output selection and safe relative paths. Require visible source instance and recipient identity, source/recipient disk budgets, expiring access and integrity verification that distinguishes observed digests from publisher authenticity. Explain delivery status separately from home-download completion. Produce bounded follow-up implementation packets for retrieval and optional push, with the latter gated on recipient choice and passing retrieval evidence.",
+      "verification": "Walkthrough download at home, explicit delivery to an authorized second device, interruption and revocation; negative cases for unauthorized agents, arbitrary local paths and unapproved recipients. Independent strong review of file authorization, credential handling, publication ordering and transfer integrity. Record unresolved recipient and transport choices as implementation gates. Walk through direct browser retrieval without an agent, remote agent submission waiting for human approval, selected torrent files, absent recipient, insufficient recipient disk, interrupted retrieval, expired access and revocation during transfer. Verify download completion does not imply delivery completion; no retrieval of staged or unrelated files and no queue-control grant automatically permits file access.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-094",
+      "title": "Define the Fetchpath design system and visual identity",
+      "milestone": "M16",
+      "dependsOn": [
+        "FP-082",
+        "FP-062"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "docs/product/UX.md",
+        "docs/architecture/specs",
+        "docs/architecture/REPOSITORY.md",
+        "apps/desktop/src",
+        "apps/cli/src",
+        "extensions/browser",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Define a cohesive, distinctive and polished Fetchpath visual direction using the existing identity as a starting point. Deliver reusable semantic tokens for color, typography, spacing, sizing, radii, elevation, iconography, density and motion, with theme mappings and an explicit source of truth and ownership. Specify common button, input, checkbox, dialog, navigation, queue row, progress, status, error, empty-state and approval patterns; include instance identity and destination hierarchy for future remote clients. Provide rendered representative desktop and narrow-browser compositions plus a terminal adaptation, so visual quality can be judged rather than inferred from prose. Desktop, web and extension can reuse visual assets/tokens where practical; CLI/TUI adapt semantic colors, terminology and hierarchy to terminal constraints without forcing GUI components or adding engine presentation dependencies. Preserve keyboard access, named controls, 4.5:1 text contrast, non-color status cues, 200% scaling, high-contrast and reduced-motion behavior. Describe incremental migration using existing dependencies, licensed font/icon assets and maintainable components rather than a mandatory framework rewrite. Keep one concise design specification and practical examples; register new committed assets/components in the repository map.",
+      "verification": "Visually review representative queue, add-torrent, settings, approval, error and empty states in supported themes, widths and densities; check text contrast and keyboard hierarchy. Confirm token ownership, GUI reuse and terminal fallback mappings are executable for downstream tasks and consistent with the existing UX contract. No screenshot snapshot tests for decorative details.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-095",
+      "title": "Apply the design system to desktop and browser extension surfaces",
+      "milestone": "M16",
+      "dependsOn": [
+        "FP-094",
+        "FP-089",
+        "FP-090"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop",
+        "extensions/browser",
+        "docs/product/UX.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Apply FP-094 tokens and reusable control/state patterns to the desktop queue, add flow, job details, settings, approvals and browser extension capture surfaces. Deliver a visually polished hierarchy with consistent alignment, typography, spacing, icons and action emphasis while keeping the queue primary. Fix the oversized and poorly grouped torrent checkboxes/dialog shown in the 1 October screenshots; destination is optional and discovery/upload wording follows FP-089/FP-090. All existing workflows, accessible names, focus return, keyboard shortcuts and honest engine-confirmed state remain intact. Long paths, names and errors remain usable at narrow sizes and 200% scaling; required actions stay reachable with a clear scroll path. Preserve settings and existing user theme choices. Use existing dependencies and avoid unrelated host/engine rewrites. Make background operation understandable in the desktop and tray: clearly distinguish Show Fetchpath, close/hide interface and stop engine. Present engine connection/running status and active-work summary from confirmed engine state; explain that downloads can continue after the desktop and tray exit. Prepare coherent placement for hub status and pending approvals, but gate remote controls on implemented FP-091/FP-092 capabilities rather than shipping nonfunctional toggles.",
+      "verification": "Desktop typecheck/build and applicable extension checks; real UI walkthrough of add, batch, torrent, settings, approval and failure states at supported widths, scaling and themes, including keyboard-only operation and existing accessibility checks. Review before/after visual evidence locally and retain only concise evidence needed for the acceptance claim. Walk through close-to-tray enabled/disabled, desktop Quit during a download, reconnect and intentionally stopped engine; verify no label or missing tray icon implies that work has stopped.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-096",
+      "title": "Apply the design system to the terminal experience",
+      "milestone": "M16",
+      "dependsOn": [
+        "FP-094",
+        "FP-089",
+        "FP-090"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli",
+        "docs/user/CLI.md",
+        "docs/product/UX.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Adapt FP-094 semantic colors, status vocabulary, density and hierarchy to the inline TUI and dashboard, including inspected-link cards, queue rows, help, settings, approvals and errors. Produce a cohesive polished terminal experience that remains readable in narrow terminals, light/dark and high-contrast themes, plain/no-color mode and ASCII glyph fallback. Preserve user-selected themes, density and keybindings, scrollback/selectable output, focus and resizing behavior, and all existing commands. Scriptable CLI output stays stable and machine-readable output gains no decorative sequences. Torrent defaults and peer choices follow FP-089/FP-090; destination and future instance identity remain clear without excessive decoration.",
+      "verification": "Run focused rendering/configuration and CLI output-contract checks where affected; walkthrough inline and dashboard modes with narrow/wide terminals, resize, no-color and ASCII fallback, existing user themes and long filenames/errors. Verify status remains understandable without color and machine-readable output retains its existing contract.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-097",
+      "title": "Create a branded GitHub banner and polish the README presentation",
+      "milestone": "M16",
+      "dependsOn": [
+        "FP-094"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "README.md",
+        "docs/product",
+        "docs/architecture/REPOSITORY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Create an attractive repository banner consistent with FP-094 visual identity, including the Fetchpath name and a concise accurate product message, and integrate it locally into the README with meaningful alt text. Deliver a reusable editable source and an optimized static render in a mapped repository asset location; compose text sharply and check legibility at typical GitHub README widths in light/dark contexts. Preserve the quick-start and installation hierarchy, make the first screen feel polished, and use current shipped capabilities rather than implying planned web/remote/torrent functionality is released. Brand assets have clear rights/provenance and no embedded private information. Avoid large redundant asset variants or a wholesale documentation rewrite. Changing the GitHub social-preview setting or publishing externally is separate scope. Prominently communicate the existing one-engine/background-download feature with an accurate short explanation of desktop/tray versus engine lifetime and a link to management instructions; describe hub mode only once shipped.",
+      "verification": "Inspect banner and README rendering at desktop and narrow widths, check image size, alt text and relative links, and confirm every product claim matches published release capabilities. Keep source/render links and a short account of visual verification; repository structure/link checks pass. Confirm background/tray claims against the implemented lifecycle and user guide, including the fact that desktop Quit does not stop active downloads.",
+      "evidence": [],
       "blockedReason": null
     }
   ]

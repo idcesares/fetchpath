@@ -24,7 +24,7 @@ Only the latest release receives security fixes.
   serving files that were not shared, or content accepted without its
   checksum.
 - Media helpers run without the pinned digest matching.
-- Torrent metadata that escapes the chosen folder, peer discovery or uploading
+- Torrent metadata that escapes the chosen folder, peer discovery (for an agent, browser capture or speed profile) or uploading
   without the person's consent, or a torrent marked complete before its files
   are checked and published safely.
 - HTTP download redirects exposing source credentials or cookies to another origin.

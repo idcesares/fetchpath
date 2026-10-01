@@ -97,15 +97,15 @@ pub const COMMANDS: &[Spec] = &[
     Spec {
         name: "add",
         aliases: &[],
-        usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q] [--discover-peers] [--upload]",
+        usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q] [--upload]",
         summary: "Look at links and confirm to download (or just paste one)",
         takes: Takes::Links,
     },
     Spec {
         name: "torrent",
         aliases: &[],
-        usage: "/torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE --to NEW_FOLDER --discover-peers [--upload]",
-        summary: "Add a torrent; peer discovery and upload are explicit",
+        usage: "/torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload]",
+        summary: "Add a torrent; peers see your IP address, upload stays off unless chosen",
         takes: Takes::Links,
     },
     Spec {
@@ -472,21 +472,18 @@ fn execute(
                     "give one magnet, HTTPS torrent link, or local .torrent file",
                 ));
             };
-            let destination = parsed
-                .to
-                .as_deref()
-                .ok_or_else(|| usage_error(spec, "choose a new folder with --to"))?;
-            if !parsed.discover_peers {
-                return Err(usage_error(
-                    spec,
-                    "add --discover-peers to contact the swarm",
-                ));
-            }
-            let job = queue::create_torrent_job(engine, source, destination, true, parsed.upload)?;
+            let destination = parsed.to.as_deref().unwrap_or("");
+            let job =
+                queue::create_torrent_job(engine, source, destination, Some(true), parsed.upload)?;
             reply.say(
                 Tone::Good,
-                format!("Added torrent {}  {destination}", client::short_id(&job)),
+                format!(
+                    "Added torrent {}  {}",
+                    client::short_id(&job),
+                    job.destination.as_deref().unwrap_or(destination)
+                ),
             );
+            reply.say(Tone::Dim, queue::torrent_note());
             Ok(())
         }
         "queue" => {
@@ -731,17 +728,17 @@ fn add(
     }
     if let Some(destination) = torrent_add_destination(spec, parsed)? {
         let source = &parsed.words[0];
-        let job = queue::create_torrent_job(
-            engine,
-            source,
-            destination,
-            parsed.discover_peers,
-            parsed.upload,
-        )?;
+        let job =
+            queue::create_torrent_job(engine, source, destination, Some(true), parsed.upload)?;
         reply.say(
             Tone::Good,
-            format!("Added torrent {}  {destination}", client::short_id(&job)),
+            format!(
+                "Added torrent {}  {}",
+                client::short_id(&job),
+                job.destination.as_deref().unwrap_or(destination)
+            ),
         );
+        reply.say(Tone::Dim, queue::torrent_note());
         return Ok(());
     }
     let at = parsed
@@ -789,23 +786,13 @@ fn torrent_add_destination<'a>(
     if parsed.words.len() != 1 {
         return Err(usage_error(spec, "add torrents one at a time"));
     }
-    if !parsed.discover_peers {
-        return Err(usage_error(
-            spec,
-            "add --discover-peers to contact the swarm",
-        ));
-    }
     if parsed.sha256.is_some() || parsed.quality.is_some() || parsed.at.is_some() {
         return Err(usage_error(
             spec,
             "torrents cannot use --sha256, --quality, or --at",
         ));
     }
-    parsed
-        .to
-        .as_deref()
-        .map(Some)
-        .ok_or_else(|| usage_error(spec, "choose a new folder with --to"))
+    Ok(Some(parsed.to.as_deref().unwrap_or("")))
 }
 
 fn help(topic: Option<&str>, reply: &mut Reply) {
@@ -1103,7 +1090,7 @@ mod tests {
     }
 
     #[test]
-    fn torrent_add_requires_peer_consent_and_a_new_folder() {
+    fn torrent_add_discovers_peers_by_default_and_leaves_the_folder_to_the_engine() {
         let spec = find("add").unwrap();
         let without_consent = queue::parse(
             &[
@@ -1114,7 +1101,11 @@ mod tests {
             &["--to"],
         )
         .unwrap();
-        assert!(torrent_add_destination(spec, &without_consent).is_err());
+        assert_eq!(
+            torrent_add_destination(spec, &without_consent).unwrap(),
+            Some(r"C:\Downloads\debian")
+        );
+        assert_eq!(without_consent.discover_peers, None);
         let allowed = queue::parse(
             &[
                 "https://example.test/debian.torrent".into(),
@@ -1129,6 +1120,15 @@ mod tests {
             torrent_add_destination(spec, &allowed).unwrap(),
             Some(r"C:\Downloads\debian")
         );
+        let automatic = queue::parse(
+            &[
+                "https://example.test/debian.torrent".into(),
+                "--discover-peers".into(),
+            ],
+            &["--to", "--discover-peers"],
+        )
+        .unwrap();
+        assert_eq!(torrent_add_destination(spec, &automatic).unwrap(), Some(""));
     }
 
     #[test]

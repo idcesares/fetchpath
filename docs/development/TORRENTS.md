@@ -3,16 +3,15 @@
 The engine owns a torrent job in the same queue and starts an isolated
 `fetchpath-torrent-helper.exe` beside its executable. The helper uses pinned
 `librqbit` 9.0.1 (Apache-2.0), consumes one bounded JSON request, and reports
-bounded progress and terminal events. The person explicitly enables peer
-discovery; uploading is off by default and requires a separate choice. Agents
-wait for approval for discovery or upload. Browser captures cannot start a
+bounded progress and terminal events. A torrent a person submits discovers
+peers by default and is refused if discovery is turned off, since it could not find peers; uploading is off by default and requires
+a separate choice. Agents wait for approval for discovery or upload. Browser captures cannot start a
 torrent. The helper caps peers at 32, download at 32 MiB/s and upload at
 128 KiB/s, and does not listen for incoming peers.
 
 Magnet links, HTTPS metadata links, and local `.torrent` files are accepted.
-The desktop and terminal add flows select Torrent for these inputs; the
-terminal and CLI require explicit `--discover-peers`, and desktop requires its
-peer-discovery checkbox. The engine snapshots local metadata (at most 4 MiB)
+The desktop and terminal add flows select Torrent for these inputs; peer
+discovery is on; clearing the desktop checkbox is refused by the engine. The engine snapshots local metadata (at most 4 MiB)
 under its private data directory before saving a v2 queue record. Restart
 rehashes that copy and fails closed if it is missing or changed; replacing a
 local source with a new link retires the old snapshot after the queue save.
@@ -46,7 +45,25 @@ clean-Sandbox lifecycle, where the helper started without the redistributable,
 and the owner added torrents from a magnet, an HTTPS `.torrent` link and a local
 `.torrent` file in the desktop, command line and terminal of that clean install.
 
-Current limits: torrent jobs need a new destination folder and cannot be
+FP-089 (1 October 2026): a torrent no longer needs a destination. An empty
+destination is automatic: the engine resolves the root through the person's
+rules and default folder (`Session::resolve_torrent_destination`), the queue
+record keeps the root and an automatic flag across restarts, and the helper
+stages in `<root>\.fetchpath-<job>-<hash>.part`, names the folder from the
+torrent's info name (hazardous names fall back to `Torrent <hash prefix>`) and
+claims `name`, `name (2)`, and so on with an exclusive `create_dir` (Windows
+renames over an empty directory), renames the stage onto its own claim, records
+the folder in the stage marker so a rerun after a crash reports it, and emits `Published` so the job's destination becomes the final folder. A
+bare name goes into the same root; a full path behaves as before. An agent's
+automatic destination is checked against its grants as a folder inside the
+root. Verified by session, policy and helper unit tests; the installed-app
+walkthrough and independent review are still open.
+
+Peer discovery default (FP-090): the protocol's `discover_peers` is optional; absent means on for a person and off for an agent, and the engine stores the effective policy in the record so retry and restart reuse it. A torrent whose effective discovery is off (a person clears it, or an agent omits or sends false) is refused at creation with `policy.discovery_off`; the helper has no trackers or DHT, so queueing it could only fail. An agent is told to request `discover_peers`, which needs approval. Cancel kills the helper process, which ends all peer activity; there is still no pause. Verified by protocol wire, session policy and CLI parsing tests; the installed-app walkthrough and independent strong review are still open.
+
+Current limits: choosing only the root for an automatic torrent is not
+offered (a full path is an exact new folder), no client previews the resolved
+root before submission, and torrent jobs cannot be
 paused in place. A magnet's private source may need to be supplied again
 after an engine restart. There is no per-file selection or seeding after
 completion. Peer traffic and untrusted torrent metadata remain subject to

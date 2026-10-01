@@ -2359,8 +2359,11 @@
               "$ref": "#/$defs/DestinationIntent"
             },
             "discover_peers": {
-              "description": "Peer discovery contacts trackers and/or the DHT. It is explicit.",
-              "type": "boolean"
+              "description": "Peer discovery contacts trackers and/or the DHT. Absent means the\ndefault for the submitting principal: on for a person, off for an\nagent. A null is treated as absent. An agent that asks for it needs\napproval.",
+              "type": [
+                "boolean",
+                "null"
+              ]
             },
             "input": {
               "$ref": "#/$defs/JobInput"
@@ -2380,16 +2383,15 @@
               ]
             },
             "upload": {
-              "description": "Serving pieces to peers is separately explicit and capped.",
+              "default": false,
+              "description": "Serving pieces to peers is separately explicit and capped. It\nnever defaults on.",
               "type": "boolean"
             }
           },
           "required": [
             "kind",
             "input",
-            "destination",
-            "discover_peers",
-            "upload"
+            "destination"
           ],
           "type": "object"
         }

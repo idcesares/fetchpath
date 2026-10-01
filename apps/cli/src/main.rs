@@ -25,7 +25,7 @@ Usage:
 
 The download queue, kept by the Fetchpath engine:
   fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
-  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE --to NEW_FOLDER --discover-peers [--upload] [--wait]
+  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait]
   fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...

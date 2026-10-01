@@ -1315,3 +1315,37 @@ fn validate(root: &Value, schema: &Value, value: &Value, path: &str) -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn a_torrent_request_reads_an_explicit_or_absent_discovery_choice() {
+    use fetchpath_protocol::command::JobRequest;
+    let request = |extra: Value| {
+        let mut value = json!({
+            "kind": "torrent",
+            "input": { "type": "url", "url": "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "destination": { "path": "Album", "conflict": "ask" },
+        });
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        serde_json::from_value::<JobRequest>(value).unwrap()
+    };
+    let choice = |request| match request {
+        JobRequest::Torrent {
+            discover_peers,
+            upload,
+            ..
+        } => (discover_peers, upload),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(choice(request(json!({}))), (None, false));
+    assert_eq!(
+        choice(request(json!({ "discover_peers": true, "upload": true }))),
+        (Some(true), true)
+    );
+    assert_eq!(
+        choice(request(json!({ "discover_peers": false }))),
+        (Some(false), false)
+    );
+}

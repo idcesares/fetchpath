@@ -282,6 +282,10 @@ struct QueueRecord {
     torrent_policy: Option<TorrentPolicy>,
     torrent_metadata_sha256: Option<String>,
     torrent_metadata_path: Option<PathBuf>,
+    /// A torrent whose `destination` is still the root folder: the helper names
+    /// the child folder from metadata and `destination` becomes that folder once
+    /// it is published.
+    torrent_auto: bool,
     job: Option<JobHandle>,
     /// Live only. Deliberately not persisted: a rate measured before a restart
     /// describes a transfer that is no longer running.
@@ -395,6 +399,9 @@ pub struct TorrentDraft {
     pub destination: String,
     pub not_before_ms: Option<u64>,
     pub policy: TorrentPolicy,
+    /// `destination` is the root of an engine-named folder (set by the engine).
+    #[serde(skip)]
+    pub auto: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -539,6 +546,8 @@ struct PersistedRecord {
     torrent_policy: Option<TorrentPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     torrent_metadata_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    torrent_auto: bool,
     #[serde(flatten, default)]
     durable: RecordDurable,
     /// Absent for the person's own jobs, so a 0.1.0 file writes back
@@ -1047,6 +1056,38 @@ impl Session {
         Ok(folder.join(path).display().to_string())
     }
 
+    /// The destination of a new torrent after the person's rules, for every
+    /// principal. A full path stays as it is. A bare folder name goes into the
+    /// matching rule's folder or the default folder, like a file name does. An
+    /// empty one means the engine names the folder from the torrent: the
+    /// returned path is then the root and the flag is set. A checksum rule does
+    /// not apply, since a torrent verifies itself against its metadata.
+    pub fn resolve_torrent_destination(
+        &self,
+        source: Option<&str>,
+        destination: &str,
+    ) -> Result<(String, bool), String> {
+        let trimmed = destination.trim();
+        let path = Path::new(trimmed);
+        let bare = path.components().count() == 1
+            && matches!(path.components().next(), Some(Component::Normal(_)));
+        if !trimmed.is_empty() && !bare {
+            return Ok((destination.to_owned(), false));
+        }
+        let verdict = self.decide_rules(source.unwrap_or(""), None, None);
+        let root = verdict
+            .matched
+            .and_then(|rule| rule.spec.then.folder)
+            .map(PathBuf::from)
+            .or_else(|| self.default_folder())
+            .ok_or_else(|| "Choose a folder for this torrent.".to_owned())?;
+        if trimmed.is_empty() {
+            Ok((root.display().to_string(), true))
+        } else {
+            Ok((root.join(path).display().to_string(), false))
+        }
+    }
+
     /// Where a download goes when nothing else says: the setting, or the
     /// Downloads folder this engine was started with.
     pub fn default_folder(&self) -> Option<PathBuf> {
@@ -1107,12 +1148,19 @@ impl Session {
         origin: &Origin,
     ) -> Result<JobSnapshot, String> {
         let source = validated_torrent_source(&draft.source)?;
-        let destination = validated_destination(&draft.destination)?;
+        let destination = validated_torrent_destination(&draft.destination, draft.auto)?;
         if !draft.policy.discover_peers {
-            return Err("Enable peer discovery explicitly for this torrent.".into());
+            return Err(
+                "policy.discovery_off: a torrent cannot find peers without discovery.".into(),
+            );
         }
-        let mut record =
-            QueueRecord::new_torrent(source, destination, draft.not_before_ms, draft.policy);
+        let mut record = QueueRecord::new_torrent(
+            source,
+            destination,
+            draft.auto,
+            draft.not_before_ms,
+            draft.policy,
+        );
         record.apply(origin);
         let id = record.id.clone();
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
@@ -1127,12 +1175,15 @@ impl Session {
         &self,
         source: &Path,
         destination: &str,
+        auto: bool,
         not_before_ms: Option<u64>,
         policy: TorrentPolicy,
         origin: &Origin,
     ) -> Result<JobSnapshot, String> {
         if !policy.discover_peers {
-            return Err("Enable peer discovery explicitly for this torrent.".into());
+            return Err(
+                "policy.discovery_off: a torrent cannot find peers without discovery.".into(),
+            );
         }
         if !source.is_absolute() {
             return Err("Choose a .torrent file by its full path.".into());
@@ -1158,11 +1209,16 @@ impl Session {
         }
         use sha2::{Digest, Sha256};
         let hash = format!("{:x}", Sha256::digest(&bytes));
-        let destination = validated_destination(destination)?;
+        let destination = validated_torrent_destination(destination, auto)?;
         let source_name = source.file_name().unwrap().to_string_lossy().into_owned();
         let synthetic_source = format!("local-torrent:{hash}");
-        let mut record =
-            QueueRecord::new_torrent(synthetic_source.clone(), destination, not_before_ms, policy);
+        let mut record = QueueRecord::new_torrent(
+            synthetic_source.clone(),
+            destination,
+            auto,
+            not_before_ms,
+            policy,
+        );
         record.display_url = source_name.clone();
         record.view.source = source_name;
         record.restart_url = Some(synthetic_source.clone());
@@ -1184,7 +1240,7 @@ impl Session {
         drop(file);
         record.torrent_metadata_sha256 = Some(hash);
         record.torrent_metadata_path = Some(snapshot);
-        if !record.destination.exists() {
+        if !record.destination_taken() {
             record.job = Some(torrent_job(&record, synthetic_source, policy));
         }
         record.apply(origin);
@@ -1471,8 +1527,12 @@ impl Session {
                 let _ = store.remove_secret(&credential_ref);
             }
         }
-        if let Some(destination) = destination {
+        // An unchanged destination keeps an automatic torrent automatic.
+        if let Some(destination) = destination
+            && destination != record.destination
+        {
             record.destination = destination;
+            record.torrent_auto = false;
         }
         // An empty field clears the checksum; anything else replaces it.
         if let Some(checksum) = checksum {
@@ -1482,7 +1542,7 @@ impl Session {
             "This source included private query values. Paste a refreshed link to continue."
                 .to_string()
         })?;
-        if record.destination.exists() {
+        if record.destination_taken() {
             record.view.state = "failed".into();
             record.view.error = Some("A file already exists at this destination.".into());
             record.view.action = Some("choose_new_path".into());
@@ -1725,7 +1785,7 @@ impl Session {
                 "Paste a refreshed link because private query values were not saved.",
                 "edit_link",
             )),
-            Some(_) if record.destination.exists() => Err((
+            Some(_) if record.destination_taken() => Err((
                 "failed",
                 "A file already exists at this destination.",
                 "choose_new_path",
@@ -1847,7 +1907,7 @@ impl Session {
         let state = self.inner.lock().expect("desktop jobs poisoned");
         find_record(&state, job_id)
             .ok()
-            .map(|record| record.destination.clone())
+            .map(QueueRecord::grant_path)
     }
 
     /// Stops a running agent download whose stated or received size passed
@@ -1983,7 +2043,7 @@ impl Session {
             if record.principal != principal
                 || record.approval.is_some()
                 || !unfinished
-                || policy::inside_grants(&record.destination, folders)
+                || policy::inside_grants(&record.grant_path(), folders)
             {
                 continue;
             }
@@ -2232,7 +2292,7 @@ impl Session {
             let Some(url) = record.live_url.clone() else {
                 continue;
             };
-            if record.destination.exists() {
+            if record.destination_taken() {
                 continue;
             }
             record.attempt += 1;
@@ -2687,6 +2747,7 @@ impl QueueRecord {
             torrent_policy: None,
             torrent_metadata_sha256: None,
             torrent_metadata_path: None,
+            torrent_auto: false,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2768,6 +2829,7 @@ impl QueueRecord {
             torrent_policy: None,
             torrent_metadata_sha256: None,
             torrent_metadata_path: None,
+            torrent_auto: false,
             job,
             rate: RateEstimate::default(),
             attempt: 0,
@@ -2807,23 +2869,44 @@ impl QueueRecord {
     fn new_torrent(
         source: String,
         destination: PathBuf,
+        auto: bool,
         not_before_ms: Option<u64>,
         policy: TorrentPolicy,
     ) -> Self {
         let mut record =
             Self::new_checked(source.clone(), destination.clone(), not_before_ms, None);
         record.torrent_policy = Some(policy);
+        record.torrent_auto = auto;
         record.view.kind = "torrent".into();
-        record.job = (!destination.exists()).then(|| {
-            JobHandle::Torrent(TorrentJob::create(fetchpath_torrent::request(
-                source,
-                destination,
-                record.id.clone(),
-                policy.discover_peers,
-                policy.upload,
-            )))
-        });
+        if auto {
+            // `new_checked` took the existing root for a conflict.
+            let scheduled = not_before_ms.is_some_and(|due| due > now_ms());
+            record.view.state = if scheduled { "scheduled" } else { "queued" }.into();
+            record.view.error = None;
+            record.view.action = None;
+            record.view.retryable = false;
+            record.view.finished_at_ms = None;
+            record.finished_at_ms = None;
+        }
+        record.job = (!record.destination_taken()).then(|| torrent_job(&record, source, policy));
         record
+    }
+
+    /// The path an agent's folder grants are checked against: the destination,
+    /// or for an automatic torrent a folder the engine will name inside the
+    /// root, since a grant covers what is saved within it.
+    fn grant_path(&self) -> PathBuf {
+        if self.torrent_auto {
+            self.destination.join("torrent")
+        } else {
+            self.destination.clone()
+        }
+    }
+
+    /// An existing destination blocks a new download, except the root of an
+    /// automatic torrent, which is meant to exist.
+    fn destination_taken(&self) -> bool {
+        !self.torrent_auto && self.destination.exists()
     }
 
     fn restore(
@@ -2911,7 +2994,7 @@ impl QueueRecord {
                 "queued"
             };
             let job = if let Some(policy) = saved.torrent_policy {
-                let request = match (&metadata_path, &saved.torrent_metadata_sha256) {
+                let mut request = match (&metadata_path, &saved.torrent_metadata_sha256) {
                     (Some(path), Some(hash)) => fetchpath_torrent::request_local(
                         url.clone(),
                         path.clone(),
@@ -2929,6 +3012,7 @@ impl QueueRecord {
                         policy.upload,
                     ),
                 };
+                request.auto_name = saved.torrent_auto;
                 Some(JobHandle::Torrent(TorrentJob::create(request)))
             } else if let Some(variant_id) = saved.media_variant_id.clone() {
                 media_tools.map(|tools| {
@@ -3026,6 +3110,7 @@ impl QueueRecord {
             torrent_policy: saved.torrent_policy,
             torrent_metadata_sha256: saved.torrent_metadata_sha256,
             torrent_metadata_path: metadata_path,
+            torrent_auto: saved.torrent_auto,
             job,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -3069,6 +3154,7 @@ impl QueueRecord {
             torrent_policy: saved.torrent_policy,
             torrent_metadata_sha256: saved.torrent_metadata_sha256,
             torrent_metadata_path: None,
+            torrent_auto: saved.torrent_auto,
             job: None,
             rate: RateEstimate::default(),
             attempt: view.attempt,
@@ -3175,6 +3261,20 @@ fn refresh_record(record: &mut QueueRecord) {
             record.view.total_bytes = snapshot.total;
             record.view.error = snapshot.error;
             record.view.cleanup_pending = false;
+            // The helper named and published the folder: from here on the
+            // job's destination is that folder, not the root it went into.
+            if let Some(published) = snapshot.published
+                && record.torrent_auto
+            {
+                if published_inside(&record.destination, Path::new(&published)) {
+                    record.destination = PathBuf::from(&published);
+                    record.view.destination = Some(published);
+                    record.torrent_auto = false;
+                } else {
+                    record.view.state = "failed".into();
+                    record.view.error = Some("torrent.transfer_failed".into());
+                }
+            }
         }
     }
     let (action, retryable) = recovery_action(&record.view);
@@ -3245,7 +3345,7 @@ fn file_job(
 }
 
 fn torrent_job(record: &QueueRecord, source: String, policy: TorrentPolicy) -> JobHandle {
-    let request = match (
+    let mut request = match (
         &record.torrent_metadata_path,
         &record.torrent_metadata_sha256,
     ) {
@@ -3266,6 +3366,7 @@ fn torrent_job(record: &QueueRecord, source: String, policy: TorrentPolicy) -> J
             policy.upload,
         ),
     };
+    request.auto_name = record.torrent_auto;
     JobHandle::Torrent(TorrentJob::create(request))
 }
 
@@ -3544,6 +3645,33 @@ fn validated_torrent_source(raw: &str) -> Result<String, String> {
 /// Validates a destination arriving over IPC. The path must be absolute and free
 /// of traversal, so a renderer cannot steer a write outside the folder the user
 /// actually chose, and the leaf must be a name Windows can really create.
+/// Whether the helper's reported folder is a single new name directly in the root.
+fn published_inside(root: &Path, published: &Path) -> bool {
+    published.parent() == Some(root)
+        && published
+            .components()
+            .next_back()
+            .is_some_and(|last| matches!(last, Component::Normal(_)))
+}
+
+/// A torrent's destination: a new folder, or for an automatic torrent the
+/// existing root folder it is published into, which may be a drive root.
+fn validated_torrent_destination(raw: &str, auto: bool) -> Result<PathBuf, String> {
+    if !auto {
+        return validated_destination(raw);
+    }
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_DESTINATION_LENGTH {
+        return Err("Choose a folder for this torrent.".into());
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err("That destination path contains characters Windows cannot use.".into());
+    }
+    let path = PathBuf::from(trimmed);
+    plain_path(&path)?;
+    Ok(path)
+}
+
 fn validated_destination(raw: &str) -> Result<PathBuf, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -3770,6 +3898,7 @@ fn write_queue(
                 media_quality: record.media_quality.clone(),
                 torrent_policy: record.torrent_policy,
                 torrent_metadata_sha256: record.torrent_metadata_sha256.clone(),
+                torrent_auto: record.torrent_auto,
                 durable: record.durable.clone(),
                 principal: record.principal.clone(),
                 approval: record.approval.clone(),
@@ -4257,6 +4386,7 @@ mod tests {
             media_quality: None,
             torrent_policy: None,
             torrent_metadata_sha256: None,
+            torrent_auto: false,
             durable: RecordDurable::default(),
             principal: Principal::User,
             approval: None,
@@ -4290,6 +4420,7 @@ mod tests {
                 .enqueue_torrent_file_for(
                     &original,
                     &destination.display().to_string(),
+                    false,
                     Some(now_ms() + 3_600_000),
                     policy,
                     &Origin::default(),
@@ -4314,6 +4445,98 @@ mod tests {
     }
 
     #[test]
+    fn a_default_and_an_approval_hold_survive_a_restart_through_the_engine() {
+        use crate::engine::{Engine, InProcessClient};
+        use fetchpath_protocol::command::{
+            Command, ConflictPolicy, DestinationIntent, JobInput, JobRequest,
+        };
+        use fetchpath_protocol::principal::{AgentName, AgentPolicy};
+        use fetchpath_protocol::{ClientId, EngineClient, Timestamp};
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("queue-v1.json");
+        let granted = dir.path().join("granted");
+        fs::create_dir_all(&granted).unwrap();
+        let original = dir.path().join("debian.torrent");
+        fs::write(&original, b"d4:infod4:name6:debian6:lengthi0eee").unwrap();
+        let torrent = |name: &str, discover_peers, input| Command::CreateJob {
+            request: JobRequest::Torrent {
+                input,
+                destination: DestinationIntent {
+                    path: granted.join(name).display().to_string(),
+                    conflict: ConflictPolicy::Ask,
+                },
+                not_before: Some(Timestamp::from_unix_ms(now_ms() as i64 + 3_600_000)),
+                discover_peers,
+                upload: false,
+            },
+        };
+        let name = AgentName::try_from("helper").unwrap();
+        let (person, agent) = {
+            let engine = Engine::new(Arc::new(Session::load(queue.clone(), 1).unwrap()));
+            let user = InProcessClient::manual(Arc::clone(&engine));
+            let helper = InProcessClient::manual(Arc::clone(&engine))
+                .with_principal(Principal::Agent(name.clone()));
+            user.send(
+                &ClientId::random(),
+                Command::SetAgentPolicy {
+                    agent: name,
+                    policy: Some(AgentPolicy {
+                        folders: vec![granted.display().to_string()],
+                        ..AgentPolicy::default()
+                    }),
+                },
+            )
+            .unwrap();
+            let id = |client: &InProcessClient, command| match client
+                .send(&ClientId::random(), command)
+                .unwrap()
+            {
+                fetchpath_protocol::message::CommandResult::Job { job } => job.job_id.to_string(),
+                other => panic!("{other:?}"),
+            };
+            (
+                id(
+                    &user,
+                    torrent(
+                        "person",
+                        None,
+                        JobInput::TorrentFile {
+                            path: original.display().to_string(),
+                        },
+                    ),
+                ),
+                id(
+                    &helper,
+                    torrent(
+                        "agent",
+                        Some(true),
+                        JobInput::Url {
+                            url: fetchpath_protocol::SensitiveUrl::try_from(
+                                "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                    .to_owned(),
+                            )
+                            .unwrap(),
+                        },
+                    ),
+                ),
+            )
+        };
+        let restored = Session::load(queue, 1).unwrap();
+        let state = restored.inner.lock().unwrap();
+        let find = |id: &str| state.records.iter().find(|record| record.id == id).unwrap();
+        assert!(find(&person).torrent_policy.unwrap().discover_peers);
+        let held = find(&agent);
+        assert!(held.torrent_policy.unwrap().discover_peers);
+        assert!(
+            held.approval
+                .as_ref()
+                .unwrap()
+                .reasons
+                .contains(&ApprovalReason::PeerDiscovery)
+        );
+    }
+
+    #[test]
     fn refreshing_a_local_torrent_retires_its_metadata_before_using_the_new_link() {
         let dir = tempfile::tempdir().unwrap();
         let queue = dir.path().join("queue-v1.json");
@@ -4325,6 +4548,7 @@ mod tests {
             .enqueue_torrent_file_for(
                 &original,
                 &destination.display().to_string(),
+                false,
                 Some(now_ms() + 3_600_000),
                 TorrentPolicy {
                     discover_peers: true,
@@ -4376,6 +4600,63 @@ mod tests {
     }
 
     #[test]
+    fn an_automatic_torrent_keeps_its_root_across_restart_and_follows_the_published_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = dir.path().join("queue-v1.json");
+        let root = dir.path().join("downloads");
+        fs::create_dir(&root).unwrap();
+        let policy = TorrentPolicy {
+            discover_peers: true,
+            upload: false,
+        };
+        let id = {
+            let session = Session::load(queue.clone(), 1).unwrap();
+            session
+                .enqueue_torrent_for(
+                    TorrentDraft {
+                        source: "https://example.test/a.torrent".into(),
+                        destination: root.display().to_string(),
+                        not_before_ms: Some(now_ms() + 3_600_000),
+                        policy,
+                        auto: true,
+                    },
+                    &Origin::default(),
+                )
+                .unwrap()
+                .job_id
+        };
+        let persisted = load_persisted(&queue).unwrap().current().unwrap();
+        assert!(
+            persisted.records[0].torrent_auto,
+            "{:?}",
+            persisted.records[0].view
+        );
+        assert_eq!(persisted.records[0].destination, root.display().to_string());
+        let restored = Session::load(queue, 1).unwrap();
+        let state = restored.inner.lock().unwrap();
+        let record = find_record(&state, &id).unwrap();
+        assert!(record.torrent_auto);
+        assert_eq!(
+            record.view.state, "scheduled",
+            "an existing root is no conflict"
+        );
+        let Some(JobHandle::Torrent(job)) = record.job.as_ref() else {
+            panic!("the restored torrent has a job");
+        };
+        assert!(job.request().auto_name);
+    }
+
+    #[test]
+    fn a_published_folder_must_be_one_name_directly_inside_the_root() {
+        let root = Path::new(r"C:\downloads");
+        assert!(published_inside(root, Path::new(r"C:\downloads\Album")));
+        assert!(!published_inside(root, Path::new(r"C:\downloads")));
+        assert!(!published_inside(root, Path::new(r"C:\downloads\a\b")));
+        assert!(!published_inside(root, Path::new(r"C:\elsewhere\Album")));
+        assert!(!published_inside(root, Path::new(r"C:\downloads\..")));
+    }
+
+    #[test]
     fn an_agent_refreshing_a_torrent_waits_for_peer_approval_again() {
         let output = tempfile::tempdir().unwrap();
         let agent = AgentName::try_from("helper").unwrap();
@@ -4384,6 +4665,7 @@ mod tests {
         let mut record = QueueRecord::new_torrent(
             "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
             output.path().join("torrent"),
+            false,
             None,
             TorrentPolicy {
                 discover_peers: true,

@@ -231,6 +231,7 @@ const mediaOptions = required<HTMLElement>("media-options");
 const torrentOptions = required<HTMLElement>("torrent-options");
 const torrentDiscovery = required<HTMLInputElement>("torrent-discovery");
 const torrentUpload = required<HTMLInputElement>("torrent-upload");
+const destinationLabel = required<HTMLLabelElement>("destination-label");
 const torrentPickFile = required<HTMLButtonElement>("torrent-pick-file");
 const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
 const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
@@ -1418,7 +1419,10 @@ kindChooser.addEventListener("change", () => {
   checksumField.hidden = media || torrent;
   urlInput.rows = media || torrent ? 2 : 3;
   urlInput.placeholder = torrent ? "magnet:?xt=urn:btih:…" : media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
-  destinationInput.placeholder = torrent ? "New folder for this torrent" : "Choose a destination file";
+  // A torrent needs no Save as: left empty, the engine picks the folder.
+  destinationInput.placeholder = torrent ? "Optional: a new folder for this torrent" : "Choose a destination file";
+  destinationInput.required = !torrent;
+  destinationLabel.textContent = torrent ? "Folder (optional)" : "Save as";
   if (torrent && destinationIsSuggested) destinationInput.value = "";
   if (media && !toolsStatus) void refreshToolsStatus();
   renderPreview();
@@ -1839,7 +1843,6 @@ form.addEventListener("submit", async (event) => {
       });
     } else if (downloadKind() === "torrent") {
       if (drafts.length !== 1) throw new Error("Add one torrent at a time.");
-      if (!torrentDiscovery.checked) throw new Error("Choose whether this torrent may contact peers and discovery services.");
       await invoke<JobSnapshot>("start_torrent_download", {
         draft: {
           url: drafts[0].url,
@@ -2057,7 +2060,8 @@ document.addEventListener("keydown", (event) => {
 function buildDrafts(): JobDraft[] {
   const urls = parseUrls();
   const baseDestination = destinationInput.value.trim();
-  if (!baseDestination || !urls.length) return [];
+  // An empty destination is only valid for a torrent: the engine chooses.
+  if (!urls.length || (!baseDestination && downloadKind() !== "torrent")) return [];
   const notBeforeMs = scheduleInput.value ? new Date(scheduleInput.value).getTime() : null;
   const used = new Set<string>();
   return urls.map((url, index) => {
@@ -2078,7 +2082,7 @@ function renderPreview(): void {
   for (const draft of drafts) {
     const item = document.createElement("li");
     const name = document.createElement("strong");
-    name.textContent = filename(draft.destination);
+    name.textContent = draft.destination ? filename(draft.destination) : "Default download folder";
     const source = document.createElement("span");
     source.textContent = redactedSource(draft.url);
     item.append(name, source);

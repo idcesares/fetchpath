@@ -305,7 +305,7 @@ impl TorrentDraft {
             input,
             destination: destination(&self.destination),
             not_before: at(self.not_before_ms),
-            discover_peers: self.discover_peers,
+            discover_peers: Some(self.discover_peers),
             upload: self.upload,
         })
     }

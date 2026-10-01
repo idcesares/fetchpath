@@ -88,6 +88,20 @@ fn ruled(message: String) -> ProtocolError {
     .with_action(Action::CorrectInput)
 }
 
+/// A torrent that cannot find peers is refused rather than queued to fail.
+fn discovery_off(person: bool) -> ProtocolError {
+    error(
+        "policy.discovery_off",
+        ErrorScope::Command,
+        if person {
+            "Peer discovery is off, so this torrent cannot find peers. Turn discovery on to add it."
+        } else {
+            "Peer discovery is off for this torrent. Request discover_peers: it needs the person's approval."
+        },
+    )
+    .with_action(Action::CorrectInput)
+}
+
 fn unsupported(what: &str) -> ProtocolError {
     error(
         "contract.unsupported",
@@ -626,16 +640,50 @@ impl Engine {
                     if matches!(principal, Principal::Browser) {
                         return Err(unsupported("Browser captures cannot start peer discovery"));
                     }
+                    // A person's torrent discovers peers unless they turn it
+                    // off. An agent never gets discovery implicitly, and upload
+                    // is explicit for everyone.
+                    let discover_peers = discover_peers.unwrap_or(principal.is_user());
+                    if !discover_peers {
+                        return Err(discovery_off(principal.is_user()));
+                    }
                     if destination.conflict != ConflictPolicy::Ask {
                         return Err(unsupported("Replacing an existing torrent destination"));
                     }
-                    let mut origin = self.origin(principal, source, destination)?;
+                    // The person's rules and the default folder first, so an
+                    // agent's grants are checked against where the torrent will
+                    // really go: a bare or empty destination is only a root.
+                    let (resolved, auto) = session
+                        .resolve_torrent_destination(
+                            match source {
+                                JobInput::Url { url } => Some(url.expose()),
+                                _ => None,
+                            },
+                            &destination.path,
+                        )
+                        .map_err(ruled)?;
+                    let destination = &DestinationIntent {
+                        path: resolved,
+                        conflict: destination.conflict,
+                    };
+                    // The grant covers what is saved inside it, so an automatic
+                    // root is checked as a folder the engine will add to it.
+                    let origin_destination = DestinationIntent {
+                        path: if auto {
+                            std::path::Path::new(&destination.path)
+                                .join("torrent")
+                                .display()
+                                .to_string()
+                        } else {
+                            destination.path.clone()
+                        },
+                        conflict: destination.conflict,
+                    };
+                    let mut origin = self.origin(principal, source, &origin_destination)?;
                     if !principal.is_user() {
-                        if *discover_peers {
-                            origin
-                                .approval
-                                .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
-                        }
+                        origin
+                            .approval
+                            .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
                         if *upload {
                             origin
                                 .approval
@@ -643,7 +691,7 @@ impl Engine {
                         }
                     }
                     let policy = TorrentPolicy {
-                        discover_peers: *discover_peers,
+                        discover_peers,
                         upload: *upload,
                     };
                     let due = not_before.map(millis).transpose()?;
@@ -654,12 +702,14 @@ impl Engine {
                                 destination: destination.path.clone(),
                                 not_before_ms: due,
                                 policy,
+                                auto,
                             },
                             &origin,
                         ),
                         JobInput::TorrentFile { path } => session.enqueue_torrent_file_for(
                             std::path::Path::new(path),
                             &destination.path,
+                            auto,
                             due,
                             policy,
                             &origin,

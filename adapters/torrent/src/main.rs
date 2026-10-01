@@ -27,10 +27,82 @@ fn stage_path(destination: &Path, job_id: &str, source: &str) -> Result<PathBuf,
     Ok(destination.with_file_name(stage_name))
 }
 
-fn bind_stage(stage: &Path, fresh: bool, info_hash: &str) -> Result<(), &'static str> {
+/// Automatic mode stages inside the root under a name that does not depend on the
+/// final folder name, which is unknown until metadata arrives.
+fn auto_stage_path(root: &Path, job_id: &str, source: &str) -> Result<PathBuf, &'static str> {
+    if !root.is_absolute() {
+        return Err("destination.invalid");
+    }
+    let source_hash = format!("{:x}", Sha256::digest(source.as_bytes()));
+    Ok(root.join(format!(".fetchpath-{job_id}-{}.part", &source_hash[..32])))
+}
+
+/// The torrent's own name when it is a safe single folder name, otherwise a neutral
+/// name from the info hash.
+fn auto_folder_name(info_name: Option<&str>, info_hash_hex: &str) -> String {
+    match info_name {
+        Some(name) if name.len() <= 200 && safe_name(name.as_bytes()) => name.to_owned(),
+        _ => format!("Torrent {}", &info_hash_hex[..8.min(info_hash_hex.len())]),
+    }
+}
+
+/// Moves the finished stage to `root/name`, then `name (2)`, `name (3)`, and so on.
+/// Existing content is never replaced or merged. `std::fs::rename` onto an existing
+/// empty directory replaces it on Windows, so a name is first claimed exclusively
+/// with `create_dir` (it fails if anything exists there); the stage is then renamed
+/// onto the empty directory this call owns. `record` runs once the name is claimed
+/// and before the rename, so a restart can find the published folder.
+fn publish_auto(
+    stage: &Path,
+    root: &Path,
+    name: &str,
+    record: impl Fn(&Path) -> Result<(), &'static str>,
+) -> Result<PathBuf, &'static str> {
+    for attempt in 1..=99u32 {
+        let candidate = if attempt == 1 {
+            root.join(name)
+        } else {
+            root.join(format!("{name} ({attempt})"))
+        };
+        match fs::create_dir(&candidate) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("destination.publish_failed"),
+        }
+        if let Err(code) = record(&candidate) {
+            let _ = fs::remove_dir(&candidate);
+            return Err(code);
+        }
+        match fs::rename(stage, &candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(_) => {
+                // Only our own empty claim is removed, never anything else.
+                let _ = fs::remove_dir(&candidate);
+            }
+        }
+    }
+    Err("destination.conflict")
+}
+
+fn marker_path(stage: &Path) -> Result<PathBuf, &'static str> {
     let mut name = stage.file_name().ok_or("stage.invalid")?.to_os_string();
     name.push(".infohash");
-    let marker = stage.with_file_name(name);
+    Ok(stage.with_file_name(name))
+}
+
+/// What a finished automatic publication left in the marker: the folder, then
+/// the received and total bytes, after the info hash line.
+fn recorded_publication(stage: &Path, root: &Path) -> Option<(PathBuf, u64, u64)> {
+    let text = fs::read_to_string(marker_path(stage).ok()?).ok()?;
+    let mut lines = text.lines().skip(1);
+    let folder = PathBuf::from(lines.next()?);
+    let received = lines.next()?.parse().ok()?;
+    let total = lines.next()?.parse().ok()?;
+    (folder.parent() == Some(root) && folder.is_dir()).then_some((folder, received, total))
+}
+
+fn bind_stage(stage: &Path, fresh: bool, info_hash: &str) -> Result<(), &'static str> {
+    let marker = marker_path(stage)?;
     if fresh {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -39,7 +111,12 @@ fn bind_stage(stage: &Path, fresh: bool, info_hash: &str) -> Result<(), &'static
             .map_err(|_| "stage.invalid")?;
         file.write_all(info_hash.as_bytes())
             .map_err(|_| "stage.invalid")?;
-    } else if fs::read_to_string(marker).map_err(|_| "stage.invalid")? != info_hash {
+    } else if fs::read_to_string(marker)
+        .map_err(|_| "stage.invalid")?
+        .lines()
+        .next()
+        != Some(info_hash)
+    {
         return Err("stage.invalid");
     }
     Ok(())
@@ -94,6 +171,13 @@ fn safe_name(segment: &[u8]) -> bool {
     {
         return false;
     }
+    // Control characters, and the console device names `CON` does not cover.
+    if segment.iter().any(|byte| *byte < 0x20 || *byte == 0x7f)
+        || segment.eq_ignore_ascii_case(b"CONIN$")
+        || segment.eq_ignore_ascii_case(b"CONOUT$")
+    {
+        return false;
+    }
     let stem = segment
         .split(|byte| *byte == b'.')
         .next()
@@ -129,10 +213,14 @@ fn safe_name(segment: &[u8]) -> bool {
 async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     request.validate()?;
     let destination = PathBuf::from(&request.destination);
-    if destination.exists() {
+    if !request.auto_name && destination.exists() {
         return Err("destination.conflict");
     }
-    let stage = stage_path(&destination, &request.job_id, &request.source)?;
+    let stage = if request.auto_name {
+        auto_stage_path(&destination, &request.job_id, &request.source)?
+    } else {
+        stage_path(&destination, &request.job_id, &request.source)?
+    };
     if stage.exists()
         && (!stage.is_dir()
             || stage
@@ -143,11 +231,26 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     {
         return Err("stage.invalid");
     }
+    if request.auto_name
+        && !stage.exists()
+        && let Some((folder, received, total)) = recorded_publication(&stage, &destination)
+    {
+        // An earlier run published but the engine never recorded it.
+        let _ = fs::remove_file(marker_path(&stage)?);
+        emit(Event::Published {
+            path: folder.display().to_string(),
+        });
+        return Ok((received, total));
+    }
     let fresh_stage = !stage.exists();
     if !fresh_stage {
         safe_tree(&stage).map_err(|_| "stage.invalid")?;
     }
-    let parent = destination.parent().ok_or("destination.invalid")?;
+    let parent = if request.auto_name {
+        destination.as_path()
+    } else {
+        destination.parent().ok_or("destination.invalid")?
+    };
     fs::create_dir_all(parent).map_err(|_| "destination.unavailable")?;
     fs::create_dir_all(&stage).map_err(|_| "stage.unavailable")?;
 
@@ -236,6 +339,9 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
         return Err("torrent.metadata_invalid");
     };
     let identity = format!("{:x}", Sha256::digest(list.info_hash.0));
+    let auto_name = request
+        .auto_name
+        .then(|| auto_folder_name(list.info.name().as_deref(), &list.info_hash.as_string()));
     bind_stage(&stage, fresh_stage, &identity)?;
     for file in list.info.iter_file_details() {
         let components: Vec<_> = file.filename.iter_components_bytes().collect();
@@ -297,10 +403,38 @@ async fn run(request: Request) -> Result<(u64, u64), &'static str> {
     let stats = handle.stats();
     session.stop().await;
     safe_tree(&stage).map_err(|_| "torrent.path_invalid")?;
-    if destination.exists() {
-        return Err("destination.conflict");
+    if let Some(name) = auto_name {
+        let marker = marker_path(&stage)?;
+        let published = publish_auto(&stage, &destination, &name, |folder| {
+            // Rewritten, not appended, so a failed earlier claim never stays
+            // the recorded folder; the swap keeps the info hash line intact.
+            let text = fs::read_to_string(&marker).map_err(|_| "stage.invalid")?;
+            let hash = text.lines().next().ok_or("stage.invalid")?;
+            let mut next = marker.clone().into_os_string();
+            next.push(".next");
+            let next = PathBuf::from(next);
+            let mut file = fs::File::create(&next).map_err(|_| "stage.invalid")?;
+            write!(
+                file,
+                "{hash}\n{}\n{}\n{}",
+                folder.display(),
+                stats.progress_bytes,
+                stats.total_bytes
+            )
+            .and_then(|_| file.sync_all())
+            .and_then(|_| fs::rename(&next, &marker))
+            .map_err(|_| "stage.invalid")
+        })?;
+        emit(Event::Published {
+            path: published.display().to_string(),
+        });
+    } else {
+        if destination.exists() {
+            return Err("destination.conflict");
+        }
+        fs::rename(&stage, &destination).map_err(|_| "destination.publish_failed")?;
     }
-    fs::rename(&stage, &destination).map_err(|_| "destination.publish_failed")?;
+    let _ = fs::remove_file(marker_path(&stage)?);
     Ok((stats.progress_bytes, stats.total_bytes))
 }
 
@@ -342,6 +476,100 @@ mod tests {
         let b = stage_path(destination, job_id, "magnet:?xt=urn:btih:bbbb").unwrap();
         assert_eq!(a, a_retry);
         assert_ne!(a, b, "another torrent must not reuse staged files");
+    }
+
+    #[test]
+    fn automatic_staging_is_stable_bound_and_independent_of_the_name() {
+        let root = Path::new(r"C:\downloads");
+        let job_id = "01234567-89ab-cdef-0123-456789abcdef";
+        let a = auto_stage_path(root, job_id, "magnet:?xt=urn:btih:aaaa").unwrap();
+        assert_eq!(
+            a,
+            auto_stage_path(root, job_id, "magnet:?xt=urn:btih:aaaa").unwrap()
+        );
+        assert_ne!(
+            a,
+            auto_stage_path(root, job_id, "magnet:?xt=urn:btih:bbbb").unwrap()
+        );
+        assert_eq!(a.parent(), Some(root));
+        auto_stage_path(Path::new("downloads"), job_id, "x").unwrap_err();
+    }
+
+    #[test]
+    fn automatic_names_fall_back_when_the_torrent_name_is_hazardous() {
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(auto_folder_name(Some("Album"), hash), "Album");
+        for bad in [
+            "..", ".", "CON", "a/b", r"a\b", "name.", "name ", "", "C:evil", "a\nb", "a\u{1}b",
+            "a\u{7f}", "CONIN$", "conout$",
+        ] {
+            assert_eq!(
+                auto_folder_name(Some(bad), hash),
+                "Torrent 01234567",
+                "{bad}"
+            );
+        }
+        assert_eq!(auto_folder_name(None, hash), "Torrent 01234567");
+        assert_eq!(
+            auto_folder_name(Some(&"a".repeat(201)), hash),
+            "Torrent 01234567"
+        );
+    }
+
+    #[test]
+    fn automatic_publication_never_replaces_existing_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("Album")).unwrap();
+        fs::write(root.join("Album").join("keep.txt"), b"mine").unwrap();
+        fs::create_dir(root.join("Album (2)")).unwrap();
+        let stage = root.join(".stage.part");
+        fs::create_dir(&stage).unwrap();
+        fs::write(stage.join("new.bin"), b"new").unwrap();
+        let published = publish_auto(&stage, root, "Album", |_| Ok(())).unwrap();
+        assert_eq!(published, root.join("Album (3)"));
+        assert!(published.join("new.bin").is_file());
+        assert!(!stage.exists());
+        assert_eq!(
+            fs::read(root.join("Album").join("keep.txt")).unwrap(),
+            b"mine"
+        );
+        assert!(!root.join("Album (2)").join("new.bin").exists());
+    }
+
+    #[test]
+    fn an_existing_empty_folder_is_skipped_and_kept() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("Album")).unwrap();
+        let stage = root.join(".stage.part");
+        fs::create_dir(&stage).unwrap();
+        fs::write(stage.join("new.bin"), b"new").unwrap();
+        let published = publish_auto(&stage, root, "Album", |_| Ok(())).unwrap();
+        assert_eq!(published, root.join("Album (2)"));
+        assert!(root.join("Album").is_dir());
+        assert_eq!(fs::read_dir(root.join("Album")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_rerun_after_publication_finds_the_recorded_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let stage = root.join(".stage.part");
+        fs::create_dir(&stage).unwrap();
+        bind_stage(&stage, true, "hash-a").unwrap();
+        let marker = marker_path(&stage).unwrap();
+        let published = publish_auto(&stage, root, "Album", |folder| {
+            let mut file = fs::OpenOptions::new().append(true).open(&marker).unwrap();
+            write!(file, "\n{}\n5\n7", folder.display()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        // The engine never recorded it: the stage is gone, the marker remains.
+        let (folder, received, total) = recorded_publication(&stage, root).unwrap();
+        assert_eq!((folder, received, total), (published, 5, 7));
+        // Anywhere else than the root, the record is not trusted.
+        assert!(recorded_publication(&stage, &root.join("other")).is_none());
     }
 
     #[test]

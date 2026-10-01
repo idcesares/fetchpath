@@ -201,7 +201,8 @@ pub struct DownloadParams {
     /// auto (default) looks at the link first: a file is saved, a video page
     /// is saved as its video, and a web page is refused. file saves whatever
     /// the link returns; media treats it as a video or audio page; torrent
-    /// needs a new folder name and explicit peer discovery.
+    /// needs discover_peers: true (the person approves it) and, optionally, a new folder name
+    /// (file_name, with folder); without one the engine names the folder.
     #[serde(default)]
     pub kind: Option<Kind>,
     /// For video or audio: a format's label or id from inspect_link, best,
@@ -212,9 +213,11 @@ pub struct DownloadParams {
     /// never saved.
     #[serde(default)]
     pub sha256: Option<String>,
-    /// For torrents: allow contact with peers, trackers and/or DHT.
+    /// For torrents: ask to contact peers, trackers and/or DHT. It waits for
+    /// the person's approval. Left out, an agent's torrent does not discover
+    /// peers and cannot download.
     #[serde(default)]
-    pub discover_peers: bool,
+    pub discover_peers: Option<bool>,
     /// For torrents: allow bounded piece uploads after the person approves.
     #[serde(default)]
     pub upload: bool,
@@ -703,23 +706,26 @@ fn start(
                 "Torrent jobs do not take a media quality or flat SHA-256.",
             ));
         }
-        if !params.discover_peers {
-            return Err(client::input_error(
-                "Set discover_peers to true to request contact with the swarm.",
-            ));
-        }
-        let folder = folder.ok_or_else(|| {
-            client::input_error("Give a full destination folder for this torrent.")
-        })?;
-        let name = name.ok_or_else(|| {
-            client::input_error("Give a new folder name in file_name for this torrent.")
-        })?;
-        let destination = std::path::Path::new(&folder).join(name);
+        // Without a name the engine picks the folder from the torrent, inside
+        // the person's default folder; a chosen folder needs a name in it.
+        let destination = match (name, folder) {
+            (Some(name), Some(folder)) => std::path::Path::new(&folder)
+                .join(name)
+                .display()
+                .to_string(),
+            (Some(name), None) => name,
+            (None, _) if params.folder.is_some() => {
+                return Err(client::input_error(
+                    "Give a new folder name in file_name for this folder, or leave both out to use the default folder.",
+                ));
+            }
+            (None, _) => String::new(),
+        };
         return queue::create_torrent_job(
             engine,
             &params.url,
-            &destination.display().to_string(),
-            true,
+            &destination,
+            params.discover_peers,
             params.upload,
         );
     }
