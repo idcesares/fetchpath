@@ -170,9 +170,9 @@ pub fn torrent(args: &[String]) -> i32 {
     let [source] = parsed.words.as_slice() else {
         return usage("torrent needs one magnet, HTTPS .torrent link, or local .torrent file");
     };
-    let Some(destination) = parsed.to.as_deref() else {
-        return usage("torrent needs --to with a new destination folder");
-    };
+    // Without --to the engine picks the folder: the default folder and rules
+    // decide where, and the torrent's own name decides what.
+    let destination = parsed.to.as_deref().unwrap_or("");
     if !parsed.discover_peers {
         return usage("torrent needs --discover-peers to contact the swarm");
     }
@@ -187,7 +187,11 @@ pub fn torrent(args: &[String]) -> i32 {
         if parsed.json {
             client::print_json(&CommandResult::Job { job: job.clone() });
         } else {
-            println!("Added torrent {}  {}", client::short_id(&job), destination);
+            println!(
+                "Added torrent {}  {}",
+                client::short_id(&job),
+                job.destination.as_deref().unwrap_or(destination)
+            );
         }
         if parsed.wait {
             client::catch_interrupt();
@@ -295,9 +299,6 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
         if parsed.sha256.is_some() || parsed.quality.is_some() || parsed.at.is_some() {
             return usage("torrent links cannot use --sha256, --quality, or --at");
         }
-        if links[0].1.as_deref().or(parsed.to.as_deref()).is_none() {
-            return usage("a torrent needs --to with a new destination folder");
-        }
     }
     if parsed.sha256.is_some() && links.len() > 1 {
         return usage("a checksum describes one file; add links with --sha256 one at a time");
@@ -340,7 +341,7 @@ fn add_links(parsed: &Args, links: &[(String, Option<String>)], look: bool) -> i
             create_torrent_job(
                 &engine,
                 link,
-                target.expect("checked above"),
+                target.unwrap_or(""),
                 parsed.discover_peers,
                 parsed.upload,
             )

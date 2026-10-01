@@ -1713,3 +1713,110 @@ fn a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_
         "saved files stay"
     );
 }
+
+fn later_torrent(destination: &str) -> Command {
+    Command::CreateJob {
+        request: JobRequest::Torrent {
+            input: JobInput::Url {
+                url: url("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            },
+            destination: DestinationIntent {
+                path: destination.to_owned(),
+                conflict: ConflictPolicy::Ask,
+            },
+            not_before: Some(Timestamp::from_unix_ms(
+                Timestamp::now().unix_ms() + 3_600_000,
+            )),
+            discover_peers: true,
+            upload: false,
+        },
+    }
+}
+
+fn set_default_folder(client: &InProcessClient, folder: Option<&Path>) {
+    let mut settings = match send(client, Command::GetSettings).unwrap() {
+        CommandResult::Settings { view } => view.settings,
+        other => panic!("{other:?}"),
+    };
+    settings.default_destination_dir = folder.map(|path| path.display().to_string());
+    send(client, Command::UpdateSettings { settings }).unwrap();
+}
+
+#[test]
+fn a_torrent_without_a_destination_uses_the_default_folder_and_rules_like_other_downloads() {
+    use fetchpath_protocol::model::{RuleActions, RuleConditions};
+    let s = setup(granting);
+    // Neither a setting nor a download folder: ask for one, as a file does.
+    assert_eq!(
+        code(send(&s.user, later_torrent(""))),
+        "input.invalid_request"
+    );
+
+    set_default_folder(&s.user, Some(&s.outside));
+    let automatic = job(send(&s.user, later_torrent("  ")).unwrap());
+    assert_eq!(
+        automatic.destination.as_deref(),
+        Some(s.outside.display().to_string().as_str()),
+        "the root, until the helper names the folder"
+    );
+    let named = job(send(&s.user, later_torrent("Album")).unwrap());
+    assert_eq!(
+        named.destination.as_deref(),
+        Some(s.outside.join("Album").display().to_string().as_str())
+    );
+    let full = s.root.join("elsewhere").join("Full");
+    let explicit = job(send(&s.user, later_torrent(&full.display().to_string())).unwrap());
+    assert_eq!(
+        explicit.destination.as_deref(),
+        Some(full.display().to_string().as_str())
+    );
+
+    // A matching rule's folder wins over the default, and a checksum rule
+    // does not block a torrent.
+    let ruled = s.root.join("ruled");
+    add_rule(
+        &s.user,
+        RuleConditions {
+            file_types: vec!["torrent".into()],
+            ..RuleConditions::default()
+        },
+        RuleActions {
+            folder: Some(ruled.display().to_string()),
+            require_checksum: true,
+            ..RuleActions::default()
+        },
+    )
+    .unwrap();
+    let mut linked = later_torrent("");
+    if let Command::CreateJob {
+        request: JobRequest::Torrent { input, .. },
+    } = &mut linked
+    {
+        *input = JobInput::Url {
+            url: url("https://example.test/a.torrent"),
+        };
+    }
+    let by_rule = job(send(&s.user, linked).unwrap());
+    assert_eq!(
+        by_rule.destination.as_deref(),
+        Some(ruled.display().to_string().as_str())
+    );
+}
+
+#[test]
+fn an_agents_automatic_torrent_destination_is_checked_against_its_grants() {
+    let s = setup(granting);
+    // The default folder is outside the grant: wait for the person.
+    set_default_folder(&s.user, Some(&s.outside));
+    let outside = job(send(&s.agent, later_torrent("")).unwrap());
+    assert_eq!(outside.state, JobState::AwaitingApproval);
+    assert!(reasons(&outside).contains(&ApprovalReason::OutsideGrantedFolders));
+    let bare = job(send(&s.agent, later_torrent("Album")).unwrap());
+    assert_eq!(bare.state, JobState::AwaitingApproval);
+
+    // Inside the grant it only waits for the peer approvals every agent
+    // torrent needs.
+    set_default_folder(&s.user, Some(&s.granted));
+    let inside = job(send(&s.agent, later_torrent("")).unwrap());
+    assert!(!reasons(&inside).contains(&ApprovalReason::OutsideGrantedFolders));
+}

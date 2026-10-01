@@ -629,7 +629,36 @@ impl Engine {
                     if destination.conflict != ConflictPolicy::Ask {
                         return Err(unsupported("Replacing an existing torrent destination"));
                     }
-                    let mut origin = self.origin(principal, source, destination)?;
+                    // The person's rules and the default folder first, so an
+                    // agent's grants are checked against where the torrent will
+                    // really go: a bare or empty destination is only a root.
+                    let (resolved, auto) = session
+                        .resolve_torrent_destination(
+                            match source {
+                                JobInput::Url { url } => Some(url.expose()),
+                                _ => None,
+                            },
+                            &destination.path,
+                        )
+                        .map_err(ruled)?;
+                    let destination = &DestinationIntent {
+                        path: resolved,
+                        conflict: destination.conflict,
+                    };
+                    // The grant covers what is saved inside it, so an automatic
+                    // root is checked as a folder the engine will add to it.
+                    let origin_destination = DestinationIntent {
+                        path: if auto {
+                            std::path::Path::new(&destination.path)
+                                .join("torrent")
+                                .display()
+                                .to_string()
+                        } else {
+                            destination.path.clone()
+                        },
+                        conflict: destination.conflict,
+                    };
+                    let mut origin = self.origin(principal, source, &origin_destination)?;
                     if !principal.is_user() {
                         if *discover_peers {
                             origin
@@ -654,12 +683,14 @@ impl Engine {
                                 destination: destination.path.clone(),
                                 not_before_ms: due,
                                 policy,
+                                auto,
                             },
                             &origin,
                         ),
                         JobInput::TorrentFile { path } => session.enqueue_torrent_file_for(
                             std::path::Path::new(path),
                             &destination.path,
+                            auto,
                             due,
                             policy,
                             &origin,

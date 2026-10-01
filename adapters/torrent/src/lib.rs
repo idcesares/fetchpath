@@ -22,7 +22,11 @@ pub struct Request {
     pub metadata_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata_sha256: Option<String>,
+    /// The explicit new folder, or the root folder when `auto_name` is set.
     pub destination: String,
+    /// The helper names the folder from torrent metadata and publishes it inside the root.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_name: bool,
     pub job_id: String,
     pub discover_peers: bool,
     pub upload: bool,
@@ -55,6 +59,9 @@ impl Request {
         if self.destination.is_empty() || self.destination.len() > 4096 {
             return Err("destination.invalid");
         }
+        if self.auto_name && !std::path::Path::new(&self.destination).is_absolute() {
+            return Err("destination.invalid");
+        }
         if self.job_id.len() != 36
             || !self
                 .job_id
@@ -73,9 +80,21 @@ impl Request {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    Progress { received: u64, total: u64 },
-    Completed { received: u64, total: u64 },
-    Failed { code: String },
+    Progress {
+        received: u64,
+        total: u64,
+    },
+    /// The final folder, emitted just before `Completed`.
+    Published {
+        path: String,
+    },
+    Completed {
+        received: u64,
+        total: u64,
+    },
+    Failed {
+        code: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,6 +113,8 @@ pub struct Snapshot {
     pub received: u64,
     pub total: Option<u64>,
     pub error: Option<String>,
+    /// The published folder, when the helper reported one.
+    pub published: Option<String>,
 }
 
 struct Inner {
@@ -120,11 +141,16 @@ impl TorrentJob {
                     received: 0,
                     total: None,
                     error: None,
+                    published: None,
                 },
                 child: None,
                 worker: None,
             })),
         }
+    }
+
+    pub fn request(&self) -> &Request {
+        &self.request
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -191,6 +217,7 @@ impl TorrentJob {
         inner.child = Some(process.clone());
         let shared = self.inner.clone();
         let request_destination = self.request.destination.clone();
+        let request_auto_name = self.request.auto_name;
         inner.worker = Some(std::thread::spawn(move || {
             let mut completed = false;
             let mut failed = None;
@@ -209,6 +236,9 @@ impl TorrentJob {
                     Event::Progress { received, total } => {
                         guard.snapshot.received = received;
                         guard.snapshot.total = Some(total);
+                    }
+                    Event::Published { path } => {
+                        guard.snapshot.published = Some(path);
                     }
                     Event::Completed { received, total } => {
                         guard.snapshot.received = received;
@@ -241,7 +271,9 @@ impl TorrentJob {
             if guard.snapshot.state == JobState::Cancelling {
                 guard.snapshot.state = if completed && success {
                     JobState::Completed
-                } else if PathBuf::from(&request_destination).exists() {
+                } else if guard.snapshot.published.is_some()
+                    || (!request_auto_name && PathBuf::from(&request_destination).exists())
+                {
                     guard.snapshot.error = Some("torrent.publication_uncertain".into());
                     JobState::Failed
                 } else {
@@ -307,6 +339,7 @@ pub fn request(
         metadata_path: None,
         metadata_sha256: None,
         destination: destination.display().to_string(),
+        auto_name: false,
         job_id,
         discover_peers,
         upload,
@@ -326,5 +359,18 @@ pub fn request_local(
     let mut request = request(source, destination, job_id, discover_peers, upload);
     request.metadata_path = Some(metadata_path.display().to_string());
     request.metadata_sha256 = Some(metadata_sha256);
+    request
+}
+
+/// An automatic request: `root` is the folder the helper publishes a named child into.
+pub fn request_auto(
+    source: String,
+    root: PathBuf,
+    job_id: String,
+    discover_peers: bool,
+    upload: bool,
+) -> Request {
+    let mut request = request(source, root, job_id, discover_peers, upload);
+    request.auto_name = true;
     request
 }

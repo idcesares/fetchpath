@@ -81,6 +81,8 @@ Version 1 supports two job kinds:
 
 The immutable `JobRequest` records kind, submitted input, destination intent, network/privacy profile, optional trusted expected identity, and creation origin (`desktop`, `cli`, or an identified browser extension). Authentication is an opaque `credential_ref`; clients never embed raw credentials in the command log.
 
+A torrent's destination intent is one of: a full path (an explicit new folder, never replaced), a bare folder name (placed in the matching rule's folder or the default folder, as a bare file name is), or empty (automatic: the root is resolved the same way and the engine names the folder from the torrent's metadata, falling back to `Torrent <infohash prefix>`, adding ` (2)`, ` (3)` on a collision, never replacing or merging). The root is resolved before an agent's folder grants are checked. The job's destination becomes the published folder once it exists. A checksum rule does not apply to torrents.
+
 Mutable policy such as priority, schedule, and bandwidth limit is versioned independently. A policy update cannot change the desired bytes, destination conflict policy, trusted identity, or media selection. Those changes create a new job so history and verification remain explainable.
 
 ## 5. Commands

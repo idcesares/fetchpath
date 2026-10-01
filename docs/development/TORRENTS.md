@@ -46,7 +46,23 @@ clean-Sandbox lifecycle, where the helper started without the redistributable,
 and the owner added torrents from a magnet, an HTTPS `.torrent` link and a local
 `.torrent` file in the desktop, command line and terminal of that clean install.
 
-Current limits: torrent jobs need a new destination folder and cannot be
+FP-089 (1 October 2026): a torrent no longer needs a destination. An empty
+destination is automatic: the engine resolves the root through the person's
+rules and default folder (`Session::resolve_torrent_destination`), the queue
+record keeps the root and an automatic flag across restarts, and the helper
+stages in `<root>\.fetchpath-<job>-<hash>.part`, names the folder from the
+torrent's info name (hazardous names fall back to `Torrent <hash prefix>`) and
+claims `name`, `name (2)`, and so on with an exclusive `create_dir` (Windows
+renames over an empty directory), renames the stage onto its own claim, records
+the folder in the stage marker so a rerun after a crash reports it, and emits `Published` so the job's destination becomes the final folder. A
+bare name goes into the same root; a full path behaves as before. An agent's
+automatic destination is checked against its grants as a folder inside the
+root. Verified by session, policy and helper unit tests; the installed-app
+walkthrough and independent review are still open.
+
+Current limits: choosing only the root for an automatic torrent is not
+offered (a full path is an exact new folder), no client previews the resolved
+root before submission, and torrent jobs cannot be
 paused in place. A magnet's private source may need to be supplied again
 after an engine restart. There is no per-file selection or seeding after
 completion. Peer traffic and untrusted torrent metadata remain subject to

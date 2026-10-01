@@ -201,7 +201,8 @@ pub struct DownloadParams {
     /// auto (default) looks at the link first: a file is saved, a video page
     /// is saved as its video, and a web page is refused. file saves whatever
     /// the link returns; media treats it as a video or audio page; torrent
-    /// needs a new folder name and explicit peer discovery.
+    /// needs explicit peer discovery and, optionally, a new folder name
+    /// (file_name, with folder); without one the engine names the folder.
     #[serde(default)]
     pub kind: Option<Kind>,
     /// For video or audio: a format's label or id from inspect_link, best,
@@ -708,20 +709,22 @@ fn start(
                 "Set discover_peers to true to request contact with the swarm.",
             ));
         }
-        let folder = folder.ok_or_else(|| {
-            client::input_error("Give a full destination folder for this torrent.")
-        })?;
-        let name = name.ok_or_else(|| {
-            client::input_error("Give a new folder name in file_name for this torrent.")
-        })?;
-        let destination = std::path::Path::new(&folder).join(name);
-        return queue::create_torrent_job(
-            engine,
-            &params.url,
-            &destination.display().to_string(),
-            true,
-            params.upload,
-        );
+        // Without a name the engine picks the folder from the torrent, inside
+        // the person's default folder; a chosen folder needs a name in it.
+        let destination = match (name, folder) {
+            (Some(name), Some(folder)) => std::path::Path::new(&folder)
+                .join(name)
+                .display()
+                .to_string(),
+            (Some(name), None) => name,
+            (None, _) if params.folder.is_some() => {
+                return Err(client::input_error(
+                    "Give a new folder name in file_name for this folder, or leave both out to use the default folder.",
+                ));
+            }
+            (None, _) => String::new(),
+        };
+        return queue::create_torrent_job(engine, &params.url, &destination, true, params.upload);
     }
     let mut flags = Vec::new();
     if let Some(quality) = &params.quality {
