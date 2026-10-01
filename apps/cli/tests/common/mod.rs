@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -130,12 +131,35 @@ pub fn text(bytes: &[u8]) -> String {
 /// Serves `body` at any path, slowly, with ranges and a strong validator;
 /// paths containing `missing` answer 404.
 pub fn server(body: Vec<u8>, pause: Duration) -> String {
+    server_with_gate(body, pause, None)
+}
+
+type TransferSignal = Arc<(Mutex<bool>, Condvar)>;
+
+pub struct TransferGate(TransferSignal);
+
+impl Drop for TransferGate {
+    fn drop(&mut self) {
+        *self.0.0.lock().unwrap() = true;
+        self.0.1.notify_all();
+    }
+}
+
+/// Allows the one-byte probe, but holds transfer bodies until the guard drops.
+pub fn held_server(body: Vec<u8>) -> (String, TransferGate) {
+    let signal = Arc::new((Mutex::new(false), Condvar::new()));
+    let base = server_with_gate(body, Duration::ZERO, Some(Arc::clone(&signal)));
+    (base, TransferGate(signal))
+}
+
+fn server_with_gate(body: Vec<u8>, pause: Duration, gate: Option<TransferSignal>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
             let body = body.clone();
+            let gate = gate.clone();
             thread::spawn(move || {
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 1024];
@@ -182,6 +206,12 @@ pub fn server(body: Vec<u8>, pause: Duration) -> String {
                 }
                 let from = start.unwrap_or(0);
                 let to = if start.is_some() { end + 1 } else { body.len() };
+                if to - from > 1
+                    && let Some(gate) = &gate
+                {
+                    let ready = gate.0.lock().unwrap();
+                    let _ready = gate.1.wait_while(ready, |ready| !*ready).unwrap();
+                }
                 for chunk in body[from..to].chunks(16 * 1024) {
                     if stream.write_all(chunk).is_err() {
                         return;

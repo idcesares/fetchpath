@@ -97,7 +97,9 @@ fn download_keeps_its_exit_codes_and_joins_the_shared_queue() {
 #[test]
 fn a_download_cancelled_from_another_client_exits_130() {
     let home = Home::new();
-    let base = server(body(2_000_000), Duration::from_millis(20));
+    // Keep publication impossible until both clients have observed cancellation,
+    // regardless of process startup delays or parallel transfer speed.
+    let (base, _gate) = held_server(body(2_000_000));
     let mut download = home
         .command(&["download", &format!("{base}/slow.bin"), "--json"])
         .stdout(Stdio::piped())
