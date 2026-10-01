@@ -21,8 +21,10 @@ const H2_POOL_FIXTURE: &str = r#"
 const http2 = require('node:http2');
 const server = http2.createServer();
 const sessions = new Set();
-const total = 8 * 1024 * 1024;
 const perConnection = process.argv[1] === 'connection';
+// Keep the connection-limited transfer alive for baseline and two gain
+// windows even when the shared CI runner delays a measurement boundary.
+const total = (perConnection ? 16 : 8) * 1024 * 1024;
 const chunk = Buffer.alloc(16 * 1024, 7);
 server.on('session', session => {
   const bucket = { streams: [], cursor: 0, tokens: 0, last: performance.now() };
@@ -125,7 +127,7 @@ fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
 #[test]
 fn h2_per_connection_limit_gains_throughput_from_the_bounded_socket_trial() {
     let (report, elapsed, image) = h2_pool_transfer("connection");
-    assert_eq!(image.bytes, vec![7; 8 * MIB]);
+    assert_eq!(image.bytes, vec![7; 16 * MIB]);
     assert_eq!(image.overlaps, 0);
     assert_eq!(report.budget.peak_active_requests, 2);
     let rates: Vec<f64> = report
@@ -142,8 +144,8 @@ fn h2_per_connection_limit_gains_throughput_from_the_bounded_socket_trial() {
         "two gains: {rates:?}"
     );
     assert!(
-        elapsed < Duration::from_secs(7),
-        "independent sockets must beat the roughly 8-second single-session cap: {elapsed:?}"
+        elapsed < Duration::from_secs(14),
+        "independent sockets must beat the roughly 16-second single-session cap: {elapsed:?}"
     );
     assert_eq!(
         report.connections_opened, 2,

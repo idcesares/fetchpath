@@ -415,3 +415,8 @@ exit-130, publication, event, byte-content or capacity assertions. All 10
 queue tests, 3 MCP tests and their strict Clippy checks pass after those
 test-only repairs; independent bounded reviews approve them. CI uses the
 validated Rust 1.98.1 toolchain.
+The HTTP/2 per-connection fixture uses 16 MiB so delayed CI sampling can
+observe its baseline and both required 15% gains. Its proportional speed
+target, two-request/socket limits and exact-content assertions are retained.
+Both HTTP/2 scheduler tests and strict scheduler Clippy pass; an independent
+bounded review approves the test-only adjustment.
