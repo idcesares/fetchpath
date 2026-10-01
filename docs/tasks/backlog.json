@@ -2721,8 +2721,8 @@
       "dependsOn": [
         "FP-080"
       ],
-      "status": "in_progress",
-      "owner": "lead",
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -2744,7 +2744,7 @@
       ],
       "acceptance": "A torrent added without a destination uses the same engine-owned default download root and applicable folder rules as other downloads; desktop and TUI do not require a Save as field. The engine chooses a safe torrent-specific child folder from metadata, including magnets whose name arrives later, and handles collisions without overwriting or merging existing content. A person may optionally choose another root before submission or change the default in settings. Agent defaults still resolve within granted folders or wait for approval. Post-start relocation is separate scope. An omitted destination has consistent engine-owned semantics across all clients; each surface shows the resolved host and destination before submission where a preview exists, and in job details afterward.",
       "verification": "Test omitted and explicit destinations through desktop, CLI/TUI and MCP; metadata-late magnets, malicious names, duplicate names and destination races; verify staged publication and agent folder grants. Desktop typecheck and an installed-app walkthrough reproduce and resolve the empty Save as rejection reported on 1 October 2026. Independent strong review of path and publication boundaries. Check that equivalent requests across surfaces resolve to the same engine folder policy without client-owned queue or default logic.",
-      "evidence": [],
+      "evidence": ["docs/development/TORRENTS.md", "adapters/torrent/src/main.rs", "crates/fetchpath-session/tests/policy.rs"],
       "blockedReason": null
     },
     {
@@ -2754,8 +2754,8 @@
       "dependsOn": [
         "FP-080"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2778,7 +2778,7 @@
       ],
       "acceptance": "Pasting a magnet or HTTPS .torrent link, or adding local metadata in the TUI, recognizes a torrent and starts normal peer discovery without requiring --discover-peers. Define and apply the same user-submission default across desktop and CLI, with a visible explanation of peer address exposure and a way to disable discovery. Explicitly supersede the previous user discovery opt-in contract; do not silently reinterpret it. Upload and seeding remain separate opt-in choices. MCP agents still require the person's approval for discovery or upload, and no browser capture or speed profile gains that permission implicitly. Persist the effective policy for retry and restart. An obvious stop control ends peer activity. Supported pause/cancel behavior and unsupported torrent actions are explained consistently across surfaces.",
       "verification": "Test pasted links, magnets and local metadata with no discovery flag, explicit discovery-off, desktop parity, retry/restart and agent requests. Installed TUI walkthrough resolves the rejection shown on 1 October 2026. Independent strong review of principal classification, consent and persistence; update affected contracts and guides together. Verify discovery-off and stopping peer activity; confirm no agent surface bypasses the same engine policy.",
-      "evidence": [],
+      "evidence": ["docs/development/TORRENTS.md", "docs/architecture/JOB-CONTRACT.md", "crates/fetchpath-session/tests/policy.rs"],
       "blockedReason": null
     },
     {
