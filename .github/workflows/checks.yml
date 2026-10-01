@@ -17,7 +17,8 @@ jobs:
       # The desktop crate embeds the built front end, so build it before cargo.
       - run: corepack pnpm --dir apps/desktop install --frozen-lockfile
       - run: corepack pnpm --dir apps/desktop build
-      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
+      - run: rustup default 1.98.1
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Also builds target/debug/fetchpath-browser-host.exe for the Node tests.
