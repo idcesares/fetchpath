@@ -13,7 +13,9 @@
 param(
     [string] $InstallerPath,
     [string] $OutputPath,
-    [int] $TimeoutMinutes = 20
+    [int] $TimeoutMinutes = 20,
+    # FP-100: the uninstall step passes /DELETEAPPDATA and checks the removal.
+    [switch] $DeleteData
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +55,8 @@ foreach ($script in @('sandbox-inner.ps1', 'uia-common.ps1')) {
 $sandboxIn = 'C:\fp\in'
 $sandboxOut = 'C:\fp\out'
 $logon = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sandboxIn\sandbox-inner.ps1 " +
-    "-InstallerPath $sandboxIn\$installerName -OutputPath $sandboxOut\result.json"
+    "-InstallerPath $sandboxIn\$installerName -OutputPath $sandboxOut\result.json" +
+    $(if ($DeleteData) { ' -DeleteData' } else { '' })
 $configuration = @"
 <Configuration>
   <MappedFolders>

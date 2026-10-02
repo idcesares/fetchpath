@@ -204,17 +204,75 @@ the uninstaller relocates itself and can delete its own directory):
 | `%LOCALAPPDATA%\app.fetchpath.desktop\EBWebView`, the WebView2 profile | **retained** |
 | `HKCU\SOFTWARE\Fetchpath contributors\Fetchpath`, the recorded install path | **retained** |
 
-This is predictable rather than accidental, and it is a user choice. The
-interactive uninstaller's confirmation page carries a **"Delete the application
-data"** checkbox. When it is ticked, the uninstaller additionally removes
-`%APPDATA%\app.fetchpath.desktop`, `%LOCALAPPDATA%\app.fetchpath.desktop` and
-`HKCU\SOFTWARE\Fetchpath contributors`. A silent uninstall - `/S`, which is what
-the script runs and what an automated deployment would use - leaves the checkbox
-unticked, so all of the retained rows above are kept.
+This is predictable rather than accidental, and it is a user choice (FP-100).
+The interactive uninstaller's confirmation page carries a **"Delete the
+application data"** checkbox, unticked by default and ignored when setup passes
+`/UPDATE` (the in-app update path).
+A silent uninstall (`/S`, what the script runs and what a deployment would use)
+keeps all of the retained rows above. `/S /DELETEAPPDATA` is the same checkbox
+ticked for a person who cannot click it; it is how the delete branch is tested.
+Passed with `/UPDATE` it is ignored, as the checkbox is.
 
-Keeping them by default is the right default: the queue is the user's own record
-of what they downloaded and what still needs attention. Note what the retained
-rows actually are, though, so nobody is surprised:
+**What is Fetchpath-owned.** Inventoried from the code on 2 October 2026
+(`EngineHome` in `crates/fetchpath-protocol/src/launch.rs`, `apps/cli/src/lan.rs`,
+`crates/fetchpath-browser-inbox`). Every path below sits under one of two roots:
+
+| Root | Contents | Removed by the choice |
+| --- | --- | --- |
+| `%APPDATA%\app.fetchpath.desktop` | queue and history (`queue-v1.json`), settings, rules, agent grants (`agents-v1.json`), engine secret and endpoint, torrent metadata snapshots and caches, content cache, browser inbox, `cli.toml` terminal preferences and history, `media-tools\` (yt-dlp, FFmpeg), instance and window locks | yes |
+| `%LOCALAPPDATA%\app.fetchpath.desktop` | WebView2 profile (`EBWebView`), LAN pairing identity and pins | yes |
+| `HKCU\SOFTWARE\Fetchpath contributors\Fetchpath` | recorded install folder | yes, with its empty parent |
+| browser-host keys, per-user PATH entry, sign-in Run value, update hold | registrations | removed on every uninstall |
+| anywhere the person saved a download, and the default Downloads folder | user content | never |
+| `FETCHPATH_APP_DATA_DIR` | a data folder moved by environment variable, for development and tests | never: the uninstaller does not know it |
+
+Nothing owned was found outside the two roots, so no folder is added to the
+choice. The file names inside `%APPDATA%\app.fetchpath.desktop` were listed from code, not from a clean
+install after every feature was used; the roots are what the removal relies on.
+
+**Why the bundler's removal is not used.** Tauri's script deletes the two roots
+with NSIS `RMDir /r`. That command follows junctions. Measured on 2 October 2026
+with the NSIS 3.11 that Tauri bundles (a scratch `RMDir /r` over a folder holding a
+junction to a folder with a sentinel file): the sentinel was deleted. (The NSIS
+source agrees: `myDelete` in `exehead/util.c` recurses into every directory
+without checking for a reparse point.) So a junction planted inside the data
+folder would have turned the checkbox into deletion of its target.
+
+**What runs instead.** `installer-hooks.nsh` takes the choice over:
+`NSIS_HOOK_PREUNINSTALL` stops the engine (`FETCHPATH_STOP_ENGINE`), reads the
+checkbox or `/DELETEAPPDATA`, copies `tools\remove-app-data.ps1` to the
+uninstaller's plugin folder and clears the bundler's flag so its `RMDir /r` never
+runs. `NSIS_HOOK_POSTUNINSTALL`, after the bundler has closed the app and removed the
+program files, runs the script, then repeats the bundler's registry cleanup for
+this choice. The script (Windows PowerShell 5.1 safe, .NET calls only):
+
+- removes only `%APPDATA%\app.fetchpath.desktop` and `%LOCALAPPDATA%\app.fetchpath.desktop`, the exact leaf directly under the profile folder;
+- refuses a root that is itself a junction or link, and says so;
+- inside a root, deletes a reparse point as a link and does not enter it;
+- keeps going after a locked file, lists each failure, and exits 3, which the
+  uninstaller reports in its log and in a message box.
+
+Covered by `tests/installer/data-removal.test.mjs`: the hook ordering, the single
+choice, and the script run against scratch folders with a real junction inside a
+root and as a root. `sandbox-lifecycle.ps1 -DeleteData` adds the whole path in
+Windows Sandbox (see the limits below).
+
+**Older uninstallers.** An interactive "uninstall first" reinstall runs the
+previously installed uninstaller, such as 0.1.0, with its own checkbox and the
+bundler's original cleanup, which does not have the junction handling above.
+The protection applies from the version that carries this change onward.
+
+**Policy.** Group Policy that blocks PowerShell scripts (execution policy) or
+puts it in Constrained Language Mode makes the removal script fail. That is
+reported in the uninstall log and a message box, exit level 3, and the data is
+kept. The bundled engine stop and PATH edit use the same PowerShell route.
+
+Setup also ends every program running from the install folder (browser host,
+torrent and media helpers, the app) before removal, and the script deletes the
+update hold last.
+
+Keeping is the default: the queue is the user's own record of what they
+downloaded and what still needs attention. What the retained rows are:
 
 - `queue-v1.json` holds the download history, including redacted source URLs;
 - the WebView2 profile holds the webview's own cache and storage;
@@ -222,11 +280,10 @@ rows actually are, though, so nobody is surprised:
   directory. Tauri reads it to restore a custom install location on reinstall,
   which is why it is tied to the same checkbox rather than removed always.
 
-Manual removal is `%APPDATA%\app.fetchpath.desktop`,
-`%LOCALAPPDATA%\app.fetchpath.desktop` and
-`HKCU\SOFTWARE\Fetchpath contributors`. The checkbox state cannot be set from the
-command line, so the ticked branch was **not** exercised by the automated run;
-only its presence in the generated installer script was confirmed.
+Manual removal is `%APPDATA%\app.fetchpath.desktop`, `%LOCALAPPDATA%\app.fetchpath.desktop` and
+`HKCU\SOFTWARE\Fetchpath contributors`. Not exercised on a clean image
+yet: the ticked branch and `/DELETEAPPDATA` through a real uninstaller, the
+interactive checkbox, and a locked file during removal.
 
 ## Retained queues across a real upgrade
 
@@ -448,10 +505,10 @@ link.
 - **Per-monitor visual review is not automated.** Reduced motion, forced colors
   and light mode are asserted as rules present in the shipped stylesheet, not as
   rendered screenshots.
-- **The uninstaller's data-removal checkbox was not exercised.** Its presence in
-  the generated installer script was confirmed and its effect is documented, but
-  there is no command-line switch for it, so only the silent, data-retaining
-  branch was actually run.
+- **The delete-data uninstall was not run on an installed copy.** The hook and
+  script compile into the installer (built 2 October 2026) and the script is
+  tested on scratch folders, but `sandbox-lifecycle.ps1 -DeleteData` and the
+  interactive checkbox are still to be run in a clean Sandbox.
 - **No generated per-crate license manifest.** The natively compiled C libraries
   are identified precisely; a machine-generated license list for the whole Rust
   dependency graph of the shipping binary has not been produced, and anything in

@@ -365,11 +365,20 @@ agent.
 
 Use **Settings → Apps → Installed apps** in Windows, find Fetchpath, and
 choose **Uninstall**. On the uninstaller's confirmation page, tick **Delete the
-application data** only if you also want your download list, history,
-settings, media tools and cache removed. Leave it unticked, as it starts, if you're
-reinstalling.
+application data** only if you also want Fetchpath's own data removed: your
+download list and history, settings, rules, agent access and its secrets,
+terminal preferences, media tools, caches, the browser connection's inbox and
+the app's web storage. It starts unticked; leave it so if you're reinstalling,
+and your list will still be there. If you reinstall over version 0.1.0 and
+are offered "uninstall first", leave the box unticked.
 
-**Files you downloaded are never removed**, wherever you saved them.
+**Files you downloaded are never removed**, wherever you saved them, and
+nothing else on your computer is touched. If a folder Fetchpath keeps its data
+in has been replaced by a shortcut-like link (a junction), it is left alone.
+To remove the data by hand, delete the `app.fetchpath.desktop` folder inside
+`%APPDATA%` and the one inside `%LOCALAPPDATA%`. A silent uninstall keeps the
+data; add `/DELETEAPPDATA` to remove it.
+
 If downloads are still running, the uninstaller stops Fetchpath first.
 
 The uninstaller also removes the browser connection, the `fetchpath`

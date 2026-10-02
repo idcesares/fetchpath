@@ -38,6 +38,7 @@
     "resources": {
       "THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
       "tools/user-path.ps1": "tools/user-path.ps1",
+      "tools/remove-app-data.ps1": "tools/remove-app-data.ps1",
       "../../../LICENSE-MIT": "LICENSE-MIT.txt",
       "../../../LICENSE-APACHE": "LICENSE-APACHE.txt",
       "../../../docs/user/GUIDE.md": "docs/GUIDE.md",

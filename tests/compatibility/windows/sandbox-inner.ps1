@@ -17,7 +17,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $InstallerPath,
-    [Parameter(Mandatory)] [string] $OutputPath
+    [Parameter(Mandatory)] [string] $OutputPath,
+    # FP-100: uninstall with /DELETEAPPDATA (the checkbox ticked) instead of keeping data.
+    [switch] $DeleteData
 )
 
 $ErrorActionPreference = 'Stop'
@@ -259,7 +261,19 @@ try {
     $engineRunning = @($processesBefore | Where-Object { $_.image -eq 'fetchpath.exe' -and $_.commandLine -match '\sengine\s*$' }).Count -gt 0
     Assert-True $engineRunning 'No engine was running when uninstall started.'
     $started = [DateTime]::UtcNow
-    $uninstaller = Start-Process -FilePath (Join-Path $installDirectory 'uninstall.exe') -ArgumentList '/S' -PassThru
+    $dataRoots = @((Join-Path $env:APPDATA 'app.fetchpath.desktop'), (Join-Path $env:LOCALAPPDATA 'app.fetchpath.desktop'))
+    $outsideSentinel = Join-Path $workDirectory 'outside-owned-roots\sentinel.txt'
+    if ($DeleteData) {
+        # A junction inside an owned root that points at a folder outside both
+        # roots: removal must delete the link and leave the folder alone.
+        [System.IO.Directory]::CreateDirectory((Split-Path $outsideSentinel)) | Out-Null
+        [System.IO.File]::WriteAllText($outsideSentinel, 'keep')
+        $junction = Join-Path $dataRoots[0] 'junction-to-outside'
+        cmd.exe /c mklink /J "$junction" (Split-Path $outsideSentinel) | Out-Null
+        Assert-True (Test-Path -LiteralPath $junction) 'Could not create the sentinel junction.'
+    }
+    $uninstallArguments = if ($DeleteData) { '/S /DELETEAPPDATA' } else { '/S' }
+    $uninstaller = Start-Process -FilePath (Join-Path $installDirectory 'uninstall.exe') -ArgumentList $uninstallArguments -PassThru
     $uninstaller.WaitForExit(120000) | Out-Null
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     do {
@@ -267,6 +281,14 @@ try {
         $settled = (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'fetchpath-desktop.exe'))) -and
             ((Get-FetchpathUninstallEntries).Count -eq 0)
     } while (-not $settled -and [DateTime]::UtcNow -lt $deadline)
+    # FP-100: the uninstaller's relocated copy may still be finishing after the
+    # first process exits. Its last log line says it is done and which branch ran.
+    $dataLog = Join-Path $env:TEMP 'fetchpath-uninstall.log'
+    $logDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        Start-Sleep -Seconds 1
+        $dataLogText = if (Test-Path -LiteralPath $dataLog) { [System.IO.File]::ReadAllText($dataLog) } else { '' }
+    } while (-not ($dataLogText -like '*remove: wipe=*' -and ($dataLogText -notlike '*remove: wipe=1*' -or $dataLogText -like '*script exit=*')) -and [DateTime]::UtcNow -lt $logDeadline)
     $userPathAfter = Get-UserPath
     $observation.uninstall = [ordered]@{
         exitCode = $uninstaller.ExitCode
@@ -277,6 +299,11 @@ try {
         userPathAfter = $userPathAfter
         userPathRestored = ($userPathAfter -ceq $observation.preflight.userPathBefore)
         nativeHostKeysRemaining = @($nativeHostKeys | Where-Object { Test-Path -LiteralPath $_ }).Count
+        deleteData = [bool]$DeleteData
+        dataLog = $dataLogText
+        dataRootsRemaining = @($dataRoots | Where-Object { Test-Path -LiteralPath $_ }).Count
+        outsideSentinelKept = (-not $DeleteData) -or ((Test-Path -LiteralPath $outsideSentinel) -and ([System.IO.File]::ReadAllText($outsideSentinel) -eq 'keep'))
+        installPathKeyRemaining = (Test-Path -LiteralPath 'HKCU:\SOFTWARE\Fetchpath contributors')
         downloadedFilesKept = (Test-Path -LiteralPath $cliDestination) -and (Test-Path -LiteralPath $appDestination) -and (Test-Path -LiteralPath $queuedFile)
         engineRunningBefore = $engineRunning
         fetchpathProcessesBefore = $processesBefore
@@ -290,6 +317,12 @@ try {
     Assert-True $observation.uninstall.userPathRestored 'The user PATH after uninstall is not byte-identical to the one before install.'
     Assert-True ($observation.uninstall.nativeHostKeysRemaining -eq 0) 'Uninstall left a browser host registration.'
     Assert-True $observation.uninstall.downloadedFilesKept 'Uninstall removed downloaded files.'
+    if ($DeleteData) {
+        Assert-True ($observation.uninstall.dataRootsRemaining -eq 0) 'Delete-data uninstall left an application data folder.'
+        Assert-True $observation.uninstall.outsideSentinelKept 'Delete-data uninstall removed a file outside the owned folders, through a junction.'
+    } else {
+        Assert-True ($observation.uninstall.dataRootsRemaining -eq 2) 'A data-keeping uninstall removed an application data folder.'
+    }
 } catch {
     $observation.abortedWith = "$($_.Exception.Message) at $($_.InvocationInfo.PositionMessage)"
     # Which App Control policy refused a program, when one did.
