@@ -1,51 +1,49 @@
+/* Popup (FP-095). Colors, type, spacing and radii come from tokens.css, a copy
+   of design/tokens.css made by tools/sync-design-tokens.mjs. */
 :root {
-  color-scheme: light dark;
-  --bg: #ffffff;
-  --fg: #17211c;
-  --muted: #4d5d55;
-  --line: #c2d0c9;
-  --accent: #19745f;
-  --on-accent: #ffffff;
-  --ok: #15563f;
-  --bad: #a3231a;
-  font: 14px/1.45 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font: 14px/var(--fp-leading) var(--fp-font-sans);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #141b18;
-    --fg: #eef5f1;
-    --muted: #a9b7b0;
-    --line: #34433c;
-    --accent: #7ce0b7;
-    --on-accent: #06120d;
-    --ok: #7ce0b7;
-    --bad: #ffb5ae;
-  }
+body {
+  width: var(--fp-popup);
+  margin: 0;
+  padding: 14px var(--fp-space-4) var(--fp-space-4);
+  background: var(--fp-bg);
+  color: var(--fp-text);
 }
-body { width: 320px; margin: 0; padding: 14px 16px 16px; background: var(--bg); color: var(--fg); }
-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-h1 { margin: 0; font-size: 1.05rem; }
-h2 { margin: 14px 0 6px; font-size: .8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
-.status { margin: 0 0 10px; font-weight: 600; }
-.status[data-state="ok"]::before { content: "\2713\00a0"; color: var(--ok); }
-.status[data-state="bad"]::before { content: "\26a0\00a0"; color: var(--bad); }
-.help { margin: 4px 0 12px; color: var(--muted); font-size: .85rem; }
+header { display: flex; align-items: center; gap: 10px; margin-bottom: var(--fp-space-3); }
+.mark { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 8px; background: var(--fp-accent); color: var(--fp-on-accent); }
+svg.i { width: var(--fp-icon-sm); height: var(--fp-icon-sm); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+h1 { margin: 0; font-size: var(--fp-text-lg); font-weight: var(--fp-weight-heavy); letter-spacing: -.01em; }
+h2 { margin: var(--fp-space-4) 0 6px; color: var(--fp-text-muted); font-size: var(--fp-text-xs); letter-spacing: var(--fp-track-caps); text-transform: uppercase; }
+/* Connection: a glyph and a word, never colour alone. */
+.status { display: flex; align-items: center; gap: 6px; margin: 0 0 var(--fp-space-3); font-weight: var(--fp-weight-strong); }
+.status[data-state="ok"] { color: var(--fp-done-fg); }
+.status[data-state="ok"]::before { content: "\2713"; }
+.status[data-state="bad"] { color: var(--fp-failed-fg); }
+.status[data-state="bad"]::before { content: "\26a0"; }
+.help { margin: var(--fp-space-1) 0 var(--fp-space-3); color: var(--fp-text-muted); font-size: var(--fp-text-sm); }
 button {
   width: 100%;
-  min-height: 38px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
+  min-height: var(--fp-control-h);
+  border: 1px solid var(--fp-accent);
+  border-radius: var(--fp-radius-md);
+  background: var(--fp-accent);
+  color: var(--fp-on-accent);
   font: inherit;
-  font-weight: 650;
+  font-weight: var(--fp-weight-strong);
   cursor: pointer;
 }
-button:disabled { opacity: .55; cursor: default; }
-button:focus-visible, input:focus-visible { outline: 3px solid #ffd06e; outline-offset: 2px; }
-.switch { display: flex; align-items: flex-start; gap: 8px; margin-top: 4px; font-weight: 600; }
-.switch input { margin-top: 3px; accent-color: var(--accent); }
-.result { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid var(--accent); font-size: .88rem; }
-.result[data-state="bad"] { border-color: var(--bad); }
+button:hover:not(:disabled) { background: var(--fp-accent-strong); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--fp-focus); outline-offset: 2px; }
+.switch { display: flex; align-items: flex-start; gap: 10px; margin-top: var(--fp-space-1); font-weight: var(--fp-weight-strong); }
+.switch input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--fp-accent); }
+/* A result: a bar, then the sentence. Failure is danger with its own glyph. */
+.result { margin: var(--fp-space-2) 0 0; padding: var(--fp-space-2) 10px; border-left: var(--fp-rail) solid var(--fp-accent); border-radius: 0 var(--fp-radius-sm) var(--fp-radius-sm) 0; background: var(--fp-running-bg); color: var(--fp-running-fg); font-size: var(--fp-text-sm); }
+.result[data-state="bad"] { border-color: var(--fp-danger); background: var(--fp-failed-bg); color: var(--fp-failed-fg); }
 ul { margin: 0; padding: 0; list-style: none; }
-li { overflow: hidden; padding: 3px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+li { overflow: hidden; padding: 3px 0; border-top: 1px solid var(--fp-line); color: var(--fp-text-muted); font: var(--fp-text-xs)/1.5 var(--fp-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+@media (forced-colors: active) {
+  button, .result { border: 1px solid CanvasText; }
+  .mark { border: 1px solid CanvasText; background: Canvas; color: CanvasText; }
+}

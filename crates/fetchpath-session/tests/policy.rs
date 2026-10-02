@@ -489,6 +489,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         onboarding_completed: true,
         start_engine_at_sign_in: Some(true),
         cache_quota_bytes: None,
+        density: None,
     };
     for command in [
         Command::ApproveJob {

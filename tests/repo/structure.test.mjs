@@ -126,3 +126,7 @@ test('the desktop app never owns the queue', () => {
     assert.ok(!/instance\.lock|\block_path\s*\(/.test(read(file)), `${file} reaches the engine's lock`);
   }
 });
+
+test('the extension ships an unmodified copy of the design tokens', () => {
+  assert.equal(read('extensions/browser/tokens.css'), read('design/tokens.css'), 'run node tools/sync-design-tokens.mjs');
+});

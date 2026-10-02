@@ -49,6 +49,24 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    /// Pure black ground and white lines (FP-095).
+    #[serde(rename = "high-contrast")]
+    HighContrast,
+}
+
+/// Row and control density (FP-095).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    #[default]
+    Comfortable,
+    Compact,
+}
+
+impl Density {
+    fn is_default(&self) -> bool {
+        *self == Self::Comfortable
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -97,6 +115,10 @@ pub struct Settings {
     /// changed, so a settings file from before it writes back unchanged.
     #[serde(skip_serializing_if = "is_default_quota")]
     pub cache_quota_bytes: u64,
+    /// Row and control density (FP-095). Written only when compact, so a
+    /// settings file from before it writes back unchanged.
+    #[serde(skip_serializing_if = "Density::is_default")]
+    pub density: Density,
 }
 
 fn is_default_quota(bytes: &u64) -> bool {
@@ -130,6 +152,7 @@ impl Default for Settings {
             start_engine_at_sign_in: false,
             rules: Vec::new(),
             cache_quota_bytes: DEFAULT_CACHE_QUOTA_BYTES,
+            density: Density::Comfortable,
         }
     }
 }

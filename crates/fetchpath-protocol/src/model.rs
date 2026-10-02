@@ -456,6 +456,20 @@ pub enum Theme {
     System,
     Light,
     Dark,
+    /// Pure black ground and white lines (FP-095). A build that predates it
+    /// reads this as an unknown theme and keeps its current one.
+    HighContrast,
+    #[serde(other)]
+    Unknown,
+}
+
+/// How tightly the interface lays out rows and controls (FP-095).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Density {
+    #[default]
+    Comfortable,
+    Compact,
     #[serde(other)]
     Unknown,
 }
@@ -487,6 +501,10 @@ pub struct EngineSettings {
     /// "leave it as it is".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_quota_bytes: Option<u64>,
+    /// Row and control density. Absent from an update means "leave it as it
+    /// is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density: Option<Density>,
 }
 
 /// A model or dataset repository resolved to one commit (FP-022). Each file

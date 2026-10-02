@@ -14,7 +14,7 @@ use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timest
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
@@ -22,6 +22,8 @@ use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 const MAX_PATH_LENGTH: usize = 4_096;
 
 type Engine<'a> = State<'a, Arc<EngineLink>>;
+
+const TRAY_ID: &str = "fetchpath-tray";
 
 /// The close button's setting, kept here so closing the window never waits
 /// on the engine.
@@ -55,6 +57,22 @@ fn engine_connection(connection: State<'_, Arc<Connection>>) -> serde_json::Valu
 #[tauri::command]
 fn start_engine(engine: Engine<'_>) {
     engine.allow_start();
+}
+
+/// The person confirmed stopping the engine. Downloads stop with it and wait
+/// in the queue; the window then reports the engine as stopped, from the
+/// watcher, not from this call.
+#[tauri::command]
+async fn stop_engine(engine: Engine<'_>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || engine.stop().map_err(text)).await
+}
+
+/// Closes the window the way its close button does: to the notification
+/// area, or by ending the desktop, per the setting. Downloads continue.
+#[tauri::command]
+fn close_window(window: tauri::WebviewWindow) {
+    let _ = window.close();
 }
 
 /// Runs a command's body on a blocking thread: it may wait on the pipe, or
@@ -1014,6 +1032,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine_connection,
             start_engine,
+            stop_engine,
+            close_window,
             start_batch,
             inspect_media,
             start_media_download,
@@ -1084,6 +1104,15 @@ pub fn run() {
                         serde_json::json!({ "connected": false, "stopped": stopped, "message": message })
                     }
                 };
+                // The tooltip says only what the engine confirmed.
+                if let Some(tray) = handle.tray_by_id(TRAY_ID) {
+                    let tip = if state["connected"] == true {
+                        "Fetchpath: engine running. Downloads continue if you close this."
+                    } else {
+                        "Fetchpath: engine not running. Open Fetchpath to start it."
+                    };
+                    let _ = tray.set_tooltip(Some(tip));
+                }
                 // Kept as well as sent: the page may not be listening yet.
                 *connection
                     .0
@@ -1092,18 +1121,41 @@ pub fn run() {
                 let _ = handle.emit("fetchpath://engine", state);
             });
             let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Fetchpath", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
-            let tray = TrayIconBuilder::new()
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Close desktop and tray (downloads continue)",
+                true,
+                None::<&str>,
+            )?;
+            let stop = MenuItem::with_id(
+                app,
+                "stop",
+                "Stop engine (stops downloads)…",
+                true,
+                None::<&str>,
+            )?;
+            let menu = Menu::with_items(
+                app,
+                &[&show, &PredefinedMenuItem::separator(app)?, &quit, &stop],
+            )?;
+            let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("app icon").clone())
                 .tooltip("Fetchpath")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
-                    // The window goes; downloads carry on in the engine,
-                    // which stops by itself once it has nothing left to do.
+                    // The window and tray go; downloads carry on in the
+                    // engine, which stops by itself once it has nothing left
+                    // to do.
                     "quit" => app.exit(0),
+                    // Stopping loses nothing but is not undone by showing
+                    // the window again, so the page asks first.
+                    "stop" => {
+                        show_main_window(app);
+                        let _ = app.emit("fetchpath://confirm-stop", ());
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

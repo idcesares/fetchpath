@@ -3,7 +3,7 @@
 use crate::{JobSnapshot as View, QueueRecord, Settings, retried_automatically, settings};
 use fetchpath_protocol::error::{Action, ErrorCode, ErrorScope, ProtocolError};
 use fetchpath_protocol::model::{
-    self, EngineSettings, IntegrityOutcome, JobKind, JobState, Phase, Progress, SettingsView,
+    self, Density, EngineSettings, IntegrityOutcome, JobKind, JobState, Phase, Progress, SettingsView,
     Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{ApprovalReason, ApprovalRequest};
@@ -209,10 +209,15 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
             settings::Theme::System => Theme::System,
             settings::Theme::Light => Theme::Light,
             settings::Theme::Dark => Theme::Dark,
+            settings::Theme::HighContrast => Theme::HighContrast,
         },
         onboarding_completed: settings.onboarding_completed,
         start_engine_at_sign_in: Some(settings.start_engine_at_sign_in),
         cache_quota_bytes: Some(settings.cache_quota_bytes),
+        density: Some(match settings.density {
+            settings::Density::Comfortable => Density::Comfortable,
+            settings::Density::Compact => Density::Compact,
+        }),
     }
 }
 
@@ -233,6 +238,7 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             Theme::System => settings::Theme::System,
             Theme::Light => settings::Theme::Light,
             Theme::Dark => settings::Theme::Dark,
+            Theme::HighContrast => settings::Theme::HighContrast,
             Theme::Unknown => current.theme,
         },
         onboarding_completed: wire.onboarding_completed,
@@ -242,6 +248,11 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
         // Rules change only through their own commands.
         rules: current.rules.clone(),
         cache_quota_bytes: wire.cache_quota_bytes.unwrap_or(current.cache_quota_bytes),
+        density: match wire.density {
+            Some(Density::Comfortable) => settings::Density::Comfortable,
+            Some(Density::Compact) => settings::Density::Compact,
+            Some(Density::Unknown) | None => current.density,
+        },
     }
 }
 

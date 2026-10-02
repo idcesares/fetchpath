@@ -22,4 +22,4 @@ The UI smoke test drives the optimized Windows application through UI Automation
 
 Keyboard operation follows native form order. `Ctrl+L` selects the address field and `Esc` clears an unsubmitted composer or recovery edit and returns focus to **Add to queue**.
 
-Closing the main window hides it to the notification area. Use **Show Fetchpath** to reopen it and **Quit Fetchpath** for an orderly shutdown that cancels and joins active jobs.
+Closing the main window hides it to the notification area. The tray menu has three separate items: **Show Fetchpath** reopens the window; **Close desktop and tray (downloads continue)** ends the desktop and icon while the engine keeps downloading; **Stop engine (stops downloads)** asks in the window first, then shuts the engine down. The window shows the engine state it last confirmed and an active-work summary from the queue the engine reported.

@@ -156,7 +156,9 @@ interface Settings {
   powerMode: boolean;
   mediaToolsDir: string | null;
   confirmRemoveCompleted: boolean;
-  theme: "system" | "light" | "dark";
+  theme: "system" | "light" | "dark" | "high-contrast";
+  /** Absent from an engine that predates the setting: comfortable. */
+  density?: "comfortable" | "compact";
   onboardingCompleted: boolean;
   cacheQuotaBytes?: number | null;
 }
@@ -232,6 +234,7 @@ const torrentOptions = required<HTMLElement>("torrent-options");
 const torrentDiscovery = required<HTMLInputElement>("torrent-discovery");
 const torrentUpload = required<HTMLInputElement>("torrent-upload");
 const destinationLabel = required<HTMLLabelElement>("destination-label");
+const destinationHint = required<HTMLParagraphElement>("destination-hint");
 const torrentPickFile = required<HTMLButtonElement>("torrent-pick-file");
 const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
 const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
@@ -275,6 +278,7 @@ const closeToTrayInput = required<HTMLInputElement>("setting-close-to-tray");
 const confirmRemoveInput = required<HTMLInputElement>("setting-confirm-remove");
 const powerModeInput = required<HTMLInputElement>("setting-power-mode");
 const themeSelect = required<HTMLSelectElement>("setting-theme");
+const densitySelect = required<HTMLSelectElement>("setting-density");
 const mediaToolsState = required<HTMLParagraphElement>("media-tools-state");
 const mediaToolsDetail = required<HTMLParagraphElement>("media-tools-detail");
 const mediaToolsLicence = required<HTMLParagraphElement>("media-tools-licence");
@@ -1212,19 +1216,27 @@ function applySettingsToForm(view: SettingsView): void {
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
+  densitySelect.value = settings.density ?? "comfortable";
 
   applyTheme(settings.theme);
+  applyDensity(settings.density);
   statsPanel.hidden = !settings.powerMode;
   onboarding.hidden = settings.onboardingCompleted;
   trayNote.textContent = settings.closeToTray
-    ? "Closing this window keeps the queue available from the notification area."
-    : "Closing this window stops Fetchpath. Downloads in progress are paused at their last checkpoint.";
+    ? "Closing this window hides it in the notification area. Downloads keep running."
+    : "Closing this window exits the desktop and its tray icon. Downloads keep running in Fetchpath's engine.";
 }
 
 /** Windows' own setting decides unless the user chose a specific appearance. */
 function applyTheme(theme: Settings["theme"]): void {
   if (theme === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", theme);
+}
+
+/** Comfortable is the token default, so only compact is written. */
+function applyDensity(density: Settings["density"]): void {
+  if (density === "compact") document.documentElement.setAttribute("data-density", "compact");
+  else document.documentElement.removeAttribute("data-density");
 }
 
 /** Sends one changed field, then re-applies whatever the backend accepted. */
@@ -1270,6 +1282,7 @@ confirmRemoveInput.addEventListener("change", () =>
 );
 powerModeInput.addEventListener("change", () => void changeSetting({ powerMode: powerModeInput.checked }));
 themeSelect.addEventListener("change", () => void changeSetting({ theme: themeSelect.value as Settings["theme"] }));
+densitySelect.addEventListener("change", () => void changeSetting({ density: densitySelect.value as Settings["density"] }));
 
 settingChooseDestination.addEventListener("click", async () => {
   clearError(settingsError);
@@ -1423,6 +1436,9 @@ kindChooser.addEventListener("change", () => {
   destinationInput.placeholder = torrent ? "Optional: a new folder for this torrent" : "Choose a destination file";
   destinationInput.required = !torrent;
   destinationLabel.textContent = torrent ? "Folder (optional)" : "Save as";
+  destinationHint.textContent = torrent
+    ? "Left empty, Fetchpath chooses the folder. A folder you name must be new: Fetchpath will not replace one that exists."
+    : "For a batch, the other files go in the same folder under their own names.";
   if (torrent && destinationIsSuggested) destinationInput.value = "";
   if (media && !toolsStatus) void refreshToolsStatus();
   renderPreview();
@@ -2154,6 +2170,114 @@ const ENGINE_LOST =
 const ENGINE_STOPPED =
   "Fetchpath's engine is stopped, so downloads are waiting. Start it to continue where they left off.";
 
+const engineChip = required<HTMLElement>("engine-chip");
+const engineChipText = required<HTMLElement>("engine-chip-text");
+const engineSummary = required<HTMLParagraphElement>("engine-summary");
+const closeWindowButton = required<HTMLButtonElement>("close-window");
+const stopEngineButton = required<HTMLButtonElement>("stop-engine");
+const stopDialog = required<HTMLDialogElement>("stop-dialog");
+const stopActive = required<HTMLParagraphElement>("stop-active");
+const stopError = required<HTMLParagraphElement>("stop-error");
+const stopCancel = required<HTMLButtonElement>("stop-cancel");
+const stopConfirm = required<HTMLButtonElement>("stop-confirm");
+const pendingApprovalsButton = required<HTMLButtonElement>("pending-approvals");
+const pendingApprovalsText = required<HTMLElement>("pending-approvals-text");
+
+/** What the engine last confirmed. Nothing here is guessed: until the first
+ *  report the chip says it is checking. */
+let engineState: "checking" | "running" | "reconnecting" | "stopped" = "checking";
+
+function renderEngineSummary(): void {
+  const chipText = {
+    checking: "Checking the engine",
+    running: "Engine running",
+    reconnecting: "Engine not responding",
+    stopped: "Engine stopped",
+  }[engineState];
+  // Called on every queue poll: an unchanged state writes nothing, so the
+  // accessibility tree and keyboard focus stay put.
+  if (engineChip.dataset.state !== engineState || engineChipText.textContent !== chipText) {
+    engineChip.dataset.state = engineState;
+    engineChipText.textContent = chipText;
+    engineChip.querySelector("use")?.setAttribute(
+      "href",
+      "#" + { checking: "i-wait", running: "i-run", reconnecting: "i-fail", stopped: "i-pause" }[engineState],
+    );
+  }
+  if (stopEngineButton.disabled !== (engineState === "stopped")) stopEngineButton.disabled = engineState === "stopped";
+
+  // The counts come from the queue the engine reported; with no engine to
+  // confirm them, none are claimed.
+  let summary: string;
+  if (engineState === "running") {
+    const running = jobs.filter((job) => isActive(job.state)).length;
+    const waiting = jobs.filter((job) => job.state === "queued" || job.state === "scheduled").length;
+    const rate = jobs.reduce((sum, job) => sum + (job.state === "running" ? (job.bytesPerSecond ?? 0) : 0), 0);
+    const parts = [
+      running ? `${running} downloading${rate > 0 ? ` at ${formatBytes(rate)}/s` : ""}` : "Nothing downloading",
+      waiting ? `${waiting} waiting` : "",
+    ].filter(Boolean);
+    summary = `Engine running. ${parts.join(", ")}.`;
+  } else if (engineState === "stopped") {
+    summary = "Engine stopped. Downloads are waiting in the queue and nothing is downloading.";
+  } else if (engineState === "reconnecting") {
+    summary = "The engine is not responding. What is downloading is unknown until it answers.";
+  } else {
+    summary = "Checking the engine…";
+  }
+
+  setText(engineSummary, summary);
+
+  const approvals = jobs.filter((job) => job.state === "awaiting_approval").length;
+  if (pendingApprovalsButton.hidden !== (approvals === 0)) pendingApprovalsButton.hidden = approvals === 0;
+  setText(pendingApprovalsText, approvals === 1 ? "1 waiting for approval" : `${approvals} waiting for approval`);
+}
+
+/** Writes text only when it differs, so a poll that changes nothing leaves the
+ *  accessibility tree alone. */
+function setText(element: HTMLElement, text: string): void {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+pendingApprovalsButton.addEventListener("click", () => {
+  document.querySelector<HTMLButtonElement>('button[data-filter="failed"]')?.click();
+  queueTitle.focus({ preventScroll: false });
+});
+
+closeWindowButton.addEventListener("click", () => void invoke("close_window"));
+
+function askToStopEngine(): void {
+  if (engineState === "stopped" || stopDialog.open) return;
+  const running = jobs.filter((job) => isActive(job.state)).length;
+  stopActive.textContent =
+    engineState !== "running"
+      ? ""
+      : running === 0
+        ? "Nothing is downloading right now."
+        : running === 1
+          ? "1 download is running and will stop."
+          : `${running} downloads are running and will stop.`;
+  stopError.hidden = true;
+  stopConfirm.disabled = false;
+  openDialog(stopDialog, stopCancel);
+}
+
+stopEngineButton.addEventListener("click", askToStopEngine);
+stopCancel.addEventListener("click", () => stopDialog.close());
+stopDialog.addEventListener("close", () => restoreDialogFocus(stopEngineButton));
+stopConfirm.addEventListener("click", async () => {
+  stopConfirm.disabled = true;
+  try {
+    await invoke("stop_engine");
+    stopDialog.close();
+    announce("Fetchpath's engine is stopping. Downloads are waiting in the queue.");
+    await syncEngineState();
+  } catch (error) {
+    stopConfirm.disabled = false;
+    showError(stopError, error);
+  }
+});
+
 /** Reads the host's current view rather than trusting event order: two
  *  reports a moment apart may arrive in either order. */
 async function syncEngineState(): Promise<void> {
@@ -2169,6 +2293,8 @@ function revealEngineNotice(text: string, canStart: boolean): void {
 }
 
 function showEngineState(state: EngineConnection): void {
+  engineState = state.connected ? "running" : state.stopped ? "stopped" : "reconnecting";
+  renderEngineSummary();
   if (state.connected && state.readOnly) {
     window.clearTimeout(engineNoticeTimer);
     engineNoticeTimer = 0;
@@ -2294,6 +2420,7 @@ function renderQueue(): void {
   // Announced after the summary so a finished or failed download is the last
   // thing queued for the polite region rather than being overwritten by it.
   announceStateChanges();
+  renderEngineSummary();
 
   // The queue is polled several times a second. Rebuilding identical cards would
   // churn the accessibility tree and steal keyboard focus, so it only rebuilds
@@ -2384,8 +2511,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   titleWrap.append(heading, source);
   const status = document.createElement("output");
   status.className = "status";
-  status.dataset.state = job.state;
-  status.textContent = stateLabel(job.state);
+  setStatus(status, job.state);
   if (primary) status.id = "job-status";
   header.append(titleWrap, status);
   article.append(header);
@@ -2419,11 +2545,16 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
     article.append(note);
   }
 
+  // The trail: a track with a waypoint dot at its head. The native progress
+  // element keeps its role, name and value; the wrapper only draws the dot.
+  const trail = document.createElement("div");
+  trail.className = "trail";
   const progress = document.createElement("progress");
   progress.setAttribute("aria-label", `Progress for ${name}`);
   if (primary) progress.id = "job-progress";
+  trail.append(progress);
   applyProgress(progress, job);
-  article.append(progress);
+  article.append(trail);
 
   const metrics = document.createElement("output");
   metrics.className = "metrics";
@@ -2507,6 +2638,17 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
  * a lie the moment the file is larger than one read.
  */
 function applyProgress(progress: HTMLProgressElement, job: JobSnapshot): void {
+  applyProgressValue(progress, job);
+  // The head dot marks where the engine says the download is; an unknown
+  // total or a finished file has no head to mark.
+  const trail = progress.parentElement;
+  if (!trail) return;
+  const known = progress.hasAttribute("value") && job.state !== "completed" && progress.value > 0;
+  trail.dataset.head = known ? "on" : "off";
+  trail.style.setProperty("--p", `${Math.round(progress.value / progress.max * 1000) / 10}%`);
+}
+
+function applyProgressValue(progress: HTMLProgressElement, job: JobSnapshot): void {
   if (job.state === "completed") {
     progress.max = 1;
     progress.value = 1;
@@ -2622,8 +2764,7 @@ function renderDetails({ job, segments }: JobDetails): void {
   detailsTitle.textContent = name;
   detailsSource.textContent = job.source;
   detailsSource.title = job.source;
-  detailsStatus.dataset.state = job.state;
-  detailsStatus.textContent = stateLabel(job.state);
+  setStatus(detailsStatus, job.state);
 
   const running = job.state === "running";
   const known = job.totalBytes && job.totalBytes > 0 ? job.totalBytes : null;
@@ -2875,7 +3016,8 @@ function actionsFor(job: JobSnapshot): Array<{ action: string; label: string; da
 function actionButton(job: JobSnapshot, spec: { action: string; label: string; danger?: boolean }): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = spec.danger ? "secondary danger" : "secondary";
+  // Approving is the one primary action on a request; everything else is quiet.
+  button.className = spec.danger ? "secondary danger" : spec.action === "approve" ? "" : "secondary";
   button.dataset.action = spec.action;
   button.dataset.jobId = job.jobId;
   button.textContent = spec.label;
@@ -3066,6 +3208,37 @@ function matchesSearch(job: JobSnapshot, query: string): boolean {
 
 function isActive(state: JobState): boolean {
   return state === "running" || state === "cancelling";
+}
+
+/** The glyph that accompanies each state, so a chip is never colour alone. */
+const STATE_GLYPH: Record<JobState, string> = {
+  scheduled: "i-wait",
+  queued: "i-wait",
+  running: "i-run",
+  paused: "i-pause",
+  cancelling: "i-pause",
+  completed: "i-ok",
+  cancelled: "i-fail",
+  failed: "i-fail",
+  needs_source: "i-fail",
+  awaiting_approval: "i-appr",
+};
+
+/** A decorative glyph, then the word. The glyph is hidden from assistive technology. */
+function glyph(id: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "i");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", "#" + id);
+  svg.append(use);
+  return svg;
+}
+
+function setStatus(element: HTMLElement, state: JobState): void {
+  if (element.dataset.state === state && element.childNodes.length > 0) return;
+  element.dataset.state = state;
+  element.replaceChildren(glyph(STATE_GLYPH[state]), document.createTextNode(stateLabel(state)));
 }
 
 function stateLabel(state: JobState): string {
@@ -3281,6 +3454,8 @@ async function start(): Promise<void> {
   renderPreview();
   await listen("fetchpath://queue", () => void refreshQueue());
   await listen("fetchpath://engine", () => void syncEngineState());
+  // The tray's Stop engine item shows this window and asks here first.
+  await listen("fetchpath://confirm-stop", () => askToStopEngine());
   // The engine may have been lost before this page was listening.
   await syncEngineState();
   await refreshQueue();

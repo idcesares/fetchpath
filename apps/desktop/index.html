@@ -9,6 +9,20 @@
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
+    <!-- Own artwork on a 24px grid, 2px round strokes, currentColor. Used
+         decoratively (aria-hidden); every state also has its word. -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-logo" viewBox="0 0 24 24"><path d="M5 18c5 0 3-12 8-12h6"/><circle cx="5" cy="18" r="1.6"/><path d="m16 3 3 3-3 3"/></symbol>
+        <symbol id="i-run" viewBox="0 0 24 24"><path d="M5 12h12m-5-5 5 5-5 5"/></symbol>
+        <symbol id="i-ok" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+        <symbol id="i-wait" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+        <symbol id="i-fail" viewBox="0 0 24 24"><path d="M12 4 3 20h18zM12 10v4m0 3v.01"/></symbol>
+        <symbol id="i-appr" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      </defs>
+    </svg>
     <a class="skip-link" href="#queue-title">Skip to the download queue</a>
 
     <!-- One polite region for progress and queue changes, one assertive region for
@@ -21,7 +35,7 @@
          things you reach for from anywhere: adding, settings and help. -->
     <header class="appbar">
       <div class="brand">
-        <img src="/icon.png" alt="" width="28" height="28" />
+        <span class="mark" aria-hidden="true"><svg class="i" width="18" height="18"><use href="#i-logo" /></svg></span>
         <span class="brand-name">Fetchpath</span>
       </div>
       <!-- The visible number and the word "active" are two separate text runs.
@@ -32,9 +46,22 @@
         <span class="stat-unit" aria-hidden="true">active</span>
         <span id="active-stat-text" class="sr-only">No downloads are active.</span>
       </div>
+      <!-- Engine state comes from the engine's own report, never assumed. -->
+      <p id="engine-chip" class="engine-chip" data-state="checking">
+        <svg class="i" aria-hidden="true"><use href="#i-wait" /></svg>
+        <span id="engine-chip-text">Checking the engine</span>
+      </p>
+      <!-- Reserved for hub status. Today it holds only what exists: approvals
+           waiting in this queue. Remote controls arrive with FP-091 and FP-092. -->
+      <div id="hub-slot" class="hub-slot" role="group" aria-label="Approvals">
+        <button id="pending-approvals" class="approval-chip" type="button" hidden>
+          <svg class="i" aria-hidden="true"><use href="#i-appr" /></svg>
+          <span id="pending-approvals-text"></span>
+        </button>
+      </div>
       <div class="appbar-actions">
         <button id="add-open" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+N Control+L">
-          <span aria-hidden="true" class="plus">+ </span>Add download
+          <svg class="i" aria-hidden="true"><use href="#i-plus" /></svg>Add download
         </button>
         <button id="open-settings" class="quiet" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+,">Settings</button>
         <button id="keyboard-help" class="quiet" type="button" aria-haspopup="dialog">Keyboard help</button>
@@ -105,18 +132,40 @@
       </div>
 
       <section id="queue-empty" class="empty-state" aria-labelledby="empty-title" hidden>
-        <img src="/icon.png" alt="" width="56" height="56" />
+        <span class="mark large" aria-hidden="true"><svg class="i" width="28" height="28"><use href="#i-logo" /></svg></span>
         <h2 id="empty-title">Nothing downloading yet</h2>
         <p>Copy a link and paste it here with <kbd>Ctrl</kbd> <kbd>V</kbd>, or add one yourself.</p>
-        <button id="empty-add" type="button" aria-haspopup="dialog">Add a download</button>
+        <button id="empty-add" type="button" aria-haspopup="dialog"><svg class="i" aria-hidden="true"><use href="#i-plus" /></svg>Add a download</button>
+        <p class="reassure">Large files resume if you close the app.</p>
       </section>
 
       <section id="job-card" class="queue" aria-label="Download queue" hidden>
         <div id="job-list" role="list"></div>
       </section>
 
-      <p class="tray-note" id="tray-note">Closing this window keeps the queue available from the notification area.</p>
+      <section class="background" aria-labelledby="background-title">
+        <h2 id="background-title">Running in the background</h2>
+        <p id="engine-summary" class="background-status">Checking the engine…</p>
+        <p class="tray-note" id="tray-note">Closing this window keeps the queue available from the notification area.</p>
+        <p class="tray-note">Downloads belong to Fetchpath's engine, not to this window, so they continue after the desktop and tray exit. Choose Show Fetchpath from the tray icon to bring this window back.</p>
+        <div class="background-actions">
+          <button id="close-window" class="secondary" type="button">Close window (downloads continue)</button>
+          <button id="stop-engine" class="secondary danger" type="button" aria-haspopup="dialog">Stop engine (stops downloads)<span aria-hidden="true">…</span></button>
+        </div>
+      </section>
     </main>
+
+    <dialog id="stop-dialog" class="card dialog" role="alertdialog" aria-labelledby="stop-title" aria-describedby="stop-detail">
+      <h2 id="stop-title">Stop Fetchpath's engine?</h2>
+      <p id="stop-detail">Downloads stop now and wait in the queue. They continue from their saved progress when you start the engine again, and schedules do not run while it is stopped.</p>
+      <p id="stop-active" class="hint"></p>
+      <p class="hint">To keep downloading and only hide this window, use Close window instead.</p>
+      <p id="stop-error" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button id="stop-cancel" class="quiet" type="button">Keep running</button>
+        <button id="stop-confirm" class="secondary danger" type="button">Stop engine</button>
+      </div>
+    </dialog>
 
     <dialog id="add-dialog" class="card dialog add-dialog" aria-labelledby="add-heading">
       <form id="download-form" class="composer">
@@ -176,10 +225,26 @@
         </section>
 
         <section id="torrent-options" class="media-options" aria-label="Torrent network options" hidden>
-          <p class="hint">Peers can see your IP address. Upload stays off unless you choose it below. Choose a new destination folder; Fetchpath will not replace one that exists.</p>
-          <button id="torrent-pick-file" class="secondary" type="button">Choose a .torrent file…</button>
-          <label><input id="torrent-discovery" type="checkbox" checked /> Contact peers and discovery services for this torrent</label>
-          <label><input id="torrent-upload" type="checkbox" /> Upload verified pieces to peers (limited to 128 KiB/s)</label>
+          <div class="torrent-source">
+            <button id="torrent-pick-file" class="secondary" type="button">Choose a .torrent file…</button>
+            <p class="hint">Or paste a magnet link above.</p>
+          </div>
+          <div class="option-group" role="group" aria-labelledby="torrent-peers-title">
+            <h3 id="torrent-peers-title" class="group-title">Finding peers</h3>
+            <div class="check-row">
+              <input id="torrent-discovery" type="checkbox" checked aria-describedby="torrent-discovery-note" />
+              <label for="torrent-discovery">Contact peers and discovery services for this torrent</label>
+              <p id="torrent-discovery-note" class="check-note">Peers can see your IP address. Without this a torrent cannot find peers.</p>
+            </div>
+          </div>
+          <div class="option-group" role="group" aria-labelledby="torrent-sharing-title">
+            <h3 id="torrent-sharing-title" class="group-title">Sharing back</h3>
+            <div class="check-row">
+              <input id="torrent-upload" type="checkbox" aria-describedby="torrent-upload-note" />
+              <label for="torrent-upload">Upload verified pieces to peers (limited to 128 KiB/s)</label>
+              <p id="torrent-upload-note" class="check-note">Upload stays off unless you choose it here.</p>
+            </div>
+          </div>
         </section>
 
         <label id="destination-label" for="destination">Save as</label>
@@ -568,6 +633,12 @@
             <option value="system">Match Windows</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
+            <option value="high-contrast">High contrast</option>
+          </select>
+          <label for="setting-density">Density <span class="hint">Compact fits more downloads on screen.</span></label>
+          <select id="setting-density">
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
           </select>
         </fieldset>
 

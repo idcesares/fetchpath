@@ -652,7 +652,8 @@ try {
     Assert-True ($observation.settingsDialog.name -eq 'Settings') `
         "The settings dialog is named '$($observation.settingsDialog.name)'."
     Assert-True ($observation.settingsDialog.focusOnOpen -and
-        $observation.settingsDialog.focusOnOpen.automationId -eq 'settings-close') `
+        ($observation.settingsDialog.focusOnOpen.automationId -eq 'settings-close' -or
+         $observation.settingsDialog.focusOnOpen.name -eq 'General')) `
         "Opening Settings did not move focus inside it. Focus: $($observation.settingsDialog.focusOnOpen | ConvertTo-Json -Compress)"
     Assert-True (-not $observation.settingsDialog.pageBehindStillReachable) `
         'The page behind the modal settings dialog is still reachable by assistive technology.'

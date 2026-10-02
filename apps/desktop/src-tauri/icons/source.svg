@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Fetchpath</title>
+  <rect width="1024" height="1024" rx="224" fill="#7ce0b7"/>
+  <g transform="translate(192 192) scale(26.667)" fill="none" stroke="#06120d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 18c5 0 3-12 8-12h6"/>
+    <circle cx="5" cy="18" r="1.6"/>
+    <path d="m16 3 3 3-3 3"/>
+  </g>
+</svg>

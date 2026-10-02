@@ -7,7 +7,7 @@ On the first send for an origin, the browser asks for that exact HTTP/HTTPS host
 `manifest.chromium.json` has the fixed unpacked-extension key expected by the native host and covers Chrome and Edge API behavior. `manifest.firefox.json` carries Firefox's distinct add-on identity and background declaration. The installer materializes the native-host manifests beside `fetchpath-browser-host.exe` and registers them for each browser.
 
 The [privacy disclosure](../../docs/user/BROWSER-PRIVACY.md) describes the
-extension's local data use. A store package can be assembled from the eight
+extension's local data use. A store package can be assembled from the nine
 Chromium files shipped in the installer, with `manifest.chromium.json` renamed
 to `manifest.json` at the ZIP root. A store upload can assign a different ID:
 before a store install is offered, the published Chrome and Edge IDs must be

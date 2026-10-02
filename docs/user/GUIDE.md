@@ -133,8 +133,10 @@ Video and audio downloads can't be paused. You can cancel them and start again.
 
 Downloads run in the background, so closing the window never stops them.
 By default the window goes to the notification area (near the clock); click
-the Fetchpath icon there to bring it back. **Quit Fetchpath** in that icon's
-menu closes the window too, and downloads still finish. Fetchpath's
+the Fetchpath icon there to bring it back. **Close desktop and tray (downloads continue)** in that icon's
+menu ends the window and the icon, and downloads still finish. **Stop engine
+(stops downloads)** asks first, then stops them; the window shows the engine
+as stopped until you start it again. Fetchpath's
 background part stops by itself about a minute after the last download ends
 and every window is closed. To stop downloads, pause or cancel them first.
 
