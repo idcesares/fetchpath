@@ -30,9 +30,6 @@ pub struct Glyphs {
     pub cancelled: &'static str,
     /// Frames of the spinner shown beside a moving download.
     pub spinner: &'static [&'static str],
-    pub paused: &'static str,
-    pub waiting: &'static str,
-    pub attention: &'static str,
     pub bar_full: &'static str,
     pub bar_empty: &'static str,
     pub rule: &'static str,
@@ -50,9 +47,6 @@ pub const UNICODE: Glyphs = Glyphs {
     failed: "✗",
     cancelled: "–",
     spinner: &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-    paused: "‖",
-    waiting: "·",
-    attention: "!",
     bar_full: "█",
     bar_empty: "░",
     rule: "─",
@@ -69,9 +63,6 @@ pub const ASCII: Glyphs = Glyphs {
     failed: "x",
     cancelled: "-",
     spinner: &["|", "/", "-", "\\"],
-    paused: "=",
-    waiting: ".",
-    attention: "!",
     bar_full: "#",
     bar_empty: "-",
     rule: "-",
@@ -157,25 +148,21 @@ pub fn receipt(job: &JobSnapshot, glyphs: &Glyphs) -> Out {
 /// lists recent finished ones too).
 pub const FINISHED: u8 = 6;
 
-/// The glyph and color for a panel row. A moving download spins.
-fn state_glyph(job: &JobSnapshot, group: u8, glyphs: &Glyphs, tick: u64) -> (&'static str, Color) {
-    match group {
-        0 => {
-            let frame = glyphs.spinner[(tick as usize) % glyphs.spinner.len()];
-            let color = match job.state {
-                JobState::Verifying | JobState::Publishing => Color::Magenta,
-                _ => ACCENT,
-            };
-            (frame, color)
-        }
-        1 => (glyphs.attention, Color::Yellow),
-        2 => (glyphs.paused, Color::Yellow),
-        FINISHED => match job.state {
-            JobState::Completed => (glyphs.saved, Color::Green),
-            JobState::Cancelled => (glyphs.cancelled, Color::DarkGray),
-            _ => (glyphs.failed, Color::Red),
-        },
-        _ => (glyphs.waiting, Color::DarkGray),
+/// The bracketed cue and color for a panel row. The cue is plain ASCII in
+/// every glyph set, so a state never rests on color alone: `[>]` running,
+/// `[~]` queued, `[=]` paused, `[!]` failed, `[v]` done, `[?]` needs a
+/// person (an approval, a choice, a link).
+fn state_glyph(job: &JobSnapshot, group: u8) -> (&'static str, Color) {
+    match (group, job.state) {
+        (0, JobState::Verifying | JobState::Publishing) => ("[>]", Color::Magenta),
+        (0, _) => ("[>]", ACCENT),
+        (_, JobState::Failed) => ("[!]", Color::Red),
+        (1, _) => ("[?]", Color::Magenta),
+        (2, _) => ("[=]", Color::DarkGray),
+        (FINISHED, JobState::Completed) => ("[v]", Color::Green),
+        (FINISHED, JobState::Cancelled) => ("[-]", Color::DarkGray),
+        (3 | 4, _) => ("[~]", Color::Yellow),
+        _ => ("[?]", Color::DarkGray),
     }
 }
 
@@ -227,6 +214,9 @@ fn tail(job: &JobSnapshot) -> String {
             crate::when::local(job.not_before.expect("checked"))
         ),
         JobState::Failed if job.retry_at.is_some() => "retrying".to_owned(),
+        JobState::Completed if !job.reused_from_cache && job.from_paired_device.is_none() => {
+            "done".to_owned()
+        }
         _ => client::state_label(job).to_owned(),
     }
 }
@@ -944,7 +934,7 @@ pub fn summary(panel: &[Row]) -> String {
 /// windows drop the bar first.
 pub fn job_line(row: &Row, width: usize, glyphs: &Glyphs, tick: u64) -> Line<'static> {
     let Row { index, group, job } = *row;
-    let (glyph, color) = state_glyph(job, group, glyphs, tick);
+    let (glyph, color) = state_glyph(job, group);
     let number = format!("{index:>3} ");
     let percent = fraction(job).map_or(String::new(), |done| format!("{:.0}%", done * 100.0));
     let tail = tail(job);
@@ -1249,6 +1239,44 @@ mod tests {
     /// file is downloading and the other has just failed, and snapshots the
     /// rendered buffer.
     #[test]
+    fn every_status_has_a_bracketed_cue_and_a_word_without_color() {
+        for (state, group, cue, word) in [
+            ("running", 0, "[>]", "starting"),
+            ("queued", 3, "[~]", "queued"),
+            ("paused", 2, "[=]", "paused"),
+            ("failed", 1, "[!]", "failed"),
+            ("completed", FINISHED, "[v]", "done"),
+            ("awaiting_approval", 1, "[?]", "needs approval"),
+        ] {
+            let job: JobSnapshot = serde_json::from_value(serde_json::json!({
+                "job_id": "00000000-0000-4000-8000-000000000000",
+                "kind": "file", "state": state, "job_revision": 1, "last_seq": 1,
+                "source_display": "https://a.test/f.zip",
+                "progress": { "bytes_received": 0 },
+                "created_at": "2026-09-26T10:00:00Z",
+            }))
+            .unwrap();
+            let line = job_line(
+                &Row {
+                    index: 1,
+                    group,
+                    job: &job,
+                },
+                60,
+                &ASCII,
+                0,
+            );
+            let plain: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            assert!(plain.contains(cue), "{plain}");
+            assert!(plain.contains(word), "{plain}");
+        }
+    }
+
+    #[test]
     fn the_panel_renders_a_recorded_stream() {
         let mut live = Live::default();
         let messages = recorded();
@@ -1272,8 +1300,8 @@ mod tests {
         assert_eq!(
             rows,
             [
-                "  2 | sample.bin               ##########------  66%  1.4 MiB/s  0:01",
-                "  1 ! missing.zip              ----------------       failed",
+                "  2 [>] sample.bin              ##########-----  66%  1.4 MiB/s  0:01",
+                "  1 [!] missing.zip             ---------------       failed",
                 "-- 1 downloading at 1.4 MiB/s · 1 to check -----------------------------",
                 "> /pause 2",
                 "Paste a link, or type / for commands",
@@ -1301,7 +1329,7 @@ mod tests {
         let (rows, cursor) = draw(&live, &long, 40, 3);
         assert_eq!(rows.len(), 6);
         // Queued jobs list the next to run (the oldest) first.
-        assert_eq!(rows[0], "  5 . https://a.test/fil...       queued");
+        assert_eq!(rows[0], "  5 [~] https://a.test/f...       queued");
         assert_eq!(rows[2], "    ... 3 more; /queue lists all");
         assert_eq!(rows[3], "-- 5 queued ----------------------------");
         assert!(rows[4].ends_with(&"x".repeat(20)), "{}", rows[4]);

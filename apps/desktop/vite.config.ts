@@ -5,6 +5,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  // WebView2 is evergreen Chromium: keep light-dark() native instead of letting the
+  // CSS minifier rewrite it (design system decision 4, no older-browser fallback).
+  build: { cssTarget: "chrome123" },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -15,6 +18,8 @@ export default defineConfig(() => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // design/tokens.css lives outside this package and is imported by styles.css.
+    fs: { allow: ["../.."] },
     hmr: host
       ? {
           protocol: "ws",

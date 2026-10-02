@@ -60,6 +60,7 @@ fn theme_name(theme: Theme) -> &'static str {
         Theme::System => "match Windows",
         Theme::Light => "light",
         Theme::Dark => "dark",
+        Theme::HighContrast => "high contrast",
         Theme::Unknown => "unknown",
     }
 }
@@ -259,7 +260,12 @@ impl SettingsMenu {
                     DELAYS[(at + by).clamp(0, DELAYS.len() as i64 - 1) as usize];
             }),
             Field::Theme => self.apply(engine, |s| {
-                let themes = [Theme::System, Theme::Light, Theme::Dark];
+                let themes = [
+                    Theme::System,
+                    Theme::Light,
+                    Theme::Dark,
+                    Theme::HighContrast,
+                ];
                 let at = themes
                     .iter()
                     .position(|theme| *theme == s.theme)

@@ -48,3 +48,7 @@ in history at `f6053ef`. Round-only Rust API symbols are retired too:
 `Scheduler::Rounds`, `Scheduler::from_env`, `TransferLimits::segment_bytes`,
 `ContentRange` and `TransferError::RestartSequential`. No persisted or wire
 format changes.
+
+## FP-095 retirement
+
+`apps/desktop/public/icon.png` was removed: the window and empty state now draw the Fetchpath mark inline from the design system, and the app icons are generated from `apps/desktop/src-tauri/icons/source.svg`. Legacy colour aliases (`--surface`, `--muted`, `--accent` and the rest) and the duplicated light-theme blocks in `apps/desktop/src/styles.css` are gone; components use only `--fp-*` tokens.

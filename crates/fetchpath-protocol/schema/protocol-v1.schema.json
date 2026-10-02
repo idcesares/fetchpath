@@ -1523,6 +1523,15 @@
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
     },
+    "Density": {
+      "description": "How tightly the interface lays out rows and controls (FP-095).",
+      "enum": [
+        "comfortable",
+        "compact",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "DestinationDecision": {
       "description": "The answer to a destination conflict.",
       "oneOf": [
@@ -1628,6 +1637,17 @@
             "string",
             "null"
           ]
+        },
+        "density": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Density"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Row and control density. Absent from an update means \"leave it as it\nis\"."
         },
         "max_active_downloads": {
           "format": "uint64",
@@ -3679,13 +3699,22 @@
       ]
     },
     "Theme": {
-      "enum": [
-        "system",
-        "light",
-        "dark",
-        "unknown"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "system",
+            "light",
+            "dark",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "high_contrast",
+          "description": "Pure black ground and white lines (FP-095). A build that predates it\nreads this as an unknown theme and keeps its current one.",
+          "type": "string"
+        }
+      ]
     },
     "Timestamp": {
       "format": "date-time",

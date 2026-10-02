@@ -5,7 +5,7 @@
 use fetchpath_protocol::command::{ConflictPolicy, DestinationIntent, JobInput, JobRequest};
 use fetchpath_protocol::error::Action;
 use fetchpath_protocol::model::{
-    self, EngineSettings, JobKind, JobState, MediaInspection, MediaVariantKind, Theme,
+    self, Density, EngineSettings, JobKind, JobState, MediaInspection, MediaVariantKind, Theme,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason};
 use fetchpath_protocol::{JobSnapshot, SensitiveUrl, Timestamp};
@@ -327,6 +327,9 @@ pub struct Settings {
     pub onboarding_completed: bool,
     #[serde(default)]
     pub cache_quota_bytes: Option<u64>,
+    /// `comfortable` or `compact`.
+    #[serde(default)]
+    pub density: Option<String>,
 }
 
 impl Settings {
@@ -344,11 +347,19 @@ impl Settings {
             theme: match settings.theme {
                 Theme::Light => "light",
                 Theme::Dark => "dark",
+                Theme::HighContrast => "high-contrast",
                 Theme::System | Theme::Unknown => "system",
             }
             .into(),
             onboarding_completed: settings.onboarding_completed,
             cache_quota_bytes: settings.cache_quota_bytes,
+            density: Some(
+                match settings.density {
+                    Some(Density::Compact) => "compact",
+                    _ => "comfortable",
+                }
+                .into(),
+            ),
         }
     }
 
@@ -368,11 +379,17 @@ impl Settings {
             theme: match self.theme.as_str() {
                 "light" => Theme::Light,
                 "dark" => Theme::Dark,
+                "high-contrast" => Theme::HighContrast,
                 _ => Theme::System,
             },
             onboarding_completed: self.onboarding_completed,
             start_engine_at_sign_in: None,
             cache_quota_bytes: self.cache_quota_bytes,
+            density: match self.density.as_deref() {
+                Some("compact") => Some(Density::Compact),
+                Some("comfortable") => Some(Density::Comfortable),
+                _ => None,
+            },
         }
     }
 }
@@ -688,6 +705,7 @@ mod tests {
             onboarding_completed: true,
             start_engine_at_sign_in: Some(true),
             cache_quota_bytes: Some(1 << 30),
+            density: Some(Density::Comfortable),
         };
         let shown = Settings::from_engine(&engine);
         assert_eq!(serde_json::to_value(&shown).unwrap()["theme"], "dark");

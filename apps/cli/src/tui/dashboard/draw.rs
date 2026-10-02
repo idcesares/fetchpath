@@ -554,8 +554,8 @@ mod tests {
             rows,
             [
                 "-- Fetchpath  1 downloading at 1.4 MiB/s · 1 to check ------------------------------------------------------------------",
-                "  2 | sample.bin           #########-----  66%  1.4 MiB/s  0:01   | sample.bin",
-                "  1 ! missing.zip          --------------       failed            | State    running",
+                "  2 [>] sample.bin          #########----  66%  1.4 MiB/s  0:01   | sample.bin",
+                "  1 [!] missing.zip         -------------       failed            | State    running",
                 "                                                                  | Progress 65.5%  1.9 MiB of 2.9 MiB  1.4 MiB/s  0:...",
                 "                                                                  | From     http://downloads.example/sample.bin",
                 "                                                                  | To       C:\\Users\\person\\Downloads\\sample.bin",

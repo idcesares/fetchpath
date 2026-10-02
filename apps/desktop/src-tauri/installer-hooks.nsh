@@ -2,22 +2,48 @@
 ;
 ; Referenced from tauri.conf.json as `bundle.windows.nsis.installerHooks`.
 ;
-; User data on uninstall. The person decides, once, and only the two folders
-; Fetchpath created for its own data can be removed:
+; User data on uninstall (FP-100). The person decides, once, and only the two
+; folders Fetchpath created for its own data can be removed:
 ;
-;   %APPDATA%\app.fetchpath.desktop        queue, settings, browser inbox, media-tools\
-;   %LOCALAPPDATA%\app.fetchpath.desktop   the WebView2 profile
+;   %APPDATA%\app.fetchpath.desktop        queue, settings, rules, agent grants,
+;                                          secrets, browser inbox, media-tools\,
+;                                          terminal preferences, locks
+;   %LOCALAPPDATA%\app.fetchpath.desktop   the WebView2 profile, LAN pairing
 ;
-; Downloaded files are never touched, wherever they were saved.
+; and the registry key HKCU\Software\Fetchpath contributors that records the
+; install folder. Downloaded files are never touched, wherever they were saved.
 ;
 ; The question is the bundler's own "Delete the application data" checkbox on
-; the uninstall confirmation page: unticked by default, ignored during an
-; upgrade, and removing exactly those two folders. FP-030 had added a second
-; question here, a Yes/No box shown after that page. Asking twice let the
-; answers contradict each other, and ticking the box then answering No still
-; deleted the data, so the second question was removed on 23 September 2026.
-; A silent uninstall keeps the data: nobody is present to choose, and keeping
-; is the recoverable answer.
+; the uninstall confirmation page: unticked by default and ignored during an
+; upgrade. FP-030 had added a second question here; asking twice let the answers
+; contradict each other, so it was removed on 23 September 2026. A silent
+; uninstall keeps the data (nobody is present to choose, and keeping is the
+; recoverable answer) unless it is started with /DELETEAPPDATA, which is the
+; checkbox ticked for a person who cannot click it.
+;
+; The bundler would remove the two folders with `RmDir /r`, and NSIS 3.11's
+; RMDir /r follows junctions (measured: a junction inside the tree had the
+; folder it pointed at emptied). So when the choice is made, this file takes it
+; over: PREUNINSTALL records it and clears the bundler's flag, and
+; POSTUNINSTALL, after the engine and the app have stopped and the program
+; files are gone, runs tools\remove-app-data.ps1. That script removes only the
+; two exact folders, refuses one that is itself a junction, and deletes a link
+; inside as a link without entering it.
+Var FetchpathWipeData
+
+; One line per decision, in $TEMP\fetchpath-uninstall.log, so a silent uninstall
+; shows which branch ran. Never holds paths of user files or secrets.
+!macro FETCHPATH_LOG TEXT
+  Push $R7
+  ClearErrors
+  FileOpen $R7 "$TEMP\fetchpath-uninstall.log" a
+  ${IfNot} ${Errors}
+    FileSeek $R7 0 END
+    FileWrite $R7 "${TEXT}$\r$\n"
+    FileClose $R7
+  ${EndIf}
+  Pop $R7
+!macroend
 
 ; Browser capture (FP-036). The host manifests are installed beside
 ; fetchpath-browser-host.exe with a relative `path`, which Chrome, Edge and
@@ -90,6 +116,12 @@
     Sleep 1000
     fetchpath_engine_free:
   ${EndIf}
+  ; Every other program running from this install (the browser host, the torrent
+  ; and media helpers, the app) must be gone before files or data are removed.
+  ; Only paths under $INSTDIR\; a copy elsewhere is left alone.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "FETCHPATH_SETUP_DIR", t "$INSTDIR\") i'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$env:FETCHPATH_SETUP_DIR, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"'
+  Pop $R9
   Pop $R9
   Pop $R8
 !macroend
@@ -182,11 +214,67 @@ FunctionEnd
   ${EndIf}
 !macroend
 
+; Decides, once the engine is stopped, whether the data is to be removed.
+; Nothing is deleted here: the app window may still be open until the bundler
+; has closed it, and the script is copied out because $INSTDIR is emptied
+; before POSTUNINSTALL.
+!macro FETCHPATH_PLAN_DATA_REMOVAL
+  Push $R0
+  StrCpy $FetchpathWipeData 0
+  Delete "$TEMP\fetchpath-uninstall.log"
+  !insertmacro FETCHPATH_LOG "plan: cmdline=[$CMDLINE] checkbox=$DeleteAppDataCheckboxState update=$UpdateMode"
+  ClearErrors
+  ${GetOptions} $CMDLINE "/DELETEAPPDATA" $R0
+  ${IfNot} ${Errors}
+    StrCpy $DeleteAppDataCheckboxState 1
+  ${EndIf}
+  !insertmacro FETCHPATH_LOG "plan: after switch checkbox=$DeleteAppDataCheckboxState"
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    InitPluginsDir
+    ClearErrors
+    CopyFiles /SILENT "$INSTDIR\tools\remove-app-data.ps1" "$PLUGINSDIR\remove-app-data.ps1"
+    ${If} ${Errors}
+      DetailPrint "Could not prepare the data removal. Your Fetchpath data was kept."
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Fetchpath could not prepare removing its data, so the data was kept. Delete the app.fetchpath.desktop folders under %APPDATA% and %LOCALAPPDATA% yourself if you want them gone." /SD IDOK
+      SetErrorLevel 3
+    ${Else}
+      StrCpy $FetchpathWipeData 1
+    ${EndIf}
+    ; Either way the bundler's own RmDir /r must not run on these folders.
+    StrCpy $DeleteAppDataCheckboxState 0
+  ${EndIf}
+  !insertmacro FETCHPATH_LOG "plan: wipe=$FetchpathWipeData"
+  Pop $R0
+!macroend
+
+!macro FETCHPATH_REMOVE_DATA
+  !insertmacro FETCHPATH_LOG "remove: wipe=$FetchpathWipeData"
+  ${If} $FetchpathWipeData = 1
+    DetailPrint "Removing the Fetchpath application data."
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\remove-app-data.ps1" -Roaming "$APPDATA" -Local "$LOCALAPPDATA"'
+    Pop $R9
+    !insertmacro FETCHPATH_LOG "remove: script exit=$R9"
+    ${If} $R9 != 0
+      DetailPrint "Some Fetchpath data could not be removed (exit $R9). It is listed above."
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Fetchpath was removed, but some of its data could not be deleted. Setup's log lists what is left; delete the app.fetchpath.desktop folders under %APPDATA% and %LOCALAPPDATA% yourself." /SD IDOK
+      SetErrorLevel 3
+    ${EndIf}
+    ; The bundler's other cleanup for this choice.
+    DeleteRegKey SHCTX "${MANUPRODUCTKEY}"
+    DeleteRegKey /ifempty SHCTX "${MANUKEY}"
+    DeleteRegValue HKCU "${MANUPRODUCTKEY}" "Installer Language"
+    DeleteRegKey /ifempty HKCU "${MANUPRODUCTKEY}"
+    DeleteRegKey /ifempty HKCU "${MANUKEY}"
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   ; Before the files go, while fetchpath.exe and tools\user-path.ps1 are
   ; still installed.
   !insertmacro FETCHPATH_STOP_ENGINE
   !insertmacro FETCHPATH_USER_PATH Remove
+  !insertmacro FETCHPATH_PLAN_DATA_REMOVAL
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
@@ -194,5 +282,6 @@ FunctionEnd
   DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}"
   DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
   !insertmacro FETCHPATH_REMOVE_SIGN_IN
+  !insertmacro FETCHPATH_REMOVE_DATA
   Delete "${FETCHPATH_UPDATE_HOLD}"
 !macroend

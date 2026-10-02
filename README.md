@@ -1,10 +1,16 @@
+<p align="center">
+  <img src="docs/assets/banner.svg" width="100%" alt="Fetchpath: a free, open source download manager for Windows 11 that resumes, verifies and never overwrites your downloads.">
+</p>
+
 # Fetchpath
 
 A download manager for Windows 11 that keeps your downloads in one list,
 pauses and resumes them, survives restarts, and checks that what arrived is
 exactly what you asked for. It can also save video and audio.
 
-**Get started:** install it, then paste a link into the window. The
+**[Download Fetchpath 0.1.0](https://github.com/idcesares/fetchpath/releases/latest)**
+(Windows 11, x64), install it, then paste a link into the window. See
+[Installing](#installing) first: 0.1.0 isn't code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
 
 ## What it does
@@ -38,7 +44,11 @@ exactly what you asked for. It can also save video and audio.
   everything can be done from the keyboard.
 - **Downloads keep going.** A background engine keeps the one list, so
   closing the window or a terminal never stops a download, and every way in
-  sees the same list.
+  sees the same list. Closing the window hides it in the tray by default, and
+  quitting the desktop from the tray menu leaves active downloads running. The
+  tray belongs to the desktop client; the engine works without it and stops by
+  itself about a minute after the last download ends. See the
+  [background controls](docs/user/GUIDE.md#pause-resume-and-restarts).
 - **A command line and an interactive terminal.** `fetchpath download LINK`
   for scripts, the whole queue from the command line, and `fetchpath` on its
   own for a live terminal view with themes, keys and aliases of your own.
@@ -84,7 +94,9 @@ and 0.1.0 can't be installed; see the [user guide](docs/user/GUIDE.md#install).
 
 [Development speed measurements](docs/development/ADAPTIVE-HTTP.md#tool-comparisons-fp-087-30-september-2026) compare the full engine with curl, aria2, wget2 and Chrome, including settings, connection counts and verification time. They are local fixture results; the published installer and Internet performance are not promised by them.
 
-See the [changelog](CHANGELOG.md) for what's in this version.
+See the [changelog](CHANGELOG.md) for what's in this version. Work after
+0.1.0, such as torrents and the new look, is in development and isn't in the
+published installer.
 
 ## Licence
 

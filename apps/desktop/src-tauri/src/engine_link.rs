@@ -92,6 +92,21 @@ impl EngineLink {
         self.may_start.store(true, Ordering::SeqCst);
     }
 
+    /// The person asked to stop the engine: no new one is started behind
+    /// their back, and the shutdown is sent once, never resent to a successor.
+    /// A connection that drops as the engine exits is the expected outcome.
+    pub fn stop(&self) -> Result<(), ProtocolError> {
+        self.may_start.store(false, Ordering::SeqCst);
+        let envelope = CommandEnvelope::new(self.client_id.clone(), Command::EngineShutdown);
+        let result = self.client().and_then(|client| client.execute(&envelope));
+        self.forget();
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) if lost(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
     fn may_start(&self) -> bool {
         self.may_start.load(Ordering::SeqCst)
     }

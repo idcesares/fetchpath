@@ -70,6 +70,7 @@ fn settings() -> EngineSettings {
         onboarding_completed: true,
         start_engine_at_sign_in: Some(false),
         cache_quota_bytes: None,
+        density: None,
     }
 }
 

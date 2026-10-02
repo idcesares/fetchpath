@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t">
+  <title id="t">Fetchpath: a Windows download manager that resumes, verifies and never overwrites</title>
+  <!-- Colors from design/tokens.css (dark values); mark from apps/desktop/src-tauri/icons/source.svg. System fonts only. The dark panel reads the same on light and dark pages. -->
+  <rect width="1280" height="320" rx="20" fill="#0b100e"/>
+  <rect x="0.5" y="0.5" width="1279" height="319" rx="19.5" fill="none" stroke="#34433c"/>
+  <path d="M1090 262c60 0 40-170 100-170h90" fill="none" stroke="#223029" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="1090" cy="262" r="6" fill="#7ce0b7"/>
+  <g transform="translate(88 80)">
+    <rect width="160" height="160" rx="36" fill="#7ce0b7"/>
+    <g transform="translate(30 30) scale(4.2)" fill="none" stroke="#06120d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 18c5 0 3-12 8-12h6"/><circle cx="5" cy="18" r="1.6"/><path d="m16 3 3 3-3 3"/>
+    </g>
+  </g>
+  <text x="290" y="160" font-family="'Segoe UI Variable','Segoe UI',system-ui,-apple-system,sans-serif" font-size="84" font-weight="760" fill="#eef5f1" letter-spacing="-1">Fetchpath</text>
+  <text x="294" y="212" font-family="'Segoe UI Variable','Segoe UI',system-ui,-apple-system,sans-serif" font-size="32" fill="#a9b7b0">Downloads that resume, verify and never overwrite.</text>
+  <text x="294" y="256" font-family="'Cascadia Mono',Consolas,ui-monospace,monospace" font-size="20" fill="#7ce0b7" letter-spacing="2">WINDOWS 11  ·  FREE AND OPEN SOURCE</text>
+</svg>
