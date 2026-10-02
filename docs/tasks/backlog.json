@@ -2915,7 +2915,7 @@
         "FP-089",
         "FP-090"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
@@ -2934,7 +2934,7 @@
       ],
       "acceptance": "Apply FP-094 tokens and reusable control/state patterns to the desktop queue, add flow, job details, settings, approvals and browser extension capture surfaces. Deliver a visually polished hierarchy with consistent alignment, typography, spacing, icons and action emphasis while keeping the queue primary. Fix the oversized and poorly grouped torrent checkboxes/dialog shown in the 1 October screenshots; destination is optional and discovery/upload wording follows FP-089/FP-090. All existing workflows, accessible names, focus return, keyboard shortcuts and honest engine-confirmed state remain intact. Long paths, names and errors remain usable at narrow sizes and 200% scaling; required actions stay reachable with a clear scroll path. Preserve settings and existing user theme choices. Use existing dependencies and avoid unrelated host/engine rewrites. Make background operation understandable in the desktop and tray: clearly distinguish Show Fetchpath, close/hide interface and stop engine. Present engine connection/running status and active-work summary from confirmed engine state; explain that downloads can continue after the desktop and tray exit. Prepare coherent placement for hub status and pending approvals, but gate remote controls on implemented FP-091/FP-092 capabilities rather than shipping nonfunctional toggles.",
       "verification": "Desktop typecheck/build and applicable extension checks; real UI walkthrough of add, batch, torrent, settings, approval and failure states at supported widths, scaling and themes, including keyboard-only operation and existing accessibility checks. Review before/after visual evidence locally and retain only concise evidence needed for the acceptance claim. Walk through close-to-tray enabled/disabled, desktop Quit during a download, reconnect and intentionally stopped engine; verify no label or missing tray icon implies that work has stopped.",
-      "evidence": [],
+      "evidence": ["design/tokens.css", "docs/development/evidence/windows/ui-accessibility.json"],
       "blockedReason": null
     },
     {
@@ -2946,7 +2946,7 @@
         "FP-089",
         "FP-090"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
@@ -2963,7 +2963,7 @@
       ],
       "acceptance": "Adapt FP-094 semantic colors, status vocabulary, density and hierarchy to the inline TUI and dashboard, including inspected-link cards, queue rows, help, settings, approvals and errors. Produce a cohesive polished terminal experience that remains readable in narrow terminals, light/dark and high-contrast themes, plain/no-color mode and ASCII glyph fallback. Preserve user-selected themes, density and keybindings, scrollback/selectable output, focus and resizing behavior, and all existing commands. Scriptable CLI output stays stable and machine-readable output gains no decorative sequences. Torrent defaults and peer choices follow FP-089/FP-090; destination and future instance identity remain clear without excessive decoration.",
       "verification": "Run focused rendering/configuration and CLI output-contract checks where affected; walkthrough inline and dashboard modes with narrow/wide terminals, resize, no-color and ASCII fallback, existing user themes and long filenames/errors. Verify status remains understandable without color and machine-readable output retains its existing contract.",
-      "evidence": [],
+      "evidence": ["apps/cli/src/tui/view.rs"],
       "blockedReason": null
     },
     {
