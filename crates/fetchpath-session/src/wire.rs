@@ -3,8 +3,8 @@
 use crate::{JobSnapshot as View, QueueRecord, Settings, retried_automatically, settings};
 use fetchpath_protocol::error::{Action, ErrorCode, ErrorScope, ProtocolError};
 use fetchpath_protocol::model::{
-    self, Density, EngineSettings, IntegrityOutcome, JobKind, JobState, Phase, Progress, SettingsView,
-    Theme, WaitingReason,
+    self, Density, EngineSettings, IntegrityOutcome, JobKind, JobState, Phase, Progress,
+    SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::{JobId, Timestamp};
