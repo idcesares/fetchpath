@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-01",
+  "updated": "2026-10-02",
   "tasks": [
     {
       "id": "FP-001",
@@ -2915,8 +2915,8 @@
         "FP-089",
         "FP-090"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2946,8 +2946,8 @@
         "FP-089",
         "FP-090"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2973,8 +2973,8 @@
       "dependsOn": [
         "FP-094"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2990,7 +2990,103 @@
       ],
       "acceptance": "Create an attractive repository banner consistent with FP-094 visual identity, including the Fetchpath name and a concise accurate product message, and integrate it locally into the README with meaningful alt text. Deliver a reusable editable source and an optimized static render in a mapped repository asset location; compose text sharply and check legibility at typical GitHub README widths in light/dark contexts. Preserve the quick-start and installation hierarchy, make the first screen feel polished, and use current shipped capabilities rather than implying planned web/remote/torrent functionality is released. Brand assets have clear rights/provenance and no embedded private information. Avoid large redundant asset variants or a wholesale documentation rewrite. Changing the GitHub social-preview setting or publishing externally is separate scope. Prominently communicate the existing one-engine/background-download feature with an accurate short explanation of desktop/tray versus engine lifetime and a link to management instructions; describe hub mode only once shipped.",
       "verification": "Inspect banner and README rendering at desktop and narrow widths, check image size, alt text and relative links, and confirm every product claim matches published release capabilities. Keep source/render links and a short account of visual verification; repository structure/link checks pass. Confirm background/tray claims against the implemented lifecycle and user guide, including the fact that desktop Quit does not stop active downloads.",
+      "evidence": ["docs/assets/banner.svg", "README.md"],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-098",
+      "title": "Design Full and Custom installer component selection",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-081",
+        "FP-094"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "docs/architecture/specs",
+        "docs/product/UX.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Design a clear Full installation preset and Custom installation checkbox page with concise component descriptions. Engine/Core is required and cannot be deselected; at least one usable interface must be selected among available Desktop, CLI/TUI, MCP and future Web components. Define prerequisites for MCP-only and web-only choices so installation never leaves the person unable to connect, grant permissions or manage the instance; do not assume an MCP process supplies a human approval UI. Identify optional browser integration, torrent and media helpers separately from interfaces, including sizes, bundled versus later download behavior and dependencies. Full selects only components available in that build, not planned capabilities. The engine, CLI/TUI and MCP currently share fetchpath.exe: decide explicitly whether selection controls installed entry points/enabled capabilities or requires a measured packaging split, and describe actual disk impact honestly. Removing Desktop should not require its UI runtime if the chosen packaging supports a headless install. Keep the per-user install and one engine owner. Specify quiet-install defaults/options, persisted selections, upgrade/repair behavior, adding/removing components later, and shared binary/helper ownership. Installing a component never implicitly grants agents access, starts remote serving, enables sharing/seeding, registers external agent clients or downloads optional tools without the stated choice. Apply the design system within native installer constraints. Web selection remains gated on FP-092 and no public-network exposure is implied.",
+      "verification": "Inspect the current generated NSIS package and executable boundaries; produce a selection/dependency matrix for Desktop-only, CLI/TUI-only, MCP-only and future Web-only, Full, Custom with no interface, quiet install and upgrade from existing full installs. Independent strong review of lifecycle, policy defaults and component-removal boundaries. Record any packaging split as a separate explicit implementation gate rather than assume selectable binaries already exist.",
       "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-099",
+      "title": "Implement selectable installer interfaces and optional modules",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-098"
+      ],
+      "status": "todo",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/desktop/src-tauri",
+        "apps/cli",
+        "tools",
+        "tests/installer",
+        "tests/compatibility/windows",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/user/GUIDE.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Implement the accepted FP-098 Full/Custom component contract using the existing installer/package conventions. Core is always selected; require one usable available interface, enforce module prerequisites, show descriptions and real installation/download consequences, and keep unshipped Web unavailable until FP-092 passes. Create shortcuts, PATH entries, browser registration and capability entry points only as specified by the chosen components, accounting for shared fetchpath.exe engine launch needs. Remember selections across upgrade and support later component changes without deleting queue/settings or binaries still required by selected components. Honor explicit choices in quiet installation and repair, preserve the single-owner engine stop/restart ordering, and avoid enabling remote access, sharing or agent grants from Full alone. Support an install without Desktop according to the accepted packaging design. Do not invent or introduce an unreviewed binary split.",
+      "verification": "Clean Windows image runs for Full and representative Custom/headless selections, no-interface rejection, prerequisite handling, quiet defaults/options, upgrade with active downloads and preserved selections, and adding/removing components. Check installed files, entry points, browser registrations and runtime prerequisites against the matrix; run focused installer/lifecycle tests and independent strong review.",
+      "evidence": [],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-100",
+      "title": "Make optional uninstall data cleanup explicit and verify it",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-057",
+        "FP-081"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/desktop/src-tauri",
+        "apps/cli/src/engine",
+        "tests/installer",
+        "tests/compatibility/windows",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/user/GUIDE.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Retain program removal on every uninstall and a separate unchecked-by-default choice to remove Fetchpath-owned settings and application data. Reuse the existing Delete application data option where possible, with a clear summary of settings, queue/history, rules, principal grants/secrets, terminal preferences, browser/webview storage, managed helper caches and installation metadata actually covered. Inventory all owned paths and registrations, including custom component selections when implemented, and explain retained data when cleanup is not chosen. Stop and hold the engine and helpers before cleanup so no process recreates state; remove application-owned registrations, shortcuts and selected program components predictably. Never delete completed user downloads, arbitrary destination folders, shared runtimes or unrelated files. Verify resolved cleanup targets remain inside explicit application-owned roots and do not follow junctions/reparse points into unrelated data; report locked or failed removals honestly. Quiet uninstall keeps data unless an explicit documented cleanup option is supported. Do not silently broaden an existing data checkbox to new user-content deletion. Future hub/agent credentials and access must be retired according to the accepted component/lifecycle design.",
+      "verification": "Exercise interactive keep-data and delete-data choices on a clean Windows image; the current packaging record explicitly lacks the latter run. Check program files/registrations are removed in both cases; saved data persists only when chosen, completed downloads and sentinel files outside owned roots survive, and no engine/helper remains or recreates data. Test quiet retention, explicit cleanup if supported, locked paths and junction/reparse hazards with focused fixtures. Independent strong review of deletion scope, secrets and stop-before-cleanup ordering; update the existing packaging record with reachable evidence.",
+      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/evidence/windows/sandbox-delete-data.json", "docs/development/evidence/windows/sandbox-lifecycle.json", "tests/installer/data-removal.test.mjs"],
       "blockedReason": null
     }
   ]
