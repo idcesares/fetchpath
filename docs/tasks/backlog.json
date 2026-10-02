@@ -2883,8 +2883,8 @@
         "FP-082",
         "FP-062"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2903,7 +2903,7 @@
       ],
       "acceptance": "Define a cohesive, distinctive and polished Fetchpath visual direction using the existing identity as a starting point. Deliver reusable semantic tokens for color, typography, spacing, sizing, radii, elevation, iconography, density and motion, with theme mappings and an explicit source of truth and ownership. Specify common button, input, checkbox, dialog, navigation, queue row, progress, status, error, empty-state and approval patterns; include instance identity and destination hierarchy for future remote clients. Provide rendered representative desktop and narrow-browser compositions plus a terminal adaptation, so visual quality can be judged rather than inferred from prose. Desktop, web and extension can reuse visual assets/tokens where practical; CLI/TUI adapt semantic colors, terminology and hierarchy to terminal constraints without forcing GUI components or adding engine presentation dependencies. Preserve keyboard access, named controls, 4.5:1 text contrast, non-color status cues, 200% scaling, high-contrast and reduced-motion behavior. Describe incremental migration using existing dependencies, licensed font/icon assets and maintainable components rather than a mandatory framework rewrite. Keep one concise design specification and practical examples; register new committed assets/components in the repository map.",
       "verification": "Visually review representative queue, add-torrent, settings, approval, error and empty states in supported themes, widths and densities; check text contrast and keyboard hierarchy. Confirm token ownership, GUI reuse and terminal fallback mappings are executable for downstream tasks and consistent with the existing UX contract. No screenshot snapshot tests for decorative details.",
-      "evidence": [],
+      "evidence": ["docs/architecture/specs/2026-10-01-design-system-design.md", "design/tokens.css"],
       "blockedReason": null
     },
     {

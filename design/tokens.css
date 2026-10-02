@@ -1,0 +1,133 @@
+/* Fetchpath design tokens (FP-094). Source of truth for desktop, web and the
+   browser extension; spec: docs/architecture/specs/2026-10-01-design-system-design.md
+   Theme: :root[data-theme="dark|light|high-contrast"]; absent or "system"
+   follows the OS. Colors use light-dark() (Chromium 123+, WebView2 evergreen).
+   Density: :root[data-density="compact"]. Components use only --fp-* names;
+   the legacy block at the end lets styles.css keep working until FP-095. */
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces and lines */
+  --fp-bg:            light-dark(#f3f7f4, #0b100e);
+  --fp-surface:       light-dark(#ffffff, #141b18);
+  --fp-surface-raised:light-dark(#ffffff, #1a2420);
+  --fp-surface-inset: light-dark(#e9f0ec, #0d1512);
+  --fp-surface-hover: light-dark(#e5eee9, #26342e);
+  --fp-scrim:         light-dark(#17211c66, #000000a6);
+  --fp-line:          light-dark(#c2d0c9, #34433c);
+  --fp-line-strong:   light-dark(#b4c6bd, #3f574d);
+  --fp-field:         light-dark(#ffffff, #0c1210);
+  --fp-field-line:    light-dark(#74827b, #617169);
+  --fp-track:         light-dark(#d6e3dc, #223029);
+
+  /* Text */
+  --fp-text:          light-dark(#17211c, #eef5f1);
+  --fp-text-muted:    light-dark(#4d5d55, #a9b7b0);
+  --fp-text-quiet:    light-dark(#5a6a62, #8a9992);
+
+  /* Accent: the "trail". Fill carries on-accent text; accent-text is for
+     accent-colored text and glyphs on surfaces. */
+  --fp-accent:        light-dark(#19745f, #7ce0b7);
+  --fp-accent-strong: light-dark(#0f5a48, #b2f4d7);
+  --fp-on-accent:     light-dark(#ffffff, #06120d);
+  --fp-accent-text:   light-dark(#15563f, #7ce0b7);
+  --fp-focus:         light-dark(#0b4fbf, #ffd06e);
+
+  /* Status roles: fg (text, glyph, rail), bg (chip), each with a glyph cue. */
+  --fp-running-fg:    var(--fp-accent-text);
+  --fp-running-bg:    light-dark(#d3efe2, #17382c);
+  --fp-done-fg:       light-dark(#12392a, #b2f4d7);
+  --fp-done-bg:       light-dark(#cdeadb, #1d4a39);
+  --fp-waiting-fg:    light-dark(#5a4405, #f9d98b);
+  --fp-waiting-bg:    light-dark(#fbeecb, #3b311a);
+  --fp-paused-fg:     light-dark(#2c3a34, #cddbd4);
+  --fp-paused-bg:     light-dark(#dfe8e4, #2b3a34);
+  --fp-failed-fg:     light-dark(#7d1811, #ffd4d0);
+  --fp-failed-bg:     light-dark(#fbdedb, #46221f);
+  --fp-danger:        light-dark(#a3231a, #ffb5ae);
+  --fp-warning:       light-dark(#8a5a00, #ffd06e);
+  --fp-approval-fg:   light-dark(#4a2a86, #dcc9ff);
+  --fp-approval-bg:   light-dark(#ebe2fb, #33265a);
+  --fp-info:          light-dark(#1d4f91, #9cc7ff);
+
+  /* Typography (system faces; no bundled font required) */
+  --fp-font-sans: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --fp-font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --fp-text-xs: .72rem;  --fp-text-sm: .84rem;  --fp-text-md: 1rem;
+  --fp-text-lg: 1.15rem; --fp-text-xl: 1.38rem; --fp-text-2xl: 1.6rem;
+  --fp-weight-regular: 400; --fp-weight-strong: 600; --fp-weight-heavy: 760;
+  --fp-leading: 1.5; --fp-leading-tight: 1.2;
+  --fp-track-caps: .16em;
+
+  /* Spacing (4px base), sizing, radii */
+  --fp-space-1: 4px;  --fp-space-2: 8px;  --fp-space-3: 12px; --fp-space-4: 16px;
+  --fp-space-5: 24px; --fp-space-6: 32px; --fp-space-7: 48px;
+  --fp-radius-sm: 6px; --fp-radius-md: 10px; --fp-radius-lg: 16px; --fp-radius-pill: 999px;
+  --fp-icon: 20px; --fp-icon-sm: 16px; --fp-rail: 4px; --fp-trail: 8px;
+  --fp-measure: 72ch; --fp-shell: 1080px; --fp-popup: 360px; --fp-dialog: 560px;
+
+  /* Density (comfortable default; hit targets never below 24px) */
+  --fp-control-h: 40px; --fp-row-pad: 14px; --fp-row-gap: 10px;
+
+  /* Elevation */
+  --fp-shadow-1: 0 1px 2px light-dark(#17211c1a, #00000066);
+  --fp-shadow-2: 0 18px 46px light-dark(#17211c2e, #00000066);
+
+  /* Motion */
+  --fp-ease: cubic-bezier(.2, .7, .2, 1);
+  --fp-dur-fast: 120ms; --fp-dur: 200ms; --fp-dur-slow: 400ms;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
+
+:root[data-density="compact"] { --fp-control-h: 32px; --fp-row-pad: 8px; --fp-row-gap: 6px; }
+
+/* High contrast: pure ground, 7:1 text, strong lines, thicker rails. */
+:root[data-theme="high-contrast"] {
+  color-scheme: dark;
+  --fp-bg: #000000; --fp-surface: #000000; --fp-surface-raised: #0a0a0a;
+  --fp-surface-inset: #000000; --fp-surface-hover: #262626; --fp-scrim: #000000d9;
+  --fp-line: #ffffff; --fp-line-strong: #ffffff; --fp-field: #000000;
+  --fp-field-line: #ffffff; --fp-track: #3a3a3a;
+  --fp-text: #ffffff; --fp-text-muted: #e6e6e6; --fp-text-quiet: #cfcfcf;
+  --fp-accent: #5ff5c0; --fp-accent-strong: #ffffff; --fp-on-accent: #000000;
+  --fp-accent-text: #5ff5c0; --fp-focus: #ffff00;
+  --fp-running-bg: #000000; --fp-done-fg: #8dffd6; --fp-done-bg: #000000;
+  --fp-waiting-fg: #ffe066; --fp-waiting-bg: #000000;
+  --fp-paused-fg: #ffffff; --fp-paused-bg: #000000;
+  --fp-failed-fg: #ffb3ad; --fp-failed-bg: #000000; --fp-danger: #ffb3ad;
+  --fp-warning: #ffe066; --fp-approval-fg: #e3d4ff; --fp-approval-bg: #000000;
+  --fp-info: #a8d1ff; --fp-shadow-1: none; --fp-shadow-2: none;
+  --fp-rail: 6px;
+}
+
+/* Operating-system high contrast overrides every theme. */
+@media (forced-colors: active) {
+  :root {
+    --fp-bg: Canvas; --fp-surface: Canvas; --fp-surface-raised: Canvas;
+    --fp-surface-inset: Canvas; --fp-surface-hover: Canvas; --fp-text: CanvasText;
+    --fp-text-muted: CanvasText; --fp-text-quiet: CanvasText; --fp-line: CanvasText;
+    --fp-line-strong: CanvasText; --fp-field: Field; --fp-field-line: FieldText;
+    --fp-accent: LinkText; --fp-accent-text: LinkText; --fp-on-accent: ButtonFace;
+    --fp-focus: Highlight; --fp-track: GrayText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --fp-dur-fast: .01ms; --fp-dur: .01ms; --fp-dur-slow: .01ms; }
+}
+
+/* Legacy names used by apps/desktop/src/styles.css and extensions/browser/popup.css.
+   Delete with FP-095 once both consume --fp-* directly. */
+:root {
+  --surface: var(--fp-surface); --surface-raised: var(--fp-surface-raised);
+  --inset: var(--fp-surface-inset); --line: var(--fp-line); --line-soft: var(--fp-line-strong);
+  --field: var(--fp-field); --field-line: var(--fp-field-line);
+  --muted: var(--fp-text-muted); --quiet: var(--fp-text-quiet);
+  --accent: var(--fp-accent); --accent-strong: var(--fp-accent-strong);
+  --on-accent: var(--fp-on-accent); --warning: var(--fp-warning); --danger: var(--fp-danger);
+  --hover: var(--fp-surface-hover); --track: var(--fp-track);
+  --appbar: color-mix(in srgb, var(--fp-bg) 80%, transparent);
+  --bg: var(--fp-bg); --fg: var(--fp-text); --ok: var(--fp-done-fg); --bad: var(--fp-danger);
+}
