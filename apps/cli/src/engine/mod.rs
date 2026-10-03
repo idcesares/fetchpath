@@ -28,6 +28,12 @@ use std::time::{Duration, Instant};
 /// How long the engine stays with no client and nothing of its own to do.
 pub const IDLE_GRACE: Duration = Duration::from_secs(60);
 
+/// How often an engine with no client and nothing of its own to do runs its
+/// pass (FP-101 gate G3): an always-on engine waits mostly idle. Commands,
+/// transfers and the browser host wake it at once; this only bounds how
+/// late it notices time passing, such as an approval expiring.
+const IDLE_TICK_INTERVAL: Duration = Duration::from_secs(5);
+
 pub const USAGE: &str = "usage: fetchpath engine [status [--json] | stop [--for-update]]";
 
 /// How long `engine stop --for-update` waits for the engine to let go of
@@ -308,12 +314,20 @@ fn serve(grace: Duration) -> Result<i32, String> {
             // Held by this thread, which lives as long as the engine serves.
             let mut awake = awake::Awake::default();
             while !host.stopping() {
+                // Busy: sample and reconcile four times a second. Idle: let
+                // wakeups do the work.
+                let interval = if host.connections.load(Ordering::SeqCst) > 0 || host.has_own_work()
+                {
+                    TICK_INTERVAL
+                } else {
+                    IDLE_TICK_INTERVAL
+                };
                 host.engine
-                    .wait_for_work(TICK_INTERVAL.saturating_sub(sampled.elapsed()));
+                    .wait_for_work(interval.saturating_sub(sampled.elapsed()));
                 if host.stopping() {
                     break;
                 }
-                if sampled.elapsed() >= TICK_INTERVAL {
+                if sampled.elapsed() >= interval {
                     host.engine.tick();
                     sampled = Instant::now();
                 } else {
@@ -342,9 +356,11 @@ fn serve(grace: Duration) -> Result<i32, String> {
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
         // Always on: never stops for being idle (FP-101).
-        if host.connections.load(Ordering::SeqCst) > 0
+        // Always on first: it never stops for being idle, and asking it
+        // costs nothing, unlike counting the queue's own work.
+        if host.engine.session().hub_mode()
+            || host.connections.load(Ordering::SeqCst) > 0
             || host.has_own_work()
-            || host.engine.session().hub_mode()
         {
             idle_since = Instant::now();
         } else if idle_since.elapsed() >= grace {

@@ -17,6 +17,7 @@ one your task names.
 - [Interactive terminal](TERMINAL.md) — FP-059 to FP-063 and FP-073: inline panel, prompt and `/` commands, dashboard, flows, personalization, remembered context, plain mode, and the review of its additions.
 - [Smart rules](RULES.md) — FP-064: rules by site, type or size, applied by the engine to protocol jobs; FP-075 extends them to the desktop and browser captures.
 - [Agents through MCP](MCP.md) — FP-065/066/067: `fetchpath mcp`, what an agent is shown, the person's access and approval surfaces, and the boundary review with its residual risks.
+- [Instance identity, always on and the disk reserve](INSTANCE-AND-LIFECYCLE.md) — FP-101: the local slice of the remote hub design, approval expiry, and agents' automatic mode.
 
 ## Features
 

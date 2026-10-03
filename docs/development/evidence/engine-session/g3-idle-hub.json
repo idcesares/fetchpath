@@ -1,0 +1,30 @@
+{
+  "gate": "FP-101 G3: idle always-on engine, 10 minutes, no clients, no downloads",
+  "date": "2026-10-03",
+  "machine": "Windows 11 Pro 10.0.26300, owner laptop",
+  "runs": [
+    {
+      "change": "before: 250 ms pass while idle",
+      "build": "debug",
+      "seconds": 600,
+      "cpu_seconds_added": 15.766,
+      "working_set_mib_start": 13.7,
+      "working_set_mib_end": 13.8,
+      "private_mib_end": 1.9,
+      "threads": 6,
+      "still_running": true
+    },
+    {
+      "change": "after: 5 s pass while idle (commit following 39895fc)",
+      "build": "debug",
+      "seconds": 600,
+      "cpu_seconds_added": 0.953,
+      "working_set_mib_start": 13.7,
+      "working_set_mib_end": 13.8,
+      "private_mib_end": 1.9,
+      "threads": 6,
+      "still_running": true
+    }
+  ],
+  "target": "under 1 s CPU added in 10 minutes"
+}
