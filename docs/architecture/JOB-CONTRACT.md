@@ -463,3 +463,42 @@ Source: `crates/fetchpath-session/src/lib.rs` (`plain_path`), `engine.rs`,
 - **An agent sees no engine-wide counters.** `EngineStatus` gives it
   `queue_cursor` and `connected_clients` of 0, and its job streams number
   their events and progress samples from 1 for that stream alone.
+
+### D6 · Instances, remote principals and capacity (FP-091, 3 October 2026)
+
+Extends D1 to D5 for explicitly selected local or remote engines. Source:
+[instance access and remote hub design](specs/2026-10-03-instance-access-and-remote-hub-design.md).
+Applies from FP-101 (identity, lifecycle, capacity; targeted for 0.2.0) and FP-092 (remote
+principals); nothing changes before that code lands.
+
+- **Instance identity.** Each engine data folder has an opaque
+  `instance_id` and a person-assigned `name`; `EngineStatus` reports both as
+  `instance`. Every mutating command carries `expected_instance_id`; another
+  instance refuses it with `contract.wrong_instance` (not retryable, action
+  `select_instance`). Clients never fall back from one instance to another.
+- **Host-owned paths.** Destinations are host paths. Remote principals choose
+  from `ListFolderChoices` (read only: default, rule and granted folders as a
+  label plus relative path) and see paths in that label form unless a person
+  device holds `view_paths`.
+- **Credential-bound principals.** A remote connection never declares its
+  principal; the engine derives it from the credential: `device:<id>` for a
+  person's enrolled device, `agent:<name>@<device>` for a remote agent. Grants
+  are separate: `view`, `submit`, `approve` (person principals only) and
+  `retrieve`. An approval by the job's requesting principal is refused with
+  `policy.self_approval`. Settings, rules, access, enrollment, hub mode and
+  `EngineShutdown` stay local `user` only. Cookies, `credential_ref` and
+  `replace_existing` stay local-only for remote person devices. A revoked
+  credential's uncommitted commands are refused; the ledger fingerprint
+  includes the remote principal, as D1 does for agents.
+- **Approval expiry.** A request still awaiting approval after its configured
+  period (default 7 days) becomes `cancelled` with `policy.approval_expired`.
+- **Disk reserve.** A job whose remaining expected bytes, together with the
+  remaining bytes of other unfinished jobs on the volume, would cross the
+  volume's reserve (default the larger of 5 GiB and 5 %) waits with
+  `storage.reserve` instead of failing; a job of unknown size is paused at its
+  checkpoint when it reaches the reserve. Removing a job never deletes its
+  published file.
+- **Notices and handshake.** `host_suspending` is an ephemeral notice sent to
+  remote clients before the host sleeps; it never consumes `seq`. The remote
+  handshake lists the engine's `features`; a major-version mismatch still
+  refuses with `contract.unsupported_version`.
