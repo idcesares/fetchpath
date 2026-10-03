@@ -3039,10 +3039,12 @@ impl QueueRecord {
         let paused = saved.view.state == "paused";
         // A job waiting for the person's decision keeps waiting. Nothing is
         // prepared for it until it is approved (contract D1).
+        // A request the agent withdrew, or that expired, ended: it is not
+        // brought back for the person to approve.
         let awaiting_approval = saved
             .approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied && !approval.expired);
+            .is_some_and(|approval| !approval.denied && !approval.withdrawn && !approval.expired);
         let (job, state, error, action, retryable) = if let Some(problem) = metadata_error {
             (None, "failed".into(), Some(problem.into()), None, false)
         } else if awaiting_approval {

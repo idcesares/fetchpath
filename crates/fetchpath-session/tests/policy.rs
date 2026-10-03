@@ -1955,7 +1955,6 @@ fn a_request_nobody_decides_on_expires_after_seven_days() {
 }
 
 #[test]
-#[ignore = "known defect found in FP-101: a withdrawn request is restored as awaiting approval; fix pending the owner's go-ahead"]
 fn a_withdrawn_request_stays_withdrawn_after_a_restart() {
     let s = setup(granting);
     let waiting = job(send(&s.agent, later(&s.outside.join("w.bin"))).unwrap());
