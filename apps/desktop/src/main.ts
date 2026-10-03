@@ -122,6 +122,8 @@ interface AgentView {
   folders: string[];
   maxBytes: number;
   maxNewJobsPerHour: number;
+  /** Inside its folders, nothing it downloads waits for approval. */
+  automatic: boolean;
 }
 
 interface JobDraft {
@@ -878,6 +880,7 @@ async function saveAgent(agent: AgentView, message: string, focus: string): Prom
       folders: agent.folders,
       maxBytes: agent.maxBytes,
       maxNewJobsPerHour: agent.maxNewJobsPerHour,
+      automatic: agent.automatic,
     });
     renderAgents();
     agentStatus(message);
@@ -916,10 +919,26 @@ function renderAgents(): void {
     heading.textContent = agent.name;
     const summary = document.createElement("p");
     summary.className = "hint field-note";
-    summary.textContent = agent.folders.length
-      ? `Saves into ${agent.folders.length === 1 ? "this folder" : "these folders"} without asking, up to ${formatBytes(agent.maxBytes)} a download and ${agent.maxNewJobsPerHour} downloads an hour.`
-      : "No folders yet: everything it asks for waits for you.";
+    const where = agent.folders.length === 1 ? "this folder" : "these folders";
+    summary.textContent = !agent.folders.length
+      ? "No folders yet: everything it asks for waits for you."
+      : agent.automatic
+        ? `Automatic: saves into ${where} without asking, whatever the size or how many. Anything elsewhere still waits for you.`
+        : `Saves into ${where} without asking, up to ${formatBytes(agent.maxBytes)} a download and ${agent.maxNewJobsPerHour} downloads an hour.`;
     card.append(heading, summary);
+
+    const automaticLabel = document.createElement("label");
+    automaticLabel.className = "check";
+    const automatic = document.createElement("input");
+    automatic.type = "checkbox";
+    automatic.checked = agent.automatic;
+    automatic.dataset.agent = agent.name;
+    automatic.dataset.agentToggle = "automatic";
+    const automaticText = document.createElement("span");
+    automaticText.textContent =
+      "Automatic: inside its folders, never ask about size, how many an hour, or torrent peers";
+    automaticLabel.append(automatic, automaticText);
+    card.append(automaticLabel);
 
     if (agent.folders.length) {
       const list = document.createElement("ul");
@@ -973,6 +992,20 @@ function renderAgents(): void {
     agentsList.append(card);
   }
 }
+
+agentsList.addEventListener("change", async (event) => {
+  const toggle = event.target as HTMLInputElement;
+  if (toggle.dataset.agentToggle !== "automatic") return;
+  const agent = agents.find((candidate) => candidate.name === toggle.dataset.agent);
+  if (!agent) return;
+  await saveAgent(
+    { ...agent, automatic: toggle.checked },
+    toggle.checked
+      ? `${agent.name} is automatic: inside its folders its downloads no longer wait for you.`
+      : `${agent.name} is no longer automatic: its size and hourly limits apply again.`,
+    `input[data-agent="${CSS.escape(agent.name)}"][data-agent-toggle="automatic"]`,
+  );
+});
 
 agentsList.addEventListener("click", async (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-agent-action]");
@@ -1050,7 +1083,7 @@ agentAdd.addEventListener("click", async () => {
   }
   agentNewName.value = "";
   await saveAgent(
-    { name, folders: [], maxBytes: DEFAULT_AGENT_BYTES, maxNewJobsPerHour: DEFAULT_AGENT_PER_HOUR },
+    { name, folders: [], maxBytes: DEFAULT_AGENT_BYTES, maxNewJobsPerHour: DEFAULT_AGENT_PER_HOUR, automatic: false },
     `${name} added. Give it a folder so its downloads there start without asking.`,
     `button[data-agent="${CSS.escape(name)}"][data-agent-action="add-folder"]`,
   );

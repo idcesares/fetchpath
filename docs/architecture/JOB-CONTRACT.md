@@ -502,3 +502,27 @@ principals); nothing changes before that code lands.
   remote clients before the host sleeps; it never consumes `seq`. The remote
   handshake lists the engine's `features`; a major-version mismatch still
   refuses with `contract.unsupported_version`.
+
+### D7 · Automatic mode for an agent (FP-101, 3 October 2026)
+
+Extends D1. Decided with the owner on 3 October 2026. Source:
+`crates/fetchpath-protocol/src/principal.rs` (`AgentPolicy::automatic`),
+`crates/fetchpath-session/src/policy.rs`, `lib.rs`, `engine.rs`.
+
+- **What it is.** A per-agent setting the person turns on (`fetchpath agents
+  auto NAME on`, or Settings in the desktop). Off by default and only a
+  `user` principal can change it, like every other part of agent access.
+- **What it lifts.** Inside the agent's granted folders its downloads never
+  wait for the person: no `rate_limit` hold at creation, no `size_limit`
+  stop while running (media and torrent byte caps are not set), and its
+  torrents may discover peers without a `peer_discovery` hold.
+- **What it does not lift.** A destination outside the granted folders is
+  still held (`outside_granted_folders`), so automatic mode never widens
+  where an agent can write. Uploading to peers is still held
+  (`peer_upload`). The hard refusals of D1 stay refused: user info in a
+  link, a `credential_ref`, and `replace_existing`. Settings, rules, access,
+  sharing and approvals stay `user` only, and the pending-approvals cap
+  still applies to what it does ask for.
+- **Turning it off** restores the limits for what follows: new jobs count
+  against the hourly rate again, and a running download past the size limit
+  is stopped at its next sample as D1 describes.

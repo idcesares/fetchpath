@@ -1975,3 +1975,67 @@ fn a_withdrawn_request_stays_withdrawn_after_a_restart() {
     let (_, agent) = clients(&engine);
     assert_eq!(get(&agent, &waiting.job_id).state, JobState::Cancelled);
 }
+
+/// Contract D7: an agent in automatic mode is not held for its rate or its
+/// size inside its folders, and is still held for saving outside them.
+#[test]
+fn an_automatic_agent_skips_rate_and_size_but_not_its_folders() {
+    let body: Vec<u8> = (0..512 * 1024).map(|i| (i % 251) as u8).collect();
+    let link = serve(body.clone(), false);
+    let s = setup(|granted| AgentPolicy {
+        max_bytes: 64 * 1024,
+        max_new_jobs_per_hour: 1,
+        automatic: true,
+        ..granting(granted)
+    });
+
+    // Past its hourly rate: still queued.
+    for name in ["a.bin", "b.bin", "c.bin"] {
+        let queued = job(send(&s.agent, later(&s.granted.join(name))).unwrap());
+        assert_eq!(queued.state, JobState::Queued, "{name}");
+    }
+    // Outside its folders: waits for the person as ever.
+    let outside = job(send(&s.agent, later(&s.outside.join("x.bin"))).unwrap());
+    assert_eq!(outside.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&outside), [ApprovalReason::OutsideGrantedFolders]);
+
+    // Eight times its size limit, of unknown size: it finishes.
+    let big = job(send(&s.agent, file(&link, &s.granted.join("big.bin"))).unwrap());
+    let done = wait_for(&s.engine, &s.agent, &big.job_id, |job| {
+        matches!(
+            job.state,
+            JobState::Completed | JobState::AwaitingApproval | JobState::Failed
+        )
+    });
+    assert_eq!(done.state, JobState::Completed);
+    assert_eq!(std::fs::read(s.granted.join("big.bin")).unwrap(), body);
+}
+
+/// Turning automatic mode off brings the limits back for what comes next.
+#[test]
+fn turning_automatic_mode_off_restores_the_rate() {
+    let s = setup(|granted| AgentPolicy {
+        max_new_jobs_per_hour: 1,
+        automatic: true,
+        ..granting(granted)
+    });
+    for name in ["a.bin", "b.bin"] {
+        assert_eq!(
+            job(send(&s.agent, later(&s.granted.join(name))).unwrap()).state,
+            JobState::Queued
+        );
+    }
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(AgentPolicy {
+                max_new_jobs_per_hour: 1,
+                ..granting(&s.granted)
+            }),
+        },
+    )
+    .unwrap();
+    let held = job(send(&s.agent, later(&s.granted.join("c.bin"))).unwrap());
+    assert_eq!(reasons(&held), [ApprovalReason::RateLimit]);
+}

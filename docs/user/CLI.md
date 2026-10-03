@@ -458,9 +458,16 @@ Grant access in the desktop (Settings, AI agents) or from the command line:
 fetchpath agents                                  # who has access, where, and how much
 fetchpath agents grant claude-code D:\AgentDownloads
 fetchpath agents limit claude-code --size 500MB --per-hour 10
+fetchpath agents auto claude-code on                  # inside its folders, never ask
 fetchpath agents revoke claude-code D:\AgentDownloads   # take one folder away
 fetchpath agents revoke claude-code                     # take all of its access away
 ```
+
+`agents auto NAME on` is automatic mode: inside the agent's folders nothing
+it downloads waits for you, whatever the size or how many an hour, and a
+torrent may find peers. Saving anywhere else still waits for your approval,
+and it still cannot use your sign-ins, replace a file, upload to peers or
+change Fetchpath's settings. `agents auto NAME off` brings the limits back.
 
 Taking a folder away, or revoking an agent, stops what it has not finished
 there: those downloads wait for your approval again, a running one paused

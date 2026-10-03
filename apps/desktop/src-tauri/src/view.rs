@@ -197,6 +197,8 @@ pub struct AgentView {
     pub folders: Vec<String>,
     pub max_bytes: u64,
     pub max_new_jobs_per_hour: u32,
+    /// Inside its folders, nothing it downloads waits for approval.
+    pub automatic: bool,
 }
 
 pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
@@ -207,6 +209,7 @@ pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
             folders: access.policy.folders.clone(),
             max_bytes: access.policy.max_bytes,
             max_new_jobs_per_hour: access.policy.max_new_jobs_per_hour,
+            automatic: access.policy.automatic,
         })
         .collect()
 }

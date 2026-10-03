@@ -129,6 +129,10 @@
     "AgentPolicy": {
       "description": "What the person allows one agent to do without asking.",
       "properties": {
+        "automatic": {
+          "description": "Automatic mode (contract D7): inside its folders the agent's\ndownloads never wait for the person. The size limit and the hourly\nrate do not apply, and a torrent may contact peers. Saving outside\nits folders still waits; credentials, replacing files and uploading\nto peers stay refused or held as before. Off unless the person turns\nit on.",
+          "type": "boolean"
+        },
         "folders": {
           "default": [],
           "description": "Folders the agent may save into, as full paths. A destination counts\nas inside one only after links and junctions are resolved.",

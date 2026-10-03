@@ -108,6 +108,7 @@ fn agent_policy() -> AgentPolicy {
         folders: vec!["C:\\Users\\person\\Downloads\\agent".into()],
         max_bytes: 104_857_600,
         max_new_jobs_per_hour: 10,
+        automatic: true,
     }
 }
 

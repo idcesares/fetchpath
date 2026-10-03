@@ -799,6 +799,7 @@ async fn set_agent(
     folders: Vec<String>,
     max_bytes: u64,
     max_new_jobs_per_hour: u32,
+    automatic: Option<bool>,
     engine: Engine<'_>,
 ) -> Result<Vec<view::AgentView>, String> {
     let engine = Arc::clone(&engine);
@@ -809,6 +810,7 @@ async fn set_agent(
                 folders,
                 max_bytes,
                 max_new_jobs_per_hour,
+                automatic: automatic.unwrap_or(false),
             }),
         };
         agent_views(engine.send(command).map_err(text)?)

@@ -14,6 +14,8 @@ pub const USAGE: &str = "usage: fetchpath agents [list]
        fetchpath agents grant NAME FOLDER...      let NAME save into these folders
        fetchpath agents revoke NAME [FOLDER...]   take folders away, or all of NAME's access
        fetchpath agents limit NAME [--size SIZE] [--per-hour N]
+       fetchpath agents auto NAME on|off          inside its folders, never ask about size,
+                                                  downloads an hour or torrent peers
        fetchpath approvals                        requests waiting for you
 NAME is the name given with `fetchpath mcp --agent NAME`. Anything outside
 an agent's folders or limits waits for `fetchpath approve JOB`.";
@@ -35,6 +37,9 @@ pub fn run(args: &[String]) -> i32 {
         }
         ["limit", name, rest @ ..] if !rest.is_empty() => {
             parse_name(name).and_then(|agent| limit(agent, rest, json))
+        }
+        ["auto", name, switch @ ("on" | "off")] => {
+            parse_name(name).and_then(|agent| automatic(agent, *switch == "on", json))
         }
         _ => {
             eprintln!("{USAGE}");
@@ -95,12 +100,19 @@ pub fn lines(policies: &[AgentAccess]) -> Vec<String> {
     let mut out = Vec::new();
     for access in policies {
         let policy = &access.policy;
-        out.push(format!(
-            "{}  up to {} a download, {} downloads an hour",
-            access.agent,
-            client::bytes(policy.max_bytes),
-            policy.max_new_jobs_per_hour
-        ));
+        out.push(if policy.automatic {
+            format!(
+                "{}  automatic: inside its folders, nothing it downloads waits for you",
+                access.agent
+            )
+        } else {
+            format!(
+                "{}  up to {} a download, {} downloads an hour",
+                access.agent,
+                client::bytes(policy.max_bytes),
+                policy.max_new_jobs_per_hour
+            )
+        });
         if policy.folders.is_empty() {
             out.push("  no folders: everything it asks for waits for you".into());
         }
@@ -219,6 +231,14 @@ fn limit(agent: AgentName, rest: &[&str], json: bool) -> Result<i32, ProtocolErr
             }
         }
     }
+    set(&engine, &agent, Some(policy), json)
+}
+
+/// `fetchpath agents auto NAME on|off` (contract D7). Folders still apply.
+fn automatic(agent: AgentName, on: bool, json: bool) -> Result<i32, ProtocolError> {
+    let engine = Engine::connect()?;
+    let mut policy = current(&engine, &agent)?;
+    policy.automatic = on;
     set(&engine, &agent, Some(policy), json)
 }
 

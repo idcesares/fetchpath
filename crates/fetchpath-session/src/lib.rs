@@ -1531,7 +1531,10 @@ impl Session {
             && !by.is_user()
             && let Some(policy) = record.torrent_policy
         {
-            if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
+            let automatic =
+                matches!(by, Principal::Agent(agent) if self.agent_policy(agent).automatic);
+            if policy.discover_peers && !automatic && !hold.contains(&ApprovalReason::PeerDiscovery)
+            {
                 hold.push(ApprovalReason::PeerDiscovery);
             }
             if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
@@ -2021,6 +2024,10 @@ impl Session {
             if record.size_approved || record.approval.is_some() || record.view.state != "running" {
                 continue;
             }
+            // Automatic mode lifts the size limit (contract D7).
+            if agents.get(agent).is_some_and(|policy| policy.automatic) {
+                continue;
+            }
             let limit = agents
                 .get(agent)
                 .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
@@ -2268,26 +2275,24 @@ impl Session {
             // An agent's video or audio download is capped at its size limit
             // inside the adapter, since a helper can write faster than the
             // engine samples (FP-067). The person's approval lifts it.
-            if let (JobHandle::Media(media), Principal::Agent(agent)) = (job, &record.principal)
-                && !record.size_approved
-            {
-                let limit = self
-                    .agents
-                    .lock()
-                    .expect("agents poisoned")
-                    .get(agent)
-                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+            // Automatic mode lifts the cap (contract D7).
+            let cap = match &record.principal {
+                Principal::Agent(agent) if !record.size_approved => {
+                    let agents = self.agents.lock().expect("agents poisoned");
+                    match agents.get(agent) {
+                        Some(policy) if policy.automatic => None,
+                        policy => Some(
+                            policy
+                                .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes),
+                        ),
+                    }
+                }
+                _ => None,
+            };
+            if let (JobHandle::Media(media), Some(limit)) = (job, cap) {
                 media.limit_bytes(limit);
             }
-            if let (JobHandle::Torrent(torrent), Principal::Agent(agent)) = (job, &record.principal)
-                && !record.size_approved
-            {
-                let limit = self
-                    .agents
-                    .lock()
-                    .expect("agents poisoned")
-                    .get(agent)
-                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+            if let (JobHandle::Torrent(torrent), Some(limit)) = (job, cap) {
                 torrent.limit_bytes(limit);
             }
             if let JobHandle::File(file) = job {
@@ -4792,6 +4797,58 @@ mod tests {
     }
 
     #[test]
+    fn an_automatic_agent_refreshing_a_torrent_still_asks_only_to_upload() {
+        let output = tempfile::tempdir().unwrap();
+        let agent = AgentName::try_from("helper").unwrap();
+        let principal = Principal::Agent(agent.clone());
+        let jobs = Session::in_memory(1);
+        jobs.agents.lock().expect("agents poisoned").insert(
+            agent,
+            AgentPolicy {
+                automatic: true,
+                ..AgentPolicy::default()
+            },
+        );
+        let mut record = QueueRecord::new_torrent(
+            "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            output.path().join("torrent"),
+            false,
+            None,
+            TorrentPolicy {
+                discover_peers: true,
+                upload: true,
+            },
+        );
+        record.principal = principal.clone();
+        record.view.state = "failed".into();
+        let job_id = record.id.clone();
+        jobs.inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .records
+            .push(record);
+
+        jobs.retry_as(
+            &job_id,
+            Some("magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+            None,
+            None,
+            &principal,
+            Vec::new(),
+        )
+        .unwrap();
+        let state = jobs.inner.lock().expect("desktop jobs poisoned");
+        let reasons = &find_record(&state, &job_id)
+            .unwrap()
+            .approval
+            .as_ref()
+            .unwrap()
+            .reasons;
+        assert!(!reasons.contains(&ApprovalReason::PeerDiscovery));
+        assert!(reasons.contains(&ApprovalReason::PeerUpload));
+    }
+
+    #[test]
     fn a_stated_length_reaches_the_queue_view_as_a_total() {
         let dir = tempfile::tempdir().unwrap();
         let body = vec![0x31; 256 * 1024];
@@ -5418,6 +5475,7 @@ mod tests {
                 folders: vec![output.path().display().to_string()],
                 max_bytes: 256 * 1024,
                 max_new_jobs_per_hour: 20,
+                automatic: false,
             }),
         )
         .unwrap();
@@ -5491,6 +5549,7 @@ mod tests {
                 folders: vec![output.path().display().to_string()],
                 max_bytes: 256 * 1024,
                 max_new_jobs_per_hour: 20,
+                automatic: false,
             }),
         )
         .unwrap();

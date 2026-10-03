@@ -740,9 +740,17 @@ impl Engine {
                     };
                     let mut origin = self.origin(principal, source, &origin_destination)?;
                     if !principal.is_user() {
-                        origin
-                            .approval
-                            .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
+                        // An agent in automatic mode may let its torrent
+                        // find peers (contract D7); uploading still asks.
+                        let automatic = matches!(
+                            principal,
+                            Principal::Agent(agent) if self.session.agent_policy(agent).automatic
+                        );
+                        if !automatic {
+                            origin
+                                .approval
+                                .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
+                        }
                         if *upload {
                             origin
                                 .approval
