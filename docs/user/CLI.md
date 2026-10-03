@@ -230,14 +230,32 @@ in the order. A rule's folder applies only when you give no `--to`.
 
 `fetchpath settings` lists every setting, `fetchpath settings NAME` shows one
 and `fetchpath settings NAME VALUE` changes it. Switches take `on` or `off`,
-folders take a path or `none`. The engine keeps values in range and prints the
+folders take a path or `none`. `disk-reserve-bytes` is the space kept free on
+every drive: `auto` (the larger of 5 GB and 5 % of the drive) or a size such
+as `10GB`; a download that would cross it waits as `needs disk space` and
+starts by itself when there is room. The engine keeps values in range and prints the
 value it applied. The desktop app shows the same settings.
 
 ### The engine
 
-`fetchpath engine status` says whether it is running; `fetchpath engine stop`
-stops it after saving every download's progress, and the next command starts
-it again and carries on.
+`fetchpath engine status` says whether it is running and what this Fetchpath
+is named; `fetchpath engine stop` stops it after saving every download's
+progress, and the next command starts it again and carries on.
+
+The name is the computer's unless you choose one with
+`fetchpath settings instance-name NAME` (`none` returns to the computer's
+name). Each Fetchpath also keeps an id of its own, and every change a client
+sends names it, so a change meant for one Fetchpath is never carried out by
+another.
+
+Normally the engine stops about a minute after it has nothing left to do.
+`fetchpath hub on` keeps it running in the background instead, with no app
+open: it starts when you sign in to Windows and keeps the computer awake
+while downloads run, but not while idle. It is not a Windows service, so after
+a restart it runs again only once you sign in. `fetchpath hub off` returns to
+the normal stop; it leaves the sign-in start on, which you can turn off with
+`fetchpath settings start-engine-at-sign-in off`. `fetchpath hub` says which
+is in effect.
 
 `fetchpath engine stop --for-update` is what the installer and uninstaller
 run: it also keeps a new engine from starting until setup finishes (for at most
@@ -323,8 +341,10 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
-  and `/quit`.
+  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/rules`, `/agents`, `/hub`, `/tools`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
+  and `/quit`. `/agents` and `/hub` take the same words as `fetchpath agents`
+  and `fetchpath hub`, and `/settings` has the name of this Fetchpath and the
+  always-on switch.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names, folders (the ones
   recent downloads went to first) and links you downloaded before; Up and
@@ -443,9 +463,16 @@ Grant access in the desktop (Settings, AI agents) or from the command line:
 fetchpath agents                                  # who has access, where, and how much
 fetchpath agents grant claude-code D:\AgentDownloads
 fetchpath agents limit claude-code --size 500MB --per-hour 10
+fetchpath agents auto claude-code on                  # inside its folders, never ask
 fetchpath agents revoke claude-code D:\AgentDownloads   # take one folder away
 fetchpath agents revoke claude-code                     # take all of its access away
 ```
+
+`agents auto NAME on` is automatic mode: inside the agent's folders nothing
+it downloads waits for you, whatever the size or how many an hour, and a
+torrent may find peers. Saving anywhere else still waits for your approval,
+and it still cannot use your sign-ins, replace a file, upload to peers or
+change Fetchpath's settings. `agents auto NAME off` brings the limits back.
 
 Taking a folder away, or revoking an agent, stops what it has not finished
 there: those downloads wait for your approval again, a running one paused

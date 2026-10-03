@@ -11,6 +11,7 @@ pub mod lan;
 pub mod policy;
 pub mod rules;
 pub mod settings;
+pub mod space;
 mod wire;
 
 use browser_inbox::BridgeStore;
@@ -62,6 +63,8 @@ pub struct Session {
     retired_torrent_metadata: Mutex<Vec<PathBuf>>,
     /// Set when the engine stops: no job starts any more (FP-053).
     halted: std::sync::atomic::AtomicBool,
+    /// When running downloads' drives were last measured (FP-101).
+    space_checked_ms: std::sync::atomic::AtomicU64,
     /// Set when the queue was written by a newer Fetchpath (FP-070): the
     /// saved list is shown as it is, nothing starts, and nothing is written
     /// over it. Holds the explanation.
@@ -109,6 +112,11 @@ const REMEMBERED_SIZES: usize = 64;
 #[derive(Default)]
 struct QueueState {
     records: Vec<QueueRecord>,
+    /// Downloads stopped at their checkpoint because their drive reached
+    /// the disk reserve (FP-101). They go back to the queue once stopped
+    /// and start again when there is room. Not saved: after a restart the
+    /// queue simply checks the room again.
+    space_stopped: std::collections::HashSet<String>,
     /// Pages captured from the browser that are media rather than files. They
     /// open in Add download, where the quality is chosen, instead of being
     /// saved as a web page. Their captures stay pending in the browser inbox
@@ -317,7 +325,18 @@ pub(crate) struct Approval {
     denied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     withdrawn: bool,
+    /// When the wait began (FP-101). Absent from a request saved before
+    /// expiry existed, which then counts from when the download was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requested_at_ms: Option<u64>,
+    /// Nobody decided within the expiry period (contract D6).
+    #[serde(default, skip_serializing_if = "is_false")]
+    expired: bool,
 }
+
+/// How long a request waits for the person before it expires (contract D6,
+/// decision O3).
+pub const APPROVAL_EXPIRY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 impl QueueRecord {
     /// Records who asked for the job and holds it for approval when needed.
@@ -335,6 +354,8 @@ impl QueueRecord {
             reasons,
             denied: false,
             withdrawn: false,
+            requested_at_ms: Some(now_ms()),
+            expired: false,
         });
         self.view.state = "awaiting_approval".into();
         self.view.error = None;
@@ -349,7 +370,16 @@ impl QueueRecord {
     fn awaiting_approval(&self) -> bool {
         self.approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied && !approval.withdrawn)
+            .is_some_and(|approval| !approval.denied && !approval.withdrawn && !approval.expired)
+    }
+
+    /// Waiting for the person for longer than the expiry period at `now`.
+    fn approval_expired_at(&self, now: u64) -> bool {
+        self.awaiting_approval()
+            && self.approval.as_ref().is_some_and(|approval| {
+                let since = approval.requested_at_ms.unwrap_or(self.created_at_ms);
+                now.saturating_sub(since) >= APPROVAL_EXPIRY_MS
+            })
     }
 }
 
@@ -410,6 +440,9 @@ pub struct JobSnapshot {
     pub job_id: String,
     pub source: String,
     pub state: String,
+    /// Queued, but its drive has no room above the disk reserve (FP-101).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub waiting_for_space: bool,
     pub bytes_received: u64,
     /// Engine-confirmed total. Absent whenever the source never stated a
     /// length, which the interface shows as an unknown size rather than a
@@ -477,6 +510,7 @@ pub struct QueueStats {
     /// a link-capacity measurement.
     combined_bytes_per_second: u64,
     max_active_downloads: usize,
+    awaiting_approval: usize,
 }
 
 /// Where the content cache lives, and the bounds of its quota (FP-032).
@@ -648,6 +682,7 @@ impl Session {
             }),
             retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(read_only.is_some()),
+            space_checked_ms: std::sync::atomic::AtomicU64::new(0),
             read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
@@ -677,6 +712,7 @@ impl Session {
             durable: Mutex::new(Durable::default()),
             retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(false),
+            space_checked_ms: std::sync::atomic::AtomicU64::new(0),
             read_only: None,
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
@@ -695,6 +731,33 @@ impl Session {
 
     pub fn settings(&self) -> Settings {
         self.settings.lock().expect("settings poisoned").clone()
+    }
+
+    /// Whether the engine is kept running in the background (FP-101).
+    pub fn hub_mode(&self) -> bool {
+        self.settings.lock().expect("settings poisoned").hub_mode
+    }
+
+    /// Downloads transferring now, as opposed to queued or scheduled.
+    pub fn running_count(&self) -> usize {
+        if self.read_only.is_some() {
+            return 0;
+        }
+        // Read as it stands: reconciling belongs to the engine's own pass.
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        state
+            .records
+            .iter()
+            .filter(|record| record.view.state == "running")
+            .count()
+    }
+
+    /// The name clients show for this engine (contract D6).
+    pub fn instance_name(&self) -> String {
+        self.settings
+            .lock()
+            .expect("settings poisoned")
+            .display_instance_name()
     }
 
     /// True when the stored settings file was unusable on load and defaults
@@ -1350,7 +1413,14 @@ impl Session {
     pub fn cancel(&self, job_id: &str) -> Result<CancelResponse, String> {
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         self.reconcile_locked(&mut state);
+        // Cancelled while stopping at the disk reserve: it is not queued
+        // again; it reads as what its worker reports.
+        let stopping = state.space_stopped.remove(job_id);
         let record = find_record_mut(&mut state, job_id)?;
+        if stopping {
+            record.view.waiting_for_space = false;
+            refresh_record(record);
+        }
         // Cancelling a job that waits for approval ends it; the person no
         // longer has anything to decide.
         let awaiting = record.awaiting_approval();
@@ -1458,8 +1528,9 @@ impl Session {
             if approval.denied && !by.is_user() {
                 return Err("The person declined this download.".into());
             }
-            // An agent retrying what it withdrew asks the person again.
-            if approval.withdrawn && !by.is_user() {
+            // An agent retrying what it withdrew, or what nobody decided on
+            // in time, asks the person again.
+            if (approval.withdrawn || approval.expired) && !by.is_user() {
                 for reason in &approval.reasons {
                     if !hold.contains(reason) {
                         hold.push(*reason);
@@ -1480,7 +1551,10 @@ impl Session {
             && !by.is_user()
             && let Some(policy) = record.torrent_policy
         {
-            if policy.discover_peers && !hold.contains(&ApprovalReason::PeerDiscovery) {
+            let automatic =
+                matches!(by, Principal::Agent(agent) if self.agent_policy(agent).automatic);
+            if policy.discover_peers && !automatic && !hold.contains(&ApprovalReason::PeerDiscovery)
+            {
                 hold.push(ApprovalReason::PeerDiscovery);
             }
             if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
@@ -1608,7 +1682,18 @@ impl Session {
         let handle = {
             let mut state = self.inner.lock().expect("desktop jobs poisoned");
             self.reconcile_locked(&mut state);
+            // Paused while stopping at the disk reserve: it is paused like a
+            // running download, once its worker has stopped.
+            let stopping = state.space_stopped.remove(job_id);
             let record = find_record_mut(&mut state, job_id)?;
+            if stopping {
+                record.view.waiting_for_space = false;
+                // Its worker, if this pass has not taken it to join, is
+                // stopped as a running one is; otherwise it pauses as queued.
+                if record.job.is_some() {
+                    record.view.state = "running".into();
+                }
+            }
             if record.view.kind != "file" {
                 return Err(
                     "Only file downloads can be paused. Video and audio downloads have to be cancelled and started again."
@@ -1853,6 +1938,32 @@ impl Session {
     /// Refuses a job that waits for approval. It ends cancelled, and its
     /// agent is told the person declined it.
     pub fn deny(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        self.decline(job_id, false)
+    }
+
+    /// Ends every request nobody decided on within the expiry period
+    /// (contract D6), as a denial does. Run by the engine's own pass.
+    pub fn expire_approvals(&self) {
+        if self.read_only.is_some() {
+            return;
+        }
+        let now = now_ms();
+        let expired: Vec<String> = {
+            let state = self.inner.lock().expect("desktop jobs poisoned");
+            state
+                .records
+                .iter()
+                .filter(|record| record.approval_expired_at(now))
+                .map(|record| record.id.clone())
+                .collect()
+        };
+        for job_id in expired {
+            let _ = self.decline(&job_id, true);
+        }
+    }
+
+    /// Ends a request: the person declined it, or nobody decided in time.
+    fn decline(&self, job_id: &str, expired: bool) -> Result<JobSnapshot, String> {
         let stopped = {
             let mut state = self.inner.lock().expect("desktop jobs poisoned");
             let record = find_record_mut(&mut state, job_id)?;
@@ -1877,11 +1988,19 @@ impl Session {
         }
         {
             if let Some(approval) = record.approval.as_mut() {
-                approval.denied = true;
+                if expired {
+                    approval.expired = true;
+                } else {
+                    approval.denied = true;
+                }
             }
             let now = now_ms();
             record.view.state = "cancelled".into();
-            record.view.error = Some("The person declined this download.".into());
+            record.view.error = Some(if expired {
+                "Nobody approved this download within 7 days.".into()
+            } else {
+                "The person declined this download.".into()
+            });
             record.view.action = None;
             record.view.retryable = false;
             record.finished_at_ms = Some(now);
@@ -1910,6 +2029,112 @@ impl Session {
             .map(QueueRecord::grant_path)
     }
 
+    /// Asks running file downloads on a drive below its disk reserve to stop
+    /// at their checkpoint (FP-101). Only the stop is requested here; the
+    /// engine's own pass joins it and returns the download to the queue
+    /// ([`Session::requeue_space_stopped`]). Drives are measured at most
+    /// every two seconds.
+    fn stop_below_reserve(&self, state: &mut QueueState, settings: &Settings) {
+        let now = now_ms();
+        let last = self
+            .space_checked_ms
+            .load(std::sync::atomic::Ordering::SeqCst);
+        if now.saturating_sub(last) < 2_000 {
+            return;
+        }
+        self.space_checked_ms
+            .store(now, std::sync::atomic::Ordering::SeqCst);
+        let mut budget = space::Budget::new(settings.disk_reserve_bytes);
+        let QueueState {
+            records,
+            space_stopped,
+            ..
+        } = state;
+        for record in records.iter_mut() {
+            if record.view.state != "running" || space_stopped.contains(&record.id) {
+                continue;
+            }
+            let Some(JobHandle::File(file)) = record.job.as_ref() else {
+                continue;
+            };
+            if budget.below_reserve(&record.destination) {
+                file.cancel();
+                space_stopped.insert(record.id.clone());
+                show_waiting_for_space(record);
+            }
+        }
+    }
+
+    /// Returns downloads stopped at the disk reserve to the queue once
+    /// their worker has stopped, joining it outside the queue lock as a
+    /// pause does. A download that finished first keeps its outcome. Run by
+    /// the engine's own pass.
+    pub fn requeue_space_stopped(&self) {
+        let stopped: Vec<(String, JobHandle)> = {
+            let mut state = self.inner.lock().expect("desktop jobs poisoned");
+            let ids: Vec<String> = state.space_stopped.iter().cloned().collect();
+            let mut taken = Vec::new();
+            for id in ids {
+                let Ok(record) = find_record_mut(&mut state, &id) else {
+                    state.space_stopped.remove(&id);
+                    continue;
+                };
+                refresh_record(record);
+                let outcome = record.view.state.clone();
+                match outcome.as_str() {
+                    "running" | "cancelling" => show_waiting_for_space(record),
+                    "cancelled" => {
+                        show_waiting_for_space(record);
+                        if let Some(job) = record.job.take() {
+                            taken.push((id, job));
+                        }
+                    }
+                    // Completed or failed before the stop took effect.
+                    _ => {
+                        record.view.waiting_for_space = false;
+                        state.space_stopped.remove(&id);
+                    }
+                }
+            }
+            taken
+        };
+        if stopped.is_empty() {
+            return;
+        }
+        for (_, job) in &stopped {
+            job.join();
+        }
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        for (id, job) in stopped {
+            state.space_stopped.remove(&id);
+            let Ok(record) = find_record_mut(&mut state, &id) else {
+                continue;
+            };
+            if job.completed() {
+                // Published before the stop reached it.
+                record.job = Some(job);
+                refresh_record(record);
+                record.view.waiting_for_space = false;
+                continue;
+            }
+            // The person paused or cancelled it meanwhile: that stands.
+            if record.view.state != "queued" {
+                record.view.waiting_for_space = false;
+                continue;
+            }
+            // The checkpoint was retained; the next start resumes from it.
+            record.view.state = "queued".into();
+            record.view.waiting_for_space = true;
+            record.view.error = None;
+            record.view.action = None;
+            record.view.retryable = false;
+            record.finished_at_ms = None;
+            record.view.finished_at_ms = None;
+            sample_rate(record);
+        }
+        let _ = self.save_locked(&mut state);
+    }
+
     /// Stops a running agent download whose stated or received size passed
     /// its agent's limit and holds it for approval. The stop is requested
     /// here and joined on approval, so the queue lock never waits on it.
@@ -1934,6 +2159,10 @@ impl Session {
                 continue;
             }
             if record.size_approved || record.approval.is_some() || record.view.state != "running" {
+                continue;
+            }
+            // Automatic mode lifts the size limit (contract D7).
+            if agents.get(agent).is_some_and(|policy| policy.automatic) {
                 continue;
             }
             let limit = agents
@@ -2155,6 +2384,14 @@ impl Session {
                 let _ = store.remove_secret(&credential_ref);
             }
         }
+        // A download being stopped at the disk reserve reads as waiting for
+        // space from the moment it is asked to stop, never as cancelled.
+        for record in &mut state.records {
+            if state.space_stopped.contains(&record.id) {
+                show_waiting_for_space(record);
+            }
+        }
+        self.stop_below_reserve(state, &settings);
         self.stop_oversize_agent_jobs(state);
         if settings.auto_retry {
             self.schedule_automatic_retries(state, &settings);
@@ -2166,9 +2403,27 @@ impl Session {
             .count();
         let now = now_ms();
         let halted = self.halted.load(std::sync::atomic::Ordering::SeqCst);
-        for record in &mut state.records {
+        // What running downloads still have to write, by destination, for
+        // the disk reserve; drives are measured only if something starts.
+        let running: Vec<(PathBuf, u64)> = state
+            .records
+            .iter()
+            .filter(|record| record.view.state == "running")
+            .map(|record| (record.destination.clone(), remaining_bytes(&record.view)))
+            .collect();
+        let mut budget: Option<space::Budget> = None;
+        let QueueState {
+            records,
+            space_stopped,
+            ..
+        } = state;
+        for record in records.iter_mut() {
             if active >= max_active || halted {
                 break;
+            }
+            // Its worker is still stopping; it is queued again once joined.
+            if space_stopped.contains(&record.id) {
+                continue;
             }
             if record.view.state == "scheduled" && record.not_before_ms.is_none_or(|due| due <= now)
             {
@@ -2177,32 +2432,87 @@ impl Session {
             if record.view.state != "queued" || record.not_before_ms.is_some_and(|due| due > now) {
                 continue;
             }
+            if record.job.is_none() && !record.view.waiting_for_space {
+                continue;
+            }
+            // The disk reserve (FP-101): a download starts only when its
+            // drive has room for what it still needs above the reserve,
+            // after what running downloads there still need. Otherwise it
+            // waits in the queue; it never fails for it.
+            let needed = record
+                .view
+                .total_bytes
+                .or_else(|| {
+                    let url = record.live_url.as_deref().unwrap_or(&record.display_url);
+                    self.inspected_size(url)
+                })
+                .map(|total| total.saturating_sub(record.view.bytes_received));
+            let budget = budget.get_or_insert_with(|| {
+                let mut budget = space::Budget::new(settings.disk_reserve_bytes);
+                for (destination, remaining) in &running {
+                    budget.running(destination, *remaining);
+                }
+                budget
+            });
+            if !budget.admit(&record.destination, needed, record.view.waiting_for_space) {
+                record.view.waiting_for_space = true;
+                continue;
+            }
+            // Stopped at the reserve: continue from the checkpoint, as a
+            // resume does, now that there is room.
+            if record.job.is_none() {
+                let Some(url) = record.live_url.clone() else {
+                    record.view.waiting_for_space = false;
+                    record.view.state = "needs_source".into();
+                    record.view.error = Some(
+                        "Paste a refreshed link because private query values were not saved."
+                            .into(),
+                    );
+                    record.view.action = Some("edit_link".into());
+                    continue;
+                };
+                match file_job(
+                    url,
+                    record.destination.clone(),
+                    record.live_context.clone(),
+                    record.view.expected_sha256.as_deref(),
+                ) {
+                    Ok(job) => record.job = Some(JobHandle::File(job)),
+                    Err(message) => {
+                        record.view.waiting_for_space = false;
+                        record.view.state = "failed".into();
+                        record.view.error = Some(message);
+                        record.view.action = Some("retry".into());
+                        record.view.retryable = true;
+                        continue;
+                    }
+                }
+            }
+            record.view.waiting_for_space = false;
             let Some(job) = record.job.as_ref() else {
                 continue;
             };
             // An agent's video or audio download is capped at its size limit
             // inside the adapter, since a helper can write faster than the
             // engine samples (FP-067). The person's approval lifts it.
-            if let (JobHandle::Media(media), Principal::Agent(agent)) = (job, &record.principal)
-                && !record.size_approved
-            {
-                let limit = self
-                    .agents
-                    .lock()
-                    .expect("agents poisoned")
-                    .get(agent)
-                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+            // Automatic mode lifts the cap (contract D7).
+            let cap = match &record.principal {
+                Principal::Agent(agent) if !record.size_approved => {
+                    let agents = self.agents.lock().expect("agents poisoned");
+                    match agents.get(agent) {
+                        Some(policy) if policy.automatic => None,
+                        policy => Some(
+                            policy
+                                .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes),
+                        ),
+                    }
+                }
+                _ => None,
+            };
+            if let (JobHandle::Media(media), Some(limit)) = (job, cap) {
                 media.limit_bytes(limit);
             }
-            if let (JobHandle::Torrent(torrent), Principal::Agent(agent)) = (job, &record.principal)
-                && !record.size_approved
-            {
-                let limit = self
-                    .agents
-                    .lock()
-                    .expect("agents poisoned")
-                    .get(agent)
-                    .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes);
+            if let (JobHandle::Torrent(torrent), Some(limit)) = (job, cap) {
                 torrent.limit_bytes(limit);
             }
             if let JobHandle::File(file) = job {
@@ -2380,6 +2690,7 @@ impl Session {
                         stats.completed_bytes.saturating_add(view.bytes_received);
                 }
                 "failed" | "needs_source" => stats.failed += 1,
+                "awaiting_approval" => stats.awaiting_approval += 1,
                 _ => {}
             }
             if view.state == "running" {
@@ -2757,6 +3068,7 @@ impl QueueRecord {
             approval: None,
             size_approved: false,
             view: JobSnapshot {
+                waiting_for_space: false,
                 job_id: id,
                 source: display,
                 state: state.into(),
@@ -2839,6 +3151,7 @@ impl QueueRecord {
             approval: None,
             size_approved: false,
             view: JobSnapshot {
+                waiting_for_space: false,
                 job_id: id,
                 source: display,
                 state: state.into(),
@@ -2953,10 +3266,12 @@ impl QueueRecord {
         let paused = saved.view.state == "paused";
         // A job waiting for the person's decision keeps waiting. Nothing is
         // prepared for it until it is approved (contract D1).
+        // A request the agent withdrew, or that expired, ended: it is not
+        // brought back for the person to approve.
         let awaiting_approval = saved
             .approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied);
+            .is_some_and(|approval| !approval.denied && !approval.withdrawn && !approval.expired);
         let (job, state, error, action, retryable) = if let Some(problem) = metadata_error {
             (None, "failed".into(), Some(problem.into()), None, false)
         } else if awaiting_approval {
@@ -3092,6 +3407,7 @@ impl QueueRecord {
             durable.reported = Some(Reported {
                 state: view.state.clone(),
                 not_before_ms: saved.not_before_ms,
+                waiting_for_space: false,
             });
         }
         Self {
@@ -3136,6 +3452,7 @@ impl QueueRecord {
             durable.reported = Some(Reported {
                 state: view.state.clone(),
                 not_before_ms: saved.not_before_ms,
+                waiting_for_space: false,
             });
         }
         Self {
@@ -3535,6 +3852,26 @@ fn discover_media_tools(configured: Option<&str>) -> Option<MediaTools> {
         .map(PathBuf::from)
         .and_then(|root| MediaTools::discover_in(&root).ok())
         .or_else(|| MediaTools::discover().ok())
+}
+
+/// Shows a download stopped at the disk reserve as queued and waiting for
+/// space, whatever its stopping worker reports.
+fn show_waiting_for_space(record: &mut QueueRecord) {
+    record.view.state = "queued".into();
+    record.view.waiting_for_space = true;
+    record.view.error = None;
+    record.view.action = None;
+    record.view.retryable = false;
+    record.finished_at_ms = None;
+    record.view.finished_at_ms = None;
+    record.view.bytes_per_second = None;
+    record.view.eta_seconds = None;
+}
+
+/// What a download still has to write, when its total is known.
+fn remaining_bytes(view: &JobSnapshot) -> u64 {
+    view.total_bytes
+        .map_or(0, |total| total.saturating_sub(view.bytes_received))
 }
 
 fn now_ms() -> u64 {
@@ -4704,6 +5041,58 @@ mod tests {
     }
 
     #[test]
+    fn an_automatic_agent_refreshing_a_torrent_still_asks_only_to_upload() {
+        let output = tempfile::tempdir().unwrap();
+        let agent = AgentName::try_from("helper").unwrap();
+        let principal = Principal::Agent(agent.clone());
+        let jobs = Session::in_memory(1);
+        jobs.agents.lock().expect("agents poisoned").insert(
+            agent,
+            AgentPolicy {
+                automatic: true,
+                ..AgentPolicy::default()
+            },
+        );
+        let mut record = QueueRecord::new_torrent(
+            "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            output.path().join("torrent"),
+            false,
+            None,
+            TorrentPolicy {
+                discover_peers: true,
+                upload: true,
+            },
+        );
+        record.principal = principal.clone();
+        record.view.state = "failed".into();
+        let job_id = record.id.clone();
+        jobs.inner
+            .lock()
+            .expect("desktop jobs poisoned")
+            .records
+            .push(record);
+
+        jobs.retry_as(
+            &job_id,
+            Some("magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into()),
+            None,
+            None,
+            &principal,
+            Vec::new(),
+        )
+        .unwrap();
+        let state = jobs.inner.lock().expect("desktop jobs poisoned");
+        let reasons = &find_record(&state, &job_id)
+            .unwrap()
+            .approval
+            .as_ref()
+            .unwrap()
+            .reasons;
+        assert!(!reasons.contains(&ApprovalReason::PeerDiscovery));
+        assert!(reasons.contains(&ApprovalReason::PeerUpload));
+    }
+
+    #[test]
     fn a_stated_length_reaches_the_queue_view_as_a_total() {
         let dir = tempfile::tempdir().unwrap();
         let body = vec![0x31; 256 * 1024];
@@ -5084,6 +5473,7 @@ mod tests {
                 ),
             ],
             link_reviews: Vec::new(),
+            space_stopped: Default::default(),
         };
         state.records[1].view.state = "cancelled".into();
         state.records[1].finished_at_ms = Some(now_ms());
@@ -5330,6 +5720,7 @@ mod tests {
                 folders: vec![output.path().display().to_string()],
                 max_bytes: 256 * 1024,
                 max_new_jobs_per_hour: 20,
+                automatic: false,
             }),
         )
         .unwrap();
@@ -5403,6 +5794,7 @@ mod tests {
                 folders: vec![output.path().display().to_string()],
                 max_bytes: 256 * 1024,
                 max_new_jobs_per_hour: 20,
+                automatic: false,
             }),
         )
         .unwrap();
@@ -5684,6 +6076,7 @@ mod tests {
                 None,
             )],
             link_reviews: Vec::new(),
+            space_stopped: Default::default(),
         };
         save_persisted(&state_path, &state).unwrap();
         let text = fs::read_to_string(&state_path).unwrap();

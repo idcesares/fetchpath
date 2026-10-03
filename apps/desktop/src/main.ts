@@ -19,6 +19,8 @@ interface JobSnapshot {
   jobId: string;
   source: string;
   state: JobState;
+  /** Queued until its drive has room above the disk reserve. */
+  waitingForSpace?: boolean;
   bytesReceived: number;
   /** Absent whenever the source never stated a length. Never guessed. */
   totalBytes: number | null;
@@ -122,6 +124,8 @@ interface AgentView {
   folders: string[];
   maxBytes: number;
   maxNewJobsPerHour: number;
+  /** Inside its folders, nothing it downloads waits for approval. */
+  automatic: boolean;
 }
 
 interface JobDraft {
@@ -161,6 +165,12 @@ interface Settings {
   density?: "comfortable" | "compact";
   onboardingCompleted: boolean;
   cacheQuotaBytes?: number | null;
+  /** This engine's name; empty asks for the computer's name. */
+  instanceName?: string | null;
+  /** Keep the engine running in the background. */
+  hubMode?: boolean | null;
+  /** Free space kept on every drive; 0 is automatic. */
+  diskReserveBytes?: number | null;
 }
 
 interface SettingsView {
@@ -275,6 +285,11 @@ const autoRetryInput = required<HTMLInputElement>("setting-auto-retry");
 const retryAttemptsInput = required<HTMLInputElement>("setting-retry-attempts");
 const retryAttemptsValue = required<HTMLOutputElement>("setting-retry-attempts-value");
 const closeToTrayInput = required<HTMLInputElement>("setting-close-to-tray");
+const instanceNameInput = required<HTMLInputElement>("setting-instance-name");
+const hubModeInput = required<HTMLInputElement>("setting-hub-mode");
+const diskReserveSelect = required<HTMLSelectElement>("setting-disk-reserve");
+/** The reserve choices, in GiB as the engine counts them. */
+const RESERVE_GIB = 1024 * 1024 * 1024;
 const confirmRemoveInput = required<HTMLInputElement>("setting-confirm-remove");
 const powerModeInput = required<HTMLInputElement>("setting-power-mode");
 const themeSelect = required<HTMLSelectElement>("setting-theme");
@@ -872,6 +887,7 @@ async function saveAgent(agent: AgentView, message: string, focus: string): Prom
       folders: agent.folders,
       maxBytes: agent.maxBytes,
       maxNewJobsPerHour: agent.maxNewJobsPerHour,
+      automatic: agent.automatic,
     });
     renderAgents();
     agentStatus(message);
@@ -910,10 +926,26 @@ function renderAgents(): void {
     heading.textContent = agent.name;
     const summary = document.createElement("p");
     summary.className = "hint field-note";
-    summary.textContent = agent.folders.length
-      ? `Saves into ${agent.folders.length === 1 ? "this folder" : "these folders"} without asking, up to ${formatBytes(agent.maxBytes)} a download and ${agent.maxNewJobsPerHour} downloads an hour.`
-      : "No folders yet: everything it asks for waits for you.";
+    const where = agent.folders.length === 1 ? "this folder" : "these folders";
+    summary.textContent = !agent.folders.length
+      ? "No folders yet: everything it asks for waits for you."
+      : agent.automatic
+        ? `Automatic: saves into ${where} without asking, whatever the size or how many. Anything elsewhere still waits for you.`
+        : `Saves into ${where} without asking, up to ${formatBytes(agent.maxBytes)} a download and ${agent.maxNewJobsPerHour} downloads an hour.`;
     card.append(heading, summary);
+
+    const automaticLabel = document.createElement("label");
+    automaticLabel.className = "check";
+    const automatic = document.createElement("input");
+    automatic.type = "checkbox";
+    automatic.checked = agent.automatic;
+    automatic.dataset.agent = agent.name;
+    automatic.dataset.agentToggle = "automatic";
+    const automaticText = document.createElement("span");
+    automaticText.textContent =
+      "Automatic: inside its folders, never ask about size, how many an hour, or torrent peers";
+    automaticLabel.append(automatic, automaticText);
+    card.append(automaticLabel);
 
     if (agent.folders.length) {
       const list = document.createElement("ul");
@@ -967,6 +999,20 @@ function renderAgents(): void {
     agentsList.append(card);
   }
 }
+
+agentsList.addEventListener("change", async (event) => {
+  const toggle = event.target as HTMLInputElement;
+  if (toggle.dataset.agentToggle !== "automatic") return;
+  const agent = agents.find((candidate) => candidate.name === toggle.dataset.agent);
+  if (!agent) return;
+  await saveAgent(
+    { ...agent, automatic: toggle.checked },
+    toggle.checked
+      ? `${agent.name} is automatic: inside its folders its downloads no longer wait for you.`
+      : `${agent.name} is no longer automatic: its size and hourly limits apply again.`,
+    `input[data-agent="${CSS.escape(agent.name)}"][data-agent-toggle="automatic"]`,
+  );
+});
 
 agentsList.addEventListener("click", async (event) => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-agent-action]");
@@ -1044,7 +1090,7 @@ agentAdd.addEventListener("click", async () => {
   }
   agentNewName.value = "";
   await saveAgent(
-    { name, folders: [], maxBytes: DEFAULT_AGENT_BYTES, maxNewJobsPerHour: DEFAULT_AGENT_PER_HOUR },
+    { name, folders: [], maxBytes: DEFAULT_AGENT_BYTES, maxNewJobsPerHour: DEFAULT_AGENT_PER_HOUR, automatic: false },
     `${name} added. Give it a folder so its downloads there start without asking.`,
     `button[data-agent="${CSS.escape(name)}"][data-agent-action="add-folder"]`,
   );
@@ -1226,6 +1272,14 @@ function applySettingsToForm(view: SettingsView): void {
 
   autoRetryInput.checked = settings.autoRetry;
   closeToTrayInput.checked = settings.closeToTray;
+  instanceNameInput.value = settings.instanceName ?? "";
+  hubModeInput.checked = settings.hubMode === true;
+  const reserveGib = Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB);
+  if (![...diskReserveSelect.options].some((option) => option.value === String(reserveGib))) {
+    // A value set elsewhere, such as from the command line, is shown as it is.
+    diskReserveSelect.add(new Option(`${reserveGib} GB`, String(reserveGib)));
+  }
+  diskReserveSelect.value = String(reserveGib);
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
@@ -1290,6 +1344,20 @@ retryAttemptsInput.addEventListener("change", () => {
 
 autoRetryInput.addEventListener("change", () => void changeSetting({ autoRetry: autoRetryInput.checked }));
 closeToTrayInput.addEventListener("change", () => void changeSetting({ closeToTray: closeToTrayInput.checked }));
+instanceNameInput.addEventListener("change", () =>
+  void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
+);
+diskReserveSelect.addEventListener("change", () =>
+  void changeSetting({ diskReserveBytes: Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
+);
+hubModeInput.addEventListener("change", () =>
+  void changeSetting(
+    { hubMode: hubModeInput.checked },
+    hubModeInput.checked
+      ? "Always on: Fetchpath keeps running in the background and starts when you sign in."
+      : "Always on is off: Fetchpath stops a minute after it has nothing left to do.",
+  ),
+);
 confirmRemoveInput.addEventListener("change", () =>
   void changeSetting({ confirmRemoveCompleted: confirmRemoveInput.checked }),
 );
@@ -2190,6 +2258,7 @@ const closeWindowButton = required<HTMLButtonElement>("close-window");
 const stopEngineButton = required<HTMLButtonElement>("stop-engine");
 const stopDialog = required<HTMLDialogElement>("stop-dialog");
 const stopActive = required<HTMLParagraphElement>("stop-active");
+const stopHub = required<HTMLParagraphElement>("stop-hub");
 const stopError = required<HTMLParagraphElement>("stop-error");
 const stopCancel = required<HTMLButtonElement>("stop-cancel");
 const stopConfirm = required<HTMLButtonElement>("stop-confirm");
@@ -2270,6 +2339,7 @@ function askToStopEngine(): void {
         : running === 1
           ? "1 download is running and will stop."
           : `${running} downloads are running and will stop.`;
+  stopHub.hidden = settingsView?.settings.hubMode !== true;
   stopError.hidden = true;
   stopConfirm.disabled = false;
   openDialog(stopDialog, stopCancel);
@@ -2511,7 +2581,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   article.dataset.state = job.state;
   article.dataset.jobId = job.jobId;
   article.setAttribute("role", "listitem");
-  article.setAttribute("aria-label", `${name}, ${stateLabel(job.state)}`);
+  article.setAttribute("aria-label", `${name}, ${jobLabel(job)}`);
 
   const header = document.createElement("header");
   header.className = "job-header";
@@ -2524,7 +2594,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   titleWrap.append(heading, source);
   const status = document.createElement("output");
   status.className = "status";
-  setStatus(status, job.state);
+  setStatus(status, job);
   if (primary) status.id = "job-status";
   header.append(titleWrap, status);
   article.append(header);
@@ -2777,7 +2847,7 @@ function renderDetails({ job, segments }: JobDetails): void {
   detailsTitle.textContent = name;
   detailsSource.textContent = job.source;
   detailsSource.title = job.source;
-  setStatus(detailsStatus, job.state);
+  setStatus(detailsStatus, job);
 
   const running = job.state === "running";
   const known = job.totalBytes && job.totalBytes > 0 ? job.totalBytes : null;
@@ -3248,10 +3318,20 @@ function glyph(id: string): SVGSVGElement {
   return svg;
 }
 
-function setStatus(element: HTMLElement, state: JobState): void {
-  if (element.dataset.state === state && element.childNodes.length > 0) return;
-  element.dataset.state = state;
-  element.replaceChildren(glyph(STATE_GLYPH[state]), document.createTextNode(stateLabel(state)));
+function setStatus(element: HTMLElement, job: JobSnapshot): void {
+  const label = jobLabel(job);
+  if (element.dataset.state === job.state && element.dataset.label === label && element.childNodes.length > 0) return;
+  element.dataset.state = job.state;
+  element.dataset.label = label;
+  element.replaceChildren(glyph(STATE_GLYPH[job.state]), document.createTextNode(label));
+}
+
+/** The state word, or why a queued download has not started. */
+function jobLabel(job: JobSnapshot): string {
+  if (job.waitingForSpace && (job.state === "queued" || job.state === "scheduled")) {
+    return "Waiting for disk space";
+  }
+  return stateLabel(job.state);
 }
 
 function stateLabel(state: JobState): string {

@@ -23,6 +23,9 @@ enum Field {
     Attempts,
     Delay,
     SignIn,
+    InstanceName,
+    AlwaysOn,
+    DiskReserve,
     VideoTools,
     ToolsFolder,
     Theme,
@@ -30,6 +33,10 @@ enum Field {
     ConfirmRemove,
     PowerMode,
 }
+
+/// Disk reserves offered, in GiB; 0 is automatic.
+const RESERVES: &[u64] = &[0, 1, 2, 5, 10, 20, 50, 100];
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// Delays offered for the first retry, in seconds.
 const DELAYS: &[u64] = &[5, 10, 15, 30, 60, 120, 300, 600];
@@ -143,6 +150,34 @@ impl SettingsMenu {
                     "Start at Windows sign-in (keeps schedules)",
                     switch(s.start_engine_at_sign_in.unwrap_or(false)),
                     "Enter to switch",
+                ),
+            ),
+            (Field::Heading, heading("This Fetchpath")),
+            (
+                Field::InstanceName,
+                Item::new(
+                    "Name",
+                    s.instance_name.clone().unwrap_or_default(),
+                    "Enter to type a name; leave it empty for the computer's name",
+                ),
+            ),
+            (
+                Field::DiskReserve,
+                Item::new(
+                    "Keep free on every drive",
+                    match s.disk_reserve_bytes.unwrap_or(0) {
+                        0 => "automatic (5 GB or 5 %)".to_owned(),
+                        bytes => format!("{} GB", bytes / GIB),
+                    },
+                    "←/→ to change; downloads wait rather than fill a drive past it",
+                ),
+            ),
+            (
+                Field::AlwaysOn,
+                Item::new(
+                    "Always on: keep running in the background",
+                    switch(s.hub_mode.unwrap_or(false)),
+                    "Enter to switch; starts at sign-in and keeps the computer awake while downloading",
                 ),
             ),
             (Field::Heading, heading("Video and audio")),
@@ -259,6 +294,15 @@ impl SettingsMenu {
                 s.auto_retry_base_delay_seconds =
                     DELAYS[(at + by).clamp(0, DELAYS.len() as i64 - 1) as usize];
             }),
+            Field::DiskReserve => self.apply(engine, |s| {
+                let gib = s.disk_reserve_bytes.unwrap_or(0) / GIB;
+                let at = RESERVES
+                    .iter()
+                    .position(|reserve| *reserve >= gib)
+                    .unwrap_or(RESERVES.len() - 1) as i64;
+                s.disk_reserve_bytes =
+                    Some(RESERVES[(at + by).clamp(0, RESERVES.len() as i64 - 1) as usize] * GIB);
+            }),
             Field::Theme => self.apply(engine, |s| {
                 let themes = [
                     Theme::System,
@@ -275,6 +319,7 @@ impl SettingsMenu {
             // Switches flip either way.
             Field::AutoRetry
             | Field::SignIn
+            | Field::AlwaysOn
             | Field::Tray
             | Field::ConfirmRemove
             | Field::PowerMode => {
@@ -290,12 +335,24 @@ impl SettingsMenu {
             Field::SignIn => self.apply(engine, |s| {
                 s.start_engine_at_sign_in = Some(!s.start_engine_at_sign_in.unwrap_or(false));
             }),
+            Field::AlwaysOn => self.apply(engine, |s| {
+                s.hub_mode = Some(!s.hub_mode.unwrap_or(false));
+            }),
+            Field::InstanceName => {
+                let mut prompt = Prompt::default();
+                prompt.set(self.view.settings.instance_name.clone().unwrap_or_default());
+                self.editing = Some((field, prompt));
+            }
             Field::Tray => self.apply(engine, |s| s.close_to_tray = !s.close_to_tray),
             Field::ConfirmRemove => self.apply(engine, |s| {
                 s.confirm_remove_completed = !s.confirm_remove_completed;
             }),
             Field::PowerMode => self.apply(engine, |s| s.power_mode = !s.power_mode),
-            Field::MaxActive | Field::Attempts | Field::Delay | Field::Theme => {
+            Field::MaxActive
+            | Field::Attempts
+            | Field::Delay
+            | Field::Theme
+            | Field::DiskReserve => {
                 self.adjust(engine, field, 1);
             }
             Field::Folder | Field::ToolsFolder => {
@@ -368,7 +425,12 @@ impl SettingsMenu {
             match prompt.handle(key) {
                 Action::Submit(text) => {
                     self.editing = None;
-                    self.save_folder(engine, field, &text);
+                    if field == Field::InstanceName {
+                        // Empty returns to the computer's name.
+                        self.apply(engine, |s| s.instance_name = Some(text.trim().to_owned()));
+                    } else {
+                        self.save_folder(engine, field, &text);
+                    }
                 }
                 Action::Leave => self.editing = None,
                 Action::Complete => {

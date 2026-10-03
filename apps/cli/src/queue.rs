@@ -1225,6 +1225,45 @@ pub fn settings(args: &[String]) -> i32 {
     })
 }
 
+/// `fetchpath hub [on|off]`: the always-on engine (FP-101). Without a word
+/// it says whether it is on.
+pub fn hub(args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        let words: Vec<String> = match parsed.words.as_slice() {
+            [] => vec!["hub-mode".into()],
+            [word] if word == "on" => vec!["hub-mode".into(), "true".into()],
+            [word] if word == "off" => vec!["hub-mode".into(), "false".into()],
+            _ => return Ok(usage("usage: fetchpath hub [on | off] [--json]")),
+        };
+        let (json, _) = settings_outcome(engine, &words)?;
+        if parsed.json {
+            client::print_json(&json);
+            return Ok(0);
+        }
+        for line in hub_lines(engine)? {
+            println!("{line}");
+        }
+        Ok(0)
+    })
+}
+
+/// What always on means now, for `fetchpath hub` and the terminal's `/hub`.
+pub(crate) fn hub_lines(engine: &Engine) -> Result<Vec<String>, ProtocolError> {
+    let on = match engine.send(Command::GetSettings)? {
+        CommandResult::Settings { view } => view.settings.hub_mode.unwrap_or(false),
+        other => return Err(client::unexpected(&other)),
+    };
+    Ok(if on {
+        vec![
+            "Always on: the Fetchpath engine keeps running in the background, even with no app open.".into(),
+            "It starts when you sign in to Windows and keeps the computer awake while downloads run.".into(),
+            "It is not a Windows service: after a restart it runs again only once you sign in.".into(),
+        ]
+    } else {
+        vec!["Always on is off: the engine stops a minute after it has nothing left to do.".into()]
+    })
+}
+
 /// Shows every setting, one, or changes one: the engine's reply for
 /// `--json`, and the lines a person reads.
 pub(crate) fn settings_outcome(
@@ -1333,6 +1372,28 @@ fn setting_value(
                 .map_err(|_| wrong("a whole number"))?
                 .into(),
         ),
+        // "none" returns to the computer's name, which the engine reads
+        // from a blank name.
+        _ if key == "instance_name" => {
+            if text.eq_ignore_ascii_case("none") {
+                Value::String(String::new())
+            } else {
+                // A name, kept as the person wrote it.
+                Value::String(text.to_owned())
+            }
+        }
+        // The disk reserve: "auto", or a size such as 10GB.
+        _ if key == "disk_reserve_bytes" => {
+            if text.eq_ignore_ascii_case("auto") {
+                Value::Number(0.into())
+            } else {
+                Value::Number(
+                    crate::rules::size(text)
+                        .map_err(|_| wrong("auto or a size such as 10GB"))?
+                        .into(),
+                )
+            }
+        }
         // Optional folders: "none" clears them.
         _ if key.ends_with("_dir") => {
             if text.is_empty() || text.eq_ignore_ascii_case("none") {
@@ -1370,7 +1431,11 @@ fn print_installed_components() {
 
 /// `fetchpath engine status` for a person, or its protocol result.
 pub fn engine_status(json: bool) -> i32 {
-    let outcome = Engine::attach().and_then(|engine| engine.send(Command::EngineStatus));
+    let engine = Engine::attach();
+    let outcome = engine
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|engine| engine.send(Command::EngineStatus));
     match outcome {
         Ok(result) if json => {
             client::print_json(&result);
@@ -1382,6 +1447,9 @@ pub fn engine_status(json: bool) -> i32 {
                 status.engine_version,
                 when::local(status.started_at)
             );
+            if let Some(instance) = &status.instance {
+                println!("This Fetchpath is named {}.", instance.name);
+            }
             // Its client count includes listeners that have gone but not
             // yet been noticed, so it is left to --json.
             println!(
@@ -1391,6 +1459,14 @@ pub fn engine_status(json: bool) -> i32 {
             );
             if let Some(reason) = &status.queue_read_only {
                 println!("{}", reason.message);
+            }
+            if let Ok(engine) = &engine
+                && let Ok(CommandResult::Settings { view }) = engine.send(Command::GetSettings)
+                && view.settings.hub_mode == Some(true)
+            {
+                println!(
+                    "Always on: it keeps running in the background (`fetchpath hub off` to stop that)."
+                );
             }
             print_installed_components();
             0

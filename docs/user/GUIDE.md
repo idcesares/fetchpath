@@ -363,6 +363,8 @@ on GitHub.
 | Setting | What it does |
 | --- | --- |
 | Downloads at the same time | 1 to 8. More at once isn't always faster. |
+| Keep free on every drive | Fetchpath never fills a drive past this: Automatic keeps the larger of 5 GB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts by itself when there is room; one already running stops at its saved progress and continues later. |
+| Name and Always on | The name this Fetchpath shows everywhere, and **Always on**: keep it running in the background with no window open, start it when you sign in, and keep the computer awake while downloads run. It is not a Windows service: after a restart it runs only once you sign in. |
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
@@ -370,7 +372,7 @@ on GitHub.
 | Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
 | Cache | Copies of downloads that matched a checksum, so the same file downloaded again doesn't use the network. Shows how much it holds, sets how much it may keep (the oldest copies go first), and **Clear cache**. Clearing it never touches your saved files. |
 | Paired computers | Lets your own computers give each other files downloaded with a checksum from a link that needed no sign-in. **Show a pairing code** on one, then on the other choose **Pair with a computer that shows a code** and enter its address and code; each shows the other's fingerprint so you can compare them. Sharing stays off until you turn it on, and **Remove** unpairs a computer at once. When a paired computer on the same network is sharing, a download with a checksum is taken from it first, checked, and its row says **From your paired computer**. |
-| AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. |
+| AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. **Automatic** lets an agent download into its folders without ever asking about size, how many an hour or torrent peers; saving anywhere else still asks you. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |

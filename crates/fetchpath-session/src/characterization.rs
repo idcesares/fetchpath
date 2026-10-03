@@ -66,7 +66,7 @@ fn a_non_ascii_destination_survives_a_save_and_load() {
     let path = dir.path().join("queue.json");
     let state = QueueState {
         records: vec![restored],
-        link_reviews: Vec::new(),
+        ..QueueState::default()
     };
     save_persisted(&path, &state).unwrap();
     let reloaded = load_persisted(&path)
@@ -108,6 +108,12 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             // Added after 0.1.0 (FP-032); a 0.1.0 file has the default.
             cache_quota_bytes: settings::DEFAULT_CACHE_QUOTA_BYTES,
             density: settings::Density::Comfortable,
+            // Added after 0.1.0 (FP-101); a 0.1.0 file uses the computer's name.
+            instance_name: None,
+            // Added after 0.1.0 (FP-101); a 0.1.0 file leaves it off.
+            hub_mode: false,
+            // Added after 0.1.0 (FP-101); a 0.1.0 file has the automatic one.
+            disk_reserve_bytes: 0,
         }
     );
 
@@ -650,6 +656,7 @@ fn unrecognized_and_internal_errors_offer_a_retry_but_are_never_retried_automati
             failed_record(dir.path(), "transport.bin", "retry", 0),
         ],
         link_reviews: Vec::new(),
+        space_stopped: Default::default(),
     };
     jobs.schedule_automatic_retries(&mut state, &Settings::default());
     assert_eq!(state.records[0].view.state, "failed");
@@ -792,6 +799,7 @@ fn only_plain_transport_failures_are_retried_automatically_and_on_a_backoff() {
             failed_record(dir.path(), "present.bin", "retry", 0),
         ],
         link_reviews: Vec::new(),
+        space_stopped: Default::default(),
     };
     // A file already at the destination is never retried over.
     fs::write(dir.path().join("present.bin"), b"x").unwrap();
@@ -1023,6 +1031,8 @@ fn the_interface_reads_these_exact_field_names() {
         keys(&serde_json::to_value(QueueStats::default()).unwrap()),
         [
             "activeBytes",
+            // Added after 0.1.0 (FP-101): requests waiting for the person.
+            "awaitingApproval",
             "combinedBytesPerSecond",
             "completed",
             "completedBytes",

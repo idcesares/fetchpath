@@ -228,6 +228,20 @@ pub const COMMANDS: &[Spec] = &[
         takes: Takes::Text,
     },
     Spec {
+        name: "agents",
+        aliases: &[],
+        usage: "/agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]",
+        summary: "Which AI agents may download, where, and whether they ask",
+        takes: Takes::Text,
+    },
+    Spec {
+        name: "hub",
+        aliases: &[],
+        usage: "/hub [on | off]",
+        summary: "Keep the engine running in the background (always on)",
+        takes: Takes::Text,
+    },
+    Spec {
         name: "tools",
         aliases: &[],
         usage: "/tools [install | use FOLDER]",
@@ -434,6 +448,42 @@ fn rules(
     Ok(())
 }
 
+/// `/agents`: the same words and engine requests as `fetchpath agents`.
+fn agents(
+    engine: &Engine,
+    spec: &Spec,
+    args: &[String],
+    reply: &mut Reply,
+) -> Result<(), ProtocolError> {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    let request = crate::agents::Request::parse(&words)
+        .ok_or_else(|| usage_error(spec, "Say grant, revoke, limit or auto"))?;
+    for line in crate::agents::lines(&request.perform(engine)?) {
+        reply.say(Tone::Normal, line);
+    }
+    Ok(())
+}
+
+/// `/hub`: always on, as `fetchpath hub` sets it.
+fn hub(
+    engine: &Engine,
+    spec: &Spec,
+    args: &[String],
+    reply: &mut Reply,
+) -> Result<(), ProtocolError> {
+    let words: Vec<String> = match args {
+        [] => vec!["hub-mode".into()],
+        [word] if word == "on" => vec!["hub-mode".into(), "true".into()],
+        [word] if word == "off" => vec!["hub-mode".into(), "false".into()],
+        _ => return Err(usage_error(spec, "Say on or off")),
+    };
+    queue::settings_outcome(engine, &words)?;
+    for line in queue::hub_lines(engine)? {
+        reply.say(Tone::Normal, line);
+    }
+    Ok(())
+}
+
 fn usage_error(spec: &Spec, message: &str) -> ProtocolError {
     client::input_error(&format!("{message}. Usage: {}", spec.usage))
 }
@@ -447,6 +497,12 @@ fn execute(
 ) -> Result<(), ProtocolError> {
     if spec.name == "rules" {
         return rules(engine, spec, args, reply);
+    }
+    if spec.name == "agents" {
+        return agents(engine, spec, args, reply);
+    }
+    if spec.name == "hub" {
+        return hub(engine, spec, args, reply);
     }
     let flags: &[&str] = match spec.name {
         "add" => &[

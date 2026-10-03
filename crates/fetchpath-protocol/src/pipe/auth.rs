@@ -287,7 +287,12 @@ pub enum Handshake {
     Proof {
         client_proof: String,
     },
-    Welcome,
+    /// Carries the engine's instance id when it has one (contract D6), so a
+    /// client can name the instance it means on every command.
+    Welcome {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instance_id: Option<crate::ids::InstanceId>,
+    },
 }
 
 /// Owner-only access, nothing inherited, and a medium label that also

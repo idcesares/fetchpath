@@ -12,11 +12,11 @@ use fetchpath_protocol::message::{
     ControlOutcome, Correlation, ProgressKind, ReplyResult, StreamPosition,
 };
 use fetchpath_protocol::model::{
-    CacheView, Confidence, EngineSettings, EngineStatus, IntegrityOutcome, JobDetails, JobKind,
-    LanView, LinkInspection, LinkKind, MediaInspection, MediaVariant, MediaVariantKind,
-    PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats, RepositoryFile,
-    RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment,
-    SettingsView, Theme, WaitingReason,
+    CacheView, Confidence, EngineSettings, EngineStatus, InstanceInfo, IntegrityOutcome,
+    JobDetails, JobKind, LanView, LinkInspection, LinkKind, MediaInspection, MediaVariant,
+    MediaVariantKind, PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats,
+    RepositoryFile, RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec,
+    RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -71,6 +71,9 @@ fn settings() -> EngineSettings {
         start_engine_at_sign_in: Some(false),
         cache_quota_bytes: None,
         density: None,
+        instance_name: Some("Studio PC".into()),
+        hub_mode: Some(false),
+        disk_reserve_bytes: Some(10 * 1024 * 1024 * 1024),
     }
 }
 
@@ -106,6 +109,7 @@ fn agent_policy() -> AgentPolicy {
         folders: vec!["C:\\Users\\person\\Downloads\\agent".into()],
         max_bytes: 104_857_600,
         max_new_jobs_per_hour: 10,
+        automatic: true,
     }
 }
 
@@ -484,6 +488,7 @@ fn every_result() -> Vec<CommandResult> {
                 completed_bytes: 20,
                 combined_bytes_per_second: 30,
                 max_active_downloads: 3,
+                awaiting_approval: 1,
             },
         },
         CommandResult::Settings {
@@ -517,6 +522,10 @@ fn every_result() -> Vec<CommandResult> {
                 active_jobs: 1,
                 queue_cursor: 120,
                 queue_read_only: None,
+                instance: Some(InstanceInfo {
+                    id: id("018f9c2a-6b1e-7d40-9a51-2e8f3c7d1b04"),
+                    name: "Studio PC".into(),
+                }),
             },
         },
         CommandResult::EngineStatus {
@@ -527,6 +536,7 @@ fn every_result() -> Vec<CommandResult> {
                 connected_clients: 0,
                 active_jobs: 0,
                 queue_cursor: 0,
+                instance: None,
                 queue_read_only: Some(
                     ProtocolError::new(
                         ErrorCode::try_from("storage.queue_from_newer_version".to_owned()).unwrap(),
@@ -674,6 +684,7 @@ fn envelope(payload: Command) -> CommandEnvelope {
         command_id: id("018f9c2a-2f70-7b42-8d6f-5bcb546e11aa"),
         issued_at: at("2026-09-20T12:00:00Z"),
         expected_revision: Some(3),
+        expected_instance_id: Some(id("018f9c2a-6b1e-7d40-9a51-2e8f3c7d1b04")),
         payload,
     }
 }

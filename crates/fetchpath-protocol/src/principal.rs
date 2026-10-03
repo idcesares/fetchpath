@@ -170,6 +170,14 @@ pub struct AgentPolicy {
     pub max_bytes: u64,
     /// New downloads per hour before further ones wait for approval.
     pub max_new_jobs_per_hour: u32,
+    /// Automatic mode (contract D7): inside its folders the agent's
+    /// downloads never wait for the person. The size limit and the hourly
+    /// rate do not apply, and a torrent may contact peers. Saving outside
+    /// its folders still waits; credentials, replacing files and uploading
+    /// to peers stay refused or held as before. Off unless the person turns
+    /// it on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub automatic: bool,
 }
 
 impl AgentPolicy {
@@ -187,6 +195,7 @@ impl Default for AgentPolicy {
             folders: Vec::new(),
             max_bytes: Self::DEFAULT_MAX_BYTES,
             max_new_jobs_per_hour: Self::DEFAULT_MAX_NEW_JOBS_PER_HOUR,
+            automatic: false,
         }
     }
 }

@@ -119,6 +119,24 @@ pub struct Settings {
     /// settings file from before it writes back unchanged.
     #[serde(skip_serializing_if = "Density::is_default")]
     pub density: Density,
+    /// The name every client shows for this engine (contract D6). `None`
+    /// means the computer's name; written only when set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_name: Option<String>,
+    /// Keep the engine running in the background (FP-101, design §10): it
+    /// does not stop when idle, starts at sign-in, and keeps the computer
+    /// awake while downloads run. Off by default and written only when on.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hub_mode: bool,
+    /// Free space left on every drive Fetchpath saves to (FP-101). 0, the
+    /// default, is automatic: the larger of 5 GiB and 5 % of the drive.
+    /// Written only when chosen.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub disk_reserve_bytes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 fn is_default_quota(bytes: &u64) -> bool {
@@ -153,6 +171,9 @@ impl Default for Settings {
             rules: Vec::new(),
             cache_quota_bytes: DEFAULT_CACHE_QUOTA_BYTES,
             density: Density::Comfortable,
+            instance_name: None,
+            hub_mode: false,
+            disk_reserve_bytes: 0,
         }
     }
 }
@@ -177,6 +198,23 @@ impl Settings {
         self.cache_quota_bytes = self
             .cache_quota_bytes
             .clamp(MIN_CACHE_QUOTA_BYTES, MAX_CACHE_QUOTA_BYTES);
+        self.instance_name = clamp_instance_name(self.instance_name.take());
+        // Always on means back after a restart too, so it implies the
+        // sign-in start; turning it off leaves the sign-in start as it is.
+        if self.hub_mode {
+            self.start_engine_at_sign_in = true;
+        }
+    }
+
+    /// The name clients show for this engine: the one the person chose, or
+    /// the computer's.
+    pub fn display_instance_name(&self) -> String {
+        self.instance_name.clone().unwrap_or_else(|| {
+            std::env::var("COMPUTERNAME")
+                .ok()
+                .and_then(|name| clamp_instance_name(Some(name)))
+                .unwrap_or_else(|| "This computer".to_owned())
+        })
     }
 
     /// The delay before attempt number `attempt` (1-based), doubling each time
@@ -187,6 +225,28 @@ impl Settings {
             .saturating_mul(1_u64 << steps)
             .min(MAX_RETRY_DELAY_SECONDS)
     }
+}
+
+/// The longest instance name kept, in characters.
+pub const MAX_INSTANCE_NAME_CHARS: usize = 64;
+
+/// An instance name is shown wherever a consequential action names its
+/// target, so it keeps only printable characters: no control, line-breaking,
+/// zero-width or text-reordering characters. Blank means the computer's name.
+fn clamp_instance_name(value: Option<String>) -> Option<String> {
+    let cleaned: String = value?
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(
+                    *c,
+                    '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+                )
+        })
+        .take(MAX_INSTANCE_NAME_CHARS)
+        .collect();
+    let trimmed = cleaned.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// A stored directory is only kept if it is an absolute path of sane length.
@@ -391,5 +451,26 @@ mod tests {
         assert_eq!(settings.retry_delay_seconds(3), 60);
         // Far beyond any configured attempt count, the delay is still bounded.
         assert_eq!(settings.retry_delay_seconds(60), MAX_RETRY_DELAY_SECONDS);
+    }
+
+    #[test]
+    fn always_on_implies_the_sign_in_start_and_off_leaves_it() {
+        let mut settings = Settings {
+            hub_mode: true,
+            ..Settings::default()
+        };
+        settings.clamp();
+        assert!(settings.start_engine_at_sign_in);
+
+        settings.hub_mode = false;
+        settings.clamp();
+        assert!(
+            settings.start_engine_at_sign_in,
+            "turning it off keeps the person's sign-in start"
+        );
+
+        // Written only when on, so a file from before it writes back unchanged.
+        let off = serde_json::to_value(Settings::default()).unwrap();
+        assert!(off.get("hubMode").is_none());
     }
 }

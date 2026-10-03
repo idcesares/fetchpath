@@ -33,7 +33,7 @@ pub use client::{EngineClient, EventStream, StreamItem, Subscription};
 pub use command::{Command, CommandEnvelope, JobInput, JobRequest};
 pub use error::{Action, ErrorCode, ErrorFamily, ErrorScope, ProtocolError};
 pub use frame::{MAX_FRAME_BYTES, decode_command, decode_server_message, encode_frame};
-pub use ids::{AttemptId, ClientId, CommandId, CredentialRef, JobId, Timestamp};
+pub use ids::{AttemptId, ClientId, CommandId, CredentialRef, InstanceId, JobId, Timestamp};
 pub use message::{CommandResult, EventPayload, JobEvent, ProgressSample, Reply, ServerMessage};
 pub use model::{JobSnapshot, JobState, SensitiveUrl};
 pub use principal::{AgentName, AgentPolicy, Principal};

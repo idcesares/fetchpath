@@ -612,6 +612,23 @@ fn agents_are_granted_limited_and_revoked_from_the_command_line() {
     assert_eq!(policy["max_new_jobs_per_hour"], 5);
     assert_eq!(policy["folders"].as_array().unwrap().len(), 2);
 
+    // Automatic mode (contract D7) keeps folders and limits, and a later
+    // limit change keeps it on.
+    let (exit, lines) = home.json(&["agents", "auto", "helper", "on", "--json"]);
+    assert_eq!(exit, 0);
+    let policy = &lines[0]["policies"][0]["policy"];
+    assert_eq!(policy["automatic"], true);
+    assert_eq!(policy["max_new_jobs_per_hour"], 5);
+    assert_eq!(policy["folders"].as_array().unwrap().len(), 2);
+    let (_, lines) = home.json(&["agents", "limit", "helper", "--per-hour", "6", "--json"]);
+    assert_eq!(lines[0]["policies"][0]["policy"]["automatic"], true);
+    assert!(text(&home.run(&["agents"]).stdout).contains("automatic"));
+    let (exit, lines) = home.json(&["agents", "auto", "helper", "off", "--json"]);
+    assert_eq!(exit, 0);
+    assert!(lines[0]["policies"][0]["policy"].get("automatic").is_none());
+    assert_eq!(code(&home.run(&["agents", "auto", "helper", "maybe"])), 2);
+    home.run(&["agents", "limit", "helper", "--per-hour", "5"]);
+
     // Taking one folder away keeps the other and the limits.
     let (exit, lines) = home.json(&["agents", "revoke", "helper", &second_arg, "--json"]);
     assert_eq!(exit, 0);
@@ -627,4 +644,27 @@ fn agents_are_granted_limited_and_revoked_from_the_command_line() {
     let output = home.run(&["agents", "revoke", "helper"]);
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert!(text(&output.stdout).contains("No agent has access yet"));
+}
+
+#[test]
+fn always_on_is_turned_on_and_off_from_the_command_line() {
+    let home = Home::new();
+    let output = home.run(&["hub"]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("Always on is off"));
+
+    let output = home.run(&["hub", "on"]);
+    assert_eq!(code(&output), 0, "{}", text(&output.stderr));
+    assert!(text(&output.stdout).contains("not a Windows service"));
+    let (_, lines) = home.json(&["settings", "--json"]);
+    assert_eq!(lines[0]["view"]["settings"]["hub_mode"], true);
+    assert_eq!(
+        lines[0]["view"]["settings"]["start_engine_at_sign_in"],
+        true
+    );
+
+    let output = home.run(&["hub", "off"]);
+    assert_eq!(code(&output), 0);
+    assert!(text(&output.stdout).contains("Always on is off"));
+    assert_eq!(code(&home.run(&["hub", "maybe"])), 2);
 }

@@ -184,6 +184,15 @@ pub struct PendingConnection {
 
 impl PendingConnection {
     pub fn authenticate(self) -> Result<ServerConnection, ProtocolError> {
+        self.authenticate_for(None)
+    }
+
+    /// Authenticates and tells the client which engine instance it reached
+    /// (contract D6).
+    pub fn authenticate_for(
+        self,
+        instance_id: Option<crate::ids::InstanceId>,
+    ) -> Result<ServerConnection, ProtocolError> {
         let deadline = Instant::now() + self.limits.handshake_timeout;
         let hello: Handshake = self.stream.read_handshake(deadline)?;
         let Handshake::Hello {
@@ -229,7 +238,7 @@ impl PendingConnection {
             )));
         }
         self.stream.write_frame(
-            &Handshake::Welcome,
+            &Handshake::Welcome { instance_id },
             deadline.saturating_duration_since(Instant::now()),
         )?;
         Ok(ServerConnection {

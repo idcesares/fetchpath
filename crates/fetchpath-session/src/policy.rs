@@ -284,7 +284,8 @@ pub(crate) fn creation_reasons(
     if !inside_grants(destination, &policy.folders) {
         reasons.push(ApprovalReason::OutsideGrantedFolders);
     }
-    if rate_exceeded {
+    // Automatic mode lifts the rate, never the folders (contract D7).
+    if rate_exceeded && !policy.automatic {
         reasons.push(ApprovalReason::RateLimit);
     }
     reasons
@@ -320,6 +321,7 @@ mod tests {
             folders: vec![r"C:\Users\me\Downloads".into()],
             max_bytes: 1,
             max_new_jobs_per_hour: 0,
+            automatic: false,
         };
         assert_eq!(validated(good).unwrap().max_new_jobs_per_hour, 1);
         for folder in ["relative", r"\no-drive", r"C:\a\..\b", ""] {

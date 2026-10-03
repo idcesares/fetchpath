@@ -1,7 +1,7 @@
 //! Commands and their envelope (job contract §5).
 
 use crate::SCHEMA_VERSION;
-use crate::ids::{ClientId, CommandId, CredentialRef, JobId, Timestamp};
+use crate::ids::{ClientId, CommandId, CredentialRef, InstanceId, JobId, Timestamp};
 use crate::model::{EngineSettings, RuleSpec, SensitiveUrl};
 use crate::principal::{AgentName, AgentPolicy};
 use schemars::JsonSchema;
@@ -20,6 +20,12 @@ pub struct CommandEnvelope {
     /// `contract.revision_conflict` without changing anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
+    /// The engine instance the client means (contract D6). An engine with an
+    /// identity refuses a change without it (see [`Command::changes_state`]),
+    /// and any command naming another instance, with
+    /// `contract.wrong_instance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_instance_id: Option<InstanceId>,
     pub payload: Command,
 }
 
@@ -32,12 +38,18 @@ impl CommandEnvelope {
             command_id: CommandId::random(),
             issued_at: Timestamp::now(),
             expected_revision: None,
+            expected_instance_id: None,
             payload,
         }
     }
 
     pub fn expecting_revision(mut self, revision: u64) -> Self {
         self.expected_revision = Some(revision);
+        self
+    }
+
+    pub fn for_instance(mut self, instance: InstanceId) -> Self {
+        self.expected_instance_id = Some(instance);
         self
     }
 }
@@ -318,6 +330,21 @@ impl Command {
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus
         )
+    }
+
+    /// True when the command changes anything a person would care which
+    /// computer it happened on: every ledgered command, plus LAN sharing and
+    /// pairing. Such a command must name its engine instance (contract D6).
+    pub fn changes_state(&self) -> bool {
+        self.is_mutating()
+            || matches!(
+                self,
+                Self::SetLanSharing { .. }
+                    | Self::StartPairing
+                    | Self::CancelPairing
+                    | Self::JoinPairing { .. }
+                    | Self::Unpair { .. }
+            )
     }
 }
 
