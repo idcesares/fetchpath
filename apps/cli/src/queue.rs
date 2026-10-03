@@ -1360,6 +1360,14 @@ fn plain(value: &serde_json::Value) -> String {
     }
 }
 
+/// What setup installed, read-only (FP-099): shown only for a copy that setup
+/// installed. Changing it is a setup rerun, so this is a sentence, not a command.
+fn print_installed_components() {
+    if let Some(selection) = fetchpath_protocol::install::installed_selection() {
+        println!("{}", selection.summary());
+    }
+}
+
 /// `fetchpath engine status` for a person, or its protocol result.
 pub fn engine_status(json: bool) -> i32 {
     let outcome = Engine::attach().and_then(|engine| engine.send(Command::EngineStatus));
@@ -1384,6 +1392,7 @@ pub fn engine_status(json: bool) -> i32 {
             if let Some(reason) = &status.queue_read_only {
                 println!("{}", reason.message);
             }
+            print_installed_components();
             0
         }
         Ok(other) => client::fail(&client::unexpected(&other), false),
@@ -1392,6 +1401,7 @@ pub fn engine_status(json: bool) -> i32 {
                 client::print_json(&serde_json::json!({ "error": error }));
             } else {
                 println!("The Fetchpath engine is not running.");
+                print_installed_components();
             }
             EXIT_ENGINE
         }

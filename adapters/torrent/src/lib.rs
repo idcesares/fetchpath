@@ -184,7 +184,10 @@ impl TorrentJob {
             .map_err(|_| "torrent.helper_unavailable")?
             .with_file_name("fetchpath-torrent-helper.exe");
         if !helper.is_file() {
-            return Err("torrent.helper_unavailable");
+            // Setup can leave the helper out (FP-099); say how to add it.
+            return Err(
+                "torrent.helper_unavailable: The torrent helper is not installed. Run Fetchpath setup again and add Torrent helper.",
+            );
         }
         let mut command = Command::new(helper);
         command

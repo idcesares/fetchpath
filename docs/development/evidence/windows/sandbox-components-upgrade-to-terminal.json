@@ -1,0 +1,204 @@
+{
+    "environment":  "Windows Sandbox",
+    "osBuild":  "10.0.26100.0",
+    "machineArchitecture":  "AMD64",
+    "installerSha256":  "2292c725178ffe6f46a7be785bc0848a8726453fbbe2a0640f8797322f4bbe4e",
+    "preflight":  {
+                      "vcruntime140Present":  false,
+                      "webview2RuntimeVersion":  null,
+                      "fetchpathOnPathBefore":  false,
+                      "installDirectoryExistedBefore":  false,
+                      "uninstallEntriesBefore":  0,
+                      "userPathBefore":  "C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Microsoft\\WindowsApps;",
+                      "smartAppControlState":  1,
+                      "smartAppControlTurnedOff":  true
+                  },
+    "baseline":  {
+                     "installerSha256":  "42a1d340f76a156add3f1f3054bd60ad58d6dfb2277010b754c2630d45770058",
+                     "exitCode":  0,
+                     "desktopExecutable":  true,
+                     "browserHostExecutable":  true,
+                     "torrentHelperExecutable":  true,
+                     "nativeHostKeysRegistered":  3,
+                     "startMenuShortcut":  true,
+                     "desktopShortcut":  true,
+                     "storedInstallType":  null
+                 },
+    "seed":  {
+                 "seedAdd":  {
+                                 "commandLine":  "fetchpath add http://127.0.0.1:49736/seeded.bin --to \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\seed\" --wait",
+                                 "exitCode":  0,
+                                 "output":  "Added 306f8183  C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\seed\\seeded.bin\nC:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\seed\\seeded.bin\n"
+                             },
+                 "seedSetting":  {
+                                     "commandLine":  "fetchpath settings auto-retry off",
+                                     "exitCode":  0,
+                                     "output":  "auto-retry = off\n"
+                                 },
+                 "settingBefore":  {
+                                       "commandLine":  "fetchpath settings auto-retry",
+                                       "exitCode":  0,
+                                       "output":  "off\n"
+                                   },
+                 "historyBefore":  {
+                                       "commandLine":  "fetchpath history",
+                                       "exitCode":  0,
+                                       "output":  "   #  ID        STATE           PROGRESS                NAME\n   1  306f8183  completed       100% of 256.0 KiB       seeded.bin\n"
+                                   },
+                 "slowAdd":  {
+                                 "commandLine":  "fetchpath add http://127.0.0.1:49737/slow.bin --to \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\slow\"",
+                                 "exitCode":  0,
+                                 "output":  "Added 3b11e74a  C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\slow\\slow.bin\n"
+                             },
+                 "seededFile":  true,
+                 "engineRunning":  true
+             },
+    "install":  {
+                    "arguments":  "/S /COMPONENTS=cli",
+                    "exitCode":  0,
+                    "elapsedSeconds":  12.2,
+                    "uninstallEntries":  [
+                                             {
+                                                 "displayName":  "Fetchpath",
+                                                 "displayVersion":  "0.1.0"
+                                             }
+                                         ],
+                    "desktopExecutable":  false,
+                    "cliExecutable":  true,
+                    "browserHostExecutable":  false,
+                    "browserExtensionFolder":  false,
+                    "torrentHelperExecutable":  false,
+                    "installDirectoryOnUserPath":  true,
+                    "nativeHostKeysRegistered":  0,
+                    "startMenuShortcut":  false,
+                    "terminalShortcut":  true,
+                    "desktopShortcut":  false,
+                    "webview2BootstrapperDownloaded":  false,
+                    "storedInstallType":  "custom",
+                    "storedComponents":  "cli,core",
+                    "storedSchema":  1,
+                    "displayIcon":  "\"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Fetchpath\\fetchpath.exe\"",
+                    "mainBinaryName":  "fetchpath.exe",
+                    "mediaToolsDownloaded":  false,
+                    "setupLog":  null
+                },
+    "upgrade":  {
+                    "settingAfter":  {
+                                         "commandLine":  "fetchpath settings auto-retry",
+                                         "exitCode":  0,
+                                         "output":  "off\n"
+                                     },
+                    "historyAfter":  {
+                                         "commandLine":  "fetchpath history",
+                                         "exitCode":  0,
+                                         "output":  "   #  ID        STATE           PROGRESS                NAME\n   2  306f8183  completed       100% of 256.0 KiB       seeded.bin\n"
+                                     },
+                    "sentinelKept":  true,
+                    "dataFolderKept":  true,
+                    "seededFileKept":  true,
+                    "activeDownloadFinishedAfterUpgrade":  true,
+                    "engineExecutableSha256":  "f0614b326dc3e54e0a4e66ae1affb77986dc472496793c98b896c09722585a1a"
+                },
+    "cli":  {
+                "help":  {
+                             "commandLine":  "fetchpath --help",
+                             "exitCode":  0,
+                             "output":  "Fetchpath â€” download files from the command line.\n\nUsage:\n  fetchpath [--plain]        Open the interactive terminal (in a terminal only)\n  fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]\n  fetchpath --version\n  fetchpath --help\n\nThe download queue, kept by the Fetchpath engine:\n  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]\n  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait]\n  fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]\n  fetchpath ls [--active | --failed]          fetchpath show JOB...\n  fetchpath pause | resume | cancel | retry | rm JOB...\n  fetchpath approvals                         agents\u0027 requests that wait for you\n  fetchpath approve | deny JOB...             answer an agent\u0027s request that waits for you\n  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N]\n  fetchpath watch [JOB]                       fetchpath inspect LINK\n  fetchpath folder JOB                        show its file in File Explorer\n  fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]\n  fetchpath engine status | stop\n  fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size\n  fetchpath cache [status | clear]            verified copies kept for downloads with a checksum\n  fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)\n\nVideo and audio need two free programs, yt-dlp and ffmpeg, that are not\npart of Fetchpath:\n  fetchpath tools                             whether they are set up\n  fetchpath tools install [--yes]             download and set them up (asks first)\n  fetchpath tools use FOLDER                  use copies you already have\n\nJOB is a download\u0027s number in `fetchpath ls`, or the start of its id.\nEvery queue command takes --json to print the engine\u0027s own records.\n\n\nPaired devices (advanced; sharing is off until you run `fetchpath lan on`):\n  fetchpath lan [status]                      this computer and its paired devices\n  fetchpath lan on | off                      share checksum-verified public files with them\n  fetchpath lan pair                          show a code; then on the other device:\n  fetchpath lan join ADDRESS CODE [NAME]      fetchpath lan unpair KEY\n  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION\n\nDESTINATION may be a file name or a folder. Without one, the file goes where\na matching rule says, or to your Downloads folder, under the name the link\nsuggests. Fetchpath never\noverwrites an existing file.\n\nOptions:\n  --sha256 HEX   Save the file only if it matches this SHA-256 checksum.\n  --json         Print one JSON result on standard output, and no progress.\n  -q, --quiet    Print only the saved path.\n\nExit codes:\n  0 saved   1 engine unavailable   2 bad input   3 file already exists\n  4 network or server   5 checksum did not match   6 could not write\n  130 cancelled or interrupted\n\nThe full guide is docs\\CLI.md in the Fetchpath install folder.\n"
+                         },
+                "version":  {
+                                "commandLine":  "fetchpath --version",
+                                "exitCode":  0,
+                                "output":  "fetchpath 0.1.0\n"
+                            },
+                "download":  {
+                                 "commandLine":  "fetchpath download http://127.0.0.1:49736/cli.bin \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\cli-download.bin\" --json",
+                                 "exitCode":  0,
+                                 "output":  "{\"bytes\":262144,\"checksum_matched\":false,\"destination\":\"C:\\\\Users\\\\WDAGUtilityAccount\\\\AppData\\\\Local\\\\Temp\\\\fp043\\\\cli-download.bin\",\"job_id\":\"b434df9d-86af-4a54-8cb1-5f9ce8731d64\",\"observed_sha256\":\"81d0141af58569f91edf2d036b67a6b82c062d1829fd93aec50ed96b4773d225\",\"result\":\"downloaded_observed\",\"staging_cleanup_pending\":null}\n"
+                             },
+                "downloadedBytes":  262144,
+                "queuedDownload":  {
+                                       "commandLine":  "fetchpath add http://127.0.0.1:49736/queued.bin --to \"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\" --wait",
+                                       "exitCode":  0,
+                                       "output":  "Added 8ce75e49  C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\nC:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\fp043\\queued\\queued.bin\n"
+                                   },
+                "queuedBytes":  262144,
+                "engineStatus":  {
+                                     "commandLine":  "fetchpath engine status",
+                                     "exitCode":  0,
+                                     "output":  "The Fetchpath engine 0.1.0 is running, started 2026-10-02 21:16.\n0 active downloads.\nInstalled: Fetchpath 0.1.0 (Custom): Core, Terminal. To change the components, download Fetchpath setup again and choose Change components.\n"
+                                 }
+            },
+    "update":  {
+                   "arguments":  "/S /UPDATE /COMPONENTS=full",
+                   "exitCode":  0,
+                   "before":  {
+                                  "type":  "custom",
+                                  "list":  "cli,core",
+                                  "desktop":  false,
+                                  "engine":  true,
+                                  "browser":  false,
+                                  "torrent":  false,
+                                  "nativeHostKeys":  0,
+                                  "onPath":  true,
+                                  "shortcuts":  1
+                              },
+                   "after":  {
+                                 "type":  "custom",
+                                 "list":  "cli,core",
+                                 "desktop":  false,
+                                 "engine":  true,
+                                 "browser":  false,
+                                 "torrent":  false,
+                                 "nativeHostKeys":  0,
+                                 "onPath":  true,
+                                 "shortcuts":  1
+                             },
+                   "engineStartsAfterUpdate":  {
+                                                   "commandLine":  "fetchpath ls",
+                                                   "exitCode":  0,
+                                                   "output":  "   #  ID        STATE           PROGRESS                NAME\n   1  8ce75e49  completed       100% of 256.0 KiB       queued.bin\n   2  b434df9d  completed       100% of 256.0 KiB       cli-download.bin\n   3  3b11e74a  completed       100% of 3.0 MiB         slow.bin\n   4  306f8183  completed       100% of 256.0 KiB       seeded.bin\n"
+                                               }
+               },
+    "uninstall":  {
+                      "exitCode":  0,
+                      "elapsedSeconds":  11.2,
+                      "installDirectoryRemains":  false,
+                      "uninstallEntriesRemain":  0,
+                      "installDirectoryOnUserPath":  false,
+                      "userPathAfter":  "C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Microsoft\\WindowsApps;",
+                      "userPathRestored":  true,
+                      "nativeHostKeysRemaining":  0,
+                      "deleteData":  false,
+                      "dataLog":  "plan: cmdline=[\"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Temp\\~nsu1.tmp\\Un.exe\"  /S ] checkbox= update=\r\nplan: after switch checkbox=\r\nplan: wipe=0\r\nremove: wipe=0\r\n",
+                      "dataRootsRemaining":  2,
+                      "outsideSentinelKept":  true,
+                      "installPathKeyRemaining":  true,
+                      "downloadedFilesKept":  true,
+                      "shortcutsRemaining":  0,
+                      "storedSelectionRemains":  false,
+                      "roamingDataKept":  true,
+                      "engineRunningBefore":  true,
+                      "fetchpathProcessesBefore":  [
+                                                       {
+                                                           "image":  "fetchpath.exe",
+                                                           "commandLine":  "\"C:\\Users\\WDAGUtilityAccount\\AppData\\Local\\Fetchpath\\fetchpath.exe\" engine"
+                                                       }
+                                                   ],
+                      "fetchpathProcessesAfter":  [
+
+                                                  ]
+                  },
+    "components":  {
+                       "requested":  "cli",
+                       "expectedType":  "custom",
+                       "expectedList":  "cli,core",
+                       "baseline":  true
+                   },
+    "failures":  [
+
+                 ],
+    "passed":  true,
+    "hostOsBuild":  "10.0.26300.0",
+    "recordedAt":  "2026-10-03T00:22:01.2622462Z",
+    "wallClockSeconds":  491
+}

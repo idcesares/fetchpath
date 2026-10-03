@@ -47,21 +47,80 @@ option, sets the terms for using Fetchpath.
    The first line printed must be the same as the long code at the start of
    the second. If they differ, delete both files and download them again.
 3. Double-click `Fetchpath_0.1.0_x64-setup.exe` and follow the installer.
-   In an interactive setup, you can choose whether to download the video and
-   audio tools. You can also choose to open the bundled browser extension
-   folder and see the Chrome or Edge setup steps. Both choices default to No;
-   silent setup skips them. The browser still asks you to load the extension.
+   Choose **Full** (recommended: the app, the terminal command, AI agent
+   support, browser integration and the torrent helper, about 37 MiB on disk)
+   or **Custom** to pick components, as described in
+   [Choosing components](#choosing-components). On the same page, an unticked
+   box offers to download the video and audio tools from their publishers now;
+   it defaults to No, and you can do it later in Settings. If you installed
+   browser integration, you can also choose to open the bundled browser
+   extension folder and see the Chrome or Edge setup steps; that choice
+   defaults to No too, and silent setup skips both. The browser still asks you
+   to load the extension.
    Fetchpath installs just for you, doesn't ask for administrator rights,
-   and goes into `%LOCALAPPDATA%\Fetchpath`. If your PC doesn't have the
-   Microsoft Edge WebView2 Runtime (almost every Windows 11 PC does), the
-   installer downloads it from Microsoft.
+   and goes into `%LOCALAPPDATA%\Fetchpath`. If you install the desktop app
+   and your PC doesn't have the Microsoft Edge WebView2 Runtime (almost every
+   Windows 11 PC does), the installer downloads it from Microsoft.
 4. Open Fetchpath from the Start menu. A short welcome banner appears the
-   first time; choose **Got it** when you've read it.
+   first time; choose **Got it** when you've read it. If you installed only
+   the terminal, the Start menu entry is **Fetchpath Terminal**.
 
 **Updating.** Run the new installer over the old one. Your download list,
-history and settings are kept. If downloads are running, the installer stops
-Fetchpath first; each download keeps what it has received and carries on from
-there the next time Fetchpath starts.
+history, settings and the components you chose are kept. If downloads are
+running, the installer stops Fetchpath first; each download keeps what it has
+received and carries on from there the next time Fetchpath starts.
+
+### Choosing components
+
+The download is the same size whatever you choose; the choice decides which
+files are copied and which entry points (shortcuts, the `fetchpath` command on
+your PATH, browser registration) are created. Installing a component never
+gives an AI agent access, never turns on sharing, and never downloads a tool
+by itself.
+
+| Component | What you get | Extra disk |
+| --- | --- | ---: |
+| **Core** (always) | The engine, the `fetchpath` program (command line, terminal app and AI agent server in one file), the guides and licences | 10.8 MiB |
+| **Desktop app** | The Fetchpath window, Start menu and desktop shortcuts. Needs Microsoft WebView2 | 13.3 MiB |
+| **Terminal** | The `fetchpath` command and the terminal app on your PATH. Without the desktop app, a **Fetchpath Terminal** Start menu entry | none |
+| **AI agents (MCP)** | Lets agent hosts start `fetchpath mcp` from your PATH. Agents get no access until you grant it | none |
+| **Browser integration** | The browser host and its registration for Chrome, Edge and Firefox, and the extension folder | 2.5 MiB |
+| **Torrent helper** | Needed for torrent and magnet downloads. Does not turn on seeding | 10.6 MiB |
+
+You need the app or the terminal, so you can manage downloads and approve
+requests. Choosing AI agents with neither adds the terminal. Without the torrent
+helper, a torrent link fails with a message that says to run setup again and add
+it. A browser capture without the app goes to the engine's inbox and shows in
+the terminal and in `fetchpath ls`.
+
+**Changing components later.** Run the setup file again (download it again if
+you no longer have it). When it finds Fetchpath installed, choose **Change
+components**, which is selected for you; **Repair** reinstalls the components
+you already have. Components you deselect are removed; your download list,
+history, settings, agent grants, media tools and downloaded files are not
+touched. An AI agent host configured with the full path to `fetchpath.exe`
+keeps working under the same grants after you deselect AI agents or Terminal;
+revoke it with `fetchpath agents revoke`. One configured with the bare
+`fetchpath` command stops starting once the PATH entry is gone.
+
+**Quiet installation.** These switches go after the setup file name:
+
+| Switch | Effect |
+| --- | --- |
+| `/S` | Silent. A fresh PC gets Full; an existing install keeps its components. Never downloads media tools, never shows browser guidance |
+| `/P` | Passive: progress shown, no questions |
+| `/COMPONENTS=desktop,cli,mcp,browser,torrent` | Installs exactly those (Core is implied; any order). `/COMPONENTS=full` is Full. Ignored with `/UPDATE` |
+| `/NS` | No shortcuts |
+| `/UPDATE` | The in-app updater's mode: keeps the stored components, removes nothing |
+| `/R` | Starts the desktop app afterwards, if it is installed |
+| `/D=FOLDER` | Install folder (last, no quotes) |
+
+Setup exits with code **10** and changes nothing when the `/COMPONENTS` value
+cannot be used: an unknown name (`web` is not in this build), an empty entry,
+neither `desktop` nor `cli`, or `mcp` without one of them. Quiet setup does not
+add the terminal for you. The reason is written to `%TEMP%\fetchpath-install.log`.
+Exit code 1 is Cancel and 2 is setup's own failure. To install the video and
+audio tools in a deployment, run `fetchpath tools install --yes` afterwards.
 
 **"Windows protected your PC."** Fetchpath 0.1.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise

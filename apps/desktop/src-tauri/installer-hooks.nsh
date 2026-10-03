@@ -45,6 +45,11 @@ Var FetchpathWipeData
   Pop $R7
 !macroend
 
+; Components (FP-099). installer.nsi has one section per component; these hooks
+; are section-aware (they ask which components are selected) and stay the single
+; place for the engine stop, the PATH edit, the native-host keys and the data
+; removal. Design: docs/architecture/specs/2026-10-02-installer-components-design.md.
+;
 ; Browser capture (FP-036). The host manifests are installed beside
 ; fetchpath-browser-host.exe with a relative `path`, which Chrome, Edge and
 ; Firefox all resolve against the manifest's own folder on Windows. Only these
@@ -157,31 +162,68 @@ FunctionEnd
   Pop $R9
 !macroend
 
-; The finish page says the command line came with the app (FP-044). This file is
-; included before the bundler's pages, and the bundler leaves this text unset.
-!define MUI_FINISHPAGE_TEXT "Fetchpath is installed.$\r$\n$\r$\nThe fetchpath command is installed too. Open a new terminal and type fetchpath --help to get started.$\r$\n$\r$\nClick Finish to close Setup."
+; The finish page text is set in installer.nsi (FpFinishShow): it depends on the
+; components that were installed.
+
+; One line per decision, in $TEMP\fetchpath-install.log, so a quiet install shows
+; why a selection was refused or derived. Never holds user data or secrets.
+!macro FETCHPATH_INSTALL_LOG TEXT
+  Push $R7
+  ClearErrors
+  FileOpen $R7 "$TEMP\fetchpath-install.log" a
+  ${IfNot} ${Errors}
+    FileSeek $R7 0 END
+    FileWrite $R7 "${TEXT}$\r$\n"
+    FileClose $R7
+  ${EndIf}
+  Pop $R7
+!macroend
+
+; The three per-user native-messaging keys belong to Browser integration (FP-099):
+; written when it is selected, removed when it is deselected and on uninstall.
+!macro FETCHPATH_REMOVE_HOST_KEYS
+  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}"
+  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}"
+  DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
+!macroend
 
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro FETCHPATH_STOP_ENGINE
 !macroend
 
+; Runs once, after every component is in place and the selection is known
+; (installer.nsi, section "-Finish"). Installing is never consent: nothing here
+; grants an agent, starts serving, enables sharing, or downloads a tool unless
+; the person ticked the media box on the installation type page.
 !macro NSIS_HOOK_POSTINSTALL
-  WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
-  WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
-  WriteRegStr HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.firefox.json"
-  DetailPrint "Registered the Fetchpath browser bridge for Chrome, Edge and Firefox."
+  ${If} ${SectionIsSelected} ${SecBrowser}
+    WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
+    WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
+    WriteRegStr HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.firefox.json"
+    DetailPrint "Registered the Fetchpath browser bridge for Chrome, Edge and Firefox."
+  ${Else}
+    !insertmacro FETCHPATH_REMOVE_HOST_KEYS
+  ${EndIf}
 
-  !insertmacro FETCHPATH_USER_PATH Add
+  ; The PATH entry exists while Terminal or AI agents is selected.
+  ${If} ${SectionIsSelected} ${SecCli}
+  ${OrIf} ${SectionIsSelected} ${SecMcp}
+    !insertmacro FETCHPATH_USER_PATH Add
+  ${Else}
+    !insertmacro FETCHPATH_USER_PATH Remove
+  ${EndIf}
   Delete "${FETCHPATH_UPDATE_HOLD}"
 
-  ; Tauri calls this hook after the installed files are in place. Its finish
-  ; page already uses both checkboxes (desktop shortcut and launch app), so an
-  ; interactive setup asks here. Quiet and passive setup must never download
-  ; optional software without a person choosing it.
+  ; Tauri calls this hook after the installed files are in place. Quiet and
+  ; passive setup must never download optional software without a person
+  ; choosing it, so only an interactive setup acts on the media box.
   ${IfNot} ${Silent}
   ${AndIf} $PassiveMode != 1
     ; The guided installer puts all three executables in this data folder.
-    ; An upgrade with them already present needs no new choice or download.
+    ; An upgrade with them already present needs no new download.
+    ${If} $FpMedia <> 1
+      Goto fetchpath_media_done
+    ${EndIf}
     ${If} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\yt-dlp.exe"
       ${If} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\ffmpeg.exe"
       ${AndIf} ${FileExists} "$APPDATA\app.fetchpath.desktop\media-tools\ffprobe.exe"
@@ -192,8 +234,7 @@ FunctionEnd
         Goto fetchpath_media_done
       ${EndIf}
     ${EndIf}
-    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Set up video and audio tools now?$\r$\n$\r$\nFetchpath will download yt-dlp and FFmpeg (including ffprobe) over the internet. These third-party tools have their own licenses (Unlicense and GPL-3.0-or-later). Fetchpath checks their pinned SHA-256 values before using them. You can do this later in Settings." IDNO fetchpath_media_done
-    DetailPrint "Setting up optional video and audio tools; download progress appears here."
+    DetailPrint "Downloading yt-dlp and FFmpeg (including ffprobe) from their publishers; Fetchpath checks their pinned SHA-256 values. Progress appears here."
     nsExec::ExecToLog '"$INSTDIR\fetchpath.exe" tools install --yes'
     Pop $R9
     StrCmp $R9 0 fetchpath_media_done
@@ -204,12 +245,14 @@ FunctionEnd
     ; Chrome and Edge require the person to add an unpacked extension in the
     ; browser. Opening this folder only starts those steps; it grants no browser
     ; permission and automatic capture remains off until enabled in the popup.
-    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Show how to add the optional Fetchpath browser extension to Chrome or Edge?$\r$\n$\r$\nYour browser will ask you to load it. You can also find these steps later in Fetchpath Settings." IDNO fetchpath_browser_done
-    ExecShell "open" "$INSTDIR\browser-extension"
-    ${If} ${Errors}
-      DetailPrint "Could not open the browser extension folder. Open it from Fetchpath Settings later."
+    ${If} ${SectionIsSelected} ${SecBrowser}
+      MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Show how to add the optional Fetchpath browser extension to Chrome or Edge?$\r$\n$\r$\nYour browser will ask you to load it. You can also find these steps later in Fetchpath Settings." IDNO fetchpath_browser_done
+      ExecShell "open" "$INSTDIR\browser-extension"
+      ${If} ${Errors}
+        DetailPrint "Could not open the browser extension folder. Open it from Fetchpath Settings later."
+      ${EndIf}
+      MessageBox MB_OK|MB_ICONINFORMATION "In Chrome, open chrome://extensions; in Edge, open edge://extensions. Turn on Developer mode, choose Load unpacked, then select the browser-extension folder that Setup opened. To check the connection later, open Fetchpath Settings > Browser extension."
     ${EndIf}
-    MessageBox MB_OK|MB_ICONINFORMATION "In Chrome, open chrome://extensions; in Edge, open edge://extensions. Turn on Developer mode, choose Load unpacked, then select the browser-extension folder that Setup opened. To check the connection later, open Fetchpath Settings > Browser extension."
     fetchpath_browser_done:
   ${EndIf}
 !macroend
@@ -278,9 +321,7 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}"
-  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}"
-  DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
+  !insertmacro FETCHPATH_REMOVE_HOST_KEYS
   !insertmacro FETCHPATH_REMOVE_SIGN_IN
   !insertmacro FETCHPATH_REMOVE_DATA
   Delete "${FETCHPATH_UPDATE_HOLD}"

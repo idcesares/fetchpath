@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-02",
+  "updated": "2026-10-03",
   "tasks": [
     {
       "id": "FP-001",
@@ -3001,8 +3001,8 @@
         "FP-081",
         "FP-094"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
@@ -3020,7 +3020,7 @@
       ],
       "acceptance": "Design a clear Full installation preset and Custom installation checkbox page with concise component descriptions. Engine/Core is required and cannot be deselected; at least one usable interface must be selected among available Desktop, CLI/TUI, MCP and future Web components. Define prerequisites for MCP-only and web-only choices so installation never leaves the person unable to connect, grant permissions or manage the instance; do not assume an MCP process supplies a human approval UI. Identify optional browser integration, torrent and media helpers separately from interfaces, including sizes, bundled versus later download behavior and dependencies. Full selects only components available in that build, not planned capabilities. The engine, CLI/TUI and MCP currently share fetchpath.exe: decide explicitly whether selection controls installed entry points/enabled capabilities or requires a measured packaging split, and describe actual disk impact honestly. Removing Desktop should not require its UI runtime if the chosen packaging supports a headless install. Keep the per-user install and one engine owner. Specify quiet-install defaults/options, persisted selections, upgrade/repair behavior, adding/removing components later, and shared binary/helper ownership. Installing a component never implicitly grants agents access, starts remote serving, enables sharing/seeding, registers external agent clients or downloads optional tools without the stated choice. Apply the design system within native installer constraints. Web selection remains gated on FP-092 and no public-network exposure is implied.",
       "verification": "Inspect the current generated NSIS package and executable boundaries; produce a selection/dependency matrix for Desktop-only, CLI/TUI-only, MCP-only and future Web-only, Full, Custom with no interface, quiet install and upgrade from existing full installs. Independent strong review of lifecycle, policy defaults and component-removal boundaries. Record any packaging split as a separate explicit implementation gate rather than assume selectable binaries already exist.",
-      "evidence": [],
+      "evidence": ["docs/architecture/specs/2026-10-02-installer-components-design.md"],
       "blockedReason": null
     },
     {
@@ -3030,8 +3030,8 @@
       "dependsOn": [
         "FP-098"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "done",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
@@ -3053,7 +3053,7 @@
       ],
       "acceptance": "Implement the accepted FP-098 Full/Custom component contract using the existing installer/package conventions. Core is always selected; require one usable available interface, enforce module prerequisites, show descriptions and real installation/download consequences, and keep unshipped Web unavailable until FP-092 passes. Create shortcuts, PATH entries, browser registration and capability entry points only as specified by the chosen components, accounting for shared fetchpath.exe engine launch needs. Remember selections across upgrade and support later component changes without deleting queue/settings or binaries still required by selected components. Honor explicit choices in quiet installation and repair, preserve the single-owner engine stop/restart ordering, and avoid enabling remote access, sharing or agent grants from Full alone. Support an install without Desktop according to the accepted packaging design. Do not invent or introduce an unreviewed binary split.",
       "verification": "Clean Windows image runs for Full and representative Custom/headless selections, no-interface rejection, prerequisite handling, quiet defaults/options, upgrade with active downloads and preserved selections, and adding/removing components. Check installed files, entry points, browser registrations and runtime prerequisites against the matrix; run focused installer/lifecycle tests and independent strong review.",
-      "evidence": [],
+      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/evidence/windows/sandbox-components-full.json", "docs/development/evidence/windows/sandbox-components-terminal-only.json", "docs/development/evidence/windows/sandbox-components-upgrade-to-terminal.json"],
       "blockedReason": null
     },
     {

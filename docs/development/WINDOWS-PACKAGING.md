@@ -414,8 +414,7 @@ executable and was confirmed present in the installed directory.
 
 What is actually redistributed was determined from this repository, not assumed:
 `Cargo.lock`, the `curl` features in `crates/fetchpath-core/Cargo.toml`, the
-absence of `bundle.externalBin` and helper `bundle.resources` entries in
-`tauri.conf.json`, and printable strings read out of the compiled binaries.
+`bundle.externalBin` entries in `tauri.release.conf.json`, and printable strings read out of the compiled binaries.
 
 **Statically linked into the Fetchpath binary**, via
 `curl = { features = ["static-curl", "http2"] }`:
@@ -441,8 +440,8 @@ platform-gated dependencies of `curl`.
   installer downloads Microsoft's bootstrapper when the runtime is missing and
   embeds no Microsoft binary.
 - **yt-dlp, FFmpeg and ffprobe** - supervised as external child processes and
-  never bundled. `tauri.conf.json` has no `externalBin` entry and no
-  `media-tools` resource, and `adapters/media` discovers them from
+  never bundled. The release config bundles only `fetchpath` and the torrent helper as
+  `externalBin` (the base `tauri.conf.json` has none) and no `media-tools` resource, and `adapters/media` discovers them from
   `FETCHPATH_YT_DLP` plus `FETCHPATH_FFMPEG_DIR`, from
   `FETCHPATH_MEDIA_TOOLS_DIR`, or from a `media-tools` directory an operator
   places beside the executable. Interactive NSIS setup now offers a default-off
@@ -466,7 +465,7 @@ start ([evidence](evidence/windows/sandbox-lifecycle.json)), and the owner's
 interactive Sandbox pass of the setup choices, torrent intake and Settings
 window found no defect (FP-079 to FP-082).
 
-Interactive NSIS setup offers two default-off steps: media tools through the
+Interactive NSIS setup offers two default-off steps (since FP-099 the media box is on the installation type page): media tools through the
 pinned `fetchpath tools install`, and browser extension guidance that opens the
 bundled extension folder and shows Chrome/Edge's Load unpacked steps; browsers
 must confirm the extension themselves because there is no store listing or ID
@@ -517,3 +516,41 @@ link.
 - **Updates are manual.** There is no updater: a new version is a new installer
   run over the old one, which is what was tested. `bundle.windows.allowDowngrades`
   is `false`, so a lower version will not silently replace a higher one.
+
+## Installer components (FP-099)
+
+Built: `src-tauri/installer.nsi` forks Tauri's NSIS template (recorded upstream
+hash; `tests/installer/template-fork.test.mjs` fails when the installed CLI's
+template differs). One section per component (Core, Desktop with its WebView2
+step, Terminal, AI agents, Browser integration, Torrent helper), an
+installation type page (Full or Custom, unticked media box), a components page,
+"Change components / Repair / Uninstall" on a same-version reinstall, quiet
+`/COMPONENTS=` (exit 10 and nothing touched when invalid; `/UPDATE` ignores it),
+the selection stored with the uninstall entry (`FetchpathInstallType`,
+`FetchpathComponents`, `FetchpathComponentsSchema`; unreadable values are derived
+from disk), removal of deselected components after the engine stops, and
+read-only "installed components" in `fetchpath engine status` and Settings. The
+torrent helper's missing-file error now says to rerun setup. `fetchpath.exe`
+is still one binary; no split. Hooks, FP-100 data removal and the engine
+stop/restart order are unchanged.
+
+Verified (Windows Sandbox, clean image, one installer, one run at a time;
+evidence in `evidence/windows/`): `sandbox-components-full.json` (default
+install, Full stored, `/UPDATE /COMPONENTS=cli` changes nothing, keep-data
+uninstall), `sandbox-components-terminal-only.json` (nine refused selections
+exit 10 with the machine untouched; `/COMPONENTS=cli` installs no desktop exe,
+no WebView2 bootstrapper, Terminal Start entry, PATH, no host keys; CLI and
+engine work; uninstall clean), `sandbox-components-upgrade-to-terminal.json`
+(earlier Full build seeded with history, a setting, a data file and a running
+download, then `/COMPONENTS=cli`: desktop exe, shortcuts, host keys, host,
+extension and helper removed; data, setting, history kept; the download
+finished). `node --test` covers the template, `MAINBINARYNAME` keying,
+parsing, storage, removal and no-consent rules as text.
+
+Limits: the interactive pages (type, components, finish, reinstall radios) are
+compiled and checked as text but were not driven in the Sandbox. Selections not
+run there (Desktop-only, Custom with MCP, add components later, repair) rest on
+the same code paths and the static checks. One early Full run's WebView2
+installer step failed (setup exit 2) and passed on rerun; its log was not yet
+captured. Media tool download sizes were not measured. DPI of the sidebar
+bitmaps was not checked (no bitmaps are configured yet).
