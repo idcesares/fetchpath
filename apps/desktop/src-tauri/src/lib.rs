@@ -636,6 +636,14 @@ fn browser_setup_status(app: AppHandle) -> browser_setup::BrowserSetupStatus {
     browser_setup::status(app.path().resource_dir().ok().as_deref())
 }
 
+/// What setup installed, read-only (FP-099). `None` for a copy that setup did
+/// not install, such as a development build. The components are changed by
+/// running Fetchpath setup again, so Settings only says so.
+#[tauri::command]
+fn installed_components() -> Option<String> {
+    fetchpath_protocol::install::installed_selection().map(|selection| selection.summary())
+}
+
 #[tauri::command]
 fn reveal_extension_folder(app: AppHandle) -> Result<(), String> {
     browser_setup::reveal_extension_folder(app.path().resource_dir().ok().as_deref())
@@ -1056,6 +1064,7 @@ pub fn run() {
             install_media_tools,
             use_media_tools_dir,
             browser_setup_status,
+            installed_components,
             cli_path,
             reveal_extension_folder,
             open_project_page,

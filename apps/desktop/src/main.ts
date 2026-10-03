@@ -291,6 +291,7 @@ const addCancelButton = required<HTMLButtonElement>("add-cancel");
 const emptyAddButton = required<HTMLButtonElement>("empty-add");
 const queueEmpty = required<HTMLElement>("queue-empty");
 
+const installedComponents = required<HTMLParagraphElement>("installed-components");
 const browserSetupState = required<HTMLParagraphElement>("browser-setup-state");
 const browserSetupDetail = required<HTMLParagraphElement>("browser-setup-detail");
 const browserSetupSteps = required<HTMLOListElement>("browser-setup-steps");
@@ -476,7 +477,7 @@ async function showSettings(category?: string): Promise<void> {
   if (category) settingsCategories.find((button) => button.dataset.settingsCategory === category)?.click();
   clearError(settingsError);
   openDialog(settingsDialog, settingsCategories.find((button) => button.getAttribute("aria-pressed") === "true") ?? settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache(), refreshLan()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache(), refreshLan()]);
 }
 
 /* Rules (FP-075) -------------------------------------------------------------
@@ -1118,6 +1119,18 @@ document.addEventListener("paste", (event) => {
   event.preventDefault();
   openComposer(links.join("\n"));
 });
+
+/* Installed components (FP-099): read-only; setup changes them. ------------ */
+
+async function refreshInstalledComponents(): Promise<void> {
+  try {
+    const summary = await invoke<string | null>("installed_components");
+    installedComponents.textContent =
+      summary ?? "This copy was not installed with the Fetchpath installer, so it has no component list.";
+  } catch {
+    installedComponents.textContent = "Could not read the installed components.";
+  }
+}
 
 /* Browser extension ------------------------------------------------------- */
 

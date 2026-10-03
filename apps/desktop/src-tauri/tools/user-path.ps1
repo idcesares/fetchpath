@@ -1,5 +1,5 @@
 <#
-Adds or removes one folder in the per-user PATH (FP-037).
+Adds, removes or tests for one folder in the per-user PATH (FP-037; Test is FP-099).
 
 Run by the installer hooks. NSIS cannot do this safely: its registry reads
 return an EMPTY string for any value longer than NSIS_MAX_STRLEN (1024), so a
@@ -17,7 +17,7 @@ Safety rules, each enforced below:
   -Current VALUE -DryRun   prints the value that would be written, for tests.
 #>
 param(
-  [Parameter(Mandatory)][ValidateSet('Add', 'Remove')][string]$Action,
+  [Parameter(Mandatory)][ValidateSet('Add', 'Remove', 'Test')][string]$Action,
   [Parameter(Mandatory)][string]$Dir,
   [string]$Current,
   [switch]$DryRun
@@ -58,6 +58,19 @@ if ($DryRun) {
   if ($null -ne $next) { Assert-Safe $Current $next $Action $Dir }
   if ($null -eq $next) { '<unchanged>' } else { $next }
   exit 0
+}
+
+if ($Action -eq 'Test') {
+  # Exit 0 when -Dir is in the user PATH, 3 when it is not. Read-only: setup uses
+  # it to rebuild a selection when the stored one cannot be read.
+  $reader = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $false)
+  if (-not $reader) { exit 3 }
+  try {
+    $value = [string]$reader.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  } finally { $reader.Close() }
+  $wanted = $Dir.TrimEnd([char]92)
+  $hit = @($value -split ';' | Where-Object { $_ -and $_.TrimEnd([char]92) -ieq $wanted })
+  if ($hit.Count) { exit 0 } else { exit 3 }
 }
 
 $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)

@@ -16,6 +16,7 @@ pub mod describe;
 pub mod error;
 pub mod frame;
 pub mod ids;
+pub mod install;
 #[cfg(windows)]
 pub mod launch;
 pub mod message;

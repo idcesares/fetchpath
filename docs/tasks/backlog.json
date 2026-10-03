@@ -3030,8 +3030,8 @@
       "dependsOn": [
         "FP-098"
       ],
-      "status": "todo",
-      "owner": null,
+      "status": "in_progress",
+      "owner": "claude (lead)",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",

@@ -15,7 +15,13 @@ param(
     [string] $OutputPath,
     [int] $TimeoutMinutes = 20,
     # FP-100: the uninstall step passes /DELETEAPPDATA and checks the removal.
-    [switch] $DeleteData
+    [switch] $DeleteData,
+    # FP-099: install with /COMPONENTS=<this> (for example `cli`, or
+    # `desktop,cli,mcp,browser,torrent`). Empty is the default fresh install, Full.
+    [string] $Components = '',
+    # FP-099: an earlier (pre-components, Full) installer to install and seed first;
+    # the installer under test is then run over it with -Components.
+    [string] $BaselineInstallerPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +54,12 @@ $resultDirectory = Join-Path $stage 'out'
 [System.IO.Directory]::CreateDirectory($resultDirectory) | Out-Null
 $installerName = [System.IO.Path]::GetFileName($InstallerPath)
 Copy-Item -LiteralPath $InstallerPath -Destination $inputDirectory
+$baselineName = $null
+if ($BaselineInstallerPath) {
+    if (-not (Test-Path -LiteralPath $BaselineInstallerPath -PathType Leaf)) { throw "Baseline installer not found: $BaselineInstallerPath" }
+    $baselineName = 'baseline-' + [System.IO.Path]::GetFileName($BaselineInstallerPath)
+    Copy-Item -LiteralPath $BaselineInstallerPath -Destination (Join-Path $inputDirectory $baselineName)
+}
 foreach ($script in @('sandbox-inner.ps1', 'uia-common.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination $inputDirectory
 }
@@ -56,7 +68,9 @@ $sandboxIn = 'C:\fp\in'
 $sandboxOut = 'C:\fp\out'
 $logon = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sandboxIn\sandbox-inner.ps1 " +
     "-InstallerPath $sandboxIn\$installerName -OutputPath $sandboxOut\result.json" +
-    $(if ($DeleteData) { ' -DeleteData' } else { '' })
+    $(if ($DeleteData) { ' -DeleteData' } else { '' }) +
+    $(if ($Components) { " -Components $Components" } else { '' }) +
+    $(if ($baselineName) { " -BaselineInstallerPath $sandboxIn\$baselineName" } else { '' })
 $configuration = @"
 <Configuration>
   <MappedFolders>

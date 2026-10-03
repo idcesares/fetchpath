@@ -400,8 +400,22 @@ output; you never run it yourself. Give each host its own name with
 | Codex | in `~/.codex/config.toml`: `[mcp_servers.fetchpath]` with `command = "fetchpath"` and `args = ["mcp", "--agent", "codex"]` |
 | VS Code | in `.vscode/mcp.json`: `"servers": {"fetchpath": {"type": "stdio", "command": "fetchpath", "args": ["mcp", "--agent", "vscode"]}}` |
 
-Restart the host after installing Fetchpath so it finds `fetchpath` on your
-PATH, or give the full path to `fetchpath.exe`.
+**Recommended: give the host the full path to `fetchpath.exe`**, in place of
+`fetchpath` in the table. Setup puts it in `%LOCALAPPDATA%\Fetchpath` unless you
+chose another folder. For Claude Code:
+
+```powershell
+claude mcp add fetchpath -- "$env:LOCALAPPDATA\Fetchpath\fetchpath.exe" mcp --agent claude-code
+```
+
+A full path keeps working whichever components you later choose in Fetchpath
+setup. The bare `fetchpath` command needs the PATH entry, which setup adds only
+while the Terminal or AI agents component is installed; restart the host after
+installing so it sees the new PATH. If you later remove both components, a
+host configured with the bare command stops starting (it fails closed), while a
+host configured with the full path still runs under the same grants and
+approvals. To stop an agent for good, use `fetchpath agents revoke` or
+Settings > Agent access.
 
 The agent gets these tools: `download` (a file, or a video at a quality;
 optionally waiting, with progress), `inspect_link`, `list_downloads`,

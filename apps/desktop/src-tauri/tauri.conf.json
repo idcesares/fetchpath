@@ -86,7 +86,8 @@
         ],
         "displayLanguageSelector": false,
         "compression": "lzma",
-        "installerHooks": "./installer-hooks.nsh"
+        "installerHooks": "./installer-hooks.nsh",
+        "template": "./installer.nsi"
       }
     }
   }
