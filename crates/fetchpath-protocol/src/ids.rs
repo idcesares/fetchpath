@@ -107,6 +107,12 @@ uuid_id!(
     AttemptId
 );
 uuid_id!(
+    /// One engine's data folder: the queue a client means to act on
+    /// (contract D6). Created once and never changed; the name shown beside
+    /// it is a setting.
+    InstanceId
+);
+uuid_id!(
     /// A stored protected request context, such as a browser capture's
     /// cookies. The secret itself never crosses the protocol.
     CredentialRef

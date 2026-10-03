@@ -317,7 +317,18 @@ pub(crate) struct Approval {
     denied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     withdrawn: bool,
+    /// When the wait began (FP-101). Absent from a request saved before
+    /// expiry existed, which then counts from when the download was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    requested_at_ms: Option<u64>,
+    /// Nobody decided within the expiry period (contract D6).
+    #[serde(default, skip_serializing_if = "is_false")]
+    expired: bool,
 }
+
+/// How long a request waits for the person before it expires (contract D6,
+/// decision O3).
+pub const APPROVAL_EXPIRY_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 impl QueueRecord {
     /// Records who asked for the job and holds it for approval when needed.
@@ -335,6 +346,8 @@ impl QueueRecord {
             reasons,
             denied: false,
             withdrawn: false,
+            requested_at_ms: Some(now_ms()),
+            expired: false,
         });
         self.view.state = "awaiting_approval".into();
         self.view.error = None;
@@ -349,7 +362,16 @@ impl QueueRecord {
     fn awaiting_approval(&self) -> bool {
         self.approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied && !approval.withdrawn)
+            .is_some_and(|approval| !approval.denied && !approval.withdrawn && !approval.expired)
+    }
+
+    /// Waiting for the person for longer than the expiry period at `now`.
+    fn approval_expired_at(&self, now: u64) -> bool {
+        self.awaiting_approval()
+            && self.approval.as_ref().is_some_and(|approval| {
+                let since = approval.requested_at_ms.unwrap_or(self.created_at_ms);
+                now.saturating_sub(since) >= APPROVAL_EXPIRY_MS
+            })
     }
 }
 
@@ -477,6 +499,7 @@ pub struct QueueStats {
     /// a link-capacity measurement.
     combined_bytes_per_second: u64,
     max_active_downloads: usize,
+    awaiting_approval: usize,
 }
 
 /// Where the content cache lives, and the bounds of its quota (FP-032).
@@ -695,6 +718,33 @@ impl Session {
 
     pub fn settings(&self) -> Settings {
         self.settings.lock().expect("settings poisoned").clone()
+    }
+
+    /// Whether the engine is kept running in the background (FP-101).
+    pub fn hub_mode(&self) -> bool {
+        self.settings.lock().expect("settings poisoned").hub_mode
+    }
+
+    /// Downloads transferring now, as opposed to queued or scheduled.
+    pub fn running_count(&self) -> usize {
+        if self.read_only.is_some() {
+            return 0;
+        }
+        // Read as it stands: reconciling belongs to the engine's own pass.
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        state
+            .records
+            .iter()
+            .filter(|record| record.view.state == "running")
+            .count()
+    }
+
+    /// The name clients show for this engine (contract D6).
+    pub fn instance_name(&self) -> String {
+        self.settings
+            .lock()
+            .expect("settings poisoned")
+            .display_instance_name()
     }
 
     /// True when the stored settings file was unusable on load and defaults
@@ -1458,8 +1508,9 @@ impl Session {
             if approval.denied && !by.is_user() {
                 return Err("The person declined this download.".into());
             }
-            // An agent retrying what it withdrew asks the person again.
-            if approval.withdrawn && !by.is_user() {
+            // An agent retrying what it withdrew, or what nobody decided on
+            // in time, asks the person again.
+            if (approval.withdrawn || approval.expired) && !by.is_user() {
                 for reason in &approval.reasons {
                     if !hold.contains(reason) {
                         hold.push(*reason);
@@ -1853,6 +1904,32 @@ impl Session {
     /// Refuses a job that waits for approval. It ends cancelled, and its
     /// agent is told the person declined it.
     pub fn deny(&self, job_id: &str) -> Result<JobSnapshot, String> {
+        self.decline(job_id, false)
+    }
+
+    /// Ends every request nobody decided on within the expiry period
+    /// (contract D6), as a denial does. Run by the engine's own pass.
+    pub fn expire_approvals(&self) {
+        if self.read_only.is_some() {
+            return;
+        }
+        let now = now_ms();
+        let expired: Vec<String> = {
+            let state = self.inner.lock().expect("desktop jobs poisoned");
+            state
+                .records
+                .iter()
+                .filter(|record| record.approval_expired_at(now))
+                .map(|record| record.id.clone())
+                .collect()
+        };
+        for job_id in expired {
+            let _ = self.decline(&job_id, true);
+        }
+    }
+
+    /// Ends a request: the person declined it, or nobody decided in time.
+    fn decline(&self, job_id: &str, expired: bool) -> Result<JobSnapshot, String> {
         let stopped = {
             let mut state = self.inner.lock().expect("desktop jobs poisoned");
             let record = find_record_mut(&mut state, job_id)?;
@@ -1877,11 +1954,19 @@ impl Session {
         }
         {
             if let Some(approval) = record.approval.as_mut() {
-                approval.denied = true;
+                if expired {
+                    approval.expired = true;
+                } else {
+                    approval.denied = true;
+                }
             }
             let now = now_ms();
             record.view.state = "cancelled".into();
-            record.view.error = Some("The person declined this download.".into());
+            record.view.error = Some(if expired {
+                "Nobody approved this download within 7 days.".into()
+            } else {
+                "The person declined this download.".into()
+            });
             record.view.action = None;
             record.view.retryable = false;
             record.finished_at_ms = Some(now);
@@ -2380,6 +2465,7 @@ impl Session {
                         stats.completed_bytes.saturating_add(view.bytes_received);
                 }
                 "failed" | "needs_source" => stats.failed += 1,
+                "awaiting_approval" => stats.awaiting_approval += 1,
                 _ => {}
             }
             if view.state == "running" {
@@ -2956,7 +3042,7 @@ impl QueueRecord {
         let awaiting_approval = saved
             .approval
             .as_ref()
-            .is_some_and(|approval| !approval.denied);
+            .is_some_and(|approval| !approval.denied && !approval.expired);
         let (job, state, error, action, retryable) = if let Some(problem) = metadata_error {
             (None, "failed".into(), Some(problem.into()), None, false)
         } else if awaiting_approval {

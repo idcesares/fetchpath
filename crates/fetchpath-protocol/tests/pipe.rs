@@ -50,7 +50,7 @@ enum Seen {
     /// With the principal the client declared.
     Authenticated(String),
     AuthFailed(String),
-    Command(CommandEnvelope),
+    Command(Box<CommandEnvelope>),
     Ended(Option<String>),
 }
 
@@ -142,7 +142,7 @@ fn serve(
     loop {
         match connection.receive() {
             Ok(Some(envelope)) => {
-                let _ = tx.send(Seen::Command(envelope.clone()));
+                let _ = tx.send(Seen::Command(Box::new(envelope.clone())));
                 if respond == Respond::DropFirst {
                     let mut dropped = dropped_once.lock().unwrap();
                     if !*dropped {
@@ -289,7 +289,10 @@ fn raw_authenticate(file: &mut File) {
         },
     )
     .unwrap();
-    assert_eq!(raw_read::<Handshake>(file), Handshake::Welcome);
+    assert_eq!(
+        raw_read::<Handshake>(file),
+        Handshake::Welcome { instance_id: None }
+    );
 }
 
 #[test]
@@ -492,7 +495,10 @@ fn the_engine_refuses_a_wrong_proof_and_a_replayed_one() {
         },
     )
     .unwrap();
-    assert_eq!(raw_read::<Handshake>(&mut first), Handshake::Welcome);
+    assert_eq!(
+        raw_read::<Handshake>(&mut first),
+        Handshake::Welcome { instance_id: None }
+    );
 
     // The same hello and the recorded proof, replayed on a new connection.
     let mut replay = raw_open(&engine.name);

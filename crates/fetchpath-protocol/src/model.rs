@@ -307,6 +307,10 @@ pub struct QueueStats {
     /// Sum of observed per-download rates, not a link-capacity measurement.
     pub combined_bytes_per_second: u64,
     pub max_active_downloads: u64,
+    /// Downloads waiting for the person to approve them (FP-101), so a
+    /// management surface such as the tray can say so without listing jobs.
+    #[serde(default)]
+    pub awaiting_approval: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -505,6 +509,16 @@ pub struct EngineSettings {
     /// is".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub density: Option<Density>,
+    /// The name shown for this engine on every client (contract D6).
+    /// Absent from an update means "leave it as it is"; empty means the
+    /// computer's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_name: Option<String>,
+    /// Keep the engine running in the background: no idle stop, started at
+    /// sign-in (which it turns on), and the computer kept awake while
+    /// downloads run. Absent from an update means "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_mode: Option<bool>,
 }
 
 /// A model or dataset repository resolved to one commit (FP-022). Each file
@@ -666,4 +680,15 @@ pub struct EngineStatus {
     /// unchanged and every change is refused with this error (FP-070).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_read_only: Option<crate::error::ProtocolError>,
+    /// Which engine this is (contract D6). Absent from an engine without an
+    /// identity, such as an in-process test engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<InstanceInfo>,
+}
+
+/// An engine's stable identity and the name the person gave it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InstanceInfo {
+    pub id: crate::ids::InstanceId,
+    pub name: String,
 }

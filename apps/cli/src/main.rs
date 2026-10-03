@@ -36,6 +36,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
+  fetchpath hub [on | off]                    keep the engine running in the background
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
   fetchpath cache [status | clear]            verified copies kept for downloads with a checksum
   fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
@@ -105,6 +106,7 @@ fn main() {
         Some("history") => queue::history(&args[1..]),
         Some("settings") => queue::settings(&args[1..]),
         Some("engine") => engine::run(&args[1..]),
+        Some("hub") => queue::hub(&args[1..]),
         Some("tools") => tools::run(&args[1..]),
         Some("folder") => reveal::run(&args[1..]),
         Some("rules") => rules::run(&args[1..]),

@@ -167,6 +167,9 @@ pub enum Action {
     /// Wait for the person to approve or deny the job in Fetchpath. An
     /// agent relays this rather than retrying.
     AwaitApproval,
+    /// Choose which Fetchpath instance to act on; this one is not the one
+    /// the command meant (contract D6).
+    SelectInstance,
     #[serde(other)]
     Unknown,
 }

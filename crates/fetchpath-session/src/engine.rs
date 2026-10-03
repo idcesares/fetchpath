@@ -30,11 +30,11 @@ use fetchpath_protocol::message::{
     CommandResult, ControlOutcome, JobEvent, ProgressKind, ProgressSample, StreamPosition,
 };
 use fetchpath_protocol::model::{
-    self, EngineStatus, JobDetails, MediaInspection, MediaVariant, MediaVariantKind, QueueStats,
-    Segment,
+    self, EngineStatus, InstanceInfo, JobDetails, MediaInspection, MediaVariant, MediaVariantKind,
+    QueueStats, Segment,
 };
 use fetchpath_protocol::principal::Principal;
-use fetchpath_protocol::{JobId, SCHEMA_VERSION, Timestamp};
+use fetchpath_protocol::{InstanceId, JobId, SCHEMA_VERSION, Timestamp};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -213,6 +213,9 @@ pub struct Engine {
     sample_cursor: AtomicU64,
     /// New jobs per agent in the last hour (contract D1).
     rates: Mutex<RateWindow>,
+    /// This engine's data folder identity (contract D6). `None` only for
+    /// engines without one, such as in-process tests.
+    instance: Option<InstanceId>,
 }
 
 impl Engine {
@@ -229,13 +232,68 @@ impl Engine {
     }
 
     pub fn new(session: Arc<Session>) -> Arc<Self> {
+        Self::build(session, None)
+    }
+
+    /// An engine that is the instance `instance` (contract D6): it refuses a
+    /// change that does not name it and any command naming another.
+    pub fn with_instance(session: Arc<Session>, instance: InstanceId) -> Arc<Self> {
+        Self::build(session, Some(instance))
+    }
+
+    fn build(session: Arc<Session>, instance: Option<InstanceId>) -> Arc<Self> {
         Arc::new(Self {
             session,
             commands: Mutex::new(()),
             started_at: Timestamp::now(),
             sample_cursor: AtomicU64::new(0),
             rates: Mutex::new(RateWindow::default()),
+            instance,
         })
+    }
+
+    pub fn instance_id(&self) -> Option<&InstanceId> {
+        self.instance.as_ref()
+    }
+
+    /// This engine's identity and current name, when it has an identity.
+    pub fn instance(&self) -> Option<InstanceInfo> {
+        self.instance.clone().map(|id| InstanceInfo {
+            id,
+            name: self.session.instance_name(),
+        })
+    }
+
+    /// Refuses a command meant for another instance, and a change that does
+    /// not say which instance it means (contract D6). Reads may leave it out.
+    fn check_instance(&self, envelope: &CommandEnvelope) -> Result<(), ProtocolError> {
+        let Some(own) = &self.instance else {
+            return Ok(());
+        };
+        let meant = match &envelope.expected_instance_id {
+            Some(meant) => meant,
+            None if !envelope.payload.changes_state() => return Ok(()),
+            None => {
+                return Err(error(
+                    "contract.wrong_instance",
+                    ErrorScope::Command,
+                    "This change does not say which Fetchpath it is for. Update or restart the app that sent it.",
+                )
+                .with_action(Action::SelectInstance));
+            }
+        };
+        if meant == own {
+            return Ok(());
+        }
+        Err(error(
+            "contract.wrong_instance",
+            ErrorScope::Command,
+            format!(
+                "This command was meant for another Fetchpath, not {}. Choose the one you mean and try again.",
+                self.session.instance_name()
+            ),
+        )
+        .with_action(Action::SelectInstance))
     }
 
     pub fn session(&self) -> &Arc<Session> {
@@ -266,6 +324,7 @@ impl Engine {
                 "a subscription is opened with subscribe, not execute",
             ));
         }
+        self.check_instance(envelope)?;
         policy::authorize(principal, &envelope.payload)?;
         if !envelope.payload.is_mutating() {
             return self.query(principal, &envelope.payload);
@@ -1104,6 +1163,7 @@ impl Engine {
                         completed_bytes: stats.completed_bytes,
                         combined_bytes_per_second: stats.combined_bytes_per_second,
                         max_active_downloads: stats.max_active_downloads as u64,
+                        awaiting_approval: stats.awaiting_approval as u64,
                     },
                 })
             }
@@ -1239,6 +1299,7 @@ impl Engine {
                         },
                         queue_cursor: if person { durable.engine.cursor } else { 0 },
                         queue_read_only: self.read_only_error(),
+                        instance: self.instance(),
                     },
                 })
             }
@@ -1263,6 +1324,7 @@ impl Engine {
         if envelope.schema_version != SCHEMA_VERSION {
             return Err(ProtocolError::unsupported_version(envelope.schema_version));
         }
+        self.check_instance(envelope)?;
         policy::authorize(principal, &envelope.payload)?;
         if let Command::SubscribeJob { job_id, .. } = &envelope.payload
             && !principal.is_user()
@@ -1377,6 +1439,7 @@ impl Engine {
     /// ledgered commands. Never waits on a subscriber.
     pub fn reconcile(&self) {
         let _serial = self.commands.lock().unwrap_or_else(|p| p.into_inner());
+        self.session.expire_approvals();
         let _ = self.session.list();
     }
 

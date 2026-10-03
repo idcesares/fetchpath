@@ -330,6 +330,13 @@ pub struct Settings {
     /// `comfortable` or `compact`.
     #[serde(default)]
     pub density: Option<String>,
+    /// The name this engine shows on every client (contract D6). Absent
+    /// leaves it unchanged; blank returns to the computer's name.
+    #[serde(default)]
+    pub instance_name: Option<String>,
+    /// Keep the engine running in the background. Absent leaves it.
+    #[serde(default)]
+    pub hub_mode: Option<bool>,
 }
 
 impl Settings {
@@ -360,6 +367,8 @@ impl Settings {
                 }
                 .into(),
             ),
+            instance_name: settings.instance_name.clone(),
+            hub_mode: settings.hub_mode,
         }
     }
 
@@ -390,6 +399,8 @@ impl Settings {
                 Some("comfortable") => Some(Density::Comfortable),
                 _ => None,
             },
+            instance_name: self.instance_name.clone(),
+            hub_mode: self.hub_mode,
         }
     }
 }
@@ -706,6 +717,8 @@ mod tests {
             start_engine_at_sign_in: Some(true),
             cache_quota_bytes: Some(1 << 30),
             density: Some(Density::Comfortable),
+            instance_name: Some("Studio PC".into()),
+            hub_mode: Some(false),
         };
         let shown = Settings::from_engine(&engine);
         assert_eq!(serde_json::to_value(&shown).unwrap()["theme"], "dark");

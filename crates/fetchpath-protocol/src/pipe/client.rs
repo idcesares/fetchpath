@@ -6,6 +6,7 @@ use crate::client::{EngineClient, EventStream, StreamItem, Subscription};
 use crate::command::{Command, CommandEnvelope};
 use crate::error::{Action, ProtocolError};
 use crate::frame::decode_server_message;
+use crate::ids::InstanceId;
 use crate::message::{CommandResult, ServerMessage};
 use crate::principal::Principal;
 use std::sync::{Arc, Mutex};
@@ -15,9 +16,15 @@ use std::time::{Duration, Instant};
 pub struct PipeClient {
     stream: Arc<Stream>,
     limits: Limits,
+    instance_id: Option<InstanceId>,
 }
 
 impl PipeClient {
+    /// The engine instance this connection reached, when the engine has one.
+    pub fn instance_id(&self) -> Option<&InstanceId> {
+        self.instance_id.as_ref()
+    }
+
     /// Connects and runs the handshake. The engine must prove it holds the
     /// same secret before anything is sent, so a process squatting on the
     /// pipe name learns nothing.
@@ -120,7 +127,11 @@ impl PipeClient {
             deadline.saturating_duration_since(Instant::now()),
         )?;
         match stream.read_handshake(deadline)? {
-            Handshake::Welcome => Ok(Self { stream, limits }),
+            Handshake::Welcome { instance_id } => Ok(Self {
+                stream,
+                limits,
+                instance_id,
+            }),
             _ => Err(stream.fail(handshake_failed("expected welcome"))),
         }
     }
@@ -186,6 +197,10 @@ impl PipeClient {
 /// [`EngineClient`] over the pipe. Commands share one connection, opened on
 /// first use and reopened once if it was lost; each subscription gets its
 /// own connection so events never wait behind replies.
+///
+/// The first engine instance it reaches is the one it means for its whole
+/// life (contract D6): every command names it, so an engine with another
+/// data folder behind a later connection refuses instead of acting.
 pub struct PipeEngineClient {
     name: PipeName,
     secret: EngineSecret,
@@ -194,6 +209,7 @@ pub struct PipeEngineClient {
     reply_timeout: Duration,
     principal: Principal,
     connection: Mutex<Option<PipeClient>>,
+    instance: Mutex<Option<InstanceId>>,
 }
 
 impl PipeEngineClient {
@@ -206,7 +222,26 @@ impl PipeEngineClient {
             reply_timeout: Duration::from_secs(60),
             principal: Principal::User,
             connection: Mutex::new(None),
+            instance: Mutex::new(None),
         }
+    }
+
+    /// The instance this client means: the one it was given, or the first
+    /// one it reached.
+    pub fn instance_id(&self) -> Option<InstanceId> {
+        self.instance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Means `instance` on every command, whatever engine later answers.
+    pub fn for_instance(self, instance: Option<InstanceId>) -> Self {
+        *self
+            .instance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = instance;
+        self
     }
 
     /// Acts for `principal` on every connection it opens.
@@ -216,13 +251,30 @@ impl PipeEngineClient {
     }
 
     fn open(&self) -> Result<PipeClient, ProtocolError> {
-        PipeClient::connect_as(
+        let client = PipeClient::connect_as(
             &self.name,
             &self.secret,
             self.limits,
             self.connect_timeout,
             &self.principal,
-        )
+        )?;
+        let mut instance = self
+            .instance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if instance.is_none() {
+            *instance = client.instance_id().cloned();
+        }
+        Ok(client)
+    }
+
+    /// The envelope naming this client's instance, unless it names one.
+    fn stamped(&self, envelope: &CommandEnvelope) -> CommandEnvelope {
+        let mut envelope = envelope.clone();
+        if envelope.expected_instance_id.is_none() {
+            envelope.expected_instance_id = self.instance_id();
+        }
+        envelope
     }
 }
 
@@ -237,7 +289,7 @@ impl EngineClient for PipeEngineClient {
                 *connection = Some(self.open()?);
             }
             let client = connection.as_ref().expect("opened above");
-            match client.call(envelope, self.reply_timeout) {
+            match client.call(&self.stamped(envelope), self.reply_timeout) {
                 // Resending the same envelope is safe: the engine answers a
                 // repeated command id with the original result.
                 Err(error) if attempt == 0 && error.code.as_str() == "contract.connection_lost" => {
@@ -263,7 +315,7 @@ impl EngineClient for PipeEngineClient {
             ));
         }
         let client = self.open()?;
-        let start = client.call(envelope, self.reply_timeout)?;
+        let start = client.call(&self.stamped(envelope), self.reply_timeout)?;
         Ok(Subscription {
             start,
             events: Box::new(PipeEvents { client }),

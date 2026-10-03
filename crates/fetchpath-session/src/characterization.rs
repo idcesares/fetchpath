@@ -108,6 +108,10 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             // Added after 0.1.0 (FP-032); a 0.1.0 file has the default.
             cache_quota_bytes: settings::DEFAULT_CACHE_QUOTA_BYTES,
             density: settings::Density::Comfortable,
+            // Added after 0.1.0 (FP-101); a 0.1.0 file uses the computer's name.
+            instance_name: None,
+            // Added after 0.1.0 (FP-101); a 0.1.0 file leaves it off.
+            hub_mode: false,
         }
     );
 
@@ -1023,6 +1027,8 @@ fn the_interface_reads_these_exact_field_names() {
         keys(&serde_json::to_value(QueueStats::default()).unwrap()),
         [
             "activeBytes",
+            // Added after 0.1.0 (FP-101): requests waiting for the person.
+            "awaitingApproval",
             "combinedBytesPerSecond",
             "completed",
             "completedBytes",

@@ -8,7 +8,7 @@
 
 use crate::command::{Command, CommandEnvelope};
 use crate::error::{ErrorCode, ErrorScope, ProtocolError};
-use crate::ids::ClientId;
+use crate::ids::{ClientId, InstanceId};
 use crate::pipe::{EngineSecret, Limits, PipeClient, PipeEngineClient, endpoint};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -77,6 +77,37 @@ impl EngineHome {
         self.dir.join("engine-endpoint-v1")
     }
 
+    pub fn instance_path(&self) -> PathBuf {
+        self.dir.join("instance-v1")
+    }
+
+    /// This data folder's instance id (contract D6), created on first use.
+    /// Only the engine calls this, holding the single-owner lock. An
+    /// unreadable file is replaced: clients then see a new instance and
+    /// refuse to act on it until they reconnect, which is the safe side.
+    pub fn instance_id(&self) -> Result<InstanceId, ProtocolError> {
+        let path = self.instance_path();
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(id) = InstanceId::try_from(text.trim().to_owned())
+        {
+            return Ok(id);
+        }
+        let id = InstanceId::random();
+        let unwritable = |error: std::io::Error| {
+            ProtocolError::new(
+                ErrorCode::try_from("internal.persistence_failed".to_owned())
+                    .expect("a valid built-in code"),
+                ErrorScope::Engine,
+                format!("The engine's identity could not be saved: {error}."),
+            )
+        };
+        std::fs::create_dir_all(&self.dir).map_err(unwritable)?;
+        let temporary = path.with_extension("tmp");
+        std::fs::write(&temporary, id.as_str()).map_err(unwritable)?;
+        std::fs::rename(&temporary, &path).map_err(unwritable)?;
+        Ok(id)
+    }
+
     /// The single-owner lock. Only the engine opens it; clients never do
     /// (FP-055).
     pub fn lock_path(&self) -> PathBuf {
@@ -135,11 +166,10 @@ pub fn attach(home: &EngineHome, limits: Limits) -> Result<PipeEngineClient, Pro
         &CommandEnvelope::new(ClientId::random(), Command::EngineStatus),
         Duration::from_secs(5),
     )?;
-    Ok(PipeEngineClient::new(
-        name,
-        EngineSecret::load(&home.secret_path())?,
-        limits,
-    ))
+    Ok(
+        PipeEngineClient::new(name, EngineSecret::load(&home.secret_path())?, limits)
+            .for_instance(probe.instance_id().cloned()),
+    )
 }
 
 fn absent(error: &ProtocolError) -> bool {

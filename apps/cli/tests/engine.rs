@@ -476,7 +476,13 @@ fn restart_as(home: &EngineHome, principal: &str) {
         },
     )
     .unwrap();
-    assert_eq!(read(&mut pipe), Handshake::Welcome);
+    // The engine names its instance (contract D6).
+    assert!(matches!(
+        read(&mut pipe),
+        Handshake::Welcome {
+            instance_id: Some(_)
+        }
+    ));
 }
 
 #[test]
@@ -674,4 +680,75 @@ fn stopping_for_an_update_with_no_engine_leaves_no_trace_behind() {
         .unwrap();
     assert_eq!(stop.status.code(), Some(0), "{stop:?}");
     assert!(!missing.exists(), "uninstall must not create a data folder");
+}
+
+/// Contract D6 (FP-101 gate G1): the engine keeps one identity for its data
+/// folder across restarts, announces it, and the client names it on every
+/// change, which the engine therefore accepts.
+#[test]
+fn the_engine_keeps_its_instance_across_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    let status = |client: &fetchpath_protocol::pipe::PipeEngineClient| match client
+        .send(&ClientId::random(), Command::EngineStatus)
+        .unwrap()
+    {
+        CommandResult::EngineStatus { status } => status.instance.expect("an identity"),
+        other => panic!("{other:?}"),
+    };
+
+    let mut first = engine(&home, 60_000);
+    let client = attached(&home);
+    let before = status(&client);
+    assert_eq!(client.instance_id(), Some(before.id.clone()));
+    client
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+    assert_eq!(exited_within(&mut first, Duration::from_secs(10)), Some(0));
+
+    let mut second = engine(&home, 60_000);
+    let client = attached(&home);
+    assert_eq!(status(&client).id, before.id);
+    client
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+    assert_eq!(exited_within(&mut second, Duration::from_secs(10)), Some(0));
+}
+
+/// FP-101 gate G2, the part a test can reach: an always-on engine does not
+/// stop for being idle, and turning it off restores the idle stop.
+#[test]
+fn an_always_on_engine_stays_up_until_it_is_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    let mut child = engine(&home, 300);
+    let set = |on: bool| {
+        let client = attached(&home);
+        let mut settings = match client
+            .send(&ClientId::random(), Command::GetSettings)
+            .unwrap()
+        {
+            CommandResult::Settings { view } => view.settings,
+            other => panic!("{other:?}"),
+        };
+        settings.hub_mode = Some(on);
+        match client
+            .send(&ClientId::random(), Command::UpdateSettings { settings })
+            .unwrap()
+        {
+            CommandResult::Settings { view } => {
+                assert_eq!(view.settings.hub_mode, Some(on));
+                if on {
+                    assert_eq!(view.settings.start_engine_at_sign_in, Some(true));
+                }
+            }
+            other => panic!("{other:?}"),
+        }
+    };
+
+    set(true);
+    // Many idle graces with no client and no work: still serving.
+    assert_eq!(exited_within(&mut child, Duration::from_secs(3)), None);
+    set(false);
+    assert_eq!(exited_within(&mut child, Duration::from_secs(10)), Some(0));
 }

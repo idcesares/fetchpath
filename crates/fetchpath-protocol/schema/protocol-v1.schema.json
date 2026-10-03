@@ -98,6 +98,11 @@
           "const": "await_approval",
           "description": "Wait for the person to approve or deny the job in Fetchpath. An\nagent relays this rather than retrying.",
           "type": "string"
+        },
+        {
+          "const": "select_instance",
+          "description": "Choose which Fetchpath instance to act on; this one is not the one\nthe command meant (contract D6).",
+          "type": "string"
         }
       ]
     },
@@ -1027,6 +1032,17 @@
         "command_id": {
           "$ref": "#/$defs/CommandId"
         },
+        "expected_instance_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstanceId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The engine instance the client means (contract D6). An engine with an\nidentity refuses a change without it (see [`Command::changes_state`]),\nand any command naming another instance, with\n`contract.wrong_instance`."
+        },
         "expected_revision": {
           "description": "The job revision the client last saw. A mismatch returns\n`contract.revision_conflict` without changing anything.",
           "format": "uint64",
@@ -1649,6 +1665,20 @@
           ],
           "description": "Row and control density. Absent from an update means \"leave it as it\nis\"."
         },
+        "hub_mode": {
+          "description": "Keep the engine running in the background: no idle stop, started at\nsign-in (which it turns on), and the computer kept awake while\ndownloads run. Absent from an update means \"leave it as it is\".",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "instance_name": {
+          "description": "The name shown for this engine on every client (contract D6).\nAbsent from an update means \"leave it as it is\"; empty means the\ncomputer's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_active_downloads": {
           "format": "uint64",
           "minimum": 0,
@@ -1706,6 +1736,17 @@
         "engine_version": {
           "description": "The Fetchpath build, such as `0.2.0`.",
           "type": "string"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InstanceInfo"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which engine this is (contract D6). Absent from an engine without an\nidentity, such as an in-process test engine."
         },
         "queue_cursor": {
           "description": "The latest queue-wide event cursor.",
@@ -1777,6 +1818,27 @@
           "type": "string"
         }
       ]
+    },
+    "InstanceId": {
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "InstanceInfo": {
+      "description": "An engine's stable identity and the name the person gave it.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
     },
     "IntegrityOutcome": {
       "description": "What a finished download's bytes are known to be (contract §3).",
@@ -3132,6 +3194,13 @@
       "description": "Queue figures counted from one reconciled moment.",
       "properties": {
         "active_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "awaiting_approval": {
+          "default": 0,
+          "description": "Downloads waiting for the person to approve them (FP-101), so a\nmanagement surface such as the tray can say so without listing jobs.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

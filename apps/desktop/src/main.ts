@@ -161,6 +161,10 @@ interface Settings {
   density?: "comfortable" | "compact";
   onboardingCompleted: boolean;
   cacheQuotaBytes?: number | null;
+  /** This engine's name; empty asks for the computer's name. */
+  instanceName?: string | null;
+  /** Keep the engine running in the background. */
+  hubMode?: boolean | null;
 }
 
 interface SettingsView {
@@ -275,6 +279,8 @@ const autoRetryInput = required<HTMLInputElement>("setting-auto-retry");
 const retryAttemptsInput = required<HTMLInputElement>("setting-retry-attempts");
 const retryAttemptsValue = required<HTMLOutputElement>("setting-retry-attempts-value");
 const closeToTrayInput = required<HTMLInputElement>("setting-close-to-tray");
+const instanceNameInput = required<HTMLInputElement>("setting-instance-name");
+const hubModeInput = required<HTMLInputElement>("setting-hub-mode");
 const confirmRemoveInput = required<HTMLInputElement>("setting-confirm-remove");
 const powerModeInput = required<HTMLInputElement>("setting-power-mode");
 const themeSelect = required<HTMLSelectElement>("setting-theme");
@@ -1226,6 +1232,8 @@ function applySettingsToForm(view: SettingsView): void {
 
   autoRetryInput.checked = settings.autoRetry;
   closeToTrayInput.checked = settings.closeToTray;
+  instanceNameInput.value = settings.instanceName ?? "";
+  hubModeInput.checked = settings.hubMode === true;
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
@@ -1290,6 +1298,17 @@ retryAttemptsInput.addEventListener("change", () => {
 
 autoRetryInput.addEventListener("change", () => void changeSetting({ autoRetry: autoRetryInput.checked }));
 closeToTrayInput.addEventListener("change", () => void changeSetting({ closeToTray: closeToTrayInput.checked }));
+instanceNameInput.addEventListener("change", () =>
+  void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
+);
+hubModeInput.addEventListener("change", () =>
+  void changeSetting(
+    { hubMode: hubModeInput.checked },
+    hubModeInput.checked
+      ? "Always on: Fetchpath keeps running in the background and starts when you sign in."
+      : "Always on is off: Fetchpath stops a minute after it has nothing left to do.",
+  ),
+);
 confirmRemoveInput.addEventListener("change", () =>
   void changeSetting({ confirmRemoveCompleted: confirmRemoveInput.checked }),
 );
@@ -2190,6 +2209,7 @@ const closeWindowButton = required<HTMLButtonElement>("close-window");
 const stopEngineButton = required<HTMLButtonElement>("stop-engine");
 const stopDialog = required<HTMLDialogElement>("stop-dialog");
 const stopActive = required<HTMLParagraphElement>("stop-active");
+const stopHub = required<HTMLParagraphElement>("stop-hub");
 const stopError = required<HTMLParagraphElement>("stop-error");
 const stopCancel = required<HTMLButtonElement>("stop-cancel");
 const stopConfirm = required<HTMLButtonElement>("stop-confirm");
@@ -2270,6 +2290,7 @@ function askToStopEngine(): void {
         : running === 1
           ? "1 download is running and will stop."
           : `${running} downloads are running and will stop.`;
+  stopHub.hidden = settingsView?.settings.hubMode !== true;
   stopError.hidden = true;
   stopConfirm.disabled = false;
   openDialog(stopDialog, stopCancel);

@@ -145,6 +145,15 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
 /// refused (contract D1).
 fn approval_error(record: &QueueRecord) -> Option<ProtocolError> {
     let approval = record.approval.as_ref()?;
+    if approval.expired {
+        return (record.view.state == "cancelled").then(|| {
+            ProtocolError::new(
+                code("policy.approval_expired"),
+                ErrorScope::Job,
+                "Nobody approved this download within 7 days.",
+            )
+        });
+    }
     if approval.denied {
         return (record.view.state == "cancelled").then(|| {
             ProtocolError::new(
@@ -218,6 +227,8 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
             settings::Density::Comfortable => Density::Comfortable,
             settings::Density::Compact => Density::Compact,
         }),
+        instance_name: Some(settings.display_instance_name()),
+        hub_mode: Some(settings.hub_mode),
     }
 }
 
@@ -253,6 +264,14 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             Some(Density::Compact) => settings::Density::Compact,
             Some(Density::Unknown) | None => current.density,
         },
+        // Absent leaves the name and blank returns to the computer's name.
+        // The computer's name sent back unchanged is not stored as a choice.
+        instance_name: match &wire.instance_name {
+            None => current.instance_name.clone(),
+            Some(name) if *name == current.display_instance_name() => current.instance_name.clone(),
+            Some(name) => Some(name.clone()),
+        },
+        hub_mode: wire.hub_mode.unwrap_or(current.hub_mode),
     }
 }
 

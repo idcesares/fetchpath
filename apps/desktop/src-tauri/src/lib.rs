@@ -29,6 +29,43 @@ const TRAY_ID: &str = "fetchpath-tray";
 /// on the engine.
 struct CloseToTray(AtomicBool);
 
+/// One line for the tray: which Fetchpath, what it is downloading, what waits
+/// for the person, and whether it stays on in the background. `None` when
+/// the engine did not answer, so the tray keeps what it last confirmed.
+fn tray_summary(link: &EngineLink) -> Option<String> {
+    let stats = match link.send(Command::QueueStats).ok()? {
+        CommandResult::QueueStats { stats } => stats,
+        _ => return None,
+    };
+    let name = match link.send(Command::EngineStatus).ok()? {
+        CommandResult::EngineStatus { status } => status.instance.map(|instance| instance.name),
+        _ => None,
+    };
+    let always_on = matches!(
+        link.send(Command::GetSettings),
+        Ok(CommandResult::Settings { view }) if view.settings.hub_mode == Some(true)
+    );
+    let mut parts = vec![format!(
+        "Fetchpath on {}",
+        name.as_deref().unwrap_or("this computer")
+    )];
+    parts.push(match stats.running {
+        0 if stats.queued + stats.scheduled == 0 => "nothing downloading".to_owned(),
+        0 => format!("{} waiting to start", stats.queued + stats.scheduled),
+        1 => "1 downloading".to_owned(),
+        n => format!("{n} downloading"),
+    });
+    match stats.awaiting_approval {
+        0 => {}
+        1 => parts.push("1 needs your approval".to_owned()),
+        n => parts.push(format!("{n} need your approval")),
+    }
+    if always_on {
+        parts.push("always on".to_owned());
+    }
+    Some(parts.join(" · "))
+}
+
 /// Whether the engine is reachable, as last reported by the queue watcher.
 struct Connection(std::sync::Mutex<serde_json::Value>);
 
@@ -1098,8 +1135,31 @@ pub fn run() {
             let connection = Arc::new(Connection::default());
             app.manage(Arc::clone(&connection));
             let handle = app.handle().clone();
+            // The tray is a management client of the engine (FP-101): its
+            // first line says what the engine is doing, never more than the
+            // engine confirmed.
+            let status = MenuItem::with_id(
+                app,
+                "status",
+                "Fetchpath: connecting to the engine",
+                false,
+                None::<&str>,
+            )?;
+            let tray_status = status.clone();
+            let summary_link = Arc::clone(&engine);
+            let show_summary = move |handle: &tauri::AppHandle, text: String| {
+                let _ = tray_status.set_text(&text);
+                if let Some(tray) = handle.tray_by_id(TRAY_ID) {
+                    let _ = tray.set_tooltip(Some(text));
+                }
+            };
             // Runs for the life of the window.
             let _watcher = engine_link::watch(engine, move |signal| {
+                if matches!(signal, Signal::Queue | Signal::Connected)
+                    && let Some(text) = tray_summary(&summary_link)
+                {
+                    show_summary(&handle, text);
+                }
                 let state = match signal {
                     Signal::Queue => {
                         let _ = handle.emit("fetchpath://queue", ());
@@ -1113,14 +1173,15 @@ pub fn run() {
                         serde_json::json!({ "connected": false, "stopped": stopped, "message": message })
                     }
                 };
-                // The tooltip says only what the engine confirmed.
-                if let Some(tray) = handle.tray_by_id(TRAY_ID) {
-                    let tip = if state["connected"] == true {
-                        "Fetchpath: engine running. Downloads continue if you close this."
-                    } else {
-                        "Fetchpath: engine not running. Open Fetchpath to start it."
-                    };
-                    let _ = tray.set_tooltip(Some(tip));
+                if state["connected"] != true {
+                    show_summary(
+                        &handle,
+                        if state["stopped"] == true {
+                            "Fetchpath: engine stopped. Open Fetchpath to start it.".into()
+                        } else {
+                            "Fetchpath: engine not running. Open Fetchpath to start it.".into()
+                        },
+                    );
                 }
                 // Kept as well as sent: the page may not be listening yet.
                 *connection
@@ -1146,7 +1207,14 @@ pub fn run() {
             )?;
             let menu = Menu::with_items(
                 app,
-                &[&show, &PredefinedMenuItem::separator(app)?, &quit, &stop],
+                &[
+                    &status,
+                    &PredefinedMenuItem::separator(app)?,
+                    &show,
+                    &PredefinedMenuItem::separator(app)?,
+                    &quit,
+                    &stop,
+                ],
             )?;
             let tray = TrayIconBuilder::with_id(TRAY_ID)
                 .icon(app.default_window_icon().expect("app icon").clone())

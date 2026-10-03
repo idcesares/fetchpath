@@ -7,6 +7,7 @@
 //! tells clients where it is. A client cannot reach the engine before the
 //! endpoint exists.
 
+mod awake;
 mod signin;
 
 use fetchpath_protocol::command::Command;
@@ -266,7 +267,8 @@ fn serve(grace: Duration) -> Result<i32, String> {
         session.use_cache(root.clone());
         session.use_lan(lan, root);
     }
-    let engine = Engine::new(Arc::new(session));
+    let instance = home.instance_id().map_err(|error| error.message)?;
+    let engine = Engine::with_instance(Arc::new(session), instance);
     engine.tick();
 
     let opened = (|| {
@@ -303,6 +305,8 @@ fn serve(grace: Duration) -> Result<i32, String> {
         let host = Arc::clone(&host);
         std::thread::spawn(move || {
             let mut sampled = Instant::now();
+            // Held by this thread, which lives as long as the engine serves.
+            let mut awake = awake::Awake::default();
             while !host.stopping() {
                 host.engine
                     .wait_for_work(TICK_INTERVAL.saturating_sub(sampled.elapsed()));
@@ -315,6 +319,8 @@ fn serve(grace: Duration) -> Result<i32, String> {
                 } else {
                     host.engine.reconcile();
                 }
+                let session = host.engine.session();
+                awake.set(session.hub_mode() && session.running_count() > 0);
             }
         })
     };
@@ -335,7 +341,11 @@ fn serve(grace: Duration) -> Result<i32, String> {
             // Transient: clients that open and close the pipe quickly.
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
-        if host.connections.load(Ordering::SeqCst) > 0 || host.has_own_work() {
+        // Always on: never stops for being idle (FP-101).
+        if host.connections.load(Ordering::SeqCst) > 0
+            || host.has_own_work()
+            || host.engine.session().hub_mode()
+        {
             idle_since = Instant::now();
         } else if idle_since.elapsed() >= grace {
             host.begin_stop();
@@ -389,7 +399,7 @@ fn stopping_error() -> ProtocolError {
 }
 
 fn connection(host: &Arc<Host>, pending: PendingConnection) {
-    let Ok(connection) = pending.authenticate() else {
+    let Ok(connection) = pending.authenticate_for(host.engine.instance_id().cloned()) else {
         return;
     };
     let principal = connection.principal().clone();

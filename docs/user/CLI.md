@@ -235,9 +235,24 @@ value it applied. The desktop app shows the same settings.
 
 ### The engine
 
-`fetchpath engine status` says whether it is running; `fetchpath engine stop`
-stops it after saving every download's progress, and the next command starts
-it again and carries on.
+`fetchpath engine status` says whether it is running and what this Fetchpath
+is named; `fetchpath engine stop` stops it after saving every download's
+progress, and the next command starts it again and carries on.
+
+The name is the computer's unless you choose one with
+`fetchpath settings instance-name NAME` (`none` returns to the computer's
+name). Each Fetchpath also keeps an id of its own, and every change a client
+sends names it, so a change meant for one Fetchpath is never carried out by
+another.
+
+Normally the engine stops about a minute after it has nothing left to do.
+`fetchpath hub on` keeps it running in the background instead, with no app
+open: it starts when you sign in to Windows and keeps the computer awake
+while downloads run, but not while idle. It is not a Windows service, so after
+a restart it runs again only once you sign in. `fetchpath hub off` returns to
+the normal stop; it leaves the sign-in start on, which you can turn off with
+`fetchpath settings start-engine-at-sign-in off`. `fetchpath hub` says which
+is in effect.
 
 `fetchpath engine stop --for-update` is what the installer and uninstaller
 run: it also keeps a new engine from starting until setup finishes (for at most

@@ -490,6 +490,8 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         start_engine_at_sign_in: Some(true),
         cache_quota_bytes: None,
         density: None,
+        instance_name: None,
+        hub_mode: None,
     };
     for command in [
         Command::ApproveJob {
@@ -1880,4 +1882,97 @@ fn a_browser_capture_cannot_start_a_torrent() {
             "contract.unsupported"
         );
     }
+}
+
+/// Moves every saved request's start back by `days` (FP-101 tests only).
+fn age_requests(queue: &Path, days: u64) {
+    let text = std::fs::read_to_string(queue).unwrap();
+    let mut saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let back = days * 24 * 60 * 60 * 1000;
+    for record in saved["records"].as_array_mut().unwrap() {
+        if let Some(approval) = record.get_mut("approval").and_then(|a| a.as_object_mut()) {
+            let at = approval["requestedAtMs"]
+                .as_u64()
+                .expect("a start is saved");
+            approval.insert("requestedAtMs".into(), (at - back).into());
+        }
+    }
+    std::fs::write(queue, serde_json::to_vec(&saved).unwrap()).unwrap();
+}
+
+#[test]
+fn a_request_nobody_decides_on_expires_after_seven_days() {
+    let s = setup(granting);
+    let fresh = job(send(&s.agent, later(&s.outside.join("fresh.bin"))).unwrap());
+    let queue = s.queue.clone();
+    drop((s.user, s.agent, s.engine));
+
+    // Six days: still waiting.
+    age_requests(&queue, 6);
+    let engine = open(&queue);
+    engine.reconcile();
+    let (_, agent) = clients(&engine);
+    assert_eq!(get(&agent, &fresh.job_id).state, JobState::AwaitingApproval);
+    drop((agent, engine));
+
+    // Eight in all: expired, as a denial ends it, with its own reason.
+    age_requests(&queue, 2);
+    let engine = open(&queue);
+    engine.reconcile();
+    let (user, agent) = clients(&engine);
+    let expired = get(&agent, &fresh.job_id);
+    assert_eq!(expired.state, JobState::Cancelled);
+    assert_eq!(
+        expired.error.map(|error| error.code.as_str().to_owned()),
+        Some("policy.approval_expired".to_owned())
+    );
+    // Nothing is left for the person to approve.
+    assert!(
+        send(
+            &user,
+            Command::ApproveJob {
+                job_id: fresh.job_id.clone()
+            }
+        )
+        .is_err()
+    );
+    drop((user, agent, engine));
+
+    // It stays ended across a restart, and an agent retrying it asks again.
+    let engine = open(&queue);
+    engine.reconcile();
+    let (_, agent) = clients(&engine);
+    assert_eq!(get(&agent, &fresh.job_id).state, JobState::Cancelled);
+    let retried = job(send(
+        &agent,
+        Command::Retry {
+            job_id: fresh.job_id.clone(),
+            expected_sha256: None,
+        },
+    )
+    .unwrap());
+    assert_eq!(retried.state, JobState::AwaitingApproval);
+}
+
+#[test]
+#[ignore = "known defect found in FP-101: a withdrawn request is restored as awaiting approval; fix pending the owner's go-ahead"]
+fn a_withdrawn_request_stays_withdrawn_after_a_restart() {
+    let s = setup(granting);
+    let waiting = job(send(&s.agent, later(&s.outside.join("w.bin"))).unwrap());
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: waiting.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(get(&s.agent, &waiting.job_id).state, JobState::Cancelled);
+    let queue = s.queue.clone();
+    drop((s.user, s.agent, s.engine));
+
+    let engine = open(&queue);
+    engine.reconcile();
+    let (_, agent) = clients(&engine);
+    assert_eq!(get(&agent, &waiting.job_id).state, JobState::Cancelled);
 }
