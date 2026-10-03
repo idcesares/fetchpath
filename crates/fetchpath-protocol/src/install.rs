@@ -53,7 +53,11 @@ impl InstalledSelection {
         format!(
             "Installed: Fetchpath {} ({}): {}. To change the components, download Fetchpath setup again and choose Change components.",
             self.version,
-            if self.install_type == "full" { "Full" } else { "Custom" },
+            if self.install_type == "full" {
+                "Full"
+            } else {
+                "Custom"
+            },
             self.labels().join(", ")
         )
     }
@@ -83,7 +87,12 @@ pub fn parse_selection(output: &str) -> Option<InstalledSelection> {
         names.dedup();
         names
     };
-    let all = || LABELS.iter().map(|(name, _)| (*name).to_owned()).collect::<Vec<_>>();
+    let all = || {
+        LABELS
+            .iter()
+            .map(|(name, _)| (*name).to_owned())
+            .collect::<Vec<_>>()
+    };
     let mut sorted_all = all();
     sorted_all.sort();
     let (install_type, components, readable) = match (stored_type.as_deref(), stored_list) {
@@ -138,7 +147,8 @@ pub fn installed_selection() -> Option<InstalledSelection> {
 mod tests {
     use super::*;
 
-    const KEY: &str = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Fetchpath\r\n";
+    const KEY: &str =
+        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Fetchpath\r\n";
 
     #[test]
     fn a_custom_selection_is_read_from_the_stored_list() {
@@ -149,7 +159,11 @@ mod tests {
         assert_eq!(selection.install_type, "custom");
         assert_eq!(selection.components, ["cli", "core"]);
         assert_eq!(selection.labels(), ["Core", "Terminal"]);
-        assert!(selection.summary().contains("download Fetchpath setup again"));
+        assert!(
+            selection
+                .summary()
+                .contains("download Fetchpath setup again")
+        );
     }
 
     #[test]
@@ -186,9 +200,11 @@ mod tests {
     FetchpathComponents    REG_SZ    mcp,core
 ",
         ] {
-            let selection =
-                parse_selection(&format!("{KEY}    DisplayVersion    REG_SZ    0.1.0
-{bad}")).unwrap();
+            let selection = parse_selection(&format!(
+                "{KEY}    DisplayVersion    REG_SZ    0.1.0
+{bad}"
+            ))
+            .unwrap();
             assert!(!selection.readable, "{bad}");
             assert!(selection.summary().contains("components unknown"));
         }
@@ -199,7 +215,10 @@ mod tests {
         let output = format!(
             "{KEY}    DisplayVersion    REG_SZ    0.1.0\r\n    FetchpathInstallType    REG_SZ    custom\r\n    FetchpathComponents    REG_SZ    web,core,desktop\r\n"
         );
-        assert_eq!(parse_selection(&output).unwrap().components, ["core", "desktop"]);
+        assert_eq!(
+            parse_selection(&output).unwrap().components,
+            ["core", "desktop"]
+        );
         assert_eq!(parse_selection("ERROR: not found"), None);
     }
 }
