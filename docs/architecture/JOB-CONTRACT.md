@@ -492,12 +492,18 @@ principals); nothing changes before that code lands.
   includes the remote principal, as D1 does for agents.
 - **Approval expiry.** A request still awaiting approval after its configured
   period (default 7 days) becomes `cancelled` with `policy.approval_expired`.
-- **Disk reserve.** A job whose remaining expected bytes, together with the
-  remaining bytes of other unfinished jobs on the volume, would cross the
-  volume's reserve (default the larger of 5 GiB and 5 %) waits with
-  `storage.reserve` instead of failing; a job of unknown size is paused at its
-  checkpoint when it reaches the reserve. Removing a job never deletes its
-  published file.
+- **Disk reserve.** Every drive keeps a reserve: the `disk_reserve_bytes`
+  setting, or when it is 0 the larger of 5 GiB and 5 % of the drive. A
+  queued job starts only if its remaining expected bytes fit above the
+  reserve after the remaining bytes of jobs already running on that drive;
+  otherwise it stays `queued` with waiting reason `storage_reserve`, reported
+  by a durable `waiting` event, and starts by itself when there is room. A
+  running file download on a drive that falls below its reserve is stopped
+  at its checkpoint and queued the same way; one of unknown size restarts
+  only with 512 MiB of room above the reserve. Video, audio and torrent
+  downloads are checked when they start, not stopped while running (their
+  helpers own their files). A drive that cannot be measured never holds a
+  download back. Removing a job never deletes its published file.
 - **Notices and handshake.** `host_suspending` is an ephemeral notice sent to
   remote clients before the host sleeps; it never consumes `seq`. The remote
   handshake lists the engine's `features`; a major-version mismatch still

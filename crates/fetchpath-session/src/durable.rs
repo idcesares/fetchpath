@@ -13,6 +13,7 @@
 use crate::engine::Subscriber;
 use crate::{QueueRecord, wire};
 use fetchpath_protocol::message::{Correlation, EventPayload, JobEvent};
+use fetchpath_protocol::model::WaitingReason;
 use fetchpath_protocol::{ClientId, CommandId, CommandResult, JobId, SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -141,6 +142,9 @@ pub(crate) struct Reported {
     pub state: String,
     #[serde(default)]
     pub not_before_ms: Option<u64>,
+    /// Waiting for room above the disk reserve (FP-101).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waiting_for_space: bool,
 }
 
 /// Saved with each record; omitted while unused, so a 0.1.0 record reads and
@@ -278,6 +282,7 @@ impl Durable {
             let current = Reported {
                 state: record.view.state.clone(),
                 not_before_ms: record.not_before_ms,
+                waiting_for_space: record.view.waiting_for_space,
             };
             let mut payloads = Vec::new();
             match record.durable.reported.as_ref() {
@@ -305,6 +310,14 @@ impl Durable {
                                 observed_sha256: record.view.observed_sha256.clone(),
                             }));
                         }
+                    }
+                    // A queued download starts waiting for disk space: the
+                    // contract's `waiting` event, since its state is still
+                    // queued.
+                    if current.waiting_for_space && !previous.waiting_for_space {
+                        payloads.push(Some(EventPayload::Waiting {
+                            reason: WaitingReason::StorageReserve,
+                        }));
                     }
                     if previous.not_before_ms != current.not_before_ms {
                         payloads.push(Some(EventPayload::PolicyChanged {

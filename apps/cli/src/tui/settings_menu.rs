@@ -25,6 +25,7 @@ enum Field {
     SignIn,
     InstanceName,
     AlwaysOn,
+    DiskReserve,
     VideoTools,
     ToolsFolder,
     Theme,
@@ -32,6 +33,10 @@ enum Field {
     ConfirmRemove,
     PowerMode,
 }
+
+/// Disk reserves offered, in GiB; 0 is automatic.
+const RESERVES: &[u64] = &[0, 1, 2, 5, 10, 20, 50, 100];
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// Delays offered for the first retry, in seconds.
 const DELAYS: &[u64] = &[5, 10, 15, 30, 60, 120, 300, 600];
@@ -157,6 +162,17 @@ impl SettingsMenu {
                 ),
             ),
             (
+                Field::DiskReserve,
+                Item::new(
+                    "Keep free on every drive",
+                    match s.disk_reserve_bytes.unwrap_or(0) {
+                        0 => "automatic (5 GB or 5 %)".to_owned(),
+                        bytes => format!("{} GB", bytes / GIB),
+                    },
+                    "←/→ to change; downloads wait rather than fill a drive past it",
+                ),
+            ),
+            (
                 Field::AlwaysOn,
                 Item::new(
                     "Always on: keep running in the background",
@@ -278,6 +294,15 @@ impl SettingsMenu {
                 s.auto_retry_base_delay_seconds =
                     DELAYS[(at + by).clamp(0, DELAYS.len() as i64 - 1) as usize];
             }),
+            Field::DiskReserve => self.apply(engine, |s| {
+                let gib = s.disk_reserve_bytes.unwrap_or(0) / GIB;
+                let at = RESERVES
+                    .iter()
+                    .position(|reserve| *reserve >= gib)
+                    .unwrap_or(RESERVES.len() - 1) as i64;
+                s.disk_reserve_bytes =
+                    Some(RESERVES[(at + by).clamp(0, RESERVES.len() as i64 - 1) as usize] * GIB);
+            }),
             Field::Theme => self.apply(engine, |s| {
                 let themes = [
                     Theme::System,
@@ -323,7 +348,11 @@ impl SettingsMenu {
                 s.confirm_remove_completed = !s.confirm_remove_completed;
             }),
             Field::PowerMode => self.apply(engine, |s| s.power_mode = !s.power_mode),
-            Field::MaxActive | Field::Attempts | Field::Delay | Field::Theme => {
+            Field::MaxActive
+            | Field::Attempts
+            | Field::Delay
+            | Field::Theme
+            | Field::DiskReserve => {
                 self.adjust(engine, field, 1);
             }
             Field::Folder | Field::ToolsFolder => {

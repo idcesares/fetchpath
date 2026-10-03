@@ -1669,6 +1669,15 @@
           ],
           "description": "Row and control density. Absent from an update means \"leave it as it\nis\"."
         },
+        "disk_reserve_bytes": {
+          "description": "Free space left on every drive downloads go to; 0 is automatic (the\nlarger of 5 GiB and 5 % of the drive). Absent from an update means\n\"leave it as it is\".",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "hub_mode": {
           "description": "Keep the engine running in the background: no idle stop, started at\nsign-in (which it turns on), and the computer kept awake while\ndownloads run. Absent from an update means \"leave it as it is\".",
           "type": [
@@ -3826,6 +3835,11 @@
         {
           "const": "media_tools_missing",
           "description": "The media helpers are missing.",
+          "type": "string"
+        },
+        {
+          "const": "storage_reserve",
+          "description": "Its drive has no room above the disk reserve; it starts by itself\nwhen there is (FP-101, contract D6).",
           "type": "string"
         }
       ]

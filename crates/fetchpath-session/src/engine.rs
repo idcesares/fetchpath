@@ -1448,6 +1448,7 @@ impl Engine {
     pub fn reconcile(&self) {
         let _serial = self.commands.lock().unwrap_or_else(|p| p.into_inner());
         self.session.expire_approvals();
+        self.session.requeue_space_stopped();
         let _ = self.session.list();
     }
 

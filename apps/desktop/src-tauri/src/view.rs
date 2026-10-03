@@ -43,6 +43,8 @@ pub struct JobView {
     pub reused_from_cache: bool,
     /// The fingerprint of the paired computer it came from (FP-034).
     pub from_paired_device: Option<String>,
+    /// Queued until its drive has room above the disk reserve (FP-101).
+    pub waiting_for_space: bool,
 }
 
 fn ms(at: Timestamp) -> u64 {
@@ -92,6 +94,7 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
         job_id: job.job_id.to_string(),
         source: job.source_display.clone(),
         state: state(job, now),
+        waiting_for_space: job.waiting_reason == Some(model::WaitingReason::StorageReserve),
         bytes_received: job.progress.bytes_received,
         total_bytes: job.progress.bytes_total,
         bytes_per_second: job.progress.rate_bytes_per_second,
@@ -340,6 +343,9 @@ pub struct Settings {
     /// Keep the engine running in the background. Absent leaves it.
     #[serde(default)]
     pub hub_mode: Option<bool>,
+    /// Free space left on every drive; 0 is automatic. Absent leaves it.
+    #[serde(default)]
+    pub disk_reserve_bytes: Option<u64>,
 }
 
 impl Settings {
@@ -372,6 +378,7 @@ impl Settings {
             ),
             instance_name: settings.instance_name.clone(),
             hub_mode: settings.hub_mode,
+            disk_reserve_bytes: settings.disk_reserve_bytes,
         }
     }
 
@@ -404,6 +411,7 @@ impl Settings {
             },
             instance_name: self.instance_name.clone(),
             hub_mode: self.hub_mode,
+            disk_reserve_bytes: self.disk_reserve_bytes,
         }
     }
 }
@@ -613,6 +621,7 @@ mod tests {
                 "state": "running",
                 "bytesReceived": 10,
                 "totalBytes": 40,
+                "waitingForSpace": false,
                 "bytesPerSecond": 5,
                 "etaSeconds": 6,
                 "attempt": 0,
@@ -722,6 +731,7 @@ mod tests {
             density: Some(Density::Comfortable),
             instance_name: Some("Studio PC".into()),
             hub_mode: Some(false),
+            disk_reserve_bytes: Some(0),
         };
         let shown = Settings::from_engine(&engine);
         assert_eq!(serde_json::to_value(&shown).unwrap()["theme"], "dark");

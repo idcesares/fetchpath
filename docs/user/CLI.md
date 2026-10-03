@@ -230,7 +230,10 @@ in the order. A rule's folder applies only when you give no `--to`.
 
 `fetchpath settings` lists every setting, `fetchpath settings NAME` shows one
 and `fetchpath settings NAME VALUE` changes it. Switches take `on` or `off`,
-folders take a path or `none`. The engine keeps values in range and prints the
+folders take a path or `none`. `disk-reserve-bytes` is the space kept free on
+every drive: `auto` (the larger of 5 GB and 5 % of the drive) or a size such
+as `10GB`; a download that would cross it waits as `needs disk space` and
+starts by itself when there is room. The engine keeps values in range and prints the
 value it applied. The desktop app shows the same settings.
 
 ### The engine

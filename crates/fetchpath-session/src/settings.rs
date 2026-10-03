@@ -128,6 +128,15 @@ pub struct Settings {
     /// awake while downloads run. Off by default and written only when on.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hub_mode: bool,
+    /// Free space left on every drive Fetchpath saves to (FP-101). 0, the
+    /// default, is automatic: the larger of 5 GiB and 5 % of the drive.
+    /// Written only when chosen.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub disk_reserve_bytes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 fn is_default_quota(bytes: &u64) -> bool {
@@ -164,6 +173,7 @@ impl Default for Settings {
             density: Density::Comfortable,
             instance_name: None,
             hub_mode: false,
+            disk_reserve_bytes: 0,
         }
     }
 }

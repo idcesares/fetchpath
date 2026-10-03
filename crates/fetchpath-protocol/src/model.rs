@@ -151,6 +151,9 @@ pub enum WaitingReason {
     MediaSelection,
     /// The media helpers are missing.
     MediaToolsMissing,
+    /// Its drive has no room above the disk reserve; it starts by itself
+    /// when there is (FP-101, contract D6).
+    StorageReserve,
     #[serde(other)]
     Unknown,
 }
@@ -519,6 +522,11 @@ pub struct EngineSettings {
     /// downloads run. Absent from an update means "leave it as it is".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub_mode: Option<bool>,
+    /// Free space left on every drive downloads go to; 0 is automatic (the
+    /// larger of 5 GiB and 5 % of the drive). Absent from an update means
+    /// "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_reserve_bytes: Option<u64>,
 }
 
 /// A model or dataset repository resolved to one commit (FP-022). Each file

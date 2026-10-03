@@ -1382,6 +1382,18 @@ fn setting_value(
                 Value::String(text.to_owned())
             }
         }
+        // The disk reserve: "auto", or a size such as 10GB.
+        _ if key == "disk_reserve_bytes" => {
+            if text.eq_ignore_ascii_case("auto") {
+                Value::Number(0.into())
+            } else {
+                Value::Number(
+                    crate::rules::size(text)
+                        .map_err(|_| wrong("auto or a size such as 10GB"))?
+                        .into(),
+                )
+            }
+        }
         // Optional folders: "none" clears them.
         _ if key.ends_with("_dir") => {
             if text.is_empty() || text.eq_ignore_ascii_case("none") {

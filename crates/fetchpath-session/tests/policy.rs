@@ -492,6 +492,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         density: None,
         instance_name: None,
         hub_mode: None,
+        disk_reserve_bytes: None,
     };
     for command in [
         Command::ApproveJob {

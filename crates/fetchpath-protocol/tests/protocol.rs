@@ -73,6 +73,7 @@ fn settings() -> EngineSettings {
         density: None,
         instance_name: Some("Studio PC".into()),
         hub_mode: Some(false),
+        disk_reserve_bytes: Some(10 * 1024 * 1024 * 1024),
     }
 }
 

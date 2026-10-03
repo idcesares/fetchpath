@@ -624,6 +624,18 @@
             <input id="setting-hub-mode" type="checkbox" aria-describedby="hub-mode-note" />
             <span>Always on: keep Fetchpath running in the background</span>
           </label>
+          <label for="setting-disk-reserve">Keep free on every drive</label>
+          <select id="setting-disk-reserve" aria-describedby="disk-reserve-note">
+            <option value="0">Automatic (5 GB or 5 % of the drive, whichever is larger)</option>
+            <option value="1">1 GB</option>
+            <option value="2">2 GB</option>
+            <option value="5">5 GB</option>
+            <option value="10">10 GB</option>
+            <option value="20">20 GB</option>
+            <option value="50">50 GB</option>
+            <option value="100">100 GB</option>
+          </select>
+          <p id="disk-reserve-note" class="field-note">Downloads never fill a drive past this. One that would waits, shown as Waiting for disk space, and starts by itself when there is room.</p>
           <p id="hub-mode-note" class="field-note">Fetchpath keeps running with no window open, starts when you sign in to Windows, and keeps the computer awake while downloads run, not while idle. It is not a Windows service: after a restart it runs again only once you sign in.</p>
         </fieldset>
 

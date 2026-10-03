@@ -251,6 +251,13 @@ pub fn name(job: &JobSnapshot) -> String {
 /// scheduled, a failure with a retry due is retrying.
 pub fn state_label(job: &JobSnapshot) -> &'static str {
     match job.state {
+        // Its drive has no room above the disk reserve yet (FP-101).
+        JobState::Queued
+            if job.waiting_reason
+                == Some(fetchpath_protocol::model::WaitingReason::StorageReserve) =>
+        {
+            "needs disk space"
+        }
         JobState::Queued if job.not_before.is_some() => "scheduled",
         JobState::Failed if job.retry_at.is_some() => "retrying",
         // Copied from the cache, not transferred (FP-032).

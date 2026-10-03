@@ -19,6 +19,8 @@ interface JobSnapshot {
   jobId: string;
   source: string;
   state: JobState;
+  /** Queued until its drive has room above the disk reserve. */
+  waitingForSpace?: boolean;
   bytesReceived: number;
   /** Absent whenever the source never stated a length. Never guessed. */
   totalBytes: number | null;
@@ -167,6 +169,8 @@ interface Settings {
   instanceName?: string | null;
   /** Keep the engine running in the background. */
   hubMode?: boolean | null;
+  /** Free space kept on every drive; 0 is automatic. */
+  diskReserveBytes?: number | null;
 }
 
 interface SettingsView {
@@ -283,6 +287,9 @@ const retryAttemptsValue = required<HTMLOutputElement>("setting-retry-attempts-v
 const closeToTrayInput = required<HTMLInputElement>("setting-close-to-tray");
 const instanceNameInput = required<HTMLInputElement>("setting-instance-name");
 const hubModeInput = required<HTMLInputElement>("setting-hub-mode");
+const diskReserveSelect = required<HTMLSelectElement>("setting-disk-reserve");
+/** The reserve choices, in GiB as the engine counts them. */
+const RESERVE_GIB = 1024 * 1024 * 1024;
 const confirmRemoveInput = required<HTMLInputElement>("setting-confirm-remove");
 const powerModeInput = required<HTMLInputElement>("setting-power-mode");
 const themeSelect = required<HTMLSelectElement>("setting-theme");
@@ -1267,6 +1274,12 @@ function applySettingsToForm(view: SettingsView): void {
   closeToTrayInput.checked = settings.closeToTray;
   instanceNameInput.value = settings.instanceName ?? "";
   hubModeInput.checked = settings.hubMode === true;
+  const reserveGib = Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB);
+  if (![...diskReserveSelect.options].some((option) => option.value === String(reserveGib))) {
+    // A value set elsewhere, such as from the command line, is shown as it is.
+    diskReserveSelect.add(new Option(`${reserveGib} GB`, String(reserveGib)));
+  }
+  diskReserveSelect.value = String(reserveGib);
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
@@ -1333,6 +1346,9 @@ autoRetryInput.addEventListener("change", () => void changeSetting({ autoRetry: 
 closeToTrayInput.addEventListener("change", () => void changeSetting({ closeToTray: closeToTrayInput.checked }));
 instanceNameInput.addEventListener("change", () =>
   void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
+);
+diskReserveSelect.addEventListener("change", () =>
+  void changeSetting({ diskReserveBytes: Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
 );
 hubModeInput.addEventListener("change", () =>
   void changeSetting(
@@ -2565,7 +2581,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   article.dataset.state = job.state;
   article.dataset.jobId = job.jobId;
   article.setAttribute("role", "listitem");
-  article.setAttribute("aria-label", `${name}, ${stateLabel(job.state)}`);
+  article.setAttribute("aria-label", `${name}, ${jobLabel(job)}`);
 
   const header = document.createElement("header");
   header.className = "job-header";
@@ -2578,7 +2594,7 @@ function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
   titleWrap.append(heading, source);
   const status = document.createElement("output");
   status.className = "status";
-  setStatus(status, job.state);
+  setStatus(status, job);
   if (primary) status.id = "job-status";
   header.append(titleWrap, status);
   article.append(header);
@@ -2831,7 +2847,7 @@ function renderDetails({ job, segments }: JobDetails): void {
   detailsTitle.textContent = name;
   detailsSource.textContent = job.source;
   detailsSource.title = job.source;
-  setStatus(detailsStatus, job.state);
+  setStatus(detailsStatus, job);
 
   const running = job.state === "running";
   const known = job.totalBytes && job.totalBytes > 0 ? job.totalBytes : null;
@@ -3302,10 +3318,20 @@ function glyph(id: string): SVGSVGElement {
   return svg;
 }
 
-function setStatus(element: HTMLElement, state: JobState): void {
-  if (element.dataset.state === state && element.childNodes.length > 0) return;
-  element.dataset.state = state;
-  element.replaceChildren(glyph(STATE_GLYPH[state]), document.createTextNode(stateLabel(state)));
+function setStatus(element: HTMLElement, job: JobSnapshot): void {
+  const label = jobLabel(job);
+  if (element.dataset.state === job.state && element.dataset.label === label && element.childNodes.length > 0) return;
+  element.dataset.state = job.state;
+  element.dataset.label = label;
+  element.replaceChildren(glyph(STATE_GLYPH[job.state]), document.createTextNode(label));
+}
+
+/** The state word, or why a queued download has not started. */
+function jobLabel(job: JobSnapshot): string {
+  if (job.waitingForSpace && (job.state === "queued" || job.state === "scheduled")) {
+    return "Waiting for disk space";
+  }
+  return stateLabel(job.state);
 }
 
 function stateLabel(state: JobState): string {

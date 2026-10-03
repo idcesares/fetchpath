@@ -363,6 +363,8 @@ on GitHub.
 | Setting | What it does |
 | --- | --- |
 | Downloads at the same time | 1 to 8. More at once isn't always faster. |
+| Keep free on every drive | Fetchpath never fills a drive past this: Automatic keeps the larger of 5 GB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts by itself when there is room; one already running stops at its saved progress and continues later. |
+| Name and Always on | The name this Fetchpath shows everywhere, and **Always on**: keep it running in the background with no window open, start it when you sign in, and keep the computer awake while downloads run. It is not a Windows service: after a restart it runs only once you sign in. |
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |

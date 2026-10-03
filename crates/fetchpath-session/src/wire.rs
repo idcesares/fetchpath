@@ -31,6 +31,9 @@ pub(crate) fn job_state(state: &str) -> JobState {
 }
 
 pub(crate) fn waiting_reason(view: &View) -> Option<WaitingReason> {
+    if view.waiting_for_space && matches!(view.state.as_str(), "queued" | "scheduled") {
+        return Some(WaitingReason::StorageReserve);
+    }
     (view.state == "needs_source").then_some(match view.action.as_deref() {
         Some("recapture") => WaitingReason::BrowserContextLost,
         _ => WaitingReason::SourceExpired,
@@ -229,6 +232,7 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
         }),
         instance_name: Some(settings.display_instance_name()),
         hub_mode: Some(settings.hub_mode),
+        disk_reserve_bytes: Some(settings.disk_reserve_bytes),
     }
 }
 
@@ -272,6 +276,9 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             Some(name) => Some(name.clone()),
         },
         hub_mode: wire.hub_mode.unwrap_or(current.hub_mode),
+        disk_reserve_bytes: wire
+            .disk_reserve_bytes
+            .unwrap_or(current.disk_reserve_bytes),
     }
 }
 
