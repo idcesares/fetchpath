@@ -338,8 +338,10 @@ line into the window's history saying where the file went or why it stopped.
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
 - Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
-  and `/quit`.
+  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/rules`, `/agents`, `/hub`, `/tools`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
+  and `/quit`. `/agents` and `/hub` take the same words as `fetchpath agents`
+  and `fetchpath hub`, and `/settings` has the name of this Fetchpath and the
+  always-on switch.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names, folders (the ones
   recent downloads went to first) and links you downloaded before; Up and

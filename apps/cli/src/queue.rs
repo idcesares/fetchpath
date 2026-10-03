@@ -1240,26 +1240,27 @@ pub fn hub(args: &[String]) -> i32 {
             client::print_json(&json);
             return Ok(0);
         }
-        let on = match engine.send(Command::GetSettings)? {
-            CommandResult::Settings { view } => view.settings.hub_mode.unwrap_or(false),
-            other => return Err(client::unexpected(&other)),
-        };
-        if on {
-            println!(
-                "Always on: the Fetchpath engine keeps running in the background, even with no app open."
-            );
-            println!(
-                "It starts when you sign in to Windows and keeps the computer awake while downloads run."
-            );
-            println!(
-                "It is not a Windows service: after a restart it runs again only once you sign in."
-            );
-        } else {
-            println!(
-                "Always on is off: the engine stops a minute after it has nothing left to do."
-            );
+        for line in hub_lines(engine)? {
+            println!("{line}");
         }
         Ok(0)
+    })
+}
+
+/// What always on means now, for `fetchpath hub` and the terminal's `/hub`.
+pub(crate) fn hub_lines(engine: &Engine) -> Result<Vec<String>, ProtocolError> {
+    let on = match engine.send(Command::GetSettings)? {
+        CommandResult::Settings { view } => view.settings.hub_mode.unwrap_or(false),
+        other => return Err(client::unexpected(&other)),
+    };
+    Ok(if on {
+        vec![
+            "Always on: the Fetchpath engine keeps running in the background, even with no app open.".into(),
+            "It starts when you sign in to Windows and keeps the computer awake while downloads run.".into(),
+            "It is not a Windows service: after a restart it runs again only once you sign in.".into(),
+        ]
+    } else {
+        vec!["Always on is off: the engine stops a minute after it has nothing left to do.".into()]
     })
 }
 

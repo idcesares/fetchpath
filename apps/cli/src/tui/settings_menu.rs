@@ -23,6 +23,8 @@ enum Field {
     Attempts,
     Delay,
     SignIn,
+    InstanceName,
+    AlwaysOn,
     VideoTools,
     ToolsFolder,
     Theme,
@@ -143,6 +145,23 @@ impl SettingsMenu {
                     "Start at Windows sign-in (keeps schedules)",
                     switch(s.start_engine_at_sign_in.unwrap_or(false)),
                     "Enter to switch",
+                ),
+            ),
+            (Field::Heading, heading("This Fetchpath")),
+            (
+                Field::InstanceName,
+                Item::new(
+                    "Name",
+                    s.instance_name.clone().unwrap_or_default(),
+                    "Enter to type a name; leave it empty for the computer's name",
+                ),
+            ),
+            (
+                Field::AlwaysOn,
+                Item::new(
+                    "Always on: keep running in the background",
+                    switch(s.hub_mode.unwrap_or(false)),
+                    "Enter to switch; starts at sign-in and keeps the computer awake while downloading",
                 ),
             ),
             (Field::Heading, heading("Video and audio")),
@@ -275,6 +294,7 @@ impl SettingsMenu {
             // Switches flip either way.
             Field::AutoRetry
             | Field::SignIn
+            | Field::AlwaysOn
             | Field::Tray
             | Field::ConfirmRemove
             | Field::PowerMode => {
@@ -290,6 +310,14 @@ impl SettingsMenu {
             Field::SignIn => self.apply(engine, |s| {
                 s.start_engine_at_sign_in = Some(!s.start_engine_at_sign_in.unwrap_or(false));
             }),
+            Field::AlwaysOn => self.apply(engine, |s| {
+                s.hub_mode = Some(!s.hub_mode.unwrap_or(false));
+            }),
+            Field::InstanceName => {
+                let mut prompt = Prompt::default();
+                prompt.set(self.view.settings.instance_name.clone().unwrap_or_default());
+                self.editing = Some((field, prompt));
+            }
             Field::Tray => self.apply(engine, |s| s.close_to_tray = !s.close_to_tray),
             Field::ConfirmRemove => self.apply(engine, |s| {
                 s.confirm_remove_completed = !s.confirm_remove_completed;
@@ -368,7 +396,12 @@ impl SettingsMenu {
             match prompt.handle(key) {
                 Action::Submit(text) => {
                     self.editing = None;
-                    self.save_folder(engine, field, &text);
+                    if field == Field::InstanceName {
+                        // Empty returns to the computer's name.
+                        self.apply(engine, |s| s.instance_name = Some(text.trim().to_owned()));
+                    } else {
+                        self.save_folder(engine, field, &text);
+                    }
                 }
                 Action::Leave => self.editing = None,
                 Action::Complete => {

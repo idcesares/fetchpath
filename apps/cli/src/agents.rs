@@ -27,28 +27,51 @@ pub fn run(args: &[String]) -> i32 {
         .map(String::as_str)
         .filter(|arg| *arg != "--json")
         .collect();
-    let outcome = match words.as_slice() {
-        [] | ["list"] => list(json),
-        ["grant", name, folders @ ..] if !folders.is_empty() => {
-            parse_name(name).and_then(|agent| grant(agent, folders, json))
-        }
-        ["revoke", name, folders @ ..] => {
-            parse_name(name).and_then(|agent| revoke(agent, folders, json))
-        }
-        ["limit", name, rest @ ..] if !rest.is_empty() => {
-            parse_name(name).and_then(|agent| limit(agent, rest, json))
-        }
-        ["auto", name, switch @ ("on" | "off")] => {
-            parse_name(name).and_then(|agent| automatic(agent, *switch == "on", json))
-        }
-        _ => {
-            eprintln!("{USAGE}");
-            return EXIT_USAGE;
-        }
+    let Some(request) = Request::parse(&words) else {
+        eprintln!("{USAGE}");
+        return EXIT_USAGE;
     };
-    match outcome {
-        Ok(code) => code,
+    match Engine::connect().and_then(|engine| request.perform(&engine)) {
+        Ok(policies) => {
+            print(&policies, json);
+            0
+        }
         Err(error) => client::fail(&error, json),
+    }
+}
+
+/// One `agents` request, in the words `fetchpath agents` and the terminal's
+/// `/agents` share.
+pub(crate) enum Request<'a> {
+    List,
+    Grant(&'a str, &'a [&'a str]),
+    Revoke(&'a str, &'a [&'a str]),
+    Limit(&'a str, &'a [&'a str]),
+    Automatic(&'a str, bool),
+}
+
+impl<'a> Request<'a> {
+    /// `None` when the words are not a request.
+    pub(crate) fn parse(words: &'a [&'a str]) -> Option<Self> {
+        Some(match words {
+            [] | ["list"] => Self::List,
+            ["grant", name, folders @ ..] if !folders.is_empty() => Self::Grant(name, folders),
+            ["revoke", name, folders @ ..] => Self::Revoke(name, folders),
+            ["limit", name, rest @ ..] if !rest.is_empty() => Self::Limit(name, rest),
+            ["auto", name, switch @ ("on" | "off")] => Self::Automatic(name, *switch == "on"),
+            _ => return None,
+        })
+    }
+
+    /// Carries it out and returns every agent's access afterwards.
+    pub(crate) fn perform(&self, engine: &Engine) -> Result<Vec<AgentAccess>, ProtocolError> {
+        match *self {
+            Self::List => policies(engine),
+            Self::Grant(name, folders) => grant(engine, parse_name(name)?, folders),
+            Self::Revoke(name, folders) => revoke(engine, parse_name(name)?, folders),
+            Self::Limit(name, rest) => limit(engine, parse_name(name)?, rest),
+            Self::Automatic(name, on) => automatic(engine, parse_name(name)?, on),
+        }
     }
 }
 
@@ -77,17 +100,14 @@ fn set(
     engine: &Engine,
     agent: &AgentName,
     policy: Option<AgentPolicy>,
-    json: bool,
-) -> Result<i32, ProtocolError> {
-    let policies = match engine.send(Command::SetAgentPolicy {
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    match engine.send(Command::SetAgentPolicy {
         agent: agent.clone(),
         policy,
     })? {
-        CommandResult::AgentPolicies { policies } => policies,
-        other => return Err(client::unexpected(&other)),
-    };
-    print(&policies, json);
-    Ok(0)
+        CommandResult::AgentPolicies { policies } => Ok(policies),
+        other => Err(client::unexpected(&other)),
+    }
 }
 
 pub fn lines(policies: &[AgentAccess]) -> Vec<String> {
@@ -135,11 +155,6 @@ fn print(policies: &[AgentAccess], json: bool) {
     }
 }
 
-fn list(json: bool) -> Result<i32, ProtocolError> {
-    print(&policies(&Engine::connect()?)?, json);
-    Ok(0)
-}
-
 /// A folder as the engine wants it: full, existing, and spelled the same way
 /// each time so it can be found again to revoke.
 fn folder(text: &str) -> Result<String, ProtocolError> {
@@ -165,26 +180,32 @@ fn same_folder(a: &str, b: &str) -> bool {
         .eq_ignore_ascii_case(b.trim_end_matches(['\\', '/']))
 }
 
-fn grant(agent: AgentName, folders: &[&str], json: bool) -> Result<i32, ProtocolError> {
-    let engine = Engine::connect()?;
-    let mut policy = current(&engine, &agent)?;
+fn grant(
+    engine: &Engine,
+    agent: AgentName,
+    folders: &[&str],
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    let mut policy = current(engine, &agent)?;
     for text in folders {
         let folder = folder(text)?;
         if !policy.folders.iter().any(|held| same_folder(held, &folder)) {
             policy.folders.push(folder);
         }
     }
-    set(&engine, &agent, Some(policy), json)
+    set(engine, &agent, Some(policy))
 }
 
-fn revoke(agent: AgentName, folders: &[&str], json: bool) -> Result<i32, ProtocolError> {
-    let engine = Engine::connect()?;
+fn revoke(
+    engine: &Engine,
+    agent: AgentName,
+    folders: &[&str],
+) -> Result<Vec<AgentAccess>, ProtocolError> {
     if folders.is_empty() {
         // All of it: the agent goes back to asking for everything, and its
         // unfinished downloads wait for the person (engine, D4).
-        return set(&engine, &agent, None, json);
+        return set(engine, &agent, None);
     }
-    let mut policy = current(&engine, &agent)?;
+    let mut policy = current(engine, &agent)?;
     for text in folders {
         let before = policy.folders.len();
         let wanted = download::absolute(Path::new(text.trim()))
@@ -197,12 +218,15 @@ fn revoke(agent: AgentName, folders: &[&str], json: bool) -> Result<i32, Protoco
             )));
         }
     }
-    set(&engine, &agent, Some(policy), json)
+    set(engine, &agent, Some(policy))
 }
 
-fn limit(agent: AgentName, rest: &[&str], json: bool) -> Result<i32, ProtocolError> {
-    let engine = Engine::connect()?;
-    let mut policy = current(&engine, &agent)?;
+fn limit(
+    engine: &Engine,
+    agent: AgentName,
+    rest: &[&str],
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    let mut policy = current(engine, &agent)?;
     let mut words = rest.iter();
     while let Some(word) = words.next() {
         let (flag, inline) = match word.split_once('=') {
@@ -231,15 +255,18 @@ fn limit(agent: AgentName, rest: &[&str], json: bool) -> Result<i32, ProtocolErr
             }
         }
     }
-    set(&engine, &agent, Some(policy), json)
+    set(engine, &agent, Some(policy))
 }
 
 /// `fetchpath agents auto NAME on|off` (contract D7). Folders still apply.
-fn automatic(agent: AgentName, on: bool, json: bool) -> Result<i32, ProtocolError> {
-    let engine = Engine::connect()?;
-    let mut policy = current(&engine, &agent)?;
+fn automatic(
+    engine: &Engine,
+    agent: AgentName,
+    on: bool,
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    let mut policy = current(engine, &agent)?;
     policy.automatic = on;
-    set(&engine, &agent, Some(policy), json)
+    set(engine, &agent, Some(policy))
 }
 
 /// `fetchpath approvals`: every request waiting for the person, as the
