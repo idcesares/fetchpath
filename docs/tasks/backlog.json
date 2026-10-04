@@ -3154,6 +3154,55 @@
         "docs/development/evidence/windows/agent-installer.json"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-103",
+      "title": "Validate, document and publish the 0.2.0 release",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-102"
+      ],
+      "status": "in_progress",
+      "owner": "codex (lead; release integration, validation and publication)",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "Cargo.lock",
+        "apps",
+        "crates",
+        "adapters",
+        "tests",
+        "tools",
+        ".github",
+        "package.json",
+        "README.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "PROJECT.md",
+        "SECURITY.md",
+        "docs"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A11",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Owner-authorized release closure on 4 October 2026: independently review release changes and FP-101 persistence/lifecycle, resolve concrete security/correctness findings, run current repository/Rust/frontend/dependency/security checks, validate the final Windows package and upgrades, update clear user-facing and contributor documentation and GitHub repository metadata, and publish version 0.2.0 with installer and checksums only if the recorded release verdict permits it. Preserve previously accepted platform limits, no speed claims, no remote hub, no automatic grants or sharing; Claude Code actual download validation remains owner-deferred. Do not silently waive remaining release-relevant gates.",
+      "verification": "Record exact tested revision/artifact and commands/results in the existing release candidate record, with small reachable evidence. Independent strong review plus bounded repair recheck where needed; dependency advisory and secret checks; workspace tests, clippy, formatting, frontend build, repository tests, licenses and pins; clean Windows installer and 0.1.0 upgrade/saved-data validation. Confirm CI on published revision, version consistency, release assets and checksum integrity, documentation links and GitHub repository setup. Keep unsupported real reboot/power-loss evidence explicit.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
+      "blockedReason": null
     }
   ]
 }
