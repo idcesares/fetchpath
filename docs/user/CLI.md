@@ -59,10 +59,9 @@ fetchpath download https://example.com/tools/archive.zip D:\Installers\tools.zip
 
 Links must start with `http://` or `https://`.
 
-### Torrents in development builds
+### Torrents and magnets
 
-The published 0.1.0 installer does not contain this command. In a build with
-`fetchpath-torrent-helper.exe` beside `fetchpath.exe`, add one magnet, HTTPS
+Install the torrent component (included in Full setup), then add one magnet, HTTPS
 `.torrent` link, or local `.torrent` file with `fetchpath torrent SOURCE`.
 `--to` is optional: without it the torrent goes into a
 folder named after it inside your default download folder (or the matching
@@ -70,8 +69,8 @@ rule's folder), and a number is added if that name is taken. With `--to
 D:\Downloads\NewFolder` the folder is exactly that. `fetchpath add SOURCE --to
 D:\Downloads\NewFolder` and the terminal's `/add` detect
 these torrent sources too. Fetchpath never replaces or merges into an existing folder. Peer discovery is on, so peers can see your IP address (`--discover-peers` is accepted and changes nothing). Uploading is off unless you pass `--upload`. Cancelling stops all peer activity; torrents cannot be paused. The job appears in the shared
-queue and can be cancelled or retried there. An agent's request waits for your
-approval before contacting peers, and never discovers peers unless it asks. The transfer has a 32-peer limit and bounded
+queue and can be cancelled or retried there. An agent must request peer discovery and obtain your approval, unless you
+explicitly enabled automatic mode inside its granted folders. The transfer has a 32-peer limit and bounded
 download and upload rates. For a local `.torrent`, Fetchpath saves a private
 copy of its metadata so the job can survive moving or deleting the original.
 
@@ -241,6 +240,8 @@ value it applied. The desktop app shows the same settings.
 `fetchpath engine status` says whether it is running and what this Fetchpath
 is named; `fetchpath engine stop` stops it after saving every download's
 progress, and the next command starts it again and carries on.
+Use `fetchpath --version` for the installed application version; engine status
+reports the internal engine component version.
 
 The name is the computer's unless you choose one with
 `fetchpath settings instance-name NAME` (`none` returns to the computer's

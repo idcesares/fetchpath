@@ -69,6 +69,11 @@ agent host (see [CLI.md](docs/user/CLI.md#ai-agents-mcp)) or from the tests in
 wire change, regenerate it with `FETCHPATH_BLESS_SCHEMA=1` set while running
 `cargo test -p fetchpath-protocol` and review the diff.
 
+CI also runs the ignored helper-policy and durable-publication regression in an
+isolated `CARGO_TARGET_DIR`, keeping its deterministic helper away from real
+artifacts. Repository test files run sequentially to protect fixture timing
+from concurrent native installer checks.
+
 The real guided media-tool install downloads about 130 MB from the helpers'
 publishers, so it is ignored by default:
 
@@ -99,18 +104,28 @@ pwsh -NoProfile -File tests/compatibility/metalink/run.ps1
 
 ### Windows lifecycle checks
 
-`packaging-lifecycle.ps1` and `engine-lifecycle.ps1` upgrade to builds
-numbered 0.1.1 and 0.1.2, and refuse installers built before the last
-commit. Build them from the current tree, then the release last:
+Prefer the disposable Sandbox harnesses for the current release. They install
+only inside the guest and keep the owner's Windows session untouched. Run them
+one at a time after building the release:
 
 ```powershell
-corepack pnpm --dir apps/desktop tauri build --config src-tauri/tauri.release.conf.json --config '{"version":"0.1.1"}'
-corepack pnpm --dir apps/desktop tauri build --config src-tauri/tauri.release.conf.json --config '{"version":"0.1.2"}'
-corepack pnpm --dir apps/desktop release
+powershell.exe -NoProfile -File tests/compatibility/windows/sandbox-lifecycle.ps1
+powershell.exe -NoProfile -File tests/compatibility/windows/agent-installer.ps1
+powershell.exe -NoProfile -File tests/compatibility/windows/sign-in-lifecycle.ps1
+powershell.exe -NoProfile -File tests/compatibility/windows/sandbox-lifecycle.ps1 -BaselineInstallerPath work/baseline/Fetchpath_0.1.0_x64-setup.exe -Components cli
 ```
 
-`engine-lifecycle.ps1` also needs the pre-engine 0.1.0 installer to upgrade
-from, passed as `-OldInstallerPath`.
+Download the published baseline and verify its release checksum before the
+upgrade test. The sign-in harness performs an actual guest logoff/logon,
+checks automatic engine startup before a client can start it, and verifies a
+checkpointed download. It does not reboot the owner PC or test sudden power loss.
+Sandbox adjusts Smart App Control only inside the disposable guest because the
+installer is unsigned; ordinary users must follow the documented Windows limits.
+
+The older on-machine `packaging-lifecycle.ps1` and `engine-lifecycle.ps1` are
+historical 0.1.x harnesses with fixed version expectations. Do not use their
+old artifact defaults as a current release gate. They require separately built
+versioned fixtures and refuse artifacts older than the last commit.
 
 Both Windows scripts throw on a failed assertion and still write their partial
 observation, so a JSON file with `"passed": false` is a failure record rather

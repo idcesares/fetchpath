@@ -5,12 +5,14 @@ FP-103, recorded 4 October 2026 on Windows 11 x64. This replaces the
 
 ## Verdict
 
-**Validation in progress; not published.** Publication requires current package lifecycle tests,
-and green GitHub CI on the integrated release revision. No gate is waived.
+**Local release gate passed; publication awaits green GitHub CI.** Independent
+reviews and final package checks passed. No gate is waived.
 
 Candidate: `Fetchpath_0.2.0_x64-setup.exe`, built from the FP-103 release tree.
 SHA-256: `9d8e7434cd952c297a7848908cb89296b5f78734c353edef80125e2ef84dd1a4`.
 It is unsigned. The hash checks downloaded bytes, not publisher authenticity.
+
+Compact [machine-readable evidence](evidence/release/fp103-gate.json) records the tested product revision and artifact.
 
 ## Current evidence
 
@@ -23,8 +25,8 @@ It is unsigned. The hash checks downloaded bytes, not publisher authenticity.
 | Policy and recovery | Isolated-target ignored session regression passed: running/scheduled media and torrent policy changes; failed/deferred/successful saves; Published to saved Running to restart to Completed without a duplicate folder. 11 helper tests passed. |
 | Protocols | Actual FTP, FTPS and SFTP fixtures passed, including Ed25519/password, resume and RSA private-key refusal. |
 | Dependencies | JavaScript audit: no known vulnerabilities. RustSec findings assessed below. Notices regenerated and checked for 718 packages. Media publisher pins matched. |
-| Secrets | Gitleaks 8.30.1: no findings across 160 commits after two exact exceptions for verified public Chromium identity keys. Final commit scan remains required. |
-| Package | Release build passed. Final clean install, public 0.1.0 upgrade, agent lifecycle and actual guest sign-in checks are in progress. |
+| Secrets | Gitleaks 8.30.1: no findings across 160 commits after two exact exceptions for verified public Chromium identity keys. Release history scan is repeated after the final commit. |
+| Package | Release build passed. [Clean install](evidence/windows/fp103-clean-install.json), [public 0.1.0 upgrade](evidence/windows/fp103-upgrade.json), [88 agent installer assertions](evidence/windows/fp103-agent-installer.json), and [actual guest sign-out/sign-in](evidence/windows/sign-in-lifecycle.json) passed. |
 | Review | Independent lifecycle, security and dependency reviews ran. Named findings repaired; independent bounded final publication recovery recheck passed. |
 
 ## Security findings and repairs
@@ -55,7 +57,7 @@ six maintenance warnings and one unsoundness warning remain.
 - The yanked `yoke-derive 0.8.3` was replaced with `0.8.4`.
 
 GitHub secret scanning, push protection and dependency alerts are enabled;
-no open alerts were observed. Actions are pinned to verified commit IDs,
+No open secret alerts were observed. The GTK/Linux-only glib dependency alert was dismissed as not used in the supported Windows target, with its scope recorded. Actions are pinned to verified commit IDs,
 CI checks the JavaScript audit, and Dependabot covers Cargo, desktop npm and
 GitHub Actions. These checks complement review and tests; they do not
 claim that the software has no vulnerabilities.

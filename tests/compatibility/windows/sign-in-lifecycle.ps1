@@ -38,15 +38,22 @@ try {
     Wait-File 'before.json' 30
     & wsb exec --id $sandbox --run-as ExistingLogin --command 'cmd.exe /c shutdown.exe /l'
     if ($LASTEXITCODE -ne 0) { throw 'Guest logoff failed' }
-    Start-Sleep -Seconds 3
+    $logoffDeadline=[DateTime]::UtcNow.AddSeconds(90)
+    do {
+        Execute-Phase 'LogoffProbe' 'System'
+        if (Test-Path (Join-Path $out 'logoff-ready')) { break }
+        Start-Sleep -Seconds 2
+    } while ([DateTime]::UtcNow -lt $logoffDeadline)
+    if (-not (Test-Path (Join-Path $out 'logoff-ready'))) { throw 'Guest logoff did not finish' }
     Start-Process wsb.exe -ArgumentList @('connect','--id',$sandbox) -WindowStyle Hidden
     $loginDeadline=[DateTime]::UtcNow.AddSeconds(90)
     do {
-        & wsb exec --id $sandbox --run-as ExistingLogin --command 'cmd.exe /c whoami.exe >C:\fp\out\login-ready.txt' | Out-Null
-        if ($LASTEXITCODE -eq 0) { break }
+        # A failed process launch can still return a successful wsb CLI exit.
+        & wsb exec --id $sandbox --run-as ExistingLogin --command 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\fp\in\sign-in-lifecycle-inner.ps1 -Phase LoginProbe' | Out-Null
+        if ((Test-Path (Join-Path $out 'login-ready.txt')) -and (Get-Item (Join-Path $out 'login-ready.txt')).Length -gt 0) { break }
         Start-Sleep -Seconds 3
     } while ([DateTime]::UtcNow -lt $loginDeadline)
-    if ($LASTEXITCODE -ne 0) { throw 'Guest sign-in did not become available' }
+    if (-not (Test-Path (Join-Path $out 'login-ready.txt')) -or (Get-Item (Join-Path $out 'login-ready.txt')).Length -eq 0) { throw 'Guest sign-in did not become available' }
     Execute-Phase 'After'
     Wait-File 'result.json'
     $result=Get-Content (Join-Path $out 'result.json') -Raw | ConvertFrom-Json

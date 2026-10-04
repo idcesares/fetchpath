@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (release preparation)
+## 0.2.0 (4 October 2026)
 
 ### Added
 
@@ -41,7 +41,7 @@
 Windows 11 x64 only, unsigned; no HTTP/3 or remote hub. Torrents have no pause,
 per-file selection or seeding after completion. No named media website is
 promised. Claude Code's current model-driven download test is owner-deferred;
-real reboot/sign-in recovery and sudden power-loss evidence remain incomplete.
+guest sign-out/sign-in recovery passed; physical reboot and sudden power loss remain untested.
 
 ## 0.1.0 (28 September 2026)
 

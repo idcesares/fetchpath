@@ -1,14 +1,14 @@
 # FP-103 G2: invoked only in a disposable Windows Sandbox by the outer harness.
 [CmdletBinding()]
-param([ValidateSet('Setup','ServeLaunch','Serve','Before','After')][string]$Phase = 'Setup')
+param([ValidateSet('Setup','ServeLaunch','Serve','Before','LogoffProbe','LoginProbe','After')][string]$Phase = 'Setup')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $out = 'C:\fp\out'
 $exe = Join-Path $env:LOCALAPPDATA 'Fetchpath\fetchpath.exe'
 function Assert-G2([bool]$Condition,[string]$Message) { if (-not $Condition) { throw $Message } }
 function Invoke-Fp([string[]]$Arguments) {
-    $text = (& $exe @Arguments | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) { throw "Fetchpath command failed: $($Arguments[0])" }
+    $text = (& $exe @Arguments 2> "$out\cli-error.txt" | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Fetchpath command failed: $($Arguments[0]); $(Get-Content "$out\cli-error.txt" -Raw -ErrorAction SilentlyContinue)" }
     return $text
 }
 function Engine-Process {
@@ -20,6 +20,7 @@ function Logon-Sid { return (& whoami.exe /logonid | Out-String).Trim() }
 try {
     switch ($Phase) {
         Setup {
+            if (Test-Path "$out\setup.json") { break }
             $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy'
             $sac = Get-ItemProperty -LiteralPath $key -Name VerifiedAndReputablePolicyState -ErrorAction SilentlyContinue
             if ($sac -and $sac.VerifiedAndReputablePolicyState -ne 0) {
@@ -35,6 +36,17 @@ try {
             $version = Invoke-Fp @('--version')
             Assert-G2 ($version -match '0\.2\.0') 'Wrong packaged CLI version'
             [IO.File]::WriteAllText("$out\setup.json",(@{ version=$version; sandboxSacState=if ($sac) { $sac.VerifiedAndReputablePolicyState } else { 0 } } | ConvertTo-Json))
+        }
+        LogoffProbe {
+            $before=Get-Content "$out\before.json" -Raw | ConvertFrom-Json
+            if (-not (Get-Process -Id $before.enginePid -ErrorAction SilentlyContinue)) {
+                [IO.File]::WriteAllText("$out\logoff-ready",'ready')
+            }
+        }
+        LoginProbe {
+            $before=Get-Content "$out\before.json" -Raw | ConvertFrom-Json
+            $sid=Logon-Sid
+            if ($sid -and $sid -ne $before.logonSid) { [IO.File]::WriteAllText("$out\login-ready.txt",$sid) }
         }
         ServeLaunch {
             # SYSTEM keeps this loopback fixture alive across the guest user's logoff.
@@ -108,7 +120,7 @@ try {
             } while ([DateTime]::UtcNow -lt $deadline)
             Assert-G2 ($job.state -eq 'paused') 'Could not checkpoint the partial download'
             Invoke-Fp @('resume',$id) | Out-Null
-            $before=@{ logonSid=Logon-Sid; instanceId=$status.instance.id; enginePid=$pidBefore; jobId=$id; destination=(Join-Path $folder 'g2.bin'); desktopExitPassed=$true }
+            $before=@{ logonSid=Logon-Sid; instanceId=$status.instance.id; engineVersion=$status.engine_version; executableHash=(Get-FileHash -LiteralPath $exe).Hash; enginePid=$pidBefore; jobId=$id; destination=(Join-Path $folder 'g2.bin'); desktopExitPassed=$true }
             [IO.File]::WriteAllText("$out\before.json",($before | ConvertTo-Json))
         }
         After {
@@ -123,10 +135,23 @@ try {
             } while ([DateTime]::UtcNow -lt $deadline)
             Assert-G2 ($processes.Count -eq 1) 'Windows sign-in did not start the engine automatically'
             Assert-G2 ($processes[0].ProcessId -ne $before.enginePid) 'The original engine was not replaced across logoff'
-            $status=(Invoke-Fp @('engine','status','--json') | ConvertFrom-Json).status
-            Assert-G2 ($status.instance.id -eq $before.instanceId) 'Sign-in changed the persisted instance identity'
-            Assert-G2 ($status.engine_version -eq '0.2.0') 'Wrong engine started at sign-in'
+            $pidAfter=$processes[0].ProcessId
+            # Let the old fixture connection unwind before metadata recovery.
+            # Automatic startup has already been observed without a client.
             [IO.File]::WriteAllText("$out\resume",'')
+            $readyDeadline=[DateTime]::UtcNow.AddSeconds(30)
+            do {
+                try {
+                    $status=(Invoke-Fp @('engine','status','--json') | ConvertFrom-Json).status
+                    break
+                } catch {
+                    if ([DateTime]::UtcNow -ge $readyDeadline) { throw }
+                    Start-Sleep -Milliseconds 300
+                }
+            } while ($true)
+            Assert-G2 ($status.instance.id -eq $before.instanceId) 'Sign-in changed the persisted instance identity'
+            Assert-G2 ($status.engine_version -eq $before.engineVersion -and (Get-FileHash -LiteralPath $exe).Hash -eq $before.executableHash) 'The engine executable changed across sign-in'
+            Assert-G2 ((Invoke-Fp @('--version')) -match '0\.2\.0') 'Wrong packaged CLI version after sign-in'
             $deadline=[DateTime]::UtcNow.AddSeconds(75)
             do {
                 $job=@((Invoke-Fp @('ls','--json') | ConvertFrom-Json).jobs | Where-Object job_id -eq $before.jobId)[0]
@@ -134,13 +159,14 @@ try {
                 Start-Sleep -Milliseconds 500
             } while ([DateTime]::UtcNow -lt $deadline)
             Assert-G2 ($job.state -eq 'completed') 'Persisted job did not complete after Windows sign-in'
+            Assert-G2 (@(Engine-Process).Count -eq 1 -and @(Engine-Process)[0].ProcessId -eq $pidAfter) 'A client replaced the automatically started engine'
             $bytes=[IO.File]::ReadAllBytes($before.destination)
             Assert-G2 ($bytes.Length -eq 2097152 -and @($bytes | Where-Object { $_ -ne 0x5a }).Count -eq 0) 'Recovered bytes differ from the fixture'
             $ranges=@(Get-Content "$out\after-ranges.txt" | ForEach-Object { [int]$_ })
             Assert-G2 (@($ranges | Where-Object { $_ -gt 0 }).Count -gt 0) 'No checkpoint range was resumed after sign-in'
             Start-Sleep -Seconds 65
-            Assert-G2 (@(Engine-Process).Count -eq 1) 'Always-on engine exited after the last download and client'
-            $result=@{ passed=$true; environment='Windows Sandbox'; osBuild=[Environment]::OSVersion.Version.ToString(); version='0.2.0'; newLogonVerified=$true; desktopExitPassed=$before.desktopExitPassed; automaticEngineStart=$true; stableInstance=$true; resumedRange=($ranges | Measure-Object -Maximum).Maximum; savedBytes=$bytes.Length; bytesVerified=$true; idlePastDefaultGrace=$true; limitation='Actual guest sign-out/sign-in; no reboot or power-loss test' }
+            Assert-G2 (@(Engine-Process).Count -eq 1 -and @(Engine-Process)[0].ProcessId -eq $pidAfter) 'Automatically started engine exited after the last download and client'
+            $result=@{ passed=$true; environment='Windows Sandbox'; osBuild=[Environment]::OSVersion.Version.ToString(); version='0.2.0'; newLogonVerified=$true; desktopExitPassed=$before.desktopExitPassed; automaticEngineStart=$true; sameAutomaticEngineThroughIdle=$true; stableInstance=$true; resumedRange=($ranges | Measure-Object -Maximum).Maximum; savedBytes=$bytes.Length; bytesVerified=$true; idlePastDefaultGrace=$true; limitation='Actual guest sign-out/sign-in; no reboot or power-loss test' }
             [IO.File]::WriteAllText("$out\result.json",($result | ConvertTo-Json))
             Invoke-Fp @('hub','off') | Out-Null
             Invoke-Fp @('engine','stop') | Out-Null

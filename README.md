@@ -10,7 +10,7 @@ exactly what you asked for. It can also save video and audio.
 
 **[Download Fetchpath](https://github.com/idcesares/fetchpath/releases/latest)**
 (Windows 11, x64), install it, then paste a link into the window.
-This page describes **0.2.0, in release preparation**; the release page lists
+This page describes **0.2.0**; the release page lists
 the published versions. See [Installing](#installing) first: Fetchpath isn't
 code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
@@ -89,7 +89,7 @@ you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
 Fetchpath isn't code-signed, so **Windows SmartScreen warns when you run
-the installer**. Once the checksum matches, choose **More info → Run anyway**.
+the installer**. Once the checksum matches, choose **More info â†’ Run anyway**.
 Where **Smart App Control** is on, Windows blocks unsigned programs outright
 and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md#install).
 

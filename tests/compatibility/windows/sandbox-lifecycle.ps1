@@ -66,10 +66,11 @@ foreach ($script in @('sandbox-inner.ps1', 'uia-common.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination $inputDirectory
 }
 
+$releaseVersion = (Get-Content (Join-Path $repositoryRoot 'apps/desktop/src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json).version
 $sandboxIn = 'C:\fp\in'
 $sandboxOut = 'C:\fp\out'
 $logon = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File $sandboxIn\sandbox-inner.ps1 " +
-    "-InstallerPath $sandboxIn\$installerName -OutputPath $sandboxOut\result.json" +
+    "-InstallerPath $sandboxIn\$installerName -OutputPath $sandboxOut\result.json -ExpectedVersion $releaseVersion" +
     $(if ($DeleteData) { ' -DeleteData' } else { '' }) +
     $(if ($Components) { " -Components $Components" } else { '' }) +
     $(if ($baselineName) { " -BaselineInstallerPath $sandboxIn\$baselineName" } else { '' })
@@ -91,7 +92,7 @@ $configurationPath = Join-Path $stage 'fetchpath.wsb'
 # interactive logon session: the logon command runs in it and the desktop app
 # gets a real window for UI Automation to drive.
 $started = [DateTime]::UtcNow
-Start-Process -FilePath $configurationPath
+Start-Process -FilePath $configurationPath -WindowStyle Hidden
 $doneMarker = Join-Path $resultDirectory 'done'
 $deadline = $started.AddMinutes($TimeoutMinutes)
 while (-not (Test-Path -LiteralPath $doneMarker) -and [DateTime]::UtcNow -lt $deadline) {

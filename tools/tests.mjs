@@ -16,7 +16,7 @@ if (!tests.length) {
   process.stderr.write('No repository tests found.\n');
   process.exit(1);
 }
-const result = spawnSync(process.execPath, ['--test', '--', ...tests], {
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=1', '--', ...tests], {
   cwd: root, stdio: 'inherit',
 });
 process.exit(result.status ?? 1);

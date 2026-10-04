@@ -64,11 +64,17 @@ No network listener: remote access is FP-092, deferred to the third release.
 - An always-on engine notices time passing (approval expiry, a newly due
   scheduled download, an old browser host's capture) within 5 s while idle.
 
+- FP-103 G2, final 0.2.0 installer: actual guest sign-out/sign-in in Windows
+  Sandbox 26100. The engine survived forced desktop exit, started automatically
+  before any client could launch it after a new logon, kept its instance and
+  executable identity, resumed from byte 294912, and verified all 2097152 bytes.
+  The same automatically started process stayed up beyond idle grace.
+  [Evidence](evidence/windows/sign-in-lifecycle.json).
+
 ## Limitations that still hold
 
-- **G2 is not yet shown on a real reboot.** Tests prove no idle exit and the
-  sign-in start setting; a sign-out or restart with a persisted download
-  resuming, on the default data folder, still needs the walkthrough.
+- G2 proves actual Windows guest sign-out/sign-in on the default data folder.
+  A physical-machine reboot and sudden power loss remain untested.
 - **G3 passes narrowly** on one debug-build run; a release build has not
   been measured. The idle pass still rewrites the queue file every 5 s
   when nothing changed.
@@ -83,5 +89,5 @@ No network listener: remote access is FP-092, deferred to the third release.
 - Independent lifecycle and security reviews ran for FP-103. Repairs keep the
   desktop pinned to its original instance through reconnects, restart running
   helper jobs when automatic policy changes, and retain torrent recovery
-  identity until completion is durable. The final publication repair recheck
-  is tracked in the release gate.
+  identity until completion is durable. The independent final publication
+  repair recheck passed; the release gate records the evidence.

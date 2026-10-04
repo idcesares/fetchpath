@@ -217,8 +217,8 @@ running. To stop downloads, pause or cancel them first.
 **Always on** in **Settings → General** keeps the engine running without a
 window and starts it when you sign in to Windows. While downloading it asks
 Windows to keep the computer awake; it does not wake a sleeping computer or
-run before sign-in. A real reboot/sign-in recovery walkthrough is still a
-gap in the release evidence; ordinary engine-restart tests have passed.
+run before sign-in. Sign-out/sign-in recovery was verified in Windows
+Sandbox; a physical-machine reboot and sudden power loss remain untested.
 
 If Fetchpath's background part was stopped on purpose, for example with
 `fetchpath engine stop`, the window says so and offers **Start Fetchpath**;
