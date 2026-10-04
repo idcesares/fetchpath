@@ -10,7 +10,7 @@ fetchpath-cache = { path = "../../crates/fetchpath-cache" }
 aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
 curve25519-dalek = "5.0.0"
 ed25519-dalek = "3.0.0"
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 sha2 = "0.11.0"
