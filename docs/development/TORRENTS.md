@@ -51,13 +51,18 @@ rules and default folder (`Session::resolve_torrent_destination`), the queue
 record keeps the root and an automatic flag across restarts, and the helper
 stages in `<root>\.fetchpath-<job>-<hash>.part`, names the folder from the
 torrent's info name (hazardous names fall back to `Torrent <hash prefix>`) and
-claims `name`, `name (2)`, and so on with an exclusive `create_dir` (Windows
-renames over an empty directory), renames the stage onto its own claim, records
-the folder in the stage marker so a rerun after a crash reports it, and emits `Published` so the job's destination becomes the final folder. A
+publishes to `name`, `name (2)`, and so on with Windows `MoveFileExW`
+without replacement. An existing destination is never overwritten. The
+publication marker remains until the engine has durably saved completion.
+The view can show the published folder immediately, while a Running queue
+record retains the original root and automatic flag so a restart can find
+that marker. Only Completed promotes the persistent destination. A crash
+after the durable save but before marker cleanup can leave a harmless marker.
+A
 bare name goes into the same root; a full path behaves as before. An agent's
 automatic destination is checked against its grants as a folder inside the
-root. Verified by session, policy and helper unit tests; the installed-app
-walkthrough and independent review are still open.
+root. Verified by session, policy and helper unit tests; the packaged helper walkthrough passed; release boundary review found and
+repaired publication ordering and Windows no-overwrite behavior.
 
 Peer discovery default (FP-090): the protocol's `discover_peers` is optional; absent means on for a person and off for an agent, and the engine stores the effective policy in the record so retry and restart reuse it. A torrent whose effective discovery is off (a person clears it, or an agent omits or sends false) is refused at creation with `policy.discovery_off`; the helper has no trackers or DHT, so queueing it could only fail. An agent is told to request `discover_peers`, which needs approval. Cancel kills the helper process, which ends all peer activity; there is still no pause. Verified by protocol wire, session policy and CLI parsing tests; the installed-app walkthrough and independent strong review are still open.
 

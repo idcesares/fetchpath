@@ -29,7 +29,7 @@ Set-StrictMode -Version Latest
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.1.0_x64-setup.exe'
+    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.2.0_x64-setup.exe'
 }
 if (-not $OutputPath) {
     $OutputPath = Join-Path $repositoryRoot 'docs\development\evidence\windows\sandbox-lifecycle.json'
@@ -47,6 +47,8 @@ if ((Get-RunningSandboxIds).Count -gt 0) {
 
 # The staging folders live under work/, which Git ignores.
 $stage = Join-Path $repositoryRoot 'work\fp043-sandbox'
+$stage = [IO.Path]::GetFullPath($stage)
+if (-not $stage.StartsWith((Join-Path $repositoryRoot 'work\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'Stage escapes repository work directory' }
 if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 $inputDirectory = Join-Path $stage 'in'
 $resultDirectory = Join-Path $stage 'out'

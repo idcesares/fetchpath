@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.0 (release preparation)
+
+### Added
+
+- Torrent and magnet downloads in the shared queue, from the desktop,
+  terminal and command line. A new folder is chosen in your default or
+  rule-selected download folder. Peer discovery is on for a person;
+  uploading requires a separate choice.
+- A consistent new appearance for the desktop, terminal and browser extension,
+  with settings grouped by purpose.
+- Full and Custom installation, component changes and repair: choose the
+  desktop, terminal, AI agent support, browser integration and torrent helper.
+  Video and audio tools remain an optional, separate download.
+- Guided Codex and Claude Code connections, selected explicitly in setup or
+  with `fetchpath agent-setup`. Upgrade and repair maintain owned connections;
+  uninstall and component removal clean them up while preserving edited entries.
+  Registration grants no download access.
+- Instance naming and identity checks, tray status, optional **Always on**
+  with Windows sign-in start and keeping the computer awake during downloads.
+- Automatic mode for an agent within its granted folders; size, hourly and
+  torrent discovery approvals can be relaxed explicitly. Upload, credentials
+  and downloads outside those folders keep their restrictions.
+- Disk-space reserve and waiting for space, plus seven-day expiry of unanswered
+  agent approval requests.
+
+### Fixed
+
+- HTTP transfers reuse connections and schedule work without waiting for
+  fixed rounds; engine commands and completed transfers wake scheduling promptly.
+  No Internet speed claim is made.
+- Torrent retry and publication checks keep staged data tied to its source;
+  the packaged helper runs without a separately installed Visual C++ runtime.
+- Withdrawn approval requests stay ended after restart. Uninstall offers
+  explicit application-data deletion and always keeps downloaded files.
+
+### Limits and release status
+
+0.2.0 publication depends on the [release verdict](docs/development/RELEASE-CANDIDATE.md).
+Windows 11 x64 only, unsigned; no HTTP/3 or remote hub. Torrents have no pause,
+per-file selection or seeding after completion. No named media website is
+promised. Claude Code's current model-driven download test is owner-deferred;
+real reboot/sign-in recovery and sudden power-loss evidence remain incomplete.
+
 ## 0.1.0 (28 September 2026)
 
 The first public release of Fetchpath, for Windows 11 on x64.

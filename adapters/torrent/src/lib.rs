@@ -1,6 +1,7 @@
 //! The bounded wire contract between the engine and its isolated torrent helper.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Write};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -159,6 +160,20 @@ impl TorrentJob {
             .expect("torrent job poisoned")
             .snapshot
             .clone()
+    }
+
+    /// Remove bounded recovery evidence only after the host durably saves completion.
+    /// Calling this after a failed queue save would lose crash recovery identity.
+    pub fn acknowledge_publication(&self) -> std::io::Result<()> {
+        if self.snapshot().state != JobState::Completed {
+            return Err(std::io::Error::other("torrent is not completed"));
+        }
+        let marker = publication_marker(&self.request)?;
+        match std::fs::remove_file(marker) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn limit_bytes(&self, limit: u64) {
@@ -330,6 +345,30 @@ impl TorrentJob {
     }
 }
 
+fn publication_marker(request: &Request) -> std::io::Result<PathBuf> {
+    request.validate().map_err(std::io::Error::other)?;
+    let destination = PathBuf::from(&request.destination);
+    if !destination.is_absolute() {
+        return Err(std::io::Error::other("destination.invalid"));
+    }
+    let source_hash = format!("{:x}", Sha256::digest(request.source.as_bytes()));
+    let suffix = format!(
+        ".fetchpath-{}-{}.part.infohash",
+        request.job_id,
+        &source_hash[..32]
+    );
+    if request.auto_name {
+        Ok(destination.join(suffix))
+    } else {
+        let mut name = destination
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("destination.invalid"))?
+            .to_os_string();
+        name.push(suffix);
+        Ok(destination.with_file_name(name))
+    }
+}
+
 pub fn request(
     source: String,
     destination: PathBuf,
@@ -376,4 +415,34 @@ pub fn request_auto(
     let mut request = request(source, root, job_id, discover_peers, upload);
     request.auto_name = true;
     request
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn publication_evidence_is_removed_only_by_completed_job_acknowledgment() {
+        for auto_name in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut request = request(
+                "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".into(),
+                temp.path().join("Album"),
+                "01234567-89ab-cdef-0123-456789abcdef".into(),
+                true,
+                false,
+            );
+            request.auto_name = auto_name;
+            let marker = publication_marker(&request).unwrap();
+            std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+            std::fs::write(&marker, b"durable recovery evidence").unwrap();
+            let job = TorrentJob::create(request);
+            assert!(job.acknowledge_publication().is_err());
+            assert!(marker.is_file());
+            job.inner.lock().unwrap().snapshot.state = JobState::Completed;
+            job.acknowledge_publication().unwrap();
+            assert!(!marker.exists());
+            job.acknowledge_publication().unwrap();
+        }
+    }
 }

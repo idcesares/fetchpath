@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Installation and usage
+    url: https://github.com/idcesares/fetchpath/blob/main/docs/user/GUIDE.md
+    about: Start here for installation, downloads, browser capture and agent setup.
+  - name: Report a security vulnerability privately
+    url: https://github.com/idcesares/fetchpath/security/advisories/new
+    about: Please keep security reports out of public issues.

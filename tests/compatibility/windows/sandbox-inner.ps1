@@ -243,7 +243,7 @@ try {
             storedInstallType = Get-Stored 'FetchpathInstallType'
         }
         Assert-True ($observation.baseline.exitCode -eq 0) "The baseline installer exited with code $($observation.baseline.exitCode)."
-        Assert-True ($observation.baseline.desktopExecutable -and $observation.baseline.browserHostExecutable -and $observation.baseline.torrentHelperExecutable) 'The baseline did not install every program.'
+        Assert-True ($observation.baseline.desktopExecutable -and $observation.baseline.browserHostExecutable) 'The published baseline did not install its desktop and browser host.'
         Assert-True ($observation.baseline.nativeHostKeysRegistered -eq 3 -and $observation.baseline.startMenuShortcut -and $observation.baseline.desktopShortcut) 'The baseline did not register the keys and shortcuts.'
         Assert-True ($null -eq $observation.baseline.storedInstallType) 'The baseline already stores a selection; it must be the build from before components.'
 

@@ -189,9 +189,13 @@ class PasswordAndKeyServer(asyncssh.SSHServer):
 class SftpFixture:
     def __init__(self, root: pathlib.Path, directory: pathlib.Path):
         self.host_key = asyncssh.generate_private_key("ssh-rsa")
-        self.client_key = asyncssh.generate_private_key("ssh-rsa")
+        self.client_key = asyncssh.generate_private_key("ssh-ed25519")
         self.client_key_path = directory / "sftp-client-key.pem"
-        self.client_key.write_private_key(self.client_key_path, "pkcs1-pem")
+        self.client_key.write_private_key(self.client_key_path, "openssh")
+        self.rsa_client_key_path = directory / "sftp-rsa-client-key.pem"
+        asyncssh.generate_private_key("ssh-rsa").write_private_key(
+            self.rsa_client_key_path, "pkcs1-pem"
+        )
         self.root = root
         self.ready = threading.Event()
         self.failure: Exception | None = None
@@ -267,6 +271,7 @@ def main() -> None:
         "known_hosts": str(known_hosts),
         "wrong_known_hosts": str(wrong_known_hosts),
         "private_key": str(sftp.client_key_path),
+        "rsa_private_key": str(sftp.rsa_client_key_path),
     }
     temporary = args.state.with_suffix(".tmp")
     temporary.write_text(json.dumps(state), encoding="utf-8")

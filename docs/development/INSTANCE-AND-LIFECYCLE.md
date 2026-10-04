@@ -80,5 +80,8 @@ No network listener: remote access is FP-092, deferred to the third release.
   add and approval surfaces name it once a second instance can be selected
   (FP-092).
 - Per-principal active and submission limits moved to FP-092.
-- The required independent strong review of persistence ordering and
-  lifecycle has not run.
+- Independent lifecycle and security reviews ran for FP-103. Repairs keep the
+  desktop pinned to its original instance through reconnects, restart running
+  helper jobs when automatic policy changes, and retain torrent recovery
+  identity until completion is durable. The final publication repair recheck
+  is tracked in the release gate.

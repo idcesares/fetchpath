@@ -1,0 +1,4 @@
+# These exact historical findings are Chromium extension public identity keys,
+# verified as DER public keys. Do not suppress future findings in these files.
+c37335706bd333d79761e0926eb93f018fd88e02:extensions/browser/manifest.chromium.json:generic-api-key:6
+e47c64d67e3e944e909da79d74a783361be1255e:tools/spikes/browser/extension/manifest.chromium.json:generic-api-key:6

@@ -23,15 +23,17 @@ third-party JavaScript dependencies are needed for them.
 node tools/tasks.mjs next          # the next ready task
 node tools/tasks.mjs show FP-018   # one task in full
 node tools/tasks.mjs check         # backlog graph, contracts and evidence
-node --test                        # fixture, extension and backlog tests
+node tools/tests.mjs               # repository Node tests; excludes ignored work
 node tools/licenses/generate.mjs --check   # third-party notices are current
 node tools/media-tools/pin.mjs --check     # media helper pins still match their publishers
 ```
 
-The native-host test in `node --test` runs `target/debug/fetchpath-browser-host.exe`,
+The runner uses an explicit repository test list so ignored worktrees and copied
+plugin caches are not discovered as tests. `npm test` uses the same runner.
+The native-host test runs `target/debug/fetchpath-browser-host.exe`,
 so after a `cargo clean` run `cargo build --workspace` first.
 
-The Rust workspace needs Rust 1.98+:
+The Rust workspace needs Rust 1.98+; CI validates with Rust 1.98.1:
 
 ```powershell
 $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
@@ -54,6 +56,7 @@ cache and paired-device state use `FETCHPATH_DATA_DIR` instead
 
 ```powershell
 $env:FETCHPATH_APP_DATA_DIR = "$PWD\work\engine-data"
+$env:FETCHPATH_DATA_DIR = "$PWD\work\engine-cache"
 target\debug\fetchpath.exe engine status   # starts nothing; says whether one runs
 target\debug\fetchpath.exe add https://example.com/ --wait
 target\debug\fetchpath.exe                 # the interactive terminal

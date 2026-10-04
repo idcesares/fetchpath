@@ -36,6 +36,6 @@ one your task names.
 
 ## Release
 
-- [Release gate](RELEASE-CANDIDATE.md) — the 0.1.0 acceptance matrix on the engine platform and its verdict (FP-069).
+- [Release gate](RELEASE-CANDIDATE.md) — the current 0.2.0 acceptance matrix, security scope and publication verdict (FP-103).
 - [Windows UX and packaging](WINDOWS-PACKAGING.md) — FP-017.
 - [First end-user test](FIELD-FEEDBACK.md) — FP-040 onward.

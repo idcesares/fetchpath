@@ -43,14 +43,14 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 
 | Area | Owns |
 |---|---|
-| `tools/tasks.mjs` / `tests/repo` | Backlog integrity and selection, release-asset and repository-structure checks |
+| `tools/tasks.mjs` / `tools/tests.mjs` / `tests/repo` | Backlog integrity and selection, release-asset and repository-structure checks |
 | `tools/bench` / `tests/bench` | Local fixture server, paired download runner (including isolated Chrome native downloads in `tools/bench/chrome-download.mjs`), protocol matrix, fixture tests; provider, chunking and delta comparisons (FP-022, FP-023) |
 | `tools/sync-design-tokens.mjs` | Copies the design tokens into the browser extension (`--check` reports drift) |
 | `tools/licenses` | Third-party notice generation from `Cargo.lock` |
 | `tools/media-tools` | Pinning media helpers against their publishers' checksums |
 | `tests/installer` | Installer PATH, runtime-import, engine-stop, data-removal, template-fork and component-selection checks |
 | `tests/compatibility` | On-machine browser/media/protocol/Windows harnesses with explicit supported/partial/unsupported/untested states |
-| `.github` | CI (`node tools/tasks.mjs check` and `node --test`) and the pull request template |
+| `.github` | CI (`node tools/tasks.mjs check` and `node tools/tests.mjs`) and the pull request template |
 | `.codex` | Project-local Codex tool configuration; no product runtime behavior |
 
 ## Local-only areas (ignored)

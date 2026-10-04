@@ -387,15 +387,18 @@ where
             .map_err(|_| {
                 TransferError::Authentication("the SSH private key could not be loaded".into())
             })?;
-            let hash = session
-                .best_supported_rsa_hash()
-                .await
-                .map_err(|_| TransferError::Authentication("SSH key negotiation failed".into()))?
-                .flatten();
+            // RUSTSEC-2023-0071 has no patched RSA release. Keep public
+            // host-key verification, but never expose RSA private signing.
+            if private_key.key_data().is_rsa() {
+                return Err(TransferError::Authentication(
+                    "RSA private keys are disabled; use Ed25519, ECDSA or password authentication"
+                        .into(),
+                ));
+            }
             session
                 .authenticate_publickey(
                     username,
-                    PrivateKeyWithHashAlg::new(Arc::new(private_key), hash),
+                    PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
                 )
                 .await
                 .map_err(|_| TransferError::Authentication("SFTP authentication failed".into()))?

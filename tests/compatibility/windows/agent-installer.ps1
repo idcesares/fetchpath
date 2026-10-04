@@ -3,7 +3,7 @@
 param([string]$InstallerPath, [string]$OutputPath, [int]$TimeoutMinutes = 15)
 $ErrorActionPreference = 'Stop'
 $repo = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-if (-not $InstallerPath) { $InstallerPath = Join-Path $repo 'target/release/bundle/nsis/Fetchpath_0.1.0_x64-setup.exe' }
+if (-not $InstallerPath) { $InstallerPath = Join-Path $repo 'target/release/bundle/nsis/Fetchpath_0.2.0_x64-setup.exe' }
 if (-not $OutputPath) { $OutputPath = Join-Path $repo 'docs/development/evidence/windows/agent-installer.json' }
 if (-not (Test-Path -LiteralPath $InstallerPath)) { throw 'Build the current release installer first' }
 function Sandbox-Ids {
