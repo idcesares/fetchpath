@@ -88,8 +88,18 @@
     "uninstall": "passed; keep/delete application data; downloads and external junction target kept",
     "installerSha256": "9d8e7434cd952c297a7848908cb89296b5f78734c353edef80125e2ef84dd1a4"
   },
-  "ci": "pending",
-  "publication": "pending",
+  "ci": {
+    "result": "passed",
+    "url": "https://github.com/idcesares/fetchpath/actions/runs/37239724043",
+    "commit": "caebfb54c2e70dbac0c84b6e522e65af3bcb3cc7"
+  },
+  "publication": {
+    "result": "published",
+    "url": "https://github.com/idcesares/fetchpath/releases/tag/v0.2.0",
+    "tagCommit": "caebfb54c2e70dbac0c84b6e522e65af3bcb3cc7",
+    "pullRequest": 6,
+    "publicDownloadHashVerified": true
+  },
   "limits": [
     "Windows 11 x64 only",
     "Unsigned distribution",

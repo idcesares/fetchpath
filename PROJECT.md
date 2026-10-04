@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 4 October 2026. Phase: **0.2.0 release preparation.** Fetchpath 0.1.0 is published on GitHub; 0.2.0 is undergoing owner-authorized validation and documentation before a release verdict. Its engine serves the desktop, command line, interactive terminal, browser extension and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 4 October 2026. Phase: **0.2.0 published.** Fetchpath 0.2.0 is published on GitHub after owner-authorized review, validation and documentation. Its engine serves the desktop, command line, interactive terminal, browser extension and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Confirmed purpose
 
@@ -23,7 +23,7 @@ Do not duplicate task status into multiple checklists. The backlog is authoritat
 
 Fetchpath is a Windows download manager over a portable Rust core. One per-user engine owns the queue, history, settings, rules and agent policy for every client. It provides recoverable, validator-bound HTTP resume, no-overwrite publication, checksum verification, bounded cache reuse, paired LAN sharing, pinned public Hugging Face downloads and media downloads through supervised helpers. The desktop and terminal expose the shared queue and approvals; browser captures reach it even without the window. The [user guide](docs/user/GUIDE.md) covers product behavior, and [development records](docs/development/README.md) hold evidence and limits.
 
-The 0.2.0 candidate adds torrents and magnets with a packaged isolated helper, shared visual design, Full/Custom installation, optional data cleanup, guided Codex and Claude Code registration, instance identity, optional always-on behavior, approval expiry, explicit automatic mode for agents and disk-space reserve. HTTP connection reuse, scheduling and engine wakeups were improved without a speed claim. Peer discovery defaults on for a person's torrent; agents need explicit policy or approval, browser captures cannot start torrents, and uploading and LAN sharing remain opt-in.
+The 0.2.0 release adds torrents and magnets with a packaged isolated helper, shared visual design, Full/Custom installation, optional data cleanup, guided Codex and Claude Code registration, instance identity, optional always-on behavior, approval expiry, explicit automatic mode for agents and disk-space reserve. HTTP connection reuse, scheduling and engine wakeups were improved without a speed claim. Peer discovery defaults on for a person's torrent; agents need explicit policy or approval, browser captures cannot start torrents, and uploading and LAN sharing remain opt-in.
 
 The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed; physical reboot and sudden power-loss evidence remain incomplete. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote hub work is deferred beyond 0.2.0. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
 
@@ -38,7 +38,7 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 Run `node tools/tasks.mjs next`: active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). The lanes and review requirements are in §11 of the spec.
 
-0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October the owner authorized 0.2.0 closure and publication only if its recorded release verdict permits it.
+0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed.
 
 
 ## Remaining choices

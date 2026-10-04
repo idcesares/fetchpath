@@ -3169,7 +3169,7 @@
       "dependsOn": [
         "FP-102"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "codex (lead; release integration, validation and publication)",
       "priority": "P0",
       "modelTier": "astra-high",

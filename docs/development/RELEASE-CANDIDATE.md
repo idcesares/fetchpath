@@ -5,10 +5,12 @@ FP-103, recorded 4 October 2026 on Windows 11 x64. This replaces the
 
 ## Verdict
 
-**Local release gate passed; publication awaits green GitHub CI.** Independent
-reviews and final package checks passed. No gate is waived.
+**Published: [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0).** Independent
+reviews, final package checks and [GitHub CI](https://github.com/idcesares/fetchpath/actions/runs/37239724043) passed. No gate is waived.
+Release tag: `caebfb54c2e70dbac0c84b6e522e65af3bcb3cc7`; PR #6 merged.
+Public installer download was verified against the checksum below.
 
-Candidate: `Fetchpath_0.2.0_x64-setup.exe`, built from the FP-103 release tree.
+Published installer: `Fetchpath_0.2.0_x64-setup.exe`, built from the FP-103 release tree.
 SHA-256: `9d8e7434cd952c297a7848908cb89296b5f78734c353edef80125e2ef84dd1a4`.
 It is unsigned. The hash checks downloaded bytes, not publisher authenticity.
 
@@ -25,7 +27,7 @@ Compact [machine-readable evidence](evidence/release/fp103-gate.json) records th
 | Policy and recovery | Isolated-target ignored session regression passed: running/scheduled media and torrent policy changes; failed/deferred/successful saves; Published to saved Running to restart to Completed without a duplicate folder. 11 helper tests passed. |
 | Protocols | Actual FTP, FTPS and SFTP fixtures passed, including Ed25519/password, resume and RSA private-key refusal. |
 | Dependencies | JavaScript audit: no known vulnerabilities. RustSec findings assessed below. Notices regenerated and checked for 718 packages. Media publisher pins matched. |
-| Secrets | Gitleaks 8.30.1: no findings across 160 commits after two exact exceptions for verified public Chromium identity keys. Release history scan is repeated after the final commit. |
+| Secrets | Gitleaks 8.30.1: no findings across the release history after two exact exceptions for verified public Chromium identity keys. Final history scan passed before publication. |
 | Package | Release build passed. [Clean install](evidence/windows/fp103-clean-install.json), [public 0.1.0 upgrade](evidence/windows/fp103-upgrade.json), [88 agent installer assertions](evidence/windows/fp103-agent-installer.json), and [actual guest sign-out/sign-in](evidence/windows/sign-in-lifecycle.json) passed. |
 | Review | Independent lifecycle, security and dependency reviews ran. Named findings repaired; independent bounded final publication recovery recheck passed. |
 
