@@ -5,8 +5,8 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
-    "check": "node tools/tasks.mjs check && node --test",
-    "test": "node --test",
+    "check": "node tools/tasks.mjs check && node tools/tests.mjs",
+    "test": "node tools/tests.mjs",
     "tasks": "node tools/tasks.mjs list",
     "next": "node tools/tasks.mjs next"
   }

@@ -4,7 +4,9 @@ Fetchpath is a download manager for Windows 11. It keeps a queue of your
 downloads, pauses and resumes them, survives restarts, and checks that what
 arrived is exactly what you asked for. It can also save video and audio.
 
-This guide covers version 0.1.0. You don't need to read it all: the first
+This guide covers version 0.2.0, in release preparation. Check the
+[release page](https://github.com/idcesares/fetchpath/releases/latest) for
+published versions. You don't need to read it all: the first
 two sections are enough to start. After that, use it as a reference.
 
 - [Install](#install)
@@ -14,17 +16,21 @@ two sections are enough to start. After that, use it as a reference.
 - [Several links at once](#several-links-at-once)
 - [Starting later](#starting-later)
 - [Checking a download against a checksum](#checking-a-download-against-a-checksum)
+- [Models and datasets from Hugging Face](#models-and-datasets-from-hugging-face)
+- [Torrents and magnets](#torrents-and-magnets)
 - [Video and audio](#video-and-audio)
 - [Sending links from your browser](#sending-links-from-your-browser)
 - [Settings](#settings)
 - [Requests from AI agents](#requests-from-ai-agents)
+- [Download speed](#download-speed)
 - [The command line](#the-command-line)
 - [Uninstalling](#uninstalling)
 - [When something goes wrong](#when-something-goes-wrong)
 
 ## Install
 
-**What you need:** Windows 11 on a 64-bit Intel or AMD PC. ARM PCs such as
+**What you need:** a Microsoft-serviced Windows 11 release on a 64-bit Intel
+or AMD PC. ARM PCs such as
 Snapdragon laptops aren't supported in this version.
 
 Fetchpath is free, open source software provided **as is**, without a warranty
@@ -33,22 +39,25 @@ using it lawfully and checking whether its sources and files are safe. The
 [MIT](../../LICENSE-MIT) or [Apache 2.0](../../LICENSE-APACHE) licence, at your
 option, sets the terms for using Fetchpath.
 
-1. From the Fetchpath release page, download two files:
-   `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt`.
+1. From the [Fetchpath release page](https://github.com/idcesares/fetchpath/releases/latest),
+   download two files for 0.2.0:
+   `Fetchpath_0.2.0_x64-setup.exe` and `SHA256SUMS.txt`.
 2. *Recommended:* check the installer arrived intact. In File Explorer, open
    the folder you saved them to, click the address bar, type `powershell` and
    press <kbd>Enter</kbd>. Then run:
 
    ```powershell
-   (Get-FileHash .\Fetchpath_0.1.0_x64-setup.exe).Hash.ToLower()
+   (Get-FileHash .\Fetchpath_0.2.0_x64-setup.exe).Hash.ToLower()
    Get-Content .\SHA256SUMS.txt
    ```
 
    The first line printed must be the same as the long code at the start of
-   the second. If they differ, delete both files and download them again.
-3. Double-click `Fetchpath_0.1.0_x64-setup.exe` and follow the installer.
+   the matching installer's line in `SHA256SUMS.txt`. This checks that your copy
+   matches the release asset; it does not replace a publisher signature.
+   If they differ, delete both files and download them again.
+3. Double-click `Fetchpath_0.2.0_x64-setup.exe` and follow the installer.
    Choose **Full** (recommended: the app, the terminal command, AI agent
-   support, browser integration and the torrent helper, about 37 MiB on disk)
+   support, browser integration and the torrent helper)
    or **Custom** to pick components, as described in
    [Choosing components](#choosing-components). On the same page, an unticked
    box offers to download the video and audio tools from their publishers now;
@@ -75,23 +84,24 @@ received and carries on from there the next time Fetchpath starts.
 The download is the same size whatever you choose; the choice decides which
 files are copied and which entry points (shortcuts, the `fetchpath` command on
 your PATH, browser registration) are created. Installing a component never
-gives an AI agent access, never turns on sharing, and never downloads a tool
+gives an AI agent access, turns on sharing or downloads the media tools
 by itself.
 
-| Component | What you get | Extra disk |
-| --- | --- | ---: |
-| **Core** (always) | The engine, the `fetchpath` program (command line, terminal app and AI agent server in one file), the guides and licences | 10.8 MiB |
-| **Desktop app** | The Fetchpath window, Start menu and desktop shortcuts. Needs Microsoft WebView2 | 13.3 MiB |
-| **Terminal** | The `fetchpath` command and the terminal app on your PATH. Without the desktop app, a **Fetchpath Terminal** Start menu entry | none |
-| **AI agents (MCP)** | Lets agent hosts start `fetchpath mcp` from your PATH. Agents get no access until you grant it | none |
-| **Browser integration** | The browser host and its registration for Chrome, Edge and Firefox, and the extension folder | 2.5 MiB |
-| **Torrent helper** | Needed for torrent and magnet downloads. Does not turn on seeding | 10.6 MiB |
+| Component | What you get |
+| --- | --- |
+| **Core** (always) | The engine, the `fetchpath` program (command line, terminal app and AI agent server in one file), the guides and licences |
+| **Desktop app** | The Fetchpath window, Start menu and desktop shortcuts. Needs Microsoft WebView2 |
+| **Terminal** | The `fetchpath` command and the terminal app on your PATH. Without the desktop app, a **Fetchpath Terminal** Start menu entry |
+| **AI agents (MCP)** | Lets agent hosts start `fetchpath mcp`; a separate setup page connects selected Codex and Claude Code hosts. Agents get no access until you grant it |
+| **Browser integration** | The browser host, Chrome and Edge connection, and extension folder. Firefox is not supported in this version |
+| **Torrent helper** | Needed for torrent and magnet downloads. Uploading stays off until you choose it |
 
 You need the app or the terminal, so you can manage downloads and approve
 requests. Choosing AI agents with neither adds the terminal. Without the torrent
 helper, a torrent link fails with a message that says to run setup again and add
 it. A browser capture without the app goes to the engine's inbox and shows in
-the terminal and in `fetchpath ls`.
+the terminal and in `fetchpath ls`; a video page waits for the desktop's
+quality-selection flow.
 
 **Changing components later.** Run the setup file again (download it again if
 you no longer have it). When it finds Fetchpath installed, choose **Change
@@ -110,6 +120,7 @@ revoke it with `fetchpath agents revoke`. One configured with the bare
 | `/S` | Silent. A fresh PC gets Full; an existing install keeps its components. Never downloads media tools, never shows browser guidance |
 | `/P` | Passive: progress shown, no questions |
 | `/COMPONENTS=desktop,cli,mcp,browser,torrent` | Installs exactly those (Core is implied; any order). `/COMPONENTS=full` is Full. Ignored with `/UPDATE` |
+| `/AGENTHOSTS=codex,claude-code` | Explicitly connects those hosts for your Windows user; requires AI agents (MCP). Omit it to create no new connections |
 | `/NS` | No shortcuts |
 | `/UPDATE` | The in-app updater's mode: keeps the stored components, removes nothing |
 | `/R` | Starts the desktop app afterwards, if it is installed |
@@ -121,8 +132,10 @@ neither `desktop` nor `cli`, or `mcp` without one of them. Quiet setup does not
 add the terminal for you. The reason is written to `%TEMP%\fetchpath-install.log`.
 Exit code 1 is Cancel and 2 is setup's own failure. To install the video and
 audio tools in a deployment, run `fetchpath tools install --yes` afterwards.
+Agent connection or cleanup failures use exit code **11**; resolve the reported
+configuration problem and retry while Fetchpath remains installed.
 
-**"Windows protected your PC."** Fetchpath 0.1.0 isn't signed with a
+**"Windows protected your PC."** Fetchpath 0.2.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
 it and warns when you run the installer. If you downloaded it from the
 official release page and the checksum matched in step 2, choose
@@ -133,13 +146,14 @@ reason.
 **"An App Control policy blocked this file."** This is Smart App Control, a
 Windows 11 protection that is on for some new installations. It blocks
 programs that are not signed, with no option to run them anyway, so the
-unsigned 0.1.0 cannot be installed while it is on. You can see its state in
+unsigned installer cannot run while it is on. You can see its state in
 Windows Security → App & browser control → Smart App Control. Turning it off
 is your decision to make; Fetchpath does not ask you to, and a signed build is
 the real fix.
 
-**"Allow Fetchpath on your network?"** Only if you use the command line's
-paired-device sharing. The desktop app doesn't ask.
+**"Allow Fetchpath on your network?"** Windows Firewall may ask when you
+pair computers or turn on LAN sharing, from the desktop or command line.
+Sharing is off until you choose it.
 
 ## Your first download
 
@@ -197,7 +211,14 @@ menu ends the window and the icon, and downloads still finish. **Stop engine
 (stops downloads)** asks first, then stops them; the window shows the engine
 as stopped until you start it again. Fetchpath's
 background part stops by itself about a minute after the last download ends
-and every window is closed. To stop downloads, pause or cancel them first.
+and every window is closed, unless **Always on** or LAN sharing keeps it
+running. To stop downloads, pause or cancel them first.
+
+**Always on** in **Settings → General** keeps the engine running without a
+window and starts it when you sign in to Windows. While downloading it asks
+Windows to keep the computer awake; it does not wake a sleeping computer or
+run before sign-in. Sign-out/sign-in recovery was verified in Windows
+Sandbox; a physical-machine reboot and sudden power loss remain untested.
 
 If Fetchpath's background part was stopped on purpose, for example with
 `fetchpath engine stop`, the window says so and offers **Start Fetchpath**;
@@ -254,6 +275,27 @@ the checksum Hugging Face states. Choose the folder: the files go in a folder
 named after the repository, with the repository's own layout. Every file
 comes from the same commit, even if the repository changes while you
 download. Only public repositories work for now.
+
+## Torrents and magnets
+
+Install the **Torrent helper** component, then paste a magnet link or an
+HTTPS `.torrent` link into **Add download** and choose **Torrent** if needed.
+You can also use a local `.torrent` file. Fetchpath puts the contents in a new
+folder named after the torrent, under your default Downloads folder or the
+folder chosen by a matching rule. If the name is taken, a number is added;
+existing folders are never merged or overwritten. A full destination path
+chooses the exact new folder instead.
+
+Peer discovery is on for torrents you add yourself: other peers can see your
+IP address. **Uploading** is off unless you explicitly turn it on for that
+download. **Cancel** stops all peer activity. There is no pause, individual
+file selection or seeding after completion.
+
+Torrents appear in the same list as other downloads. Without the helper,
+Fetchpath asks you to run setup again and add it. Browser captures cannot
+start torrents. Agents need discovery approval unless you have explicitly
+enabled automatic mode inside their granted folders; uploading still needs
+approval. See [the torrent command](CLI.md#downloading) for terminal use.
 
 ## Video and audio
 
@@ -347,7 +389,7 @@ downloads you start in the browser go to Fetchpath instead. If the native host
 refuses a handoff, the extension tries to restart the browser download. It's
 off until you turn it on.
 
-**Why "Developer mode"?** Version 0.1.0 isn't listed in the Chrome Web Store
+**Why "Developer mode"?** Version 0.2.0 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
 yourself. Chrome may remind you about developer-mode extensions when it
 starts; that's expected. Firefox only allows signed add-ons, so Firefox isn't
@@ -363,7 +405,7 @@ on GitHub.
 | Setting | What it does |
 | --- | --- |
 | Downloads at the same time | 1 to 8. More at once isn't always faster. |
-| Keep free on every drive | Fetchpath never fills a drive past this: Automatic keeps the larger of 5 GB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts by itself when there is room; one already running stops at its saved progress and continues later. |
+| Keep free on every drive | Automatic reserves the larger of 5 GiB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts when there is room; a running file download stops at its saved progress and continues later. Video, audio and torrents are checked at start only. A drive whose free space cannot be measured has no reserve enforcement. |
 | Name and Always on | The name this Fetchpath shows everywhere, and **Always on**: keep it running in the background with no window open, start it when you sign in, and keep the computer awake while downloads run. It is not a Windows service: after a restart it runs only once you sign in. |
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
@@ -372,7 +414,7 @@ on GitHub.
 | Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
 | Cache | Copies of downloads that matched a checksum, so the same file downloaded again doesn't use the network. Shows how much it holds, sets how much it may keep (the oldest copies go first), and **Clear cache**. Clearing it never touches your saved files. |
 | Paired computers | Lets your own computers give each other files downloaded with a checksum from a link that needed no sign-in. **Show a pairing code** on one, then on the other choose **Pair with a computer that shows a code** and enter its address and code; each shows the other's fingerprint so you can compare them. Sharing stays off until you turn it on, and **Remove** unpairs a computer at once. When a paired computer on the same network is sharing, a download with a checksum is taken from it first, checked, and its row says **From your paired computer**. |
-| AI agents | Which AI agents (such as Claude Code) may download without asking: the folders each may save into, its largest download and downloads an hour, and **Revoke access**. **Automatic** lets an agent download into its folders without ever asking about size, how many an hour or torrent peers; saving anywhere else still asks you. |
+| AI agents | The folders each agent may save into, its largest download and downloads an hour, and **Revoke access**. **Automatic** skips size, hourly and torrent discovery approvals inside those folders; saving elsewhere still asks. It never permits credentials, overwrites or sharing changes, and upload still needs approval. |
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
@@ -383,6 +425,17 @@ shortcuts.
 
 ## Requests from AI agents
 
+Choose **AI agents (MCP)** in setup, then explicitly select Codex or Claude
+Code on the connection page. Its choices start unticked. You can connect later
+with `fetchpath agent-setup add codex` or `fetchpath agent-setup add claude-code`.
+Restart the host, check its MCP connection, and approve Fetchpath's tools in
+the host when prompted. Connecting grants no download access; choose folders
+separately in **Settings → Agents and rules** or with `fetchpath agents grant`.
+See [guided setup](CLI.md#guided-setup-codex-and-claude-code) for conflicts,
+removal and other MCP clients. Codex's actual download flow is checked;
+Claude Code connection and discovery are checked, with its current
+model-driven download test deferred by the owner.
+
 An AI agent connected through `fetchpath mcp` (see [CLI.md](CLI.md#ai-agents-mcp))
 downloads into the folders you give it in Settings without asking. Anything
 else it asks for appears in the list as **Waiting for approval**, with the
@@ -390,7 +443,14 @@ agent's name and why it asks; Fetchpath announces it, and it shows under
 **Needs attention**. **Approve** lets it download; **Deny** cancels it and the
 agent is told. Nothing is downloaded while it waits. Taking a folder away or
 revoking an agent in Settings sends its unfinished downloads there back to
-waiting.
+waiting. An unanswered request expires after seven days and is cancelled;
+retrying asks again. Automatic mode is an explicit choice for that agent,
+and requests outside its granted folders still wait.
+
+These controls assume no malicious program already runs as your Windows user.
+They protect the download API; an agent host with shell access already has
+the same file access as you. There is no remote hub or remote-control listener
+in 0.2.0.
 
 ## Download speed
 
@@ -444,9 +504,16 @@ data; add `/DELETEAPPDATA` to remove it.
 
 If downloads are still running, the uninstaller stops Fetchpath first.
 
-The uninstaller also removes the browser connection, the `fetchpath`
-command from your PATH and, if you turned it on, starting at sign-in. Remove the extension from your browser yourself on its
-extensions page.
+The uninstaller also removes the browser connection, MCP registrations created
+or explicitly adopted by guided agent setup, the `fetchpath` command from your
+PATH and, if you turned it on, starting at sign-in. Remove the extension from
+your browser yourself on its extensions page.
+
+Agent connections are removed even when you keep application data. User-modified
+or manually created host entries are preserved; follow any cleanup warning and
+remove them from the host yourself. A configuration cleanup error stops removal
+while Fetchpath is still installed, so you can resolve the error and retry.
+See [agent setup and removal](CLI.md#guided-setup-codex-and-claude-code).
 
 ## When something goes wrong
 

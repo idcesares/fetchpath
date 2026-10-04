@@ -84,6 +84,7 @@ ${StrLoc}
 
 Var PassiveMode
 Var UpdateMode
+Var FpReplacement ; internal uninstall-first version replacement, not removal
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
@@ -100,6 +101,11 @@ Var FpOldBrowser
 Var FpOldTorrent
 Var FpType          ; full | custom, written after install
 Var FpMedia         ; 1 when the person ticked the media tools box
+; FP-102: host registration is a separate, unchecked choice, never Full's default.
+Var FpAgentCodex
+Var FpAgentClaude
+Var FpCbCodex
+Var FpCbClaude
 Var FpSkipSelect    ; 1 to skip the type and component pages (repair)
 Var FpReinstallChoice ; same-version choice: 1 change, 2 repair, 3 uninstall
 Var FpVerCmp        ; result of the version comparison on the reinstall page
@@ -440,6 +446,9 @@ Function PageLeaveReinstall
       ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
       ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
+      ; FP-102: uninstall-first upgrades retain owned registrations so the
+      ; replacement's reconcile can update them. Same-version Uninstall does not.
+      ${IfThen} $FpVerCmp <> 0 ${|} StrCpy $R1 "$R1 /REPLACE" ${|}
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
       ExecWait '$R1' $0
@@ -532,6 +541,60 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE FpComponentsPre
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE FpComponentsLeave
 !insertmacro MUI_PAGE_COMPONENTS
+
+; FP-102: per-user MCP host registration, independent of download grants.
+Page custom FpAgentsPage FpAgentsLeave
+Function FpAgentsPage
+  ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
+  ${IfThen} $FpSkipSelect = 1 ${|} Abort ${|}
+  Call FpAgentsSelected
+  ${If} $0 <> 1
+    Abort
+  ${EndIf}
+  !insertmacro MUI_HEADER_TEXT "Connect AI agents" "Choose which agent hosts may use Fetchpath."
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 30u "Optional: add Fetchpath to these hosts for your Windows user, across projects. Existing owned connections are kept on upgrade. No download access is granted here."
+  Pop $0
+  ${NSD_CreateCheckBox} 0 38u 100% 12u "Connect Codex (user configuration)"
+  Pop $FpCbCodex
+  SearchPath $0 "codex.exe"
+  ${If} $0 == ""
+    SearchPath $0 "codex.cmd"
+  ${EndIf}
+  ${If} $0 == ""
+    ${NSD_CreateLabel} 12u 52u -12u 16u "Codex was not found on PATH. Install it before connecting."
+    Pop $0
+    EnableWindow $FpCbCodex 0
+  ${EndIf}
+  ${NSD_CreateCheckBox} 0 74u 100% 12u "Connect Claude Code (user configuration)"
+  Pop $FpCbClaude
+  SearchPath $0 "claude.exe"
+  ${If} $0 == ""
+    SearchPath $0 "claude.cmd"
+  ${EndIf}
+  ${If} $0 == ""
+    ${NSD_CreateLabel} 12u 88u -12u 16u "Claude Code was not found on PATH. Install it before connecting."
+    Pop $0
+    EnableWindow $FpCbClaude 0
+  ${EndIf}
+  ${NSD_CreateLabel} 0 106u 100% 30u "Restart selected hosts after setup. Choose allowed folders separately in Settings > Agent access. Other requests wait for your approval. Connect later with fetchpath agent-setup."
+  Pop $0
+  ${If} $FpAgentCodex = 1
+    SendMessage $FpCbCodex ${BM_SETCHECK} ${BST_CHECKED} 0
+  ${EndIf}
+  ${If} $FpAgentClaude = 1
+    SendMessage $FpCbClaude ${BM_SETCHECK} ${BST_CHECKED} 0
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+Function FpAgentsLeave
+  ${NSD_GetState} $FpCbCodex $FpAgentCodex
+  ${NSD_GetState} $FpCbClaude $FpAgentClaude
+FunctionEnd
 
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
@@ -1200,6 +1263,33 @@ Function FpInitSelection
   StrCpy $FpType "full"
   StrCpy $FpSkipSelect 0
   StrCpy $FpMedia 0
+  StrCpy $FpAgentCodex 0
+  StrCpy $FpAgentClaude 0
+  ; An explicit quiet setup option; absence never registers a detected host.
+  ClearErrors
+  ${GetOptions} $CMDLINE "/AGENTHOSTS=" $R0
+  ${IfNot} ${Errors}
+    ${StrCase} $R0 "$R0" "L"
+    ${If} $R0 == "codex"
+      StrCpy $FpAgentCodex 1
+    ${ElseIf} $R0 == "claude-code"
+      StrCpy $FpAgentClaude 1
+    ${ElseIf} $R0 == "codex,claude-code"
+    ${OrIf} $R0 == "claude-code,codex"
+      StrCpy $FpAgentCodex 1
+      StrCpy $FpAgentClaude 1
+    ${Else}
+      StrCpy $FpReason "/AGENTHOSTS needs codex, claude-code, or codex,claude-code"
+      Call FpRefuseSelection
+    ${EndIf}
+  ${Else}
+    ${StrCase} $R1 "$CMDLINE" "L"
+    ${StrLoc} $R2 "$R1" "/agenthosts" ">"
+    ${If} $R2 != ""
+      StrCpy $FpReason "/AGENTHOSTS needs a value"
+      Call FpRefuseSelection
+    ${EndIf}
+  ${EndIf}
   StrCpy $FpReinstallChoice 1
   Call FpSelAllVars
 
@@ -1241,6 +1331,16 @@ Function FpInitSelection
     ${EndIf}
   ${EndIf}
   Call FpApplySelection
+  ${IfNot} ${SectionIsSelected} ${SecMcp}
+  ${AndIf} $FpAgentCodex = 1
+    StrCpy $FpReason "/AGENTHOSTS requires the AI agents component"
+    Call FpRefuseSelection
+  ${EndIf}
+  ${IfNot} ${SectionIsSelected} ${SecMcp}
+  ${AndIf} $FpAgentClaude = 1
+    StrCpy $FpReason "/AGENTHOSTS requires the AI agents component"
+    Call FpRefuseSelection
+  ${EndIf}
 FunctionEnd
 
 ; Writes the selection that was installed, canonical and sorted.
@@ -1329,6 +1429,14 @@ Function FpRemoveDeselected
   ${AndIfNot} ${SectionIsSelected} ${SecTorrent}
     DetailPrint "Removing the torrent helper."
     Delete "$INSTDIR\fetchpath-torrent-helper.exe"
+  ${EndIf}
+FunctionEnd
+
+; The page precedes section declarations; keep the section index use here.
+Function FpAgentsSelected
+  StrCpy $0 0
+  ${If} ${SectionIsSelected} ${SecMcp}
+    StrCpy $0 1
   ${EndIf}
 FunctionEnd
 
@@ -1480,6 +1588,7 @@ Function FpFinishShow
 FunctionEnd
 
 Function un.onInit
+  StrCpy $FpReplacement 0
   !insertmacro SetContext
 
   !if "${INSTALLMODE}" == "both"
@@ -1496,6 +1605,11 @@ Function un.onInit
   ${GetOptions} $CMDLINE "/UPDATE" $UpdateMode
   ${IfNot} ${Errors}
     StrCpy $UpdateMode 1
+  ${EndIf}
+  ClearErrors
+  ${GetOptions} $CMDLINE "/REPLACE" $0
+  ${IfNot} ${Errors}
+    StrCpy $FpReplacement 1
   ${EndIf}
 FunctionEnd
 

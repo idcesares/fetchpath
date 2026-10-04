@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-03",
+  "updated": "2026-10-04",
   "tasks": [
     {
       "id": "FP-001",
@@ -3088,8 +3088,11 @@
       "id": "FP-101",
       "title": "Build local instance identity, hub mode lifecycle and capacity limits",
       "milestone": "M15",
-      "dependsOn": ["FP-047","FP-067"],
-      "status": "blocked",
+      "dependsOn": [
+        "FP-047",
+        "FP-067"
+      ],
+      "status": "done",
       "owner": null,
       "priority": "P2",
       "modelTier": "terra-medium",
@@ -3109,9 +3112,104 @@
         "A13"
       ],
       "acceptance": "Targeted for 0.2.0 by the owner on 3 October 2026, independently of the deferred remote work (FP-091 to FP-093). Local slice S1 of the FP-091 design (spec §3, §4, §10 to §12, gates G1 to G3 and G8, contract D6), with no network listener and nothing remote: tray items for remote access and the host_suspending notice arrive with FP-092. Give each engine data folder a stable instance_id and a person-assigned name reported in EngineStatus; every client sends expected_instance_id on mutating commands and a mismatch is refused with contract.wrong_instance; consequential actions show the instance name and host-owned folder. Add ListFolderChoices. Add the always-on (hub mode) setting, local user only and off by default: when on, the engine does not idle-exit, sign-in start is turned on, persisted jobs recover after sign-in, the computer is kept awake only while jobs run, and the documentation states that nothing runs before sign-in and that this is not a service. Make the desktop tray a management client showing engine state, active work and pending approvals, with separate scoped actions for hiding the window, closing desktop and tray, and stopping the engine. Provide headless equivalents (fetchpath hub on|off|status, engine status with instance and always-on state). Add the per-volume disk reserve (default the larger of 5 GiB and 5 %) with staged-byte accounting so jobs wait with storage.reserve instead of failing, and approval expiry (7 days, policy.approval_expired). Per-principal active and submission limits moved to FP-092 by the owner on 3 October 2026, since only remote devices need them. Added by the owner on 3 October 2026: automatic mode for agents (contract D7: inside its granted folders an agent is not held for size, hourly rate or torrent peer discovery; folders, uploads and hard refusals unchanged), editable from desktop, CLI and terminal like the name and always-on settings. Removing a job never deletes its file; no automatic deletion without an explicit person policy.",
-      "verification": "Protocol tests for G1 (stable id across restart and upgrade, rename changes only the name, wrong or missing expected_instance_id refused). G2 on a real Windows 11 machine: always-on survives desktop exit and a sign-out/sign-in reboot with a persisted job resuming; ordinary mode still exits after the idle grace. G3: idle always-on engine for 10 minutes adds under 1 s CPU time; record the working set and fix the ceiling (decision O7). G8: fill a test volume to the reserve; jobs wait, nothing fails or publishes partially, and two concurrent large jobs respect staged accounting. Walk through spec walkthroughs 2, 3, 7, 8 and 9 locally, without their remote parts, and verify each tray and CLI label matches its effect. Independent strong review of persistence ordering and lifecycle before completion.",
-      "evidence": ["docs/development/INSTANCE-AND-LIFECYCLE.md","docs/development/evidence/engine-session/g3-idle-hub.json"],
-      "blockedReason": "Built and committed on branch claude/fp-101 (3 October 2026): instance identity, always on, tray status, approval expiry, automatic mode for agents (D7), terminal parity, the disk reserve (G8) and the idle fix (G3: 0.95 s CPU in 10 minutes). Two closing steps were deferred by the owner on 3 October 2026. Next actions: (1) G2 on a real machine: back up the default data folder, use a release build, turn always on, start a download, sign out and back in or restart, and confirm the engine starts at sign-in and resumes it; (2) the required independent strong review of persistence ordering (reserve stop and requeue, approval expiry, instance file) and lifecycle. Then mark done."
+      "verification": "Protocol tests for G1 (stable id across restart and upgrade, rename changes only the name, wrong or missing expected_instance_id refused). G2 on a real Windows 11 machine: always-on survives desktop exit and a sign-out/sign-in reboot with a persisted job resuming; ordinary mode still exits after the idle grace. G3: idle always-on engine for 10 minutes adds under 1 s CPU time; record the working set and fix the ceiling (decision O7). G8: fill a test volume to the reserve; jobs wait, nothing fails or publishes partially, and two concurrent large jobs respect staged accounting. Walk through spec walkthroughs 2, 3, 7, 8 and 9 locally, without their remote parts, and verify each tray and CLI label matches its effect. Independent strong review of persistence ordering and lifecycle before completion. FP-103 closure on 4 October 2026: G2 passed with the final 0.2.0 installer in an actual Windows 11 Sandbox guest: forced desktop exit, new Windows logon SID, automatic engine observed before client startup, unchanged instance and executable, checkpoint Range resume with every byte verified, and the same engine past idle grace. This is sign-out/sign-in evidence, not physical reboot or sudden power-loss evidence. Independent strong lifecycle/security review and bounded repair recheck passed.",
+      "evidence": [
+        "docs/development/INSTANCE-AND-LIFECYCLE.md",
+        "docs/development/evidence/engine-session/g3-idle-hub.json",
+        "docs/development/evidence/windows/sign-in-lifecycle.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-102",
+      "title": "Provide guided agent-host setup and owned-registration removal",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-067",
+        "FP-099",
+        "FP-100"
+      ],
+      "status": "done",
+      "owner": "codex (lead; CLI registration and installer integration)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps/cli",
+        "apps/desktop",
+        "tests/installer",
+        "tests/compatibility/windows",
+        "docs/development/MCP.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/user/CLI.md",
+        "docs/user/GUIDE.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Required before the 0.2.0 release gate, approved by the owner on 3 October 2026. Provide explicit, guided local MCP registration for Codex and Claude Code during interactive installation and through a repeatable headless setup/removal command after installation. Detect available hosts, let the person select each host and supported configuration scope, use the installed executable's absolute path and a distinct stable agent name, and report restart requirements and connection status. Do not treat selecting the AI agents component or Full as permission to edit every detected host or grant access. Keep folder grants, approval policy and automatic mode as separate explicit choices, with clear guidance and a verified no-grant approval flow. Resolve each host's supported registration mechanism and configuration location from current official documentation during implementation; account for configured home overrides, missing hosts and custom install paths. Preserve unrelated configuration and existing Fetchpath entries: conflicts require an explicit adopt/replace decision, repeated setup creates no duplicate, and interrupted writes do not corrupt host configuration. Persist a minimal ownership inventory outside optional application-data cleanup identifying registrations created or explicitly adopted by Fetchpath. Upgrade, repair and install-path changes reconcile owned registrations without duplicates or loss of other host settings. Removing the AI agents component or uninstalling removes only still-matching owned registrations, regardless of keep-data versus delete-data choice, before deleting the executable or inventory. Preserve user-modified or unowned entries with an actionable explanation; cleanup failures must be reported and remain recoverable. Document manual setup and removal for Claude Desktop, VS Code and generic stdio MCP clients, clearly distinguishing these from the validated guided hosts. No remote listener, external messages or automatic access grants.",
+      "verification": "Use isolated host homes/configurations and clean Windows install runs to cover Codex and Claude Code separately: explicit selected-host setup, MCP handshake/tool discovery and an actual host-driven download into a granted folder, plus an ungranted request awaiting human approval. Record host versions and exact scopes exercised; configuration snippets alone are not integration evidence. Exercise install, repeated setup, upgrade, repair, custom path with spaces/path change, component removal and full uninstall with both retained and deleted app data; owned registrations disappear and unrelated servers/settings and completed downloads survive. Cover missing hosts, existing unowned/conflicting registrations, user edits after registration, malformed configuration, write failure/interruption and cleanup failure; do not overwrite or remove ambiguous entries. Cover documented quiet setup choices with no implicit host registration, and quiet uninstall ownership cleanup. Run focused CLI/configuration and installer tests, reuse existing MCP policy evidence where unchanged, and obtain an independent strong review of configuration mutation, registration ownership, cleanup ordering and permission boundaries before completion. Update existing MCP and packaging records with reachable lifecycle evidence; leave unvalidated hosts explicit. Owner scope decision on 4 October 2026: further Claude Code setup testing and its authenticated download check are deferred; existing Claude registration, handshake/tool discovery, configuration tests and installer lifecycle evidence suffice for this task. Do not claim its actual download flow was validated.",
+      "evidence": [
+        "apps/cli/tests/agent_setup.rs",
+        "docs/development/MCP.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows/agent-hosts.json",
+        "docs/development/evidence/windows/agent-installer.json"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-103",
+      "title": "Validate, document and publish the 0.2.0 release",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-102"
+      ],
+      "status": "in_progress",
+      "owner": "codex (lead; release integration, validation and publication)",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "Cargo.lock",
+        "apps",
+        "crates",
+        "adapters",
+        "tests",
+        "tools",
+        ".github",
+        "package.json",
+        "README.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "PROJECT.md",
+        "SECURITY.md",
+        "docs"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A02",
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07",
+        "A08",
+        "A09",
+        "A11",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Owner-authorized release closure on 4 October 2026: independently review release changes and FP-101 persistence/lifecycle, resolve concrete security/correctness findings, run current repository/Rust/frontend/dependency/security checks, validate the final Windows package and upgrades, update clear user-facing and contributor documentation and GitHub repository metadata, and publish version 0.2.0 with installer and checksums only if the recorded release verdict permits it. Preserve previously accepted platform limits, no speed claims, no remote hub, no automatic grants or sharing; Claude Code actual download validation remains owner-deferred. Do not silently waive remaining release-relevant gates.",
+      "verification": "Record exact tested revision/artifact and commands/results in the existing release candidate record, with small reachable evidence. Independent strong review plus bounded repair recheck where needed; dependency advisory and secret checks; workspace tests, clippy, formatting, frontend build, repository tests, licenses and pins; clean Windows installer and 0.1.0 upgrade/saved-data validation. Confirm CI on published revision, version consistency, release assets and checksum integrity, documentation links and GitHub repository setup. Keep unsupported real reboot/power-loss evidence explicit.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
+      "blockedReason": null
     }
   ]
 }

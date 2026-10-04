@@ -17,6 +17,8 @@ Only the latest release receives security fixes.
   replaced or written outside its folder.
 - The engine's pipe and its secret, the browser native host, and the
   installer's handling of the engine, PATH and user data.
+- Instance identity across reconnection, and guided agent-host configuration
+  ownership, recovery and removal without changing unrelated host settings.
 - The agent boundary: `fetchpath mcp` acting beyond the folders, limits and
   approvals the person granted, reaching credentials, settings, rules or
   sharing, or page text steering an agent unmarked.
@@ -29,6 +31,15 @@ Only the latest release receives security fixes.
   are checked and published safely.
 - HTTP download redirects exposing source credentials or cookies to another origin.
 - Secrets or private URLs written to logs.
+
+## Dependency validation
+
+Release checks include dependency advisories and secret scanning. These checks
+complement boundary tests and review; they do not guarantee that no flaw exists.
+The release record documents known advisories and their assessed applicability.
+SFTP RSA private-key authentication is disabled while the upstream RSA timing
+advisory has no patched version. Password and non-RSA key authentication remain
+available; RSA public server-key verification is unaffected.
 
 ## Out of scope
 

@@ -59,10 +59,9 @@ fetchpath download https://example.com/tools/archive.zip D:\Installers\tools.zip
 
 Links must start with `http://` or `https://`.
 
-### Torrents in development builds
+### Torrents and magnets
 
-The published 0.1.0 installer does not contain this command. In a build with
-`fetchpath-torrent-helper.exe` beside `fetchpath.exe`, add one magnet, HTTPS
+Install the torrent component (included in Full setup), then add one magnet, HTTPS
 `.torrent` link, or local `.torrent` file with `fetchpath torrent SOURCE`.
 `--to` is optional: without it the torrent goes into a
 folder named after it inside your default download folder (or the matching
@@ -70,8 +69,8 @@ rule's folder), and a number is added if that name is taken. With `--to
 D:\Downloads\NewFolder` the folder is exactly that. `fetchpath add SOURCE --to
 D:\Downloads\NewFolder` and the terminal's `/add` detect
 these torrent sources too. Fetchpath never replaces or merges into an existing folder. Peer discovery is on, so peers can see your IP address (`--discover-peers` is accepted and changes nothing). Uploading is off unless you pass `--upload`. Cancelling stops all peer activity; torrents cannot be paused. The job appears in the shared
-queue and can be cancelled or retried there. An agent's request waits for your
-approval before contacting peers, and never discovers peers unless it asks. The transfer has a 32-peer limit and bounded
+queue and can be cancelled or retried there. An agent must request peer discovery and obtain your approval, unless you
+explicitly enabled automatic mode inside its granted folders. The transfer has a 32-peer limit and bounded
 download and upload rates. For a local `.torrent`, Fetchpath saves a private
 copy of its metadata so the job can survive moving or deleting the original.
 
@@ -241,6 +240,8 @@ value it applied. The desktop app shows the same settings.
 `fetchpath engine status` says whether it is running and what this Fetchpath
 is named; `fetchpath engine stop` stops it after saving every download's
 progress, and the next command starts it again and carries on.
+Use `fetchpath --version` for the installed application version; engine status
+reports the internal engine component version.
 
 The name is the computer's unless you choose one with
 `fetchpath settings instance-name NAME` (`none` returns to the computer's
@@ -413,9 +414,60 @@ Fetchpath. The host starts it and talks to it over standard input and
 output; you never run it yourself. Give each host its own name with
 `--agent`, so you can tell their requests apart and grant them separately.
 
+### Guided setup (Codex and Claude Code)
+
+Select **AI agents (MCP)** in setup, then explicitly tick the hosts to connect.
+Both boxes start unchecked. The supported scope is your Windows user, across
+projects. To connect after installing, use:
+
+```powershell
+fetchpath agent-setup status --json
+fetchpath agent-setup add codex
+fetchpath agent-setup add claude-code
+fetchpath agent-setup check codex
+fetchpath agent-setup check claude-code
+fetchpath agent-setup remove codex
+fetchpath agent-setup remove claude-code
+```
+
+Restart the host after connecting. Registration uses the full installed path
+and `check` verifies an MCP handshake and tool discovery without a model call.
+The host's own policy can still restrict loading; confirm it in the host's `/mcp` view.
+Approve Fetchpath's tools in the host when prompted; that host approval is
+separate from Fetchpath's folder grants and download approvals. A host running
+with a never-approve policy may refuse a download tool even when Fetchpath
+would allow it.
+Registration grants no download access: choose folders separately with `fetchpath agents
+grant NAME FOLDER` or Settings > Agent access. Requests outside a grant wait
+for your approval. Automatic mode is a separate choice.
+
+Existing entries are preserved. If `fetchpath` already exists, setup explains
+the conflict; `add HOST --adopt` explicitly takes ownership of an identical
+entry, and `add HOST --replace` explicitly replaces it. Close the host before
+changing its configuration. `reconcile` updates owned executable paths after a
+move; `cleanup` removes all still-matching owned entries, even if the host is
+no longer installed. Modified entries are preserved and reported for manual
+resolution. These commands do not delete downloads or revoke saved grants.
+To keep an edited entry and release Fetchpath's ownership, use `fetchpath
+agent-setup remove HOST --keep-config`. This leaves the host configuration
+unchanged; remove that entry manually if you no longer want it.
+
+Upgrade and repair reconcile owned connections. Removing the AI agents
+component or uninstalling removes owned connections even when application
+data is retained. Configuration or cleanup failures stop the installer before
+removing the executable, so you can resolve them and retry. Recovery metadata
+lives separately in `%LOCALAPPDATA%\FetchpathAgentSetup`; it is not part of the
+optional application-data deletion.
+
+### Manual setup (other MCP clients)
+
+Claude Desktop, VS Code and generic stdio MCP clients use manual registration
+and removal; the guided lifecycle covers Codex and Claude Code only. Manual
+entries are not owned by Fetchpath and are not removed automatically.
+
 | Host | Setup |
 |---|---|
-| Claude Code | `claude mcp add fetchpath -- fetchpath mcp --agent claude-code` |
+| Claude Code | `claude mcp add --scope user fetchpath -- fetchpath mcp --agent claude-code` |
 | Claude Desktop | in `claude_desktop_config.json`: `"mcpServers": {"fetchpath": {"command": "fetchpath", "args": ["mcp", "--agent", "claude-desktop"]}}` |
 | Codex | in `~/.codex/config.toml`: `[mcp_servers.fetchpath]` with `command = "fetchpath"` and `args = ["mcp", "--agent", "codex"]` |
 | VS Code | in `.vscode/mcp.json`: `"servers": {"fetchpath": {"type": "stdio", "command": "fetchpath", "args": ["mcp", "--agent", "vscode"]}}` |
@@ -425,16 +477,22 @@ output; you never run it yourself. Give each host its own name with
 chose another folder. For Claude Code:
 
 ```powershell
-claude mcp add fetchpath -- "$env:LOCALAPPDATA\Fetchpath\fetchpath.exe" mcp --agent claude-code
+claude mcp add --scope user fetchpath -- "$env:LOCALAPPDATA\Fetchpath\fetchpath.exe" mcp --agent claude-code
 ```
 
 A full path keeps working whichever components you later choose in Fetchpath
 setup. The bare `fetchpath` command needs the PATH entry, which setup adds only
 while the Terminal or AI agents component is installed; restart the host after
 installing so it sees the new PATH. If you later remove both components, a
-host configured with the bare command stops starting (it fails closed), while a
-host configured with the full path still runs under the same grants and
-approvals. To stop an agent for good, use `fetchpath agents revoke` or
+manually configured host using the bare command stops starting (it fails closed),
+while a manual full-path entry still runs under the same grants and approvals.
+Guided owned registrations are removed when AI agents is deselected. To remove
+manual registrations, remove only `fetchpath` from Claude Desktop's `mcpServers`
+or VS Code's `servers` object; leave other entries intact. A generic MCP client
+starts the full executable path with arguments `mcp --agent NAME`; remove that
+server from its configuration when finished. Manual Codex and Claude Code
+entries can be removed with `codex mcp remove fetchpath` and `claude mcp remove
+--scope user fetchpath`. To revoke an agent's download access, use `fetchpath agents revoke` or
 Settings > Agent access.
 
 The agent gets these tools: `download` (a file, or a video at a quality;

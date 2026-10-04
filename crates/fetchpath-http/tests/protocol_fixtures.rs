@@ -136,6 +136,18 @@ fn sftp_checks_host_key_supports_both_auth_modes_and_resumes() {
     };
     assert_eq!(download(&url, &key, &expected, 0).unwrap(), expected);
 
+    let rsa_key = CompatibilityContext {
+        authentication: Some(Authentication::SshKey {
+            username: value(&state, "username"),
+            private_key: PathBuf::from(value(&state, "rsa_private_key")),
+            passphrase: None,
+        }),
+        ..password.clone()
+    };
+    let error = download(&url, &rsa_key, &expected, 0).unwrap_err();
+    assert!(matches!(error, TransferError::Authentication(ref detail)
+        if detail.contains("RSA private keys are disabled")));
+
     let wrong_host = CompatibilityContext {
         ssh_known_hosts: Some(PathBuf::from(value(&state, "wrong_known_hosts"))),
         ..password

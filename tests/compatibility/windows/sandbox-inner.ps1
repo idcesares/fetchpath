@@ -27,7 +27,8 @@ param(
     # FP-099: install this (earlier, Full) installer first, seed data, then run
     # the installer under test over it with -Components: the upgrade and
     # change-components path.
-    [string] $BaselineInstallerPath = ''
+    [string] $BaselineInstallerPath = '',
+    [string] $ExpectedVersion = '0.2.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -243,7 +244,7 @@ try {
             storedInstallType = Get-Stored 'FetchpathInstallType'
         }
         Assert-True ($observation.baseline.exitCode -eq 0) "The baseline installer exited with code $($observation.baseline.exitCode)."
-        Assert-True ($observation.baseline.desktopExecutable -and $observation.baseline.browserHostExecutable -and $observation.baseline.torrentHelperExecutable) 'The baseline did not install every program.'
+        Assert-True ($observation.baseline.desktopExecutable -and $observation.baseline.browserHostExecutable) 'The published baseline did not install its desktop and browser host.'
         Assert-True ($observation.baseline.nativeHostKeysRegistered -eq 3 -and $observation.baseline.startMenuShortcut -and $observation.baseline.desktopShortcut) 'The baseline did not register the keys and shortcuts.'
         Assert-True ($null -eq $observation.baseline.storedInstallType) 'The baseline already stores a selection; it must be the build from before components.'
 
@@ -373,7 +374,7 @@ try {
     Assert-True ($help.output -and $help.output -match 'download') '`fetchpath --help` printed no usage text.'
     $version = Invoke-FromNewTerminal 'version' "$fp --version"
     $observation.cli.version = $version
-    Assert-True ($version.exitCode -eq 0 -and $version.output -match '0\.1\.0') "``fetchpath --version`` did not report 0.1.0: $($version.output)"
+    Assert-True ($version.exitCode -eq 0 -and $version.output.Trim() -eq "fetchpath $ExpectedVersion") "``fetchpath --version`` did not report ${ExpectedVersion}: $($version.output)"
 
     $cliDestination = Join-Path $workDirectory 'cli-download.bin'
     $cliDownload = Invoke-FromNewTerminal 'download' "$fp download $($fixture.BaseUrl)/cli.bin `"$cliDestination`" --json" 120

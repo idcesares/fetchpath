@@ -23,6 +23,81 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
+struct TestEngine(std::process::Child);
+
+impl Drop for TestEngine {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn start_test_engine(home: &EngineHome) -> TestEngine {
+    let engine = TestEngine(
+        Process::new(engine_exe())
+            .args(["engine", "--idle-grace-ms", "30000"])
+            .env("FETCHPATH_APP_DATA_DIR", home.dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while launch::attach(home, Limits::default()).is_err() {
+        assert!(Instant::now() < deadline, "test engine never started");
+        thread::sleep(Duration::from_millis(50));
+    }
+    engine
+}
+
+fn replacement_instance_is_refused(watch_reconnect: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().join("data"));
+    let first = start_test_engine(&home);
+    let link = Arc::new(EngineLink::new(home.clone(), Some(engine_exe())));
+    link.send(Command::QueueStats).unwrap();
+    drop(first);
+    // A different identity behind the same endpoint must not become selected
+    // merely because a connection failed or a watcher attached again.
+    std::fs::write(
+        home.instance_path(),
+        fetchpath_protocol::InstanceId::random().as_str(),
+    )
+    .unwrap();
+    let _replacement = start_test_engine(&home);
+    if watch_reconnect {
+        let (tell, signals) = mpsc::channel();
+        let watcher = engine_link::watch(Arc::clone(&link), move |signal| {
+            let _ = tell.send(signal);
+        });
+        expect(
+            &signals,
+            |signal| matches!(signal, Signal::Disconnected { .. }),
+            "replacement instance refused by watcher",
+        );
+        watcher.stop();
+        thread::sleep(Duration::from_millis(1_500));
+        assert!(!signals.try_iter().any(|signal| signal == Signal::Connected));
+        let error = link.send(Command::QueueStats).unwrap_err();
+        assert_eq!(error.code.as_str(), "contract.wrong_instance");
+    }
+    let error = link.send(Command::EngineShutdown).unwrap_err();
+    assert_eq!(error.code.as_str(), "contract.wrong_instance");
+    // The rejected mutation did not stop the replacement engine.
+    assert!(launch::attach(&home, Limits::default()).is_ok());
+}
+
+#[test]
+fn command_retry_keeps_the_selected_instance_after_connection_loss() {
+    replacement_instance_is_refused(false);
+}
+
+#[test]
+fn watcher_reconnection_keeps_the_selected_instance() {
+    replacement_instance_is_refused(true);
+}
+
 fn engine_exe() -> PathBuf {
     let exe = std::env::current_exe()
         .unwrap()

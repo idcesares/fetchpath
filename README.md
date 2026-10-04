@@ -8,9 +8,11 @@ A download manager for Windows 11 that keeps your downloads in one list,
 pauses and resumes them, survives restarts, and checks that what arrived is
 exactly what you asked for. It can also save video and audio.
 
-**[Download Fetchpath 0.1.0](https://github.com/idcesares/fetchpath/releases/latest)**
-(Windows 11, x64), install it, then paste a link into the window. See
-[Installing](#installing) first: 0.1.0 isn't code-signed. The
+**[Download Fetchpath](https://github.com/idcesares/fetchpath/releases/latest)**
+(Windows 11, x64), install it, then paste a link into the window.
+This page describes **0.2.0**; the release page lists
+the published versions. See [Installing](#installing) first: Fetchpath isn't
+code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
 
 ## What it does
@@ -21,6 +23,10 @@ exactly what you asked for. It can also save video and audio.
   even after a restart. If the file changed on the website in the meantime,
   Fetchpath starts again rather than joining two different files.
 - **Never overwrites.** A file that's already there is never replaced.
+- **Torrents and magnets.** Add a magnet, a `.torrent` link or a local
+  `.torrent` file to the same list. Fetchpath picks a new folder in your
+  Downloads folder. Peers can see your IP address; uploading is off until
+  you choose it. See [torrents](docs/user/GUIDE.md#torrents-and-magnets).
 - **Honest progress.** Percent and time left appear only when the website says
   how big the file is. Otherwise you see how much has arrived, not a guess.
 - **Checksums.** Paste a publisher's SHA-256 and Fetchpath saves the file only
@@ -47,7 +53,8 @@ exactly what you asked for. It can also save video and audio.
   sees the same list. Closing the window hides it in the tray by default, and
   quitting the desktop from the tray menu leaves active downloads running. The
   tray belongs to the desktop client; the engine works without it and stops by
-  itself about a minute after the last download ends. See the
+  itself about a minute after the last download ends, unless **Always on**
+  or LAN sharing keeps it running. Always on also starts it when you sign in. See the
   [background controls](docs/user/GUIDE.md#pause-resume-and-restarts).
 - **A command line and an interactive terminal.** `fetchpath download LINK`
   for scripts, the whole queue from the command line, and `fetchpath` on its
@@ -56,12 +63,17 @@ exactly what you asked for. It can also save video and audio.
   checksum by site, file type or size.
 - **AI agents, on your terms.** Agents such as Claude Code can download
   through `fetchpath mcp` into the folders you grant; anything else waits for
-  you to approve it. See [CLI.md](docs/user/CLI.md#ai-agents-mcp).
+  you to approve it. Setup can connect Codex and Claude Code, with no access
+  granted automatically. Optional automatic mode relaxes limits inside the
+  folders you grant. See [CLI.md](docs/user/CLI.md#ai-agents-mcp).
+- **Choose what to install.** Full includes the desktop, terminal, agent
+  support, browser integration and torrent helper; Custom lets you choose.
+  The desktop, terminal and extension share the new Fetchpath appearance.
 
 ## Requirements
 
-Windows 11 on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
-0.1.0.
+Microsoft-serviced Windows 11 releases on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
+0.2.0.
 
 ## Installing
 
@@ -71,32 +83,37 @@ using it lawfully and checking whether its sources and files are safe. Its
 [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) licence, at your option,
 sets the terms for using Fetchpath.
 
-Download `Fetchpath_0.1.0_x64-setup.exe` and `SHA256SUMS.txt` from the
+For 0.2.0, download `Fetchpath_0.2.0_x64-setup.exe` and `SHA256SUMS.txt` from the
 [release page](https://github.com/idcesares/fetchpath/releases/latest), check one against the other, and run the installer. It installs just for
 you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
-Version 0.1.0 isn't code-signed, so **Windows SmartScreen warns when you run
-the installer**. Once the checksum matches, choose **More info → Run anyway**.
+Fetchpath isn't code-signed, so **Windows SmartScreen warns when you run
+the installer**. Once the checksum matches, choose **More info â†’ Run anyway**.
 Where **Smart App Control** is on, Windows blocks unsigned programs outright
-and 0.1.0 can't be installed; see the [user guide](docs/user/GUIDE.md#install).
+and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md#install).
 
 ## Limitations
 
-- HTTP and HTTPS links only. HTTP/2 is used where the server offers it.
+- File links use HTTP and HTTPS. HTTP/2 is used where the server offers it.
   HTTP/3, FTP and SFTP aren't available in the app yet.
 - Video and audio can't be paused, and no particular website is promised to
   work; that depends on `yt-dlp`.
 - The browser extension is added in developer mode for now. Firefox isn't
   supported yet.
+- Torrents have no pause, individual file selection or seeding after completion.
+- Always on starts after Windows sign-in; it is not a service. There is no
+  remote hub or remote control in 0.2.0.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 
 [Development speed measurements](docs/development/ADAPTIVE-HTTP.md#tool-comparisons-fp-087-30-september-2026) compare the full engine with curl, aria2, wget2 and Chrome, including settings, connection counts and verification time. They are local fixture results; the published installer and Internet performance are not promised by them.
 
-See the [changelog](CHANGELOG.md) for what's in this version. Work after
-0.1.0, such as torrents and the new look, is in development and isn't in the
-published installer.
+See the [changelog](CHANGELOG.md) for changes since 0.1.0 and the
+[release candidate record](docs/development/RELEASE-CANDIDATE.md) for the
+release verdict. Claude Code connection setup is checked; its current
+model-driven download test remains deferred. Real reboot/sign-in recovery
+and sudden power-loss validation remain explicit gaps in the release evidence.
 
 ## Licence
 

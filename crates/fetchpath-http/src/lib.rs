@@ -843,12 +843,16 @@ mod tests {
     #[test]
     fn global_budget_caps_concurrent_jobs_and_buffered_bytes() {
         let budget = Arc::new(GlobalBudget::new(2, 1024).unwrap());
+        let pair = Arc::new(std::sync::Barrier::new(2));
         let workers: Vec<_> = (0..6)
             .map(|_| {
                 let budget = Arc::clone(&budget);
+                let pair = Arc::clone(&pair);
                 std::thread::spawn(move || {
                     let _permit = budget.reserve(512, &|| false).unwrap();
-                    std::thread::sleep(Duration::from_millis(20));
+                    // Both permitted workers hold their reservation before
+                    // either releases it, independent of CPU scheduling.
+                    pair.wait();
                 })
             })
             .collect();

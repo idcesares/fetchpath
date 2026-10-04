@@ -18,7 +18,7 @@ use fetchpath_protocol::error::{ErrorCode, ErrorScope};
 use fetchpath_protocol::launch::{self, EngineHome, LAUNCH_WAIT};
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::pipe::{Limits, PipeEngineClient};
-use fetchpath_protocol::{ClientId, EngineClient, ProtocolError};
+use fetchpath_protocol::{ClientId, EngineClient, InstanceId, ProtocolError};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,8 @@ pub struct EngineLink {
     exe: Option<PathBuf>,
     client_id: ClientId,
     client: Mutex<Option<Arc<PipeEngineClient>>>,
+    /// The selected instance survives connection loss and watcher restarts.
+    instance: Mutex<Option<InstanceId>>,
     /// One start at a time; held while starting, never while sending.
     starting: Mutex<()>,
     /// Whether this window may start the engine by itself.
@@ -68,6 +70,7 @@ impl EngineLink {
             exe,
             client_id: ClientId::random(),
             client: Mutex::new(None),
+            instance: Mutex::new(None),
             starting: Mutex::new(()),
             may_start: AtomicBool::new(true),
         }
@@ -130,7 +133,7 @@ impl EngineLink {
         if let Some(client) = self.held().as_ref() {
             return Ok(Arc::clone(client));
         }
-        let client = Arc::new(if self.may_start() {
+        let client = if self.may_start() {
             let exe = self
                 .exe
                 .as_ref()
@@ -139,7 +142,15 @@ impl EngineLink {
             launch::attach_or_launch(&self.home, exe, Limits::default(), LAUNCH_WAIT)?
         } else {
             launch::attach(&self.home, Limits::default())?
-        });
+        };
+        let mut instance = self
+            .instance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if instance.is_none() {
+            *instance = client.instance_id();
+        }
+        let client = Arc::new(client.for_instance(instance.clone()));
         *self.held() = Some(Arc::clone(&client));
         Ok(client)
     }

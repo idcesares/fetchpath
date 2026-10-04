@@ -1,0 +1,18 @@
+{
+  "osBuild": "10.0.26100.0",
+  "automaticEngineStart": true,
+  "passed": true,
+  "bytesVerified": true,
+  "sameAutomaticEngineThroughIdle": true,
+  "idlePastDefaultGrace": true,
+  "savedBytes": 2097152,
+  "environment": "Windows Sandbox",
+  "newLogonVerified": true,
+  "version": "0.2.0",
+  "desktopExitPassed": true,
+  "stableInstance": true,
+  "limitation": "Actual guest sign-out/sign-in; no reboot or power-loss test",
+  "resumedRange": 294912,
+  "installerSha256": "9d8e7434cd952c297a7848908cb89296b5f78734c353edef80125e2ef84dd1a4",
+  "recordedAt": "2026-10-04T21:55:04.8296359Z"
+}

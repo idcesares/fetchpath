@@ -1250,7 +1250,10 @@ fn a_retry_after_over_sixty_seconds_is_not_silently_capped() {
         &budget,
         &SegmentMonitor::default(),
         None,
-        || started.elapsed() >= Duration::from_millis(250),
+        || {
+            (server.count() > 0 && started.elapsed() >= Duration::from_millis(250))
+                || started.elapsed() >= Duration::from_secs(5)
+        },
         |_| Ok(()),
     );
     assert!(matches!(result, Err(TransferError::Cancelled)));

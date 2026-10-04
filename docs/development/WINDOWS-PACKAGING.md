@@ -554,3 +554,35 @@ the same code paths and the static checks. One early Full run's WebView2
 installer step failed (setup exit 2) and passed on rerun; its log was not yet
 captured. Media tool download sizes were not measured. DPI of the sidebar
 bitmaps was not checked (no bitmaps are configured yet).
+
+## Guided agent registration (FP-102)
+
+The AI agents component has a separate, unchecked host-selection page for
+per-user Codex and Claude Code registration; quiet setup requires the explicit
+`/AGENTHOSTS` option to add a new registration. Setup grants no download access.
+The CLI owns configuration mutation, conflict handling and recovery (see
+[MCP](MCP.md#guided-host-setup-fp-102)). Upgrade/repair reconcile owned executable
+paths. Uninstall-first version replacement carries `/REPLACE` internally so
+connections survive until the replacement reconciles them. Actual removal and
+AI agents deselection clean still-matching owned entries regardless of the
+application-data retention choice. Errors exit 11 while retaining the program
+and recovery inventory; edited entries require explicit resolution. The update
+hold is lifted only once selected program files are in place, before connection
+checks; a failed cleanup lifts it too so recovery commands can run.
+
+`tests/installer/agent-setup.test.mjs` protects consent and removal ordering.
+`tests/compatibility/windows/agent-installer.ps1` runs a disposable Windows
+Sandbox lifecycle; its host discovery fixtures are command stubs, so actual
+agent calls are checked separately by `agent-hosts.ps1`.
+
+On 4 October 2026, the current release installer passed 88 assertions in
+Windows Sandbox build 26100: the native host-selection page started unchecked,
+accepted both explicit selections and registered them; quiet setup without
+host choices made no registrations. Repeated setup, repair, update and
+uninstall-first replacement retained connections. Component removal and both
+keep-data and delete-data uninstall removed owned entries while unrelated
+configuration and completed downloads survived. See
+[installer evidence](evidence/windows/agent-installer.json) for the tested build
+hash. Native control automation verifies page wiring, not visual appearance.
+The unsigned build's Smart App Control adjustment was confined to the
+disposable Sandbox; the host policy was unchanged.

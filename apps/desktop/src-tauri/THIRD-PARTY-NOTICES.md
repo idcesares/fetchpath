@@ -760,7 +760,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | x11 | 2.21.0 | MIT | Read from the crate manifest in the local registry |
 | x11-dl | 2.21.0 | MIT | Read from the crate manifest in the local registry |
 | yoke | 0.8.3 | Unicode-3.0 | Read from the crate manifest in the local registry |
-| yoke-derive | 0.8.3 | Unicode-3.0 | Read from the crate manifest in the local registry |
+| yoke-derive | 0.8.4 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | zerocopy-derive | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | zerofrom | 0.1.8 | Unicode-3.0 | Read from the crate manifest in the local registry |

@@ -2144,6 +2144,11 @@ impl Session {
             let Principal::Agent(agent) = &record.principal else {
                 continue;
             };
+            // Automatic mode lifts size stops, including an adapter failure
+            // sampled just after the person changed the policy (contract D7).
+            if agents.get(agent).is_some_and(|policy| policy.automatic) {
+                continue;
+            }
             // A media download stopped by its byte cap has failed in the
             // adapter; for the person it is a size stop like any other.
             if record.approval.is_none()
@@ -2159,10 +2164,6 @@ impl Session {
                 continue;
             }
             if record.size_approved || record.approval.is_some() || record.view.state != "running" {
-                continue;
-            }
-            // Automatic mode lifts the size limit (contract D7).
-            if agents.get(agent).is_some_and(|policy| policy.automatic) {
                 continue;
             }
             let limit = agents
@@ -2233,6 +2234,10 @@ impl Session {
         next: Option<AgentPolicy>,
     ) -> Result<(), String> {
         let next = next.map(policy::validated).transpose()?;
+        let previous = self.agent_policy(&agent);
+        let next_policy = next.clone().unwrap_or_default();
+        let cap_changed = previous.automatic != next_policy.automatic
+            || previous.max_bytes != next_policy.max_bytes;
         let folders = next
             .as_ref()
             .map(|policy| policy.folders.clone())
@@ -2251,7 +2256,116 @@ impl Session {
             }
             *agents = updated;
         }
-        self.hold_outside_grants(&agent, &folders)
+        self.hold_outside_grants(&agent, &folders)?;
+        if cap_changed {
+            self.restart_agent_helpers(&agent)?;
+        }
+        Ok(())
+    }
+
+    /// A torrent helper copies its cap at start. Stop and rebuild helpers
+    /// when that cap changes; media can also have crossed its previous cap
+    /// before the policy update. Joining happens outside the queue lock.
+    fn restart_agent_helpers(&self, agent: &AgentName) -> Result<(), String> {
+        let access = self.agent_policy(agent);
+        let stopped = {
+            let mut state = self.inner.lock().expect("desktop jobs poisoned");
+            let mut stopped = Vec::new();
+            for record in &mut state.records {
+                // A sampler may have held the old cap just before the policy
+                // update. Lift that size reason, retaining every other hold.
+                if access.automatic
+                    && policy::inside_grants(&record.grant_path(), &access.folders)
+                    && record.principal == Principal::Agent(agent.clone())
+                    && matches!(
+                        record.job,
+                        Some(JobHandle::Media(_) | JobHandle::Torrent(_))
+                    )
+                    && let Some(approval) = record.approval.as_mut()
+                {
+                    approval
+                        .reasons
+                        .retain(|reason| *reason != ApprovalReason::SizeLimit);
+                    if approval.reasons.is_empty() {
+                        record.approval = None;
+                        record.view.state = "running".into();
+                    }
+                }
+                if record.principal != Principal::Agent(agent.clone())
+                    || record.size_approved
+                    || record.approval.is_some()
+                    || !matches!(
+                        record.job,
+                        Some(JobHandle::Media(_) | JobHandle::Torrent(_))
+                    )
+                {
+                    continue;
+                }
+                // Include a helper which failed at the old cap but has not
+                // yet been sampled into an approval hold.
+                let cap_failure = record.job.as_ref().is_some_and(|job| {
+                    match job {
+                        JobHandle::Media(job) => job.snapshot().error,
+                        JobHandle::Torrent(job) => job.snapshot().error,
+                        JobHandle::File(_) => None,
+                    }
+                    .is_some_and(|error| error.starts_with("size_limit"))
+                });
+                if record.view.state != "running" && !cap_failure {
+                    continue;
+                }
+                let job = record.job.take().expect("helper present");
+                job.cancel();
+                record.view.state = "queued".into();
+                record.view.error = None;
+                record.view.action = None;
+                record.view.retryable = false;
+                record.retry_at_ms = None;
+                stopped.push((record.id.clone(), job));
+            }
+            stopped
+        };
+        for (_, job) in &stopped {
+            job.join();
+        }
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        for (id, job) in stopped {
+            let Ok(record) = find_record_mut(&mut state, &id) else {
+                continue;
+            };
+            if job.completed() {
+                record.job = Some(job);
+                refresh_record(record);
+                continue;
+            }
+            // Another command may have cancelled, held or removed the row
+            // while its helper stopped. Preserve that command's decision.
+            if record.view.state != "queued" || record.job.is_some() || record.approval.is_some() {
+                continue;
+            }
+            let Some(url) = record.live_url.clone() else {
+                record.view.state = "needs_source".into();
+                continue;
+            };
+            record.job = if let Some(policy) = record.torrent_policy {
+                Some(torrent_job(record, url, policy))
+            } else if let Some(variant) = record.media_variant_id.clone() {
+                self.media_tools().map(|tools| {
+                    JobHandle::Media(MediaJob::create(
+                        url,
+                        variant,
+                        record.destination.clone(),
+                        tools,
+                    ))
+                })
+            } else {
+                None
+            };
+            record.finished_at_ms = None;
+            record.view.finished_at_ms = None;
+        }
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)
     }
 
     /// Holds `agent`'s unfinished downloads whose destination is outside
@@ -2813,6 +2927,17 @@ impl Session {
             // Nothing to write to: everything in memory counts as committed.
             durable.engine.generation = durable.pending_generation();
             durable.engine_changed = false;
+        }
+        // Publication recovery evidence outlives the helper. Only the queue
+        // commit above makes the completed row and its final path durable.
+        if self.state_path.is_some() {
+            for record in &state.records {
+                if record.view.state == "completed"
+                    && let Some(JobHandle::Torrent(job)) = &record.job
+                {
+                    let _ = job.acknowledge_publication();
+                }
+            }
         }
         durable.committed = durable.engine.generation;
         durable.broadcast();
@@ -3578,15 +3703,18 @@ fn refresh_record(record: &mut QueueRecord) {
             record.view.total_bytes = snapshot.total;
             record.view.error = snapshot.error;
             record.view.cleanup_pending = false;
-            // The helper named and published the folder: from here on the
-            // job's destination is that folder, not the root it went into.
+            // Show the published folder immediately, but retain the original
+            // request identity until completion. A save between Published and
+            // Completed must recover with the auto root and its marker path.
             if let Some(published) = snapshot.published
                 && record.torrent_auto
             {
                 if published_inside(&record.destination, Path::new(&published)) {
-                    record.destination = PathBuf::from(&published);
+                    if snapshot.state == TorrentJobState::Completed {
+                        record.destination = PathBuf::from(&published);
+                        record.torrent_auto = false;
+                    }
                     record.view.destination = Some(published);
-                    record.torrent_auto = false;
                 } else {
                     record.view.state = "failed".into();
                     record.view.error = Some("torrent.transfer_failed".into());
@@ -5694,6 +5822,242 @@ mod tests {
         assert!(!is_media_page("https://example.com/watch?v=abc"));
         assert!(!is_media_page("https://notyoutube.com/watch"));
         assert!(!is_media_page("not a url"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires isolated CARGO_TARGET_DIR; run explicitly with --ignored"]
+    fn automatic_policy_restarts_running_helpers_and_applies_at_start() {
+        use sha2::Digest;
+        let helper = std::env::current_exe()
+            .unwrap()
+            .with_file_name("fetchpath-torrent-helper.exe");
+        // This fixture belongs to an isolated target directory; never replace
+        // an installed/previously built helper.
+        assert!(
+            !helper.exists(),
+            "run this test in its own CARGO_TARGET_DIR"
+        );
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/policy-torrent-helper.rs");
+        assert!(
+            std::process::Command::new("rustc")
+                .arg(fixture)
+                .arg("--edition=2024")
+                .arg("-o")
+                .arg(&helper)
+                .status()
+                .unwrap()
+                .success()
+        );
+        struct RemoveHelper(PathBuf);
+        impl Drop for RemoveHelper {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let _remove = RemoveHelper(helper);
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../adapters/media/tests/fixtures");
+        let tools = MediaTools::new(
+            fixtures.join("burst-helper.cmd"),
+            &fixtures,
+            fixtures.join("fake-ffprobe-video.cmd"),
+        )
+        .unwrap();
+        for torrent in [false, true] {
+            for boundary in 0..3 {
+                let scheduled = boundary == 1;
+                let output = tempfile::tempdir().unwrap();
+                let destination = output
+                    .path()
+                    .join(if torrent { "torrent" } else { "video.mp4" });
+                let jobs = Session::in_memory_with_media(1, tools.clone());
+                let agent = AgentName::try_from("helper").unwrap();
+                let mut access = AgentPolicy {
+                    folders: vec![output.path().display().to_string()],
+                    max_bytes: 256 * 1024,
+                    max_new_jobs_per_hour: 20,
+                    automatic: false,
+                };
+                jobs.set_agent_policy(agent.clone(), Some(access.clone()))
+                    .unwrap();
+                let due = scheduled.then(|| now_ms() + 60_000);
+                let mut record = if torrent {
+                    QueueRecord::new_torrent(
+                        "magnet:?xt=urn:btih:0123456789012345678901234567890123456789".into(),
+                        destination.clone(),
+                        false,
+                        due,
+                        TorrentPolicy {
+                            discover_peers: true,
+                            upload: false,
+                        },
+                    )
+                } else {
+                    QueueRecord::new_media(
+                        "https://example.test/watch?v=1".into(),
+                        destination.clone(),
+                        due,
+                        "video-18".into(),
+                        "360p".into(),
+                        tools.clone(),
+                    )
+                };
+                record.principal = Principal::Agent(agent.clone());
+                let id = record.id.clone();
+                jobs.inner.lock().unwrap().records.push(record);
+                let before = jobs.snapshot(&id).unwrap();
+                assert_eq!(
+                    before.state,
+                    if scheduled { "scheduled" } else { "running" }
+                );
+                let previous = jobs.inner.lock().unwrap().records[0].job.clone().unwrap();
+                if torrent && !scheduled {
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    while jobs.snapshot(&id).unwrap().bytes_received != 1 {
+                        assert!(std::time::Instant::now() < deadline);
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                if boundary == 2 {
+                    let mut state = jobs.inner.lock().unwrap();
+                    let record = &mut state.records[0];
+                    record.job.as_ref().unwrap().cancel();
+                    record.hold(vec![ApprovalReason::SizeLimit]);
+                }
+                access.automatic = true;
+                jobs.set_agent_policy(agent, Some(access)).unwrap();
+                if scheduled {
+                    jobs.start_now(&id).unwrap();
+                }
+                let deadline = std::time::Instant::now() + Duration::from_secs(30);
+                let finished = loop {
+                    let snapshot = jobs.snapshot(&id).unwrap();
+                    assert_ne!(snapshot.state, "awaiting_approval", "{snapshot:?}");
+                    if is_terminal(&snapshot.state) {
+                        break snapshot;
+                    }
+                    assert!(std::time::Instant::now() < deadline, "{snapshot:?}");
+                    thread::sleep(Duration::from_millis(50));
+                };
+                assert_eq!(finished.state, "completed", "{finished:?}");
+                assert_eq!(finished.bytes_received, 2 * 1024 * 1024);
+                if torrent && !scheduled {
+                    assert!(matches!(previous, JobHandle::Torrent(ref job)
+                        if job.snapshot().state == TorrentJobState::Cancelled));
+                }
+                if !torrent {
+                    assert_eq!(fs::metadata(&destination).unwrap().len(), 2 * 1024 * 1024);
+                }
+                if torrent && scheduled {
+                    // Reuse the completed helper to prove failed and deferred
+                    // saves cannot acknowledge publication recovery evidence.
+                    let source = match jobs.inner.lock().unwrap().records[0].job.as_ref().unwrap() {
+                        JobHandle::Torrent(job) => job.request().source.clone(),
+                        _ => unreachable!(),
+                    };
+                    let hash = format!("{:x}", sha2::Sha256::digest(source.as_bytes()));
+                    let marker = output.path().join(format!(
+                        "torrent.fetchpath-{id}-{}.part.infohash",
+                        &hash[..32]
+                    ));
+                    fs::write(&marker, b"recovery evidence").unwrap();
+                    let blocked = output.path().join("blocked-parent");
+                    fs::write(&blocked, b"not a directory").unwrap();
+                    let queue = blocked.join("queue.json");
+                    let mut persistent = jobs;
+                    persistent.state_path = Some(queue.clone());
+                    let mut state = persistent.inner.lock().unwrap();
+                    persistent.durable.lock().unwrap().defer = true;
+                    persistent.save_locked(&mut state).unwrap();
+                    assert!(marker.exists());
+                    persistent.durable.lock().unwrap().defer = false;
+                    assert!(persistent.save_locked(&mut state).is_err());
+                    assert!(marker.exists());
+                    fs::remove_file(&blocked).unwrap();
+                    persistent.save_locked(&mut state).unwrap();
+                    assert!(!marker.exists());
+                }
+            }
+        }
+        // Publication is separate from worker completion. Persist its
+        // intermediate snapshot, stop the process without another save, and
+        // reload exactly that durable state as an engine crash would.
+        let output = tempfile::tempdir().unwrap();
+        let queue = output.path().join("queue.json");
+        let root = output.path().join("downloads");
+        fs::create_dir(&root).unwrap();
+        let published = root.join("Album");
+        fs::create_dir(&published).unwrap();
+        let source = "https://example.test/publication-window.torrent".to_string();
+        let jobs = Session::load(queue.clone(), 1).unwrap();
+        let record = QueueRecord::new_torrent(
+            source.clone(),
+            root.clone(),
+            true,
+            None,
+            TorrentPolicy {
+                discover_peers: true,
+                upload: false,
+            },
+        );
+        let id = record.id.clone();
+        let hash = format!("{:x}", sha2::Sha256::digest(source.as_bytes()));
+        let marker = root.join(format!(".fetchpath-{id}-{}.part.infohash", &hash[..32]));
+        fs::write(&marker, b"published recovery evidence").unwrap();
+        jobs.inner.lock().unwrap().records.push(record);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let snapshot = jobs.snapshot(&id).unwrap();
+            assert_eq!(snapshot.state, "running", "{snapshot:?}");
+            if snapshot.destination.as_deref() == Some(published.to_str().unwrap()) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{snapshot:?}");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let saved = load_persisted(&queue).unwrap().current().unwrap();
+        assert_eq!(saved.records[0].destination, root.display().to_string());
+        assert!(saved.records[0].torrent_auto);
+        assert_eq!(saved.records[0].view.state, "running");
+        assert!(marker.exists());
+        let job = jobs.inner.lock().unwrap().records[0].job.clone().unwrap();
+        job.cancel();
+        job.join();
+        drop(jobs);
+        fs::write(root.join("replay-publication"), b"resume after crash").unwrap();
+        let recovered = Session::load(queue.clone(), 1).unwrap();
+        {
+            let state = recovered.inner.lock().unwrap();
+            let JobHandle::Torrent(job) = state.records[0].job.as_ref().unwrap() else {
+                unreachable!()
+            };
+            assert!(job.request().auto_name);
+            assert_eq!(job.request().destination, root.display().to_string());
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let snapshot = recovered.snapshot(&id).unwrap();
+            if is_terminal(&snapshot.state) {
+                assert_eq!(snapshot.state, "completed", "{snapshot:?}");
+                assert_eq!(snapshot.destination.as_deref(), published.to_str());
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "{snapshot:?}");
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !marker.exists(),
+            "durable completion acknowledges the original marker"
+        );
+        assert!(!root.join("Album (2)").exists());
+        let saved = load_persisted(&queue).unwrap().current().unwrap();
+        assert_eq!(
+            saved.records[0].destination,
+            published.display().to_string()
+        );
+        assert!(!saved.records[0].torrent_auto);
     }
 
     /// An agent's video download stops at the agent's size limit and waits
