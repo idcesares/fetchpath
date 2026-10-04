@@ -83,7 +83,7 @@ by itself.
 | **Core** (always) | The engine, the `fetchpath` program (command line, terminal app and AI agent server in one file), the guides and licences | 10.8 MiB |
 | **Desktop app** | The Fetchpath window, Start menu and desktop shortcuts. Needs Microsoft WebView2 | 13.3 MiB |
 | **Terminal** | The `fetchpath` command and the terminal app on your PATH. Without the desktop app, a **Fetchpath Terminal** Start menu entry | none |
-| **AI agents (MCP)** | Lets agent hosts start `fetchpath mcp` from your PATH. Agents get no access until you grant it | none |
+| **AI agents (MCP)** | Lets agent hosts start `fetchpath mcp`; a separate setup page connects selected Codex and Claude Code hosts. Agents get no access until you grant it | none |
 | **Browser integration** | The browser host and its registration for Chrome, Edge and Firefox, and the extension folder | 2.5 MiB |
 | **Torrent helper** | Needed for torrent and magnet downloads. Does not turn on seeding | 10.6 MiB |
 
@@ -110,6 +110,7 @@ revoke it with `fetchpath agents revoke`. One configured with the bare
 | `/S` | Silent. A fresh PC gets Full; an existing install keeps its components. Never downloads media tools, never shows browser guidance |
 | `/P` | Passive: progress shown, no questions |
 | `/COMPONENTS=desktop,cli,mcp,browser,torrent` | Installs exactly those (Core is implied; any order). `/COMPONENTS=full` is Full. Ignored with `/UPDATE` |
+| `/AGENTHOSTS=codex,claude-code` | Explicitly connects those hosts for your Windows user; requires AI agents (MCP). Omit it to create no new connections |
 | `/NS` | No shortcuts |
 | `/UPDATE` | The in-app updater's mode: keeps the stored components, removes nothing |
 | `/R` | Starts the desktop app afterwards, if it is installed |
@@ -444,9 +445,16 @@ data; add `/DELETEAPPDATA` to remove it.
 
 If downloads are still running, the uninstaller stops Fetchpath first.
 
-The uninstaller also removes the browser connection, the `fetchpath`
-command from your PATH and, if you turned it on, starting at sign-in. Remove the extension from your browser yourself on its
-extensions page.
+The uninstaller also removes the browser connection, MCP registrations created
+or explicitly adopted by guided agent setup, the `fetchpath` command from your
+PATH and, if you turned it on, starting at sign-in. Remove the extension from
+your browser yourself on its extensions page.
+
+Agent connections are removed even when you keep application data. User-modified
+or manually created host entries are preserved; follow any cleanup warning and
+remove them from the host yourself. A configuration cleanup error stops removal
+while Fetchpath is still installed, so you can resolve the error and retry.
+See [agent setup and removal](CLI.md#guided-setup-codex-and-claude-code).
 
 ## When something goes wrong
 

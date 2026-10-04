@@ -206,7 +206,7 @@ test('an existing install keeps its selection unless /COMPONENTS says otherwise'
   const parse = init.indexOf('/COMPONENTS=');
   assert.ok(read > 0 && parse > read, 'the stored selection is read first and /COMPONENTS replaces it');
   assert.ok(init.includes('StrCpy $FpOldDesktop $FpSelDesktop'));
-  assert.ok(init.endsWith('Call FpApplySelection'));
+  assert.ok(init.indexOf('Call FpApplySelection') > parse);
 });
 
 test('deselecting removes only that component, after the engine stops, and never for /UPDATE', () => {
@@ -226,7 +226,7 @@ test('deselecting removes only that component, after the engine stops, and never
 
 test('registrations follow the selection', () => {
   const post = macro('NSIS_HOOK_POSTINSTALL');
-  assert.match(post, /^\$\{If\} \$\{SectionIsSelected\} \$\{SecBrowser\}\nWriteRegStr HKCU "Software\\Google\\Chrome\\NativeMessagingHosts\\\$\{FETCHPATH_HOST\}"/);
+  assert.match(post, /\$\{If\} \$\{SectionIsSelected\} \$\{SecBrowser\}\nWriteRegStr HKCU "Software\\Google\\Chrome\\NativeMessagingHosts\\\$\{FETCHPATH_HOST\}"/);
   assert.match(post, /\$\{Else\}\n!insertmacro FETCHPATH_REMOVE_HOST_KEYS\n\$\{EndIf\}/);
   assert.match(post, /\$\{If\} \$\{SectionIsSelected\} \$\{SecCli\}\n\$\{OrIf\} \$\{SectionIsSelected\} \$\{SecMcp\}\n!insertmacro FETCHPATH_USER_PATH Add\n\$\{Else\}\n!insertmacro FETCHPATH_USER_PATH Remove\n\$\{EndIf\}/);
   // Uninstall still removes every key and the PATH entry.
@@ -242,6 +242,7 @@ test('installing is never consent: no grants, serving, sharing, sign-in or tool 
   const allowed = [
     /^"\$INSTDIR\\fetchpath\.exe" engine stop --for-update$/,
     /^"\$INSTDIR\\fetchpath\.exe" tools install --yes$/,
+    /^"\$INSTDIR\\fetchpath\.exe" agent-setup \$\{ARGUMENTS\}$/,
     /user-path\.ps1" -Action (\$\{ACTION\}|Test) -Dir "\$INSTDIR"$/,
     /remove-app-data\.ps1/,
     /Get-CimInstance Win32_Process/,
@@ -253,7 +254,7 @@ test('installing is never consent: no grants, serving, sharing, sign-in or tool 
   // The one download needs the person's tick, in an interactive setup.
   const post = macro('NSIS_HOOK_POSTINSTALL');
   assert.match(post, /\$\{IfNot\} \$\{Silent\}\n\$\{AndIf\} \$PassiveMode != 1\n\$\{If\} \$FpMedia <> 1\nGoto fetchpath_media_done/);
-  // Nothing writes an agent host's configuration or the sign-in Run value (the engine owns it).
+  // Host configuration is owned by agent-setup; the engine owns the Run value.
   assert.ok(!/CurrentVersion\\Run" "Fetchpath engine" /.test(`${nsi}\n${hooks}`.replace(/DeleteRegValue[^\n]*/g, '')));
   assert.ok(!/claude_desktop_config|\.codex|mcp\.json/.test(`${nsi}\n${hooks}`));
 });

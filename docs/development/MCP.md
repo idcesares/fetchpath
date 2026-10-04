@@ -195,6 +195,53 @@ Residual risks, with reasons:
 - Three copies of the reserved-name list (engine, command line, browser
   inbox) agree now but are separate.
 
+## Guided host setup (FP-102)
+
+`apps/cli/src/agent_setup.rs` owns user-scope Codex and Claude Code registration,
+with a separate `%LOCALAPPDATA%\FetchpathAgentSetup` ownership inventory.
+`agent-setup add`, `remove`, `reconcile` and `cleanup` change only an explicitly
+selected or still-matching owned `fetchpath` entry. Codex comments and unrelated
+TOML settings survive; unrelated Claude JSON values survive. Conflicts require
+explicit adoption/replacement; edited entries stop cleanup until resolved or
+explicitly released with `remove HOST --keep-config`. Configuration writes use
+a staged, flushed replacement and a pending ownership journal; recovery compares
+the entry and prewrite digest, never stores the rest of a host's configuration.
+Registration grants no agent access. `check HOST` performs a bounded stdio
+handshake and tool discovery against an unchanged owned entry, without model
+or download calls. Host loading policy still needs checking in the host.
+
+The format/location sources checked on 3 October 2026 are the official
+[Codex MCP reference](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),
+[Codex configuration basics](https://learn.chatgpt.com/docs/config-file/config-basic)
+and [Claude Code MCP scopes](https://code.claude.com/docs/en/mcp).
+`CODEX_HOME` and `CLAUDE_CONFIG_DIR` overrides are supported; no project
+configuration is silently edited. Claude Desktop, VS Code and generic stdio
+clients retain documented manual setup/removal.
+
+The isolated registration tests are `apps/cli/tests/agent_setup.rs` (14 passed).
+`tests/compatibility/windows/agent-hosts.ps1` drives registered real hosts in
+scratch homes, with explicit grants and ungranted requests, and leaves only a
+small result suitable for evidence. On 4 October 2026, Codex 0.160.0 loaded the
+guided registration, made two actual tool calls, saved 65,536 byte-identical
+fixture bytes into its grant, and left the ungranted request awaiting approval;
+owned cleanup also passed. The isolated invocation explicitly approved only
+the download tool in Codex and forwarded the scratch engine home: Codex filters
+ambient environment variables, and `approval_mode=auto` still asks for writes.
+Claude Code 2.1.289 loaded its user registration and discovered the tools, but
+its saved OAuth session was expired and could not refresh. On 4 October 2026,
+the owner deferred further Claude Code testing and accepted the implementation
+with its model-driven download flow unvalidated. See
+[host evidence](evidence/windows/agent-hosts.json).
+`cargo clippy -p fetchpath --all-targets --locked -- -D warnings`, focused
+formatting, and the independent boundary review and repair recheck passed.
+The final explicit repository Node test list passed all 92 tests; unrestricted
+test discovery also traverses copied host-plugin caches in ignored `work/`,
+so those unrelated plugin suites were excluded from the repository check.
+Close hosts before configuration changes: sidecar locks coordinate Fetchpath
+commands, not external host writers; an external compare-to-replace race remains
+unsupported. Installer
+lifecycle evidence belongs in [WINDOWS-PACKAGING](WINDOWS-PACKAGING.md).
+
 ## Limitations
 
 - The harness grants a folder from the command line rather than through
@@ -204,8 +251,9 @@ Residual risks, with reasons:
 - Settings reads agents when it opens; a change made elsewhere meanwhile
   shows the next time.
 - Each tool call other than a wait opens its own pipe connection.
-- Setup for Claude Desktop, Codex and VS Code is documented from their
-  configuration formats; only Claude Code was run.
+- Claude Desktop and VS Code retain manual configuration examples. Guided
+  Codex is verified; the latest Claude Code connection is verified, with its
+  actual download unvalidated under the owner's deferral described above.
 - A media format label from the helper is untrusted yet is also what the
   agent passes back as `quality`; it is only ever matched against the
   helper's own list.

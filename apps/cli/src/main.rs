@@ -1,3 +1,4 @@
+mod agent_setup;
 mod agents;
 mod cache;
 mod client;
@@ -40,6 +41,10 @@ The download queue, kept by the Fetchpath engine:
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
   fetchpath cache [status | clear]            verified copies kept for downloads with a checksum
   fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
+  fetchpath agent-setup status [--json]       detect Codex / Claude Code and owned registrations
+  fetchpath agent-setup add codex|claude-code [--adopt|--replace]   register in user scope
+  fetchpath agent-setup remove codex|claude-code [--keep-config] | cleanup | reconcile
+  fetchpath agent-setup check codex|claude-code   verify owned stdio MCP connection
 
 Video and audio need two free programs, yt-dlp and ffmpeg, that are not
 part of Fetchpath:
@@ -112,6 +117,7 @@ fn main() {
         Some("rules") => rules::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
         Some("agents") => agents::run(&args[1..]),
+        Some("agent-setup") => agent_setup::run(&args[1..]),
         Some("approvals") => agents::approvals(&args[1..]),
         Some("cache") => cache::run(&args[1..]),
         Some("lan") => lan::run(&args[1..]),

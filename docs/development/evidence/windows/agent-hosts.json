@@ -1,0 +1,34 @@
+{
+  "task": "FP-102",
+  "date": "2026-10-04",
+  "environment": "Windows 11, isolated host configuration and engine data folders",
+  "codex": {
+    "passed": true,
+    "version": "codex-cli 0.160.0",
+    "scope": "CODEX_HOME/config.toml, user",
+    "model": "gpt-6.1-sol",
+    "toolCalls": 2,
+    "savedBytes": 65536,
+    "bytesVerified": "Every byte equals the local fixture's 0x5a pattern",
+    "ungrantedState": "awaiting_approval",
+    "ungrantedOutputExists": false,
+    "cleanupVerified": true,
+    "invocationOnlyOverrides": [
+      "download tool approval_mode=approve",
+      "explicit isolated FETCHPATH_APP_DATA_DIR forwarding"
+    ]
+  },
+  "claude_code": {
+    "version": "2.1.289",
+    "scope": "CLAUDE_CONFIG_DIR/.claude.json, user",
+    "connectionPassed": true,
+    "toolDiscoveryPassed": true,
+    "downloadVerified": false,
+    "remaining": "Authenticated download flow not verified; further Claude Code testing deferred by the owner on 4 October 2026 after expired sign-in prevented the run"
+  },
+  "limitations": [
+    "No global host configuration or download grants were changed",
+    "Codex host approval is separate from Fetchpath download authorization",
+    "Claude Code authenticated download flow remains unvalidated by owner decision; it does not block FP-102 completion"
+  ]
+}

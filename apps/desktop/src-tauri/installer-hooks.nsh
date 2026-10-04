@@ -187,6 +187,20 @@ FunctionEnd
   DeleteRegKey HKCU "Software\Mozilla\NativeMessagingHosts\${FETCHPATH_HOST}"
 !macroend
 
+; FP-102: keep recovery metadata outside optional app data. A failed cleanup
+; stops removal while the executable still exists, so it can be retried.
+!macro FETCHPATH_AGENT_COMMAND ARGUMENTS
+  nsExec::ExecToLog '"$INSTDIR\fetchpath.exe" agent-setup ${ARGUMENTS}'
+  Pop $R9
+  ${If} $R9 != 0
+    DetailPrint "Agent connection setup/cleanup failed. Existing configuration was preserved. Retry with fetchpath agent-setup before removing Fetchpath."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Agent connection setup or cleanup could not finish. The log explains the conflict or error. Fetchpath is kept so you can resolve it with fetchpath agent-setup and retry. No download access was granted." /SD IDOK
+    Delete "${FETCHPATH_UPDATE_HOLD}"
+    SetErrorLevel 11
+    Quit
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro FETCHPATH_STOP_ENGINE
 !macroend
@@ -196,6 +210,24 @@ FunctionEnd
 ; grants an agent, starts serving, enables sharing, or downloads a tool unless
 ; the person ticked the media box on the installation type page.
 !macro NSIS_HOOK_POSTINSTALL
+  ; Every selected program file is now in place; handshake checks may start
+  ; the local engine, so lift the update hold before those checks.
+  Delete "${FETCHPATH_UPDATE_HOLD}"
+  ; Owned registrations follow upgrades and custom install paths. Deselection
+  ; removes registrations before any future executable removal, even with data kept.
+  ${If} ${SectionIsSelected} ${SecMcp}
+    !insertmacro FETCHPATH_AGENT_COMMAND "reconcile"
+    ${If} $FpAgentCodex = 1
+      !insertmacro FETCHPATH_AGENT_COMMAND "add codex"
+      !insertmacro FETCHPATH_AGENT_COMMAND "check codex"
+    ${EndIf}
+    ${If} $FpAgentClaude = 1
+      !insertmacro FETCHPATH_AGENT_COMMAND "add claude-code"
+      !insertmacro FETCHPATH_AGENT_COMMAND "check claude-code"
+    ${EndIf}
+  ${Else}
+    !insertmacro FETCHPATH_AGENT_COMMAND "cleanup"
+  ${EndIf}
   ${If} ${SectionIsSelected} ${SecBrowser}
     WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
     WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
@@ -212,8 +244,6 @@ FunctionEnd
   ${Else}
     !insertmacro FETCHPATH_USER_PATH Remove
   ${EndIf}
-  Delete "${FETCHPATH_UPDATE_HOLD}"
-
   ; Tauri calls this hook after the installed files are in place. Quiet and
   ; passive setup must never download optional software without a person
   ; choosing it, so only an interactive setup acts on the media box.
@@ -316,6 +346,13 @@ FunctionEnd
   ; Before the files go, while fetchpath.exe and tools\user-path.ps1 are
   ; still installed.
   !insertmacro FETCHPATH_STOP_ENGINE
+  ; /UPDATE is a replacement lifecycle, followed by reconcile in POSTINSTALL.
+  ${If} $UpdateMode <> 1
+  ${AndIf} $FpReplacement <> 1
+    ${If} ${FileExists} "$INSTDIR\fetchpath.exe"
+      !insertmacro FETCHPATH_AGENT_COMMAND "cleanup"
+    ${EndIf}
+  ${EndIf}
   !insertmacro FETCHPATH_USER_PATH Remove
   !insertmacro FETCHPATH_PLAN_DATA_REMOVAL
 !macroend

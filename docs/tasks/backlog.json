@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-03",
+  "updated": "2026-10-04",
   "tasks": [
     {
       "id": "FP-001",
@@ -3112,6 +3112,48 @@
       "verification": "Protocol tests for G1 (stable id across restart and upgrade, rename changes only the name, wrong or missing expected_instance_id refused). G2 on a real Windows 11 machine: always-on survives desktop exit and a sign-out/sign-in reboot with a persisted job resuming; ordinary mode still exits after the idle grace. G3: idle always-on engine for 10 minutes adds under 1 s CPU time; record the working set and fix the ceiling (decision O7). G8: fill a test volume to the reserve; jobs wait, nothing fails or publishes partially, and two concurrent large jobs respect staged accounting. Walk through spec walkthroughs 2, 3, 7, 8 and 9 locally, without their remote parts, and verify each tray and CLI label matches its effect. Independent strong review of persistence ordering and lifecycle before completion.",
       "evidence": ["docs/development/INSTANCE-AND-LIFECYCLE.md","docs/development/evidence/engine-session/g3-idle-hub.json"],
       "blockedReason": "Built and committed on branch claude/fp-101 (3 October 2026): instance identity, always on, tray status, approval expiry, automatic mode for agents (D7), terminal parity, the disk reserve (G8) and the idle fix (G3: 0.95 s CPU in 10 minutes). Two closing steps were deferred by the owner on 3 October 2026. Next actions: (1) G2 on a real machine: back up the default data folder, use a release build, turn always on, start a download, sign out and back in or restart, and confirm the engine starts at sign-in and resumes it; (2) the required independent strong review of persistence ordering (reserve stop and requeue, approval expiry, instance file) and lifecycle. Then mark done."
+    },
+    {
+      "id": "FP-102",
+      "title": "Provide guided agent-host setup and owned-registration removal",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-067",
+        "FP-099",
+        "FP-100"
+      ],
+      "status": "done",
+      "owner": "codex (lead; CLI registration and installer integration)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps/cli",
+        "apps/desktop",
+        "tests/installer",
+        "tests/compatibility/windows",
+        "docs/development/MCP.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/user/CLI.md",
+        "docs/user/GUIDE.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A12",
+        "A13"
+      ],
+      "acceptance": "Required before the 0.2.0 release gate, approved by the owner on 3 October 2026. Provide explicit, guided local MCP registration for Codex and Claude Code during interactive installation and through a repeatable headless setup/removal command after installation. Detect available hosts, let the person select each host and supported configuration scope, use the installed executable's absolute path and a distinct stable agent name, and report restart requirements and connection status. Do not treat selecting the AI agents component or Full as permission to edit every detected host or grant access. Keep folder grants, approval policy and automatic mode as separate explicit choices, with clear guidance and a verified no-grant approval flow. Resolve each host's supported registration mechanism and configuration location from current official documentation during implementation; account for configured home overrides, missing hosts and custom install paths. Preserve unrelated configuration and existing Fetchpath entries: conflicts require an explicit adopt/replace decision, repeated setup creates no duplicate, and interrupted writes do not corrupt host configuration. Persist a minimal ownership inventory outside optional application-data cleanup identifying registrations created or explicitly adopted by Fetchpath. Upgrade, repair and install-path changes reconcile owned registrations without duplicates or loss of other host settings. Removing the AI agents component or uninstalling removes only still-matching owned registrations, regardless of keep-data versus delete-data choice, before deleting the executable or inventory. Preserve user-modified or unowned entries with an actionable explanation; cleanup failures must be reported and remain recoverable. Document manual setup and removal for Claude Desktop, VS Code and generic stdio MCP clients, clearly distinguishing these from the validated guided hosts. No remote listener, external messages or automatic access grants.",
+      "verification": "Use isolated host homes/configurations and clean Windows install runs to cover Codex and Claude Code separately: explicit selected-host setup, MCP handshake/tool discovery and an actual host-driven download into a granted folder, plus an ungranted request awaiting human approval. Record host versions and exact scopes exercised; configuration snippets alone are not integration evidence. Exercise install, repeated setup, upgrade, repair, custom path with spaces/path change, component removal and full uninstall with both retained and deleted app data; owned registrations disappear and unrelated servers/settings and completed downloads survive. Cover missing hosts, existing unowned/conflicting registrations, user edits after registration, malformed configuration, write failure/interruption and cleanup failure; do not overwrite or remove ambiguous entries. Cover documented quiet setup choices with no implicit host registration, and quiet uninstall ownership cleanup. Run focused CLI/configuration and installer tests, reuse existing MCP policy evidence where unchanged, and obtain an independent strong review of configuration mutation, registration ownership, cleanup ordering and permission boundaries before completion. Update existing MCP and packaging records with reachable lifecycle evidence; leave unvalidated hosts explicit. Owner scope decision on 4 October 2026: further Claude Code setup testing and its authenticated download check are deferred; existing Claude registration, handshake/tool discovery, configuration tests and installer lifecycle evidence suffice for this task. Do not claim its actual download flow was validated.",
+      "evidence": [
+        "apps/cli/tests/agent_setup.rs",
+        "docs/development/MCP.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows/agent-hosts.json",
+        "docs/development/evidence/windows/agent-installer.json"
+      ],
+      "blockedReason": null
     }
   ]
 }

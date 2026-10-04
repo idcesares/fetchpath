@@ -1,0 +1,31 @@
+﻿{
+    "environment":  "Windows Sandbox",
+    "hostDiscovery":  "cmd fixtures (not actual agent calls)",
+    "passed":  true,
+    "checks":  [
+                   "Codex owned registration removed",
+                   "Claude owned registration removed",
+                   "Codex sentinel survives removal",
+                   "Claude sentinel survives removal",
+                   "Detected host checkbox enabled",
+                   "Host connection starts unchecked",
+                   "Explicit host checkbox selection read back checked",
+                   "Interactive host-selection page exercised",
+                   "Interactive setup completed",
+                   "Codex registered",
+                   "Claude Code registered",
+                   "Codex unrelated configuration preserved",
+                   "Claude unrelated configuration preserved",
+                   "Uninstall-first replacement retains and reconciles connections",
+                   "Program removed",
+                   "Application data retention choice False",
+                   "Completed download survives",
+                   "Application data retention choice True"
+               ],
+    "error":  null,
+    "smartAppControlState":  1,
+    "assertions":  88,
+    "osBuild":  "10.0.26100.0",
+    "recordedAt":  "2026-10-04T12:38:39.7708252Z",
+    "installerSha256":  "cfd289ea2e37c9563b432f512d7fc2078e6e18270df0c112b5fd5ed6defdf49e"
+}
