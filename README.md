@@ -4,9 +4,13 @@
 
 # Fetchpath
 
-A download manager for Windows 11 that keeps your downloads in one list,
-pauses and resumes them, survives restarts, and checks that what arrived is
-exactly what you asked for. It can also save video and audio.
+**One download engine for every frontend, built for people and AI agents.**
+
+Fetchpath is a free, open source download manager for Windows 11. A single
+background engine owns your downloads; the desktop app, the terminal, your
+browser and AI agents are all just ways in to the same queue. It resumes,
+checks that what arrived is exactly what you asked for, and never overwrites a
+file. It also handles torrents, video and audio, and Hugging Face models.
 
 **[Download Fetchpath](https://github.com/idcesares/fetchpath/releases/latest)**
 (Windows 11, x64), install it, then paste a link into the window.
@@ -14,6 +18,16 @@ This page describes **0.2.0**; the release page lists
 the published versions. See [Installing](#installing) first: Fetchpath isn't
 code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
+
+## Why it's different
+
+| | |
+|---|---|
+| **One engine, every frontend** | Desktop, terminal UI, command line, browser extension and MCP all talk to the same engine. Start a download in one, watch it in another. Close any of them and it keeps going. |
+| **Agents are first-class** | Claude Code, Codex and other MCP clients download through `fetchpath mcp`, into folders you grant, with everything else waiting for your approval. Agents and people share one list and one set of rules. |
+| **Verified, never trusted** | Paste a publisher's SHA-256 and the file is saved only if it matches. Resumes only when the file is unchanged. Never replaces what is already on disk. |
+| **Honest speed** | Adaptive parallel connections beat single-connection curl, aria2 and wget2 where servers limit each connection (3.2 s against 8.2 s in our fixture), and lose where they don't. We publish both, with settings. [Measurements](docs/development/ADAPTIVE-HTTP.md#tool-comparisons-fp-087-30-september-2026). |
+| **Small, local stack** | A Rust engine and a Tauri desktop. No model call anywhere in the download path. |
 
 ## What it does
 
@@ -89,7 +103,7 @@ you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
 
 Fetchpath isn't code-signed, so **Windows SmartScreen warns when you run
-the installer**. Once the checksum matches, choose **More info â†’ Run anyway**.
+the installer**. Once the checksum matches, choose **More info → Run anyway**.
 Where **Smart App Control** is on, Windows blocks unsigned programs outright
 and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md#install).
 
