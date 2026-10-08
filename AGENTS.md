@@ -4,13 +4,11 @@
 
 Read PROJECT.md, run `node tools/tasks.mjs next` (active work first, then ready tasks by priority P0–P3), then read the selected task with `node tools/tasks.mjs show FP-XXX`. Load only its referenced contracts, relevant source symbols, and applicable nested instructions. Do not read the entire roadmap for every small edit.
 
-## Codebase knowledge graph
+## Code discovery
 
-ALWAYS prefer codebase-memory-mcp graph tools over grep/glob/file-search for code discovery. Check index status first; reuse an existing index. If not indexed, run index_repository against this repository only.
+Start with bounded `rg` searches and read only the relevant files and symbols. Use available symbolic tools such as Serena when they improve navigation; read their initial instructions first.
 
-Priority: search_graph for symbols; trace_path for calls; get_code_snippet for exact source; query_graph for complex patterns; get_architecture for overview. Use search_code where appropriate. String literals, configuration and non-code files can use bounded rg searches.
-
-If graph tools are unavailable or fail, report it once, use Serena symbolic tools if available (read its initial instructions first), then bounded rg. Never index the home directory, installed apps, caches, or dependency trees. Discover matching tool names and short descriptions before selecting tools; do not dump catalogs, logs, or histories.
+Keep any indexing scoped to this repository. Never index the home directory, installed apps, caches, or dependency trees. Discover matching tool names and short descriptions before selecting tools; do not dump catalogs, logs, or histories.
 
 ## Tasks and ownership
 
