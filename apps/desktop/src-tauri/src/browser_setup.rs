@@ -68,7 +68,60 @@ pub fn reveal_extension_folder(resource_dir: Option<&Path>) -> Result<(), String
         .map_err(|error| format!("Could not open the folder: {error}"))
 }
 
+/// Opens the browser's extensions page and the extension folder together, so
+/// the person only turns on Developer mode, chooses Load unpacked and pastes
+/// the folder (which the page has copied). The browser is started with its
+/// internal address as an argument: that works, unlike handing the address to
+/// the shell. `browser` is one of the names `status` reports, never a path.
+pub fn connect_browser(browser: &str, resource_dir: Option<&Path>) -> Result<(), String> {
+    let (exe, address) = match browser {
+        "Chrome" => ("chrome.exe", "chrome://extensions"),
+        "Edge" => ("msedge.exe", "edge://extensions"),
+        _ => return Err("Fetchpath connects Chrome and Edge only.".into()),
+    };
+    let program = ["HKCU", "HKLM"]
+        .into_iter()
+        .find_map(|root| {
+            registry_default(&format!(
+                r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}"
+            ))
+        })
+        .or_else(|| {
+            // Edge keeps no App Paths entry on some installs.
+            let folder = if browser == "Edge" {
+                r"Microsoft\Edge"
+            } else {
+                r"Google\Chrome"
+            };
+            ["ProgramFiles(x86)", "ProgramFiles", "LocalAppData"]
+                .into_iter()
+                .filter_map(std::env::var_os)
+                .map(|base| {
+                    PathBuf::from(base)
+                        .join(folder)
+                        .join("Application")
+                        .join(exe)
+                })
+                .find(|path| path.is_file())
+        })
+        .ok_or_else(|| format!("{browser} does not seem to be installed."))?;
+    reveal_extension_folder(resource_dir)?;
+    Command::new(program)
+        .arg(address)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open {browser}: {error}"))
+}
+
 fn registered_manifest(key: &str) -> Option<PathBuf> {
+    registry_default(key)
+}
+
+/// The default value of `key` when it names a file that exists.
+fn registry_default(key: &str) -> Option<PathBuf> {
     use std::os::windows::process::CommandExt;
     let output = Command::new("reg.exe")
         .args(["query", key, "/ve"])

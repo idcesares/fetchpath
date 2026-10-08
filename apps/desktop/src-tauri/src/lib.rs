@@ -686,6 +686,18 @@ fn reveal_extension_folder(app: AppHandle) -> Result<(), String> {
     browser_setup::reveal_extension_folder(app.path().resource_dir().ok().as_deref())
 }
 
+/// Whether Setup started this window to connect the browser: its finish page
+/// passes `--connect-browser`, and the page then opens that part of Settings.
+#[tauri::command]
+fn connect_browser_requested() -> bool {
+    std::env::args().any(|arg| arg == "--connect-browser")
+}
+
+#[tauri::command]
+fn connect_browser(app: AppHandle, browser: String) -> Result<(), String> {
+    browser_setup::connect_browser(&browser, app.path().resource_dir().ok().as_deref())
+}
+
 /// Opens only Fetchpath's own project page in the system browser.
 #[tauri::command]
 fn open_project_page() -> Result<(), String> {
@@ -1106,6 +1118,8 @@ pub fn run() {
             installed_components,
             cli_path,
             reveal_extension_folder,
+            connect_browser,
+            connect_browser_requested,
             open_project_page,
             approve_download,
             deny_download,
@@ -1179,9 +1193,9 @@ pub fn run() {
                     show_summary(
                         &handle,
                         if state["stopped"] == true {
-                            "Fetchpath: engine stopped. Open Fetchpath to start it.".into()
+                            "Fetchpath: engine stopped. Use Start engine in this menu.".into()
                         } else {
-                            "Fetchpath: engine not running. Open Fetchpath to start it.".into()
+                            "Fetchpath: engine not running. Use Start engine in this menu.".into()
                         },
                     );
                 }
@@ -1200,6 +1214,14 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let start = MenuItem::with_id(app, "start", "Start engine", true, None::<&str>)?;
+            let quit_all = MenuItem::with_id(
+                app,
+                "quit_all",
+                "Close desktop, tray and engine (stops downloads)",
+                true,
+                None::<&str>,
+            )?;
             let stop = MenuItem::with_id(
                 app,
                 "stop",
@@ -1214,7 +1236,9 @@ pub fn run() {
                     &PredefinedMenuItem::separator(app)?,
                     &show,
                     &PredefinedMenuItem::separator(app)?,
+                    &start,
                     &quit,
+                    &quit_all,
                     &stop,
                 ],
             )?;
@@ -1229,6 +1253,18 @@ pub fn run() {
                     // engine, which stops by itself once it has nothing left
                     // to do.
                     "quit" => app.exit(0),
+                    // The person chose to stop the engine too: it goes first
+                    // (off the event loop, it may wait on the pipe), then
+                    // the desktop. Queued downloads wait for the next start.
+                    "quit_all" => {
+                        let app = app.clone();
+                        let engine = Arc::clone(&app.state::<Arc<EngineLink>>());
+                        tauri::async_runtime::spawn(async move {
+                            let _ = off_thread(move || engine.stop().map_err(text)).await;
+                            app.exit(0);
+                        });
+                    }
+                    "start" => app.state::<Arc<EngineLink>>().allow_start(),
                     // Stopping loses nothing but is not undone by showing
                     // the window again, so the page asks first.
                     "stop" => {
@@ -1252,6 +1288,11 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Shown again by a second launch or the tray: the page refreshes
+            // at once instead of on its next, possibly slowed, timer tick.
+            if let WindowEvent::Focused(true) = event {
+                let _ = window.app_handle().emit("fetchpath://queue", ());
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // Closing to the tray is the default, so the window is quick to
                 // bring back. A user who turned that off means the close button
@@ -1259,6 +1300,11 @@ pub fn run() {
                 let to_tray = window.app_handle().state::<CloseToTray>();
                 if to_tray.0.load(Ordering::SeqCst) {
                     api.prevent_close();
+                    // A second launch re-shows this window with raw Win32
+                    // (single_instance), which leaves tao believing it is
+                    // still hidden; hide() would then be a no-op. show()
+                    // first brings tao's flag back in line with reality.
+                    let _ = window.show();
                     let _ = window.hide();
                 } else {
                     window.app_handle().exit(0);

@@ -126,6 +126,7 @@ Var FpSelDesktop     ; the selection being decided, 0 or 1 each
 Var FpSelCli
 Var FpSelMcp
 Var FpSelBrowser
+Var FpConnectBrowser
 Var FpSelTorrent
 
 Name "${PRODUCTNAME}"
@@ -631,7 +632,12 @@ Var AppStartMenuFolder
 
 Function RunMainBinary
   ${If} $FpDesktopOn = 1
-    nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+    ${If} $FpConnectBrowser = 1
+      ; The finish page offers to connect the browser: start at those steps.
+      nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "--connect-browser"
+    ${Else}
+      nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
@@ -1579,6 +1585,11 @@ Function FpFinishShow
   ${EndIf}
   StrCpy $0 "$0$\r$\n$\r$\nClick Finish to close Setup."
   SendMessage $mui.FinishPage.Text ${WM_SETTEXT} 0 "STR:$0"
+  ${If} ${SectionIsSelected} ${SecDesktop}
+  ${AndIf} ${SectionIsSelected} ${SecBrowser}
+    StrCpy $FpConnectBrowser 1
+    SendMessage $mui.FinishPage.Run ${WM_SETTEXT} 0 "STR:Run Fetchpath and connect my browser"
+  ${EndIf}
   ${IfNot} ${SectionIsSelected} ${SecDesktop}
     SendMessage $mui.FinishPage.Run ${BM_SETCHECK} ${BST_UNCHECKED} 0
     SendMessage $mui.FinishPage.ShowReadme ${BM_SETCHECK} ${BST_UNCHECKED} 0

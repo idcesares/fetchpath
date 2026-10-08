@@ -314,6 +314,8 @@ const browserOpenFolder = required<HTMLButtonElement>("browser-open-folder");
 const browserCopyChrome = required<HTMLButtonElement>("browser-copy-chrome");
 const browserCopyEdge = required<HTMLButtonElement>("browser-copy-edge");
 const browserCopyFolder = required<HTMLButtonElement>("browser-copy-folder");
+const browserConnectChrome = required<HTMLButtonElement>("browser-connect-chrome");
+const browserConnectEdge = required<HTMLButtonElement>("browser-connect-edge");
 const browserExtensionPath = required<HTMLElement>("browser-extension-path");
 
 interface BrowserSetupStatus {
@@ -1205,7 +1207,15 @@ function renderBrowserSetup(status: BrowserSetupStatus): void {
     : "This copy was not installed with the installer, so browser capture is unavailable here.";
   browserSetupSteps.hidden = !ready;
   browserExtensionPath.textContent = status.extensionDir ?? "";
-  for (const button of [browserOpenFolder, browserCopyFolder, browserCopyChrome, browserCopyEdge]) button.hidden = !ready;
+  for (const button of [
+    browserConnectChrome,
+    browserConnectEdge,
+    browserOpenFolder,
+    browserCopyFolder,
+    browserCopyChrome,
+    browserCopyEdge,
+  ])
+    button.hidden = !ready;
 }
 
 browserOpenFolder.addEventListener("click", async () => {
@@ -1226,6 +1236,25 @@ browserCopyFolder.addEventListener("click", async () => {
   settingsStatus.hidden = false;
   announce(settingsStatus.textContent);
 });
+
+for (const [button, browser] of [
+  [browserConnectChrome, "Chrome"],
+  [browserConnectEdge, "Edge"],
+] as const) {
+  button.addEventListener("click", async () => {
+    clearError(settingsError);
+    try {
+      // Copied first: the folder picker the browser shows next needs it.
+      await navigator.clipboard.writeText(browserExtensionPath.textContent ?? "");
+      await invoke("connect_browser", { browser });
+      settingsStatus.textContent = `Opened ${browser}'s extensions page and the folder, and copied the folder path. Turn on Developer mode, choose Load unpacked and paste it.`;
+      settingsStatus.hidden = false;
+      announce(settingsStatus.textContent);
+    } catch (error) {
+      showError(settingsError, error);
+    }
+  });
+}
 
 for (const [button, address, browser] of [
   [browserCopyChrome, "chrome://extensions", "Chrome"],
@@ -3555,6 +3584,14 @@ async function start(): Promise<void> {
   // Changes arrive as events; this slower pass catches what has no event of
   // its own, such as a schedule coming due or a link sent from the browser.
   refreshTimer = window.setInterval(() => void refreshQueue(), 1000);
+  // Setup's finish page can start the app straight at the browser steps.
+  if (await invoke<boolean>("connect_browser_requested").catch(() => false)) void showSettings("integrations");
+  // A window hidden in the notification area may have its timers slowed, so
+  // a link sent from the browser waits until it is shown again: refresh then.
+  window.addEventListener("focus", () => void refreshQueue());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refreshQueue();
+  });
 }
 
 void start();
