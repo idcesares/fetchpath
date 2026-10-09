@@ -10,6 +10,7 @@
 mod awake;
 mod signin;
 
+use crate::remote::Web;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::error::{ErrorCode, ErrorScope};
 use fetchpath_protocol::launch::{self, EngineHome};
@@ -184,8 +185,11 @@ struct Host {
     /// carried out; clients are told the engine is unavailable.
     stop: AtomicBool,
     /// Connections accepted and not yet closed, authenticated or not, so a
-    /// client still in its handshake keeps the engine from going idle.
-    connections: AtomicUsize,
+    /// client still in its handshake keeps the engine from going idle. A
+    /// signed-in web UI socket counts too.
+    connections: Arc<AtomicUsize>,
+    /// The loopback web UI, when the person turned it on (FP-104).
+    web: Web,
     /// Serializes a settings change with the sign-in start it implies.
     settings: Mutex<()>,
     /// Whether this engine uses the default data folder. Only then does it
@@ -296,17 +300,26 @@ fn serve(grace: Duration) -> Result<i32, String> {
         }
     };
 
+    let connections = Arc::new(AtomicUsize::new(0));
     let host = Arc::new(Host {
+        web: Web::new(
+            Arc::clone(&engine),
+            home.dir().to_path_buf(),
+            Arc::clone(&connections),
+        ),
         engine,
         stop: AtomicBool::new(false),
-        connections: AtomicUsize::new(0),
+        connections,
         settings: Mutex::new(()),
         default_home: home.is_default(),
         endpoint: home.endpoint_path(),
     });
-    if host.engine.session().settings().start_engine_at_sign_in {
+    let settings = host.engine.session().settings();
+    if settings.start_engine_at_sign_in {
         host.apply_sign_in(true);
     }
+    // Off also removes sessions left by a run that was killed while on.
+    host.web.apply(settings.web_ui);
     let ticker = {
         let host = Arc::clone(&host);
         std::thread::spawn(move || {
@@ -344,10 +357,10 @@ fn serve(grace: Duration) -> Result<i32, String> {
         match listener.accept(Some(TICK_INTERVAL)) {
             Ok(Some(pending)) => {
                 // Counted from acceptance, before the handshake.
-                host.connections.fetch_add(1, Ordering::SeqCst);
+                let counted = Connected::open(&host.connections);
                 let host = Arc::clone(&host);
                 std::thread::spawn(move || {
-                    let _counted = Connected(&host.connections);
+                    let _counted = counted;
                     connection(&host, pending);
                 });
             }
@@ -370,8 +383,10 @@ fn serve(grace: Duration) -> Result<i32, String> {
     host.begin_stop();
 
     // Close the pipe first, so a client arriving now finds no engine and
-    // starts the next one instead of stalling in a handshake here.
+    // starts the next one instead of stalling in a handshake here. The web
+    // UI port closes with it; its sessions stay for the next run.
     drop(listener);
+    host.web.shutdown();
     let _ = ticker.join();
     wind_down(&host.engine);
     Ok(0)
@@ -398,9 +413,16 @@ fn downloads_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Counts a connection while it lives.
-struct Connected<'a>(&'a AtomicUsize);
+pub(crate) struct Connected(Arc<AtomicUsize>);
 
-impl Drop for Connected<'_> {
+impl Connected {
+    pub(crate) fn open(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for Connected {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
@@ -491,16 +513,25 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                 });
-                let before = host.engine.session().settings().start_engine_at_sign_in;
-                let reply = match host.engine.execute_as(&principal, &envelope) {
+                let before = host.engine.session().settings();
+                // The web UI's own commands are answered here, not by the
+                // engine, which has no listener.
+                let outcome = host
+                    .web
+                    .answer(&principal, payload)
+                    .unwrap_or_else(|| host.engine.execute_as(&principal, &envelope));
+                let reply = match outcome {
                     Ok(result) => Reply::ok(envelope.command_id.clone(), result),
                     Err(error) => Reply::error(Some(envelope.command_id.clone()), error),
                 };
                 let succeeded = matches!(reply.result, ReplyResult::Ok(_));
                 if settings_change && succeeded {
-                    let after = host.engine.session().settings().start_engine_at_sign_in;
-                    if after != before {
-                        host.apply_sign_in(after);
+                    let after = host.engine.session().settings();
+                    if after.start_engine_at_sign_in != before.start_engine_at_sign_in {
+                        host.apply_sign_in(after.start_engine_at_sign_in);
+                    }
+                    if after.web_ui != before.web_ui {
+                        host.web.apply(after.web_ui);
                     }
                 }
                 drop(serialized);

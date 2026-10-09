@@ -316,6 +316,14 @@ pub struct QueueStats {
     pub awaiting_approval: u64,
 }
 
+/// A folder a signed-in device may save into (`ListFolderChoices`, contract
+/// D6): the default folder or a rule's folder, as a label and a host path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FolderChoice {
+    pub label: String,
+    pub path: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaVariantKind {
@@ -522,6 +530,10 @@ pub struct EngineSettings {
     /// downloads run. Absent from an update means "leave it as it is".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub_mode: Option<bool>,
+    /// Serve the local web UI on loopback (FP-104). Off by default. Absent
+    /// from an update means "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_ui: Option<bool>,
     /// Free space left on every drive downloads go to; 0 is automatic (the
     /// larger of 5 GiB and 5 % of the drive). Absent from an update means
     /// "leave it as it is".

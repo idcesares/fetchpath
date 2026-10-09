@@ -266,6 +266,11 @@ commands answer that Fetchpath is being updated.
 The desktop app is a client of the same engine, so a download added here
 shows in the app, and the other way round.
 
+`fetchpath web on` turns on the web UI, your download list in a browser on this
+computer at `fetchpath.localhost`; `fetchpath web open` signs your default
+browser in with a single-use link, `fetchpath web sign-out` signs every
+browser out, and `fetchpath web off` does both and closes it.
+
 ### For scripts
 
 Every queue command takes `--json` and prints the engine's own records, one

@@ -146,6 +146,15 @@ pub enum Command {
         url: SensitiveUrl,
     },
     QueueStats,
+    /// Where a signed-in device may save: the default folder and the rules'
+    /// folders (contract D6).
+    ListFolderChoices,
+    /// A single-use sign-in link for the local web UI (FP-104). The engine
+    /// host answers it, for the person only; it is never recorded.
+    OpenWebUi,
+    /// Signs out every browser of the local web UI (FP-104). The engine
+    /// host answers it, for the person only.
+    SignOutBrowsers,
     History {
         /// Matched against display links and file names.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -269,6 +278,9 @@ impl Command {
             Self::InspectMedia { .. } => "InspectMedia",
             Self::InspectLink { .. } => "InspectLink",
             Self::QueueStats => "QueueStats",
+            Self::ListFolderChoices => "ListFolderChoices",
+            Self::OpenWebUi => "OpenWebUi",
+            Self::SignOutBrowsers => "SignOutBrowsers",
             Self::History { .. } => "History",
             Self::GetSettings => "GetSettings",
             Self::TakeLinkReviews => "TakeLinkReviews",
@@ -314,6 +326,9 @@ impl Command {
                 | Self::InspectMedia { .. }
                 | Self::InspectLink { .. }
                 | Self::QueueStats
+                | Self::ListFolderChoices
+                | Self::OpenWebUi
+                | Self::SignOutBrowsers
                 | Self::History { .. }
                 | Self::GetSettings
                 | Self::GetAgentPolicies

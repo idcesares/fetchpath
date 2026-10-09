@@ -18,6 +18,7 @@ one your task names.
 - [Smart rules](RULES.md) — FP-064: rules by site, type or size, applied by the engine to protocol jobs; FP-075 extends them to the desktop and browser captures.
 - [Agents through MCP](MCP.md) — FP-065/066/067: `fetchpath mcp`, what an agent is shown, the person's access and approval surfaces, and the boundary review with its residual risks.
 - [Instance identity, always on and the disk reserve](INSTANCE-AND-LIFECYCLE.md) — FP-101: the local slice of the remote hub design, approval expiry, and agents' automatic mode.
+- [Local web UI](WEB-UI.md) — FP-104: the queue in a browser on this PC at `fetchpath.localhost`, sign-in, the device profile and its checks.
 
 ## Features
 

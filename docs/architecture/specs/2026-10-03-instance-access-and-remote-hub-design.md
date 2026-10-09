@@ -1,6 +1,6 @@
 # Instance access and an optional remote download hub
 
-Status: accepted by the user · 3 October 2026 · remote slices S2 to S4 and the required strong review deferred by the user to the third release (after 0.2.0) · Task FP-091 · Milestone M15 ·
+Status: accepted by the user · 3 October 2026 · remote slices S2 to S4 and the required strong review deferred by the user to the third release (after 0.2.0) · local web UI slice S1b (§17) proposed 8 October 2026: direction accepted by the user, decisions O9 to O13 settled (§15) · Task FP-091, S1b FP-104 · Milestone M15 ·
 Acceptance ids A01, A09, A13. Extends [the engine platform design](2026-09-24-engine-platform-design.md)
 and [the job contract](../JOB-CONTRACT.md) (D1 to D5). No deployment or
 network exposure is part of this task.
@@ -15,7 +15,10 @@ engine's queue without any surface keeping its own queue.
 Two rules bound everything below:
 
 - **Remote serving is opt-in and off by default.** Nothing listens beyond the
-  per-user pipe until the person turns hub mode on at the host.
+  per-user pipe until the person turns hub mode on at the host. The one
+  exception is the local web UI (§17): a loopback-only listener, also off by
+  default, that the local user turns on separately and that serves no other
+  device.
 - **Control and file delivery are separate.** The control plane carries
   commands, events and snapshots. It never carries file bytes. Retrieving a
   completed file is its own grant, slice and listener route.
@@ -30,6 +33,7 @@ Each slice ships alone and is gated before the next starts.
 | Slice | Delivers | Task (proposed) |
 |---|---|---|
 | S1 Local usability | Instance identity and name, hub mode lifecycle, tray as management client, capacity limits, wrong-host guard in the protocol | FP-101 |
+| S1b Local web UI | Loopback listener at `fetchpath.localhost`, launch-ticket sign-in, the browser client (queue, add, details) on this PC only (§17) | FP-104 |
 | S2 Remote control | Remote listener behind a private gateway, device enrollment, credential-bound principals and grants, minimal browser client (queue, add, details, approvals), remote agent adapter | FP-092 |
 | S3 Completed-file retrieval | `retrieve` grant, single-use retrieval tickets for published outputs | FP-093 (detail design), then its implementation packet |
 | S4 Automatic delivery | Optional delivery of completed outputs to a chosen device | FP-093 (design only until S3 passes) |
@@ -353,6 +357,19 @@ every surface shows requester, instance, destination label, size and reasons.
 | O7 | Idle hub working-set ceiling | Measure first in G3, then fix the number |
 | O8 | Browser client authentication beyond the device credential (passkey) | Defer; revisit before any option C |
 
+Accepted by the user on 8 October 2026 for S1b: build a local web UI first,
+on this PC only, at a `*.localhost` name; drop `.local` (mDNS) names, which
+need a LAN listener and have no trusted HTTPS. O9 was chosen by the user;
+O10 to O13 were settled by the lead at the user's request, the same day:
+
+| # | Question | Decision |
+|---|---|---|
+| O9 | HTTP and WebSocket server crate (a new dependency; tokio has no `net` feature today) | `hyper` 1 (`server`, `http1`) with `hyper-util`, `http-body-util` and `tokio-tungstenite` 0.30 (`handshake` only), plus tokio `net`; no framework, our own routing. A scratch stub (loopback HTTP/1, one static route, WebSocket echo) measured +590 KiB in release against an 11.8 MB `fetchpath.exe`, and 10 crates new by name to its tree. OSV (RustSec) showed no advisory for them at the resolved versions |
+| O10 | Port | Default 47474: below the Windows dynamic range (49152 and up) and clear of WinRM's local 47001. If it is taken, try the next 9 ports, then let the OS choose. The engine remembers the last port it bound and prefers it next time, so bookmarks keep working. The launcher always opens the port the engine reports, never an assumed one. Settings shows the current address |
+| O11 | Browser session lifetime | Browser-session cookie; the engine keeps only its hash, in memory, so every session ends when the engine stops (owner, 8 October 2026: a process holding the port while the engine is down must not collect a cookie that still works). It also ends after 30 days unused, on "Sign out all browsers" (which also voids live tickets) and when the web UI turns off |
+| O12 | Approvals in the local web UI | Not in S1b (§17). A job waiting for approval shows the reason and "Approve it in Fetchpath on this PC". Revisit with the G9 review |
+| O13 | Reveal a completed file in Explorer from the web UI | Yes, since the viewer is on the host. It is limited to published outputs of jobs the session may view, and no file bytes are served |
+
 ## 16. Contract changes this design implies
 
 Applied to [the job contract](../JOB-CONTRACT.md) as [D6](../JOB-CONTRACT.md#d6--instances-remote-principals-and-capacity-fp-091-3-october-2026), before code:
@@ -362,3 +379,106 @@ Applied to [the job contract](../JOB-CONTRACT.md) as [D6](../JOB-CONTRACT.md#d6-
 `policy.self_approval`, `policy.approval_expired`; `waiting(storage.reserve)`;
 `ListFolderChoices`; `host_suspending` as an ephemeral notice; the `features`
 list in the remote handshake.
+
+## 17. Local web UI (slice S1b, FP-104)
+
+**Purpose.** The same queue, in a browser tab on the host, with the desktop's
+look. It is the S2 browser client with a local sign-in instead of enrollment,
+so S2 later adds a transport and enrollment, not a second client. No other
+device can reach it.
+
+**Listener.** The remote module (`apps/cli/src/remote`) starts, and S2 extends it.
+When the local user turns the web UI on (desktop Settings or `fetchpath web
+on`; off by default), the engine binds loopback only, `127.0.0.1` and `[::1]`,
+on the port from O10 (default 47474). Routes are those of §5 minus `/enroll`: `GET /` with
+static assets embedded in `fetchpath.exe`, `GET /ui/socket` carrying the
+client view API (below), and `GET /open` (below). The raw protocol v1 socket
+of §5 is not served in S1b; it arrives with S2 for the remote CLI and agent
+adapter. The address shown to the person is
+`http://fetchpath.localhost:PORT`. Turning the web UI off closes the port and
+every browser session. It runs whether or not the desktop is open, and it
+does not keep the engine alive on its own (§10 still decides that).
+
+**Sign-in.** Loopback is not authentication: any local process, and any web
+page through the browser, can reach the port.
+
+1. "Open in browser" (desktop, tray, `fetchpath web open`) asks the engine
+   over the authenticated pipe for a launch ticket: 256 random bits,
+   single use, valid for 60 seconds.
+2. The launcher opens `http://fetchpath.localhost:PORT/open?ticket=…`.
+3. The engine consumes the ticket, sets a session cookie (`HttpOnly;
+   SameSite=Strict`, `Secure` where the browser accepts it on localhost),
+   and redirects to `/` so the ticket leaves the address bar and history.
+4. Without a valid cookie, `/` shows only "Open Fetchpath from the tray or
+   desktop to sign in", and the socket upgrade is refused.
+
+Tickets and cookies never enter logs, events or evidence (§8). A process that
+binds the port before the engine would receive a ticket. The launcher opens
+only the port the engine reports it bound, and the G9 review examines what
+remains.
+
+**Principal and grants.** A browser session is a `device:<id>` principal (D6)
+created by the launch ticket, with `view` and `submit` only, under person
+policy with the O6 limits (no cookies, stored credentials or replacing
+existing files). It has no `approve`. A browser-driving agent on this PC could
+otherwise approve its own pending jobs and bypass D1/D4. Approvals stay in
+the desktop and tray (O12). Settings, rules, agent access, LAN, cache, hub
+mode and shutdown stay desktop and CLI only, as in §6. Decided with the owner
+on 8 October 2026 (rules in JOB-CONTRACT D6): one device id per sign-in; the
+device adds file downloads only, into folder choices shown with host paths;
+it cannot move a job, change its link or checksum, or retry a denied,
+withdrawn or expired request, but may withdraw a pending request by
+cancelling or removing it; a `device:` job makes the store unreadable by
+0.2.0, which the release notes state. The residual risk, an
+agent driving the browser to submit as the person, is recorded for the G9
+review, with these: a local server on another port of `fetchpath.localhost`
+receives the cookie (cookies ignore ports; it is set on that name only, never
+on `localhost` or `127.0.0.1`); a call already running finishes after
+sign-out; and `Secure` is not set until G10 shows each browser keeps it on
+http loopback.
+
+**Browser protections.** §7 applies unchanged. The `Host` allowlist is
+`fetchpath.localhost:PORT`, `localhost:PORT`, `127.0.0.1:PORT` and
+`[::1]:PORT`, with a matching `Origin` on the upgrade. No CORS headers, the
+same CSP, and untrusted text rendered as text.
+
+**One client, two transports.** The desktop's `main.ts` calls Tauri commands
+directly. S1b introduces an engine API interface (`apps/desktop/src/engine`)
+with a Tauri implementation and a socket implementation, and moves the queue,
+add and details views and
+`styles.css` into modules both entries load. The desktop keeps every screen.
+The web entry includes only the S1b scope: queue, add into host folder choices
+(`ListFolderChoices`), job details, pause, resume, cancel, retry, remove, and
+reveal on the host (O13). FP-094 tokens and patterns apply: responsive,
+keyboard and focus accessible, light, dark and high contrast. The web build
+is a second Vite entry in `apps/desktop`. The release build produces it
+before `fetchpath.exe` embeds it; a development build without it serves a
+"web UI not built" page.
+
+**Client view API (decided by the user, 8 October 2026).** The browser
+receives the same JSON the desktop's Tauri commands return, so job state
+words, available actions and figures come from one mapping. That mapping (job
+view, queue statistics, job details and the job draft conversion) moves from
+`apps/desktop/src-tauri/src/view.rs` to a `view` module in
+`crates/fetchpath-protocol`, which the desktop re-exports and the listener
+uses. `/ui/socket` accepts only a fixed list of named calls, the `EngineApi`
+methods in the S1b scope, each as `{id, call, args}` answered by `{id, ok}`
+or `{id, error}`, plus `queue` and `engine` change notices. Anything else
+closes the socket. The listener executes each call against `Engine` as the
+session's `device:` principal, so grants are enforced by the engine, not by
+the list. A short fixed call list is also what the G9 review reads, instead
+of all of protocol v1 behind grant filtering.
+
+**Gate G10 (S1b).**
+- On a real Windows 11 machine, `fetchpath.localhost` resolves to loopback
+  in current Chrome, Edge and Firefox, whichever of IPv4 or IPv6 each picks.
+  The page is a secure context, and the cookie attributes hold.
+- Tests cover: no cookie, an expired, reused or forged ticket, a wrong
+  `Host` (DNS rebinding), a cross-origin upgrade, a refused `approve` and a
+  refused settings command from a browser session, and web UI off closing
+  live sockets.
+- The port is unreachable from another interface.
+- G7's disconnect and replay checks pass over the socket.
+- SECURITY.md scope is updated in the same change that adds the listener, and
+  an independent strong review covers the sign-in, grants and browser
+  boundary before S1b ships.

@@ -12,3 +12,4 @@ Thumbs.db
 /apps/desktop/src-tauri/binaries/
 .claude/
 .superpowers/
+/apps/desktop/dist-web/

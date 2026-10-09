@@ -161,9 +161,19 @@ fn target(command: &Command) -> Option<&JobId> {
     }
 }
 
+/// The last instant a four-digit-year timestamp can name (9999-12-31). A
+/// later one could not be read back by any client (FP-104).
+const LAST_SCHEDULE_MS: u64 = 253_402_300_799_999;
+
 fn millis(timestamp: Timestamp) -> Result<u64, ProtocolError> {
-    u64::try_from(timestamp.unix_ms())
-        .map_err(|_| input("A schedule before 1970 cannot be used.".into()))
+    let ms = u64::try_from(timestamp.unix_ms())
+        .map_err(|_| input("A schedule before 1970 cannot be used.".into()))?;
+    if ms > LAST_SCHEDULE_MS {
+        return Err(input(
+            "A schedule after the year 9999 cannot be used.".into(),
+        ));
+    }
+    Ok(ms)
 }
 
 /// Clears the save deferral if a command's change unwinds, so a panic cannot
@@ -392,7 +402,7 @@ impl Engine {
                     .iter()
                     .find(|record| record.id == job_id.as_str())
                     // Another principal's job answers as if it did not exist.
-                    .filter(|record| principal.is_user() || record.principal == *principal)
+                    .filter(|record| principal.is_person() || record.principal == *principal)
                     .ok_or_else(unknown_job)?;
                 if let Some(expected) = envelope.expected_revision
                     && expected != record.durable.job_revision
@@ -553,6 +563,22 @@ impl Engine {
         source: &JobInput,
         destination: &DestinationIntent,
     ) -> Result<Origin, ProtocolError> {
+        if principal.device().is_some() {
+            policy::check_device_input(source)?;
+            if destination.conflict != ConflictPolicy::Ask {
+                return Err(policy::device_replace_not_allowed());
+            }
+            let path = crate::validated_destination(&destination.path).map_err(input)?;
+            let choices: Vec<String> = self
+                .session
+                .folder_choices()
+                .into_iter()
+                .map(|choice| choice.path)
+                .collect();
+            if !policy::inside_grants(&path, &choices) {
+                return Err(policy::outside_folder_choices());
+            }
+        }
         let Principal::Agent(agent) = principal else {
             return Ok(Origin {
                 principal: principal.clone(),
@@ -606,8 +632,16 @@ impl Engine {
         principal: &Principal,
         job_id: &JobId,
     ) -> Result<Vec<fetchpath_protocol::principal::ApprovalReason>, ProtocolError> {
-        match self.session.destination_of(job_id.as_str()) {
-            Some(destination) if !principal.is_user() => self.agent_hold(principal, &destination),
+        // A device retries as the person, but an agent's job stays under that
+        // agent's current grants, so a browser cannot carry it past them.
+        let owner = match principal {
+            Principal::Device(_) => self.session.principal_of(job_id.as_str()),
+            _ => Some(principal.clone()),
+        };
+        match (self.session.destination_of(job_id.as_str()), owner) {
+            (Some(destination), Some(owner)) if !owner.is_user() => {
+                self.agent_hold(&owner, &destination)
+            }
             _ => Ok(Vec::new()),
         }
     }
@@ -666,6 +700,9 @@ impl Engine {
                     variant_id,
                     quality_label,
                 } => {
+                    if principal.device().is_some() {
+                        return Err(policy::device_adds_files_only());
+                    }
                     let destination = &self.ruled_destination(source, destination, &None, true)?;
                     let origin = self.origin(principal, source, destination)?;
                     let JobInput::Url { url } = source else {
@@ -698,6 +735,9 @@ impl Engine {
                 } => {
                     if matches!(principal, Principal::Browser) {
                         return Err(unsupported("Browser captures cannot start peer discovery"));
+                    }
+                    if principal.device().is_some() {
+                        return Err(policy::device_adds_files_only());
                     }
                     // A person's torrent discovers peers unless they turn it
                     // off. An agent never gets discovery implicitly, and upload
@@ -790,7 +830,8 @@ impl Engine {
             },
             Command::CreateJobs { requests } => {
                 // All or none (finding F4): the session checks every draft
-                // before it queues any. Only the person gets here.
+                // before it queues any. The person gets here, locally or
+                // through a device, whose every destination is checked.
                 let mut drafts = Vec::with_capacity(requests.len());
                 let mut origin = None;
                 for request in requests {
@@ -805,9 +846,8 @@ impl Engine {
                     };
                     let destination =
                         &self.ruled_destination(source, destination, expected_sha256, false)?;
-                    if origin.is_none() {
-                        origin = Some(self.origin(principal, source, destination)?);
-                    }
+                    let checked = self.origin(principal, source, destination)?;
+                    origin.get_or_insert(checked);
                     let JobInput::Url { url } = source else {
                         return Err(unsupported("Creating a job from a stored request"));
                     };
@@ -1039,8 +1079,10 @@ impl Engine {
         command: &Command,
     ) -> Result<CommandResult, ProtocolError> {
         use fetchpath_protocol::model::JobState as S;
-        // An agent sees only the jobs it created (contract D1).
-        let visible = |job: &model::JobSnapshot| principal.is_user() || job.principal == *principal;
+        // An agent sees only the jobs it created (contract D1); the person
+        // through a signed-in device sees them all (D6).
+        let visible =
+            |job: &model::JobSnapshot| principal.is_person() || job.principal == *principal;
         match command {
             Command::ListJobs { filter } => {
                 let jobs = self
@@ -1065,7 +1107,7 @@ impl Engine {
                 .map(|job| CommandResult::Job { job })
                 .ok_or_else(unknown_job),
             Command::JobDetails { job_id } => {
-                if !principal.is_user()
+                if !principal.is_person()
                     && self.session.principal_of(job_id.as_str()).as_ref() != Some(principal)
                 {
                     return Err(unknown_job());
@@ -1157,6 +1199,14 @@ impl Engine {
                     },
                 })
             }
+            // The engine host answers these (FP-104); the engine has no
+            // web listener of its own.
+            Command::OpenWebUi | Command::SignOutBrowsers => {
+                Err(unsupported("The web UI from this engine host"))
+            }
+            Command::ListFolderChoices => Ok(CommandResult::FolderChoices {
+                choices: self.session.folder_choices(),
+            }),
             Command::QueueStats => {
                 let stats = self.session.stats();
                 Ok(CommandResult::QueueStats {
@@ -1281,7 +1331,7 @@ impl Engine {
                 // the queue's event cursor nor the connected clients: both would
                 // let it watch the person's and other agents' activity (FP-067).
                 let jobs: Vec<_> = self.snapshots()?.into_iter().filter(visible).collect();
-                let person = principal.is_user();
+                let person = principal.is_person();
                 let durable = self.session.durable.lock().expect("engine state poisoned");
                 Ok(CommandResult::EngineStatus {
                     status: EngineStatus {
@@ -1335,7 +1385,7 @@ impl Engine {
         self.check_instance(envelope)?;
         policy::authorize(principal, &envelope.payload)?;
         if let Command::SubscribeJob { job_id, .. } = &envelope.payload
-            && !principal.is_user()
+            && !principal.is_person()
             && self.session.principal_of(job_id.as_str()).as_ref() != Some(principal)
         {
             return Err(unknown_job());
@@ -1527,7 +1577,7 @@ impl Subscriber {
             job,
             queue: Mutex::new(Pending::default()),
             ready: Condvar::new(),
-            own_count: (!principal.is_user()).then(|| (AtomicU64::new(0), AtomicU64::new(0))),
+            own_count: (!principal.is_person()).then(|| (AtomicU64::new(0), AtomicU64::new(0))),
         }
     }
 

@@ -7,7 +7,7 @@ This file ships beside `Fetchpath.exe` so the notices travel with the binary.
 Fetchpath's own source is licensed **MIT OR Apache-2.0** (`[workspace.package] license`
 in the repository root `Cargo.toml`).
 
-The table below is generated from `Cargo.lock`, so it lists the 718 third-party
+The table below is generated from `Cargo.lock`, so it lists the 720 third-party
 packages that are actually part of a build rather than a hand-maintained list.
 The **Source of the license value** column says, for every row, whether the
 value was read from the crate's own manifest or recorded by a maintainer.
@@ -625,6 +625,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tokio-socks | 0.5.3 | MIT | Read from the crate manifest in the local registry |
 | tokio-stream | 0.1.19 | MIT | Read from the crate manifest in the local registry |
+| tokio-tungstenite | 0.30.0 | MIT | Read from the crate manifest in the local registry |
 | tokio-util | 0.7.19 | MIT | Read from the crate manifest in the local registry |
 | toml | 0.8.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml | 0.9.12+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -646,6 +647,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | tracing-core | 0.1.36 | MIT | Read from the crate manifest in the local registry |
 | tray-icon | 0.24.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | try-lock | 0.2.5 | MIT | Read from the crate manifest in the local registry |
+| tungstenite | 0.30.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | typeid | 1.0.3 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | typewit | 1.15.2 | Zlib | Read from the crate manifest in the local registry |

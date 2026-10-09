@@ -78,8 +78,55 @@ impl JsonSchema for AgentName {
     }
 }
 
-/// Who a connection acts for. On the wire: `user`, `browser` or
-/// `agent:<name>`.
+/// Longest device id accepted.
+pub const MAX_DEVICE_ID: usize = 64;
+
+/// The engine-made id of one signed-in device, such as a browser session of
+/// the local web UI (contract D6): 1 to 64 lowercase letters or digits. The
+/// engine derives it from a credential; a connection never declares it.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct DeviceId(String);
+
+impl DeviceId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for DeviceId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let valid = !value.is_empty()
+            && value.len() <= MAX_DEVICE_ID
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+        if valid {
+            Ok(Self(value))
+        } else {
+            Err(format!(
+                "a device id is 1 to {MAX_DEVICE_ID} lowercase letters or digits"
+            ))
+        }
+    }
+}
+
+impl From<DeviceId> for String {
+    fn from(value: DeviceId) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Display for DeviceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// Who a connection acts for. On the wire: `user`, `browser`,
+/// `agent:<name>` or `device:<id>`.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Principal {
@@ -91,11 +138,30 @@ pub enum Principal {
     /// An agent host, such as an MCP client, under the policy the person
     /// granted it.
     Agent(AgentName),
+    /// A device the person signed in, such as a local web UI browser session
+    /// (contract D6). Acts as the person for viewing and submitting, but
+    /// never approves, and settings and access stay with `user`.
+    Device(DeviceId),
 }
 
 impl Principal {
+    /// The person on this computer, through a client that may change
+    /// settings, access and approvals.
     pub fn is_user(&self) -> bool {
         matches!(self, Self::User)
+    }
+
+    /// The person, locally or through a signed-in device: sees every job
+    /// and is not held by agent policy.
+    pub fn is_person(&self) -> bool {
+        matches!(self, Self::User | Self::Device(_))
+    }
+
+    pub fn device(&self) -> Option<&DeviceId> {
+        match self {
+            Self::Device(id) => Some(id),
+            _ => None,
+        }
     }
 
     pub fn agent(&self) -> Option<&AgentName> {
@@ -113,9 +179,10 @@ impl TryFrom<String> for Principal {
         match value.as_str() {
             "user" => Ok(Self::User),
             "browser" => Ok(Self::Browser),
-            other => match other.strip_prefix("agent:") {
-                Some(name) => AgentName::try_from(name).map(Self::Agent),
-                None => Err("a principal is user, browser or agent:<name>".into()),
+            other => match (other.strip_prefix("agent:"), other.strip_prefix("device:")) {
+                (Some(name), _) => AgentName::try_from(name).map(Self::Agent),
+                (_, Some(id)) => DeviceId::try_from(id.to_owned()).map(Self::Device),
+                _ => Err("a principal is user, browser, agent:<name> or device:<id>".into()),
             },
         }
     }
@@ -141,6 +208,7 @@ impl fmt::Display for Principal {
             Self::User => formatter.write_str("user"),
             Self::Browser => formatter.write_str("browser"),
             Self::Agent(name) => write!(formatter, "agent:{name}"),
+            Self::Device(id) => write!(formatter, "device:{id}"),
         }
     }
 }
@@ -153,8 +221,8 @@ impl JsonSchema for Principal {
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "type": "string",
-            "pattern": "^(user|browser|agent:[a-z0-9][a-z0-9._-]{0,63})$",
-            "description": "Who a connection acts for: user, browser or agent:<name>."
+            "pattern": "^(user|browser|agent:[a-z0-9][a-z0-9._-]{0,63}|device:[a-z0-9]{1,64})$",
+            "description": "Who a connection acts for: user, browser, agent:<name> or device:<id>."
         })
     }
 }
@@ -237,7 +305,13 @@ mod tests {
 
     #[test]
     fn principals_round_trip_and_reject_anything_else() {
-        for text in ["user", "browser", "agent:claude-code", "agent:a.b_c-1"] {
+        for text in [
+            "user",
+            "browser",
+            "agent:claude-code",
+            "agent:a.b_c-1",
+            "device:0f3a",
+        ] {
             let principal = Principal::try_from(text).unwrap();
             assert_eq!(principal.to_string(), text);
         }
@@ -251,10 +325,16 @@ mod tests {
             "agent:a/b",
             "agent:user\u{0}",
             "root",
+            "device:",
+            "device:AB",
+            "device:a-b",
         ] {
             assert!(Principal::try_from(text).is_err(), "{text:?}");
         }
         assert!(Principal::try_from(format!("agent:{}", "a".repeat(65))).is_err());
+        assert!(Principal::try_from(format!("device:{}", "a".repeat(65))).is_err());
+        assert!(Principal::try_from("device:0f3a").unwrap().is_person());
+        assert!(!Principal::try_from("device:0f3a").unwrap().is_user());
         assert_eq!(Principal::default(), Principal::User);
     }
 }

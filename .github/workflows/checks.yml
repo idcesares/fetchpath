@@ -8,6 +8,8 @@ permissions:
 jobs:
   checks:
     runs-on: windows-latest
+    env:
+      FETCHPATH_REQUIRE_WEB: '1'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -21,6 +23,8 @@ jobs:
       - run: corepack pnpm --dir apps/desktop install --frozen-lockfile
       - run: corepack pnpm --dir apps/desktop audit --audit-level moderate
       - run: corepack pnpm --dir apps/desktop build
+      # The command-line crate embeds the web UI; FETCHPATH_REQUIRE_WEB makes a missing bundle fail.
+      - run: corepack pnpm --dir apps/desktop build:web
       - run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
       - run: rustup default 1.98.1
       - run: cargo fmt --check

@@ -1163,6 +1163,30 @@ impl Session {
             .or_else(|| self.browser_download_dir.clone())
     }
 
+    /// Where a signed-in device may save (contract D6): the default folder
+    /// first, then each rule's folder once, labelled by the folder's name.
+    pub fn folder_choices(&self) -> Vec<fetchpath_protocol::model::FolderChoice> {
+        let mut choices: Vec<fetchpath_protocol::model::FolderChoice> = Vec::new();
+        let folders = self.default_folder().into_iter().chain(
+            self.rules()
+                .into_iter()
+                .filter_map(|rule| rule.spec.then.folder.map(PathBuf::from)),
+        );
+        for folder in folders {
+            let path = folder.display().to_string();
+            if choices.iter().any(|choice| choice.path == path) {
+                continue;
+            }
+            let label = folder
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&path)
+                .to_owned();
+            choices.push(fetchpath_protocol::model::FolderChoice { label, path });
+        }
+        choices
+    }
+
     pub fn rules(&self) -> Vec<fetchpath_protocol::model::Rule> {
         self.settings
             .lock()
@@ -1525,6 +1549,14 @@ impl Session {
         // passed, so a refused retry cannot shed a hold.
         let mut hold = hold;
         if let Some(approval) = record.approval.as_ref() {
+            // A browser could be driven by an agent, so it never reopens a
+            // request the person declined or left undecided (FP-104).
+            if by.device().is_some() && (approval.denied || approval.withdrawn || approval.expired)
+            {
+                return Err(
+                    "Retry this download in Fetchpath on this PC: it waited for approval.".into(),
+                );
+            }
             if approval.denied && !by.is_user() {
                 return Err("The person declined this download.".into());
             }

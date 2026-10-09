@@ -12,11 +12,11 @@ use fetchpath_protocol::message::{
     ControlOutcome, Correlation, ProgressKind, ReplyResult, StreamPosition,
 };
 use fetchpath_protocol::model::{
-    CacheView, Confidence, EngineSettings, EngineStatus, InstanceInfo, IntegrityOutcome,
-    JobDetails, JobKind, LanView, LinkInspection, LinkKind, MediaInspection, MediaVariant,
-    MediaVariantKind, PairedDevice, PairingState, PairingView, Phase, Progress, QueueStats,
-    RepositoryFile, RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions, RuleSpec,
-    RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
+    CacheView, Confidence, EngineSettings, EngineStatus, FolderChoice, InstanceInfo,
+    IntegrityOutcome, JobDetails, JobKind, LanView, LinkInspection, LinkKind, MediaInspection,
+    MediaVariant, MediaVariantKind, PairedDevice, PairingState, PairingView, Phase, Progress,
+    QueueStats, RepositoryFile, RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions,
+    RuleSpec, RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -73,6 +73,7 @@ fn settings() -> EngineSettings {
         density: None,
         instance_name: Some("Studio PC".into()),
         hub_mode: Some(false),
+        web_ui: Some(false),
         disk_reserve_bytes: Some(10 * 1024 * 1024 * 1024),
     }
 }
@@ -265,6 +266,9 @@ fn every_command() -> Vec<Command> {
         Command::InspectMedia { url: secret_url() },
         Command::InspectLink { url: secret_url() },
         Command::QueueStats,
+        Command::ListFolderChoices,
+        Command::OpenWebUi,
+        Command::SignOutBrowsers,
         Command::History {
             query: Some("archive".into()),
             limit: Some(50),
@@ -338,6 +342,9 @@ fn every_command() -> Vec<Command> {
             | Command::InspectMedia { .. }
             | Command::InspectLink { .. }
             | Command::QueueStats
+            | Command::ListFolderChoices
+            | Command::OpenWebUi
+            | Command::SignOutBrowsers
             | Command::History { .. }
             | Command::GetSettings
             | Command::TakeLinkReviews
@@ -476,6 +483,12 @@ fn every_result() -> Vec<CommandResult> {
         CommandResult::Rules {
             rules: vec![rule()],
         },
+        CommandResult::FolderChoices {
+            choices: vec![FolderChoice {
+                label: "Downloads".into(),
+                path: "D:/Downloads".into(),
+            }],
+        },
         CommandResult::QueueStats {
             stats: QueueStats {
                 running: 1,
@@ -585,6 +598,8 @@ fn every_result() -> Vec<CommandResult> {
         },
         CommandResult::ShuttingDown,
         CommandResult::CapturesTaken,
+        CommandResult::WebUiLink { url: secret_url() },
+        CommandResult::BrowsersSignedOut,
     ];
     for result in &results {
         match result {
@@ -596,6 +611,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::MediaInspection { .. }
             | CommandResult::LinkInspection { .. }
             | CommandResult::QueueStats { .. }
+            | CommandResult::FolderChoices { .. }
+            | CommandResult::WebUiLink { .. }
             | CommandResult::Settings { .. }
             | CommandResult::Removed { .. }
             | CommandResult::LinkReviews { .. }
@@ -608,7 +625,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Joined { .. }
             | CommandResult::Repository { .. }
             | CommandResult::ShuttingDown
-            | CommandResult::CapturesTaken => {}
+            | CommandResult::CapturesTaken
+            | CommandResult::BrowsersSignedOut => {}
         }
     }
     results
@@ -1107,6 +1125,9 @@ fn only_queries_skip_the_command_ledger() {
         "InspectMedia",
         "InspectLink",
         "QueueStats",
+        "ListFolderChoices",
+        "OpenWebUi",
+        "SignOutBrowsers",
         "History",
         "GetSettings",
         "TakeLinkReviews",

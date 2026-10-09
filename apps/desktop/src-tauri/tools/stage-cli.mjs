@@ -23,9 +23,11 @@ const triple = 'x86_64-pc-windows-msvc';
 const installedCargo = path.join(homedir(), '.cargo', 'bin', 'cargo.exe');
 const cargo = existsSync(installedCargo) ? installedCargo : 'cargo';
 
+// The release engine must embed the web UI (`pnpm build:web` runs first).
 execFileSync(cargo, ['build', '--release', '--locked', '-p', 'fetchpath'], {
   cwd: root,
   stdio: 'inherit',
+  env: { ...process.env, FETCHPATH_REQUIRE_WEB: '1' },
 });
 execFileSync(cargo, ['build', '--release', '--locked', '-p', 'fetchpath-torrent', '--bin', 'fetchpath-torrent-helper', '--features', 'helper'], {
   cwd: root,

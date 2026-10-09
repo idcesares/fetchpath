@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Fetchpath</title>
+    <script type="module" src="/src/web.ts" defer></script>
+  </head>
+  <body>
+    <!-- The same artwork as the desktop page. The sprite is hidden with the
+         shared sr-only class: this page runs under default-src 'self', which
+         refuses an inline style attribute. -->
+    <svg class="sr-only" width="0" height="0" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-logo" viewBox="0 0 24 24"><path d="M5 18c5 0 3-12 8-12h6"/><circle cx="5" cy="18" r="1.6"/><path d="m16 3 3 3-3 3"/></symbol>
+        <symbol id="i-run" viewBox="0 0 24 24"><path d="M5 12h12m-5-5 5 5-5 5"/></symbol>
+        <symbol id="i-ok" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+        <symbol id="i-wait" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></symbol>
+        <symbol id="i-fail" viewBox="0 0 24 24"><path d="M12 4 3 20h18zM12 10v4m0 3v.01"/></symbol>
+        <symbol id="i-appr" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      </defs>
+    </svg>
+    <a class="skip-link" href="#queue-title">Skip to the download queue</a>
+
+    <p id="live-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p id="live-alert" class="sr-only" role="alert" aria-atomic="true"></p>
+
+    <header class="appbar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"><svg class="i" width="18" height="18"><use href="#i-logo" /></svg></span>
+        <span class="brand-name">Fetchpath</span>
+      </div>
+      <div id="active-stat" class="active-chip" role="group" aria-labelledby="active-stat-text">
+        <strong id="active-count" aria-hidden="true">0</strong>
+        <span class="stat-unit" aria-hidden="true">active</span>
+        <span id="active-stat-text" class="sr-only">No downloads are active.</span>
+      </div>
+      <p id="engine-chip" class="engine-chip" data-state="checking">
+        <svg class="i" aria-hidden="true"><use href="#i-wait" /></svg>
+        <span id="engine-chip-text">Connecting</span>
+      </p>
+      <div class="appbar-actions">
+        <button id="add-open" type="button" aria-haspopup="dialog">
+          <svg class="i" aria-hidden="true"><use href="#i-plus" /></svg>Add download
+        </button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <template data-mount="queue-top"></template>
+
+      <div id="engine-status" class="engine-status" hidden>
+        <p id="engine-status-text" class="error"></p>
+      </div>
+
+      <template data-mount="queue-body"></template>
+    </main>
+
+    <dialog id="add-dialog" class="card dialog add-dialog" aria-labelledby="add-heading">
+      <form id="download-form" class="composer">
+        <div class="section-heading">
+          <h2 id="add-heading">Add download</h2>
+        </div>
+
+        <label for="url">Links <span class="hint">one per line</span></label>
+        <textarea
+          id="url"
+          name="url"
+          required
+          rows="3"
+          spellcheck="false"
+          autocomplete="off"
+          aria-describedby="url-hint"
+          placeholder="https://example.com/archive.zip"
+        ></textarea>
+        <p id="url-hint" class="hint field-note">
+          Paste one link, or several for a batch. The files are saved on the PC that runs Fetchpath.
+        </p>
+
+        <label for="folder">Save in</label>
+        <select id="folder" name="folder" required disabled>
+          <option value="">Loading folders…</option>
+        </select>
+
+        <label for="file-name">File name <span class="hint">optional, for one link</span></label>
+        <input id="file-name" name="file-name" autocomplete="off" spellcheck="false" placeholder="Taken from the link" />
+
+        <label for="schedule">Start time <span class="hint">optional</span></label>
+        <input id="schedule" name="schedule" type="datetime-local" aria-describedby="schedule-hint" />
+        <p id="schedule-hint" class="hint field-note">
+          A start time only applies while Fetchpath is running on the PC. It never wakes a sleeping computer.
+        </p>
+
+        <section id="batch-preview" class="preview" aria-labelledby="preview-heading" hidden>
+          <div class="preview-heading">
+            <h3 id="preview-heading">Batch preview</h3>
+            <span id="preview-count"></span>
+          </div>
+          <ol id="preview-list"></ol>
+        </section>
+
+        <div class="submit-row">
+          <div class="submit-messages">
+            <p id="form-error" class="error" hidden></p>
+          </div>
+          <button id="add-cancel" class="quiet" type="button">Cancel</button>
+          <button id="start-download" type="submit">Add to queue</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template data-mount="details-dialog"></template>
+  </body>
+</html>

@@ -25,6 +25,11 @@ Only the latest release receives security fixes.
 - Paired computers: pairing without the code, sharing without consent,
   serving files that were not shared, or content accepted without its
   checksum.
+- The loopback web UI listener: reachable while it is off, from another
+  computer or from a page on another site (host, origin or cookie checks), a
+  sign-in link used twice or after a minute, a browser session doing more than
+  viewing and submitting downloads, or a session or link written to disk or
+  logs in readable form.
 - Media helpers run without the pinned digest matching.
 - Torrent metadata that escapes the chosen folder, peer discovery (for an agent, browser capture or speed profile) or uploading
   without the person's consent, or a torrent marked complete before its files
