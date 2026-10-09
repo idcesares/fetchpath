@@ -29,7 +29,7 @@ Set-StrictMode -Version Latest
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.2.0_x64-setup.exe'
+    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.3.0_x64-setup.exe'
 }
 if (-not $OutputPath) {
     $OutputPath = Join-Path $repositoryRoot 'docs\development\evidence\windows\sandbox-lifecycle.json'

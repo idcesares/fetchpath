@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fetchpath",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Send links, pages and downloads to the Fetchpath download manager.",
   "permissions": ["contextMenus", "cookies", "nativeMessaging", "storage", "activeTab"],
   "optional_permissions": ["downloads"],

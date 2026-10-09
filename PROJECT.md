@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 4 October 2026. Phase: **0.2.0 published.** Fetchpath 0.2.0 is published on GitHub after owner-authorized review, validation and documentation. Its engine serves the desktop, command line, interactive terminal, browser extension and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 9 October 2026. Phase: **0.3.0 release preparation.** Fetchpath 0.2.0 is published on GitHub; 0.3.0 adds the local web UI and is in owner-authorized release validation. Its engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Confirmed purpose
 
@@ -24,6 +24,8 @@ Do not duplicate task status into multiple checklists. The backlog is authoritat
 Fetchpath is a Windows download manager over a portable Rust core. One per-user engine owns the queue, history, settings, rules and agent policy for every client. It provides recoverable, validator-bound HTTP resume, no-overwrite publication, checksum verification, bounded cache reuse, paired LAN sharing, pinned public Hugging Face downloads and media downloads through supervised helpers. The desktop and terminal expose the shared queue and approvals; browser captures reach it even without the window. The [user guide](docs/user/GUIDE.md) covers product behavior, and [development records](docs/development/README.md) hold evidence and limits.
 
 The 0.2.0 release adds torrents and magnets with a packaged isolated helper, shared visual design, Full/Custom installation, optional data cleanup, guided Codex and Claude Code registration, instance identity, optional always-on behavior, approval expiry, explicit automatic mode for agents and disk-space reserve. HTTP connection reuse, scheduling and engine wakeups were improved without a speed claim. Peer discovery defaults on for a person's torrent; agents need explicit policy or approval, browser captures cannot start torrents, and uploading and LAN sharing remain opt-in.
+
+The 0.3.0 release adds the optional local web UI at `fetchpath.localhost` (FP-104): the same list in a browser on this computer, signed in by a single-use link, with view and submit rights only; approvals, settings and sharing stay in the desktop. It also fixes closing to the tray after a second launch and adds tray engine controls and guided Chrome/Edge connection. 0.2.0 cannot read a queue holding a download added from a browser.
 
 The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed; physical reboot and sudden power-loss evidence remain incomplete. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote hub work is deferred beyond 0.2.0. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-04",
+  "updated": "2026-10-08",
   "tasks": [
     {
       "id": "FP-001",
@@ -2835,7 +2835,7 @@
         "A09",
         "A13"
       ],
-      "acceptance": "Slice S2 of the FP-091 design (spec §2, §5 to §9, gates G4 to G7 and G9, contract D6). Add the engine remote listener on loopback behind the private-network gateway (decision O1: tailscale serve, option B as fallback), turned on only with hub mode; default installation exposes no listener. Implement device enrollment with single-use pairing codes, per-principal limits on active jobs and submission rate for remote devices (moved from FP-101 on 3 October 2026), credential-bound device and remote agent principals, the separate view, submit and approve grants, revocation that closes live connections, and idle credential expiry (O2). Enforce the browser-origin rules of spec §7 and the redaction of §8. Ship the minimal browser client (queue, add into host folder choices, job details, approvals) with instance name, connection state and host-owned destination on consequential actions, using FP-094 tokens and patterns: responsive, keyboard and focus accessible, light, dark and high contrast; no separate visual language and no desktop settings. Browser use needs no agent. Add the remote agent adapter (fetchpath mcp --instance) over the same socket. Downloads continue on disconnect; reconnect replays; resubmission creates no duplicate. Expose torrent discovery and upload choices under the same policy as local clients; before remote torrent submission is enabled, upload has explicit byte/rate/time or ratio limits defined by the approved policy (moved from FP-090 on 1 October 2026). Retrieval of completed files and automatic delivery are excluded (FP-093). Update SECURITY.md scope in the same change that adds the listener.",
+      "acceptance": "Slice S2 of the FP-091 design (spec §2, §5 to §9, gates G4 to G7 and G9, contract D6). Add the engine remote listener on loopback behind the private-network gateway (decision O1: tailscale serve, option B as fallback), turned on only with hub mode; default installation exposes no listener. Implement device enrollment with single-use pairing codes, per-principal limits on active jobs and submission rate for remote devices (moved from FP-101 on 3 October 2026), credential-bound device and remote agent principals, the separate view, submit and approve grants, revocation that closes live connections, and idle credential expiry (O2). Enforce the browser-origin rules of spec §7 and the redaction of §8. Ship the minimal browser client (queue, add into host folder choices, job details, approvals) with instance name, connection state and host-owned destination on consequential actions, using FP-094 tokens and patterns: responsive, keyboard and focus accessible, light, dark and high contrast; no separate visual language and no desktop settings. Browser use needs no agent. Add the remote agent adapter (fetchpath mcp --instance) over the same socket. Downloads continue on disconnect; reconnect replays; resubmission creates no duplicate. Expose torrent discovery and upload choices under the same policy as local clients; before remote torrent submission is enabled, upload has explicit byte/rate/time or ratio limits defined by the approved policy (moved from FP-090 on 1 October 2026). Retrieval of completed files and automatic delivery are excluded (FP-093). Update SECURITY.md scope in the same change that adds the listener. Builds on FP-104: extends its apps/cli/src/remote listener, socket and browser client with the gateway, enrollment and remote grants instead of duplicating them.",
       "verification": "Walkthrough 1 of the spec: local desktop, remote browser and remote agent on one engine, including reconnect and duplicate submissions. Gate tests G4 (gateway checked against current docs and a real tailnet), G5 (no, wrong, revoked and expired credentials, reused and brute-forced codes, forged gateway headers, wrong Host, cross-origin upgrade), G6 (one test per grant, no agent approve, self-approval refused) and G7 (disconnect mid-transfer, gapless replay, stored result on retry). Verify turning remote access off closes remote access without touching the local queue. Review web surfaces at desktop and narrow widths, 200% scaling and supported themes; check contrast, non-color state cues and keyboard focus. Reuse torrent default and peer-policy evidence from FP-089/FP-090. Independent strong review (G9) before completion.",
       "evidence": [],
       "blockedReason": "Deferred by the owner on 3 October 2026 to the third release (after 0.2.0): remote connection needs to mature first. Resume after FP-091's strong review passes and FP-101 is done."
@@ -3209,6 +3209,82 @@
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
       ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-104",
+      "title": "Build the local web UI at fetchpath.localhost",
+      "milestone": "M15",
+      "dependsOn": [
+        "FP-047",
+        "FP-067",
+        "FP-094",
+        "FP-101"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps/cli",
+        "apps/desktop/src",
+        "apps/desktop/vite.config.ts",
+        "apps/desktop/index.html",
+        "crates/fetchpath-protocol",
+        "crates/fetchpath-session",
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/user/GUIDE.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09",
+        "A13"
+      ],
+      "acceptance": "Slice S1b of the FP-091 design (spec §17, decisions O9 to O13), accepted in direction by the owner on 8 October 2026 independently of the deferred remote work. O9 decided by the owner on 8 October 2026 (hyper with tokio-tungstenite, spec §15); O10 to O13 settled the same day (spec §15). Add the loopback-only listener in apps/cli/src/remote, off by default and turned on by the local user, serving the embedded browser client, /open and /ui/socket (the client view API of spec §17, with the job, statistics, details and draft mapping moved from the desktop to fetchpath-protocol::view) at http://fetchpath.localhost:PORT. Sign-in by single-use 60-second launch ticket obtained over the authenticated pipe, exchanged for an HttpOnly SameSite=Strict session cookie; tickets and cookies never logged. A browser session is a device principal with view and submit only: no approve, no settings, rules, agent access, LAN, cache, hub mode or shutdown. Enforce spec §7 with the localhost Host allowlist. Desktop, tray and fetchpath web open/on/off launch and control it. Introduce one engine API interface in apps/desktop with Tauri and socket implementations and share the queue, add and details views and styles.css, so the web client keeps the desktop's visuals without a fork; web scope is queue, add into host folder choices, details, pause, resume, cancel, retry, remove and reveal on the host. No .local or LAN listener. Update SECURITY.md scope in the same change that adds the listener. Device rules as in JOB-CONTRACT D6 (FP-104 bullet); the release notes state that a job store with a browser-session job is not readable by 0.2.0.",
+      "verification": "Gate G10 of the spec: name resolution, secure context and cookie attributes checked on a real Windows 11 machine in current Chrome, Edge and Firefox; tests for no cookie, expired, reused and forged tickets, wrong Host, cross-origin upgrade, refused approve and settings commands from a browser session, web UI off closing live sockets, and the port unreachable from another interface; G7 disconnect and replay over the socket. Review the web client at desktop and narrow widths, 200% scaling, light, dark and high contrast, keyboard focus and non-color state cues. The desktop still passes its existing checks after the view extraction. Independent strong review of sign-in, grants and browser boundary before done.",
+      "evidence": [
+        "docs/development/WEB-UI.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-105",
+      "title": "Validate, document and publish the 0.3.0 release",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-103",
+        "FP-104"
+      ],
+      "status": "in_progress",
+      "owner": "claude (lead; release integration, validation and publication)",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "Cargo.lock",
+        "apps",
+        "crates",
+        "tests",
+        "tools",
+        ".github",
+        "README.md",
+        "CHANGELOG.md",
+        "PROJECT.md",
+        "SECURITY.md",
+        "docs"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09",
+        "A13"
+      ],
+      "acceptance": "Owner-authorized release on 9 October 2026: version 0.3.0 (minor, because the local web UI is a feature and 0.2.0 cannot read a job store holding a browser job) with the FP-104 web UI and the tray, second-launch and browser-connect fixes since 0.2.0. Run current workspace, frontend, repository, license, dependency and secret checks; build the release package with the embedded web UI; validate a clean install and an upgrade from the public 0.2.0 installer; update user and contributor documentation; publish the installer and checksums only if the recorded release verdict permits it. No remote hub, LAN listener or speed claims; earlier 0.2.0 limits still hold. Do not silently waive release gates.",
+      "verification": "Update the release candidate record in place with the tested revision, artifact and commands/results; dependency advisory and secret checks; workspace tests, clippy, formatting, frontend and web builds, repository tests and licenses; clean Windows installer, public 0.2.0 upgrade, agent installer and sign-in harnesses. Confirm CI on the merged revision, version consistency, release assets and checksum integrity of the public download.",
+      "evidence": [],
       "blockedReason": null
     }
   ]

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.3.0 (9 October 2026)
+
+### Added
+
+- Web UI: the queue in a browser on this computer, at `fetchpath.localhost`.
+  Off by default; turn it on in Settings and use **Open in browser** there or
+  in the tray, or `fetchpath web open`. A browser can view, add, pause,
+  resume, cancel, retry and remove downloads; approvals and link, folder and
+  checksum changes stay in the desktop. Browser sign-ins end when the engine
+  stops, and **Sign out all browsers** ends them at once. It is not reachable
+  from your network.
+- Tray: **Start engine** restarts a stopped engine, and **Close desktop, tray
+  and engine** stops the engine before closing.
+- **Connect Chrome** and **Connect Edge** in Settings open the browser's
+  extensions page and the extension folder and copy its path; setup's finish
+  page offers to start that step when browser integration is installed.
+
+### Fixed
+
+- Closing the window hides it in the tray again after Fetchpath was launched
+  a second time.
+- A link sent from the browser while the window was hidden shows as soon as
+  the window comes back.
+
+### Upgrade notes
+
+- 0.2.0 cannot open a queue that holds a download added from a browser, so
+  going back to 0.2.0 after using the web UI to add downloads is not supported.
+
+### Limits and release status
+
+0.3.0 publication depends on the [release verdict](docs/development/RELEASE-CANDIDATE.md).
+Windows 11 x64 only, unsigned. The web UI is for this computer only; there is
+no LAN, remote hub or remote control. Earlier limits of 0.2.0 still hold.
+
 ## 0.2.0 (4 October 2026)
 
 ### Added

@@ -14,7 +14,7 @@ file. It also handles torrents, video and audio, and Hugging Face models.
 
 **[Download Fetchpath](https://github.com/idcesares/fetchpath/releases/latest)**
 (Windows 11, x64), install it, then paste a link into the window.
-This page describes **0.2.0**; the release page lists
+This page describes **0.3.0**; the release page lists
 the published versions. See [Installing](#installing) first: Fetchpath isn't
 code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
@@ -60,6 +60,10 @@ code-signed. The
 - **From your browser.** Right-click a link in Chrome or Edge and choose
   **Send link to Fetchpath**. Downloads that need you to be signed in keep
   working.
+- **Your list in a browser.** Turn on the web UI and open the same list at
+  `fetchpath.localhost`, on this computer only: add, pause, resume, cancel,
+  retry and remove downloads, while approvals and settings stay in the
+  desktop. See [the guide](docs/user/GUIDE.md#your-downloads-in-a-browser).
 - **Keyboard and screen reader friendly.** Every control has a name, and
   everything can be done from the keyboard.
 - **Downloads keep going.** A background engine keeps the one list, so
@@ -87,7 +91,7 @@ code-signed. The
 ## Requirements
 
 Microsoft-serviced Windows 11 releases on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
-0.2.0.
+0.3.0.
 
 ## Installing
 
@@ -97,7 +101,7 @@ using it lawfully and checking whether its sources and files are safe. Its
 [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) licence, at your option,
 sets the terms for using Fetchpath.
 
-For 0.2.0, download `Fetchpath_0.2.0_x64-setup.exe` and `SHA256SUMS.txt` from the
+For 0.3.0, download `Fetchpath_0.3.0_x64-setup.exe` and `SHA256SUMS.txt` from the
 [release page](https://github.com/idcesares/fetchpath/releases/latest), check one against the other, and run the installer. It installs just for
 you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
@@ -116,8 +120,9 @@ and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md
 - The browser extension is added in developer mode for now. Firefox isn't
   supported yet.
 - Torrents have no pause, individual file selection or seeding after completion.
-- Always on starts after Windows sign-in; it is not a service. There is no
-  remote hub or remote control in 0.2.0.
+- Always on starts after Windows sign-in; it is not a service. The web UI
+  is reachable from this computer only; there is no remote hub or remote
+  control in 0.3.0.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 

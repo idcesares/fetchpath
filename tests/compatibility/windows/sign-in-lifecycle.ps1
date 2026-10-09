@@ -3,7 +3,7 @@
 param([string]$InstallerPath,[string]$OutputPath)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-if (-not $InstallerPath) { $InstallerPath=Join-Path $repo 'target/release/bundle/nsis/Fetchpath_0.2.0_x64-setup.exe' }
+if (-not $InstallerPath) { $InstallerPath=Join-Path $repo 'target/release/bundle/nsis/Fetchpath_0.3.0_x64-setup.exe' }
 if (-not $OutputPath) { $OutputPath=Join-Path $repo 'docs/development/evidence/windows/sign-in-lifecycle.json' }
 function Sandbox-Ids { return ,@((& wsb list --raw | Out-String | ConvertFrom-Json).WindowsSandboxEnvironments | ForEach-Object { $_.Id }) }
 if ((Sandbox-Ids).Count -ne 0) { throw 'Close the existing Sandbox first' }

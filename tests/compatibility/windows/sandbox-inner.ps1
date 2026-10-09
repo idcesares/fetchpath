@@ -28,7 +28,7 @@ param(
     # the installer under test over it with -Components: the upgrade and
     # change-components path.
     [string] $BaselineInstallerPath = '',
-    [string] $ExpectedVersion = '0.2.0'
+    [string] $ExpectedVersion = '0.3.0'
 )
 
 $ErrorActionPreference = 'Stop'
