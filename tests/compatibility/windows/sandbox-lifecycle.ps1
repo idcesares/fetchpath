@@ -19,7 +19,7 @@ param(
     # FP-099: install with /COMPONENTS=<this> (for example `cli`, or
     # `desktop,cli,mcp,browser,torrent`). Empty is the default fresh install, Full.
     [string] $Components = '',
-    # FP-099: an earlier (pre-components, Full) installer to install and seed first;
+    # FP-099: an earlier default Full installer (0.1.0 or later) to install and seed first;
     # the installer under test is then run over it with -Components.
     [string] $BaselineInstallerPath = ''
 )
