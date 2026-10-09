@@ -5,10 +5,13 @@ gate, kept in Git at tag `v0.2.0` with its evidence.
 
 ## Verdict
 
-**Ready to publish once CI passes on the merged revision.** No gate is waived.
+**Published: [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0).**
+[GitHub CI](https://github.com/idcesares/fetchpath/actions/runs/37974334581) passed on the
+release commit. No gate is waived. Release tag: `4d1ffb3c9d9d8beddf7d19c69293a609b28c8bfa`;
+PR #20 merged with the same tree. The public installer download was verified
+against the checksum below.
 
-Installer: `Fetchpath_0.3.0_x64-setup.exe`, built from `4caa42a` (FP-105
-branch). SHA-256: `bc5c03bc56a4d6d383edcca580a6d949777259f59a0756278a1301105fc69921`.
+Published installer: `Fetchpath_0.3.0_x64-setup.exe`, built from `4caa42a`. SHA-256: `bc5c03bc56a4d6d383edcca580a6d949777259f59a0756278a1301105fc69921`.
 It is unsigned. The hash checks downloaded bytes, not publisher authenticity.
 Later commits change only harnesses and records, not packaged binaries.
 

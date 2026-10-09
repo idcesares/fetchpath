@@ -3259,7 +3259,7 @@
         "FP-103",
         "FP-104"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "claude (lead; release integration, validation and publication)",
       "priority": "P0",
       "modelTier": "astra-high",
@@ -3284,7 +3284,9 @@
       ],
       "acceptance": "Owner-authorized release on 9 October 2026: version 0.3.0 (minor, because the local web UI is a feature and 0.2.0 cannot read a job store holding a browser job) with the FP-104 web UI and the tray, second-launch and browser-connect fixes since 0.2.0. Run current workspace, frontend, repository, license, dependency and secret checks; build the release package with the embedded web UI; validate a clean install and an upgrade from the public 0.2.0 installer; update user and contributor documentation; publish the installer and checksums only if the recorded release verdict permits it. No remote hub, LAN listener or speed claims; earlier 0.2.0 limits still hold. Do not silently waive release gates.",
       "verification": "Update the release candidate record in place with the tested revision, artifact and commands/results; dependency advisory and secret checks; workspace tests, clippy, formatting, frontend and web builds, repository tests and licenses; clean Windows installer, public 0.2.0 upgrade, agent installer and sign-in harnesses. Confirm CI on the merged revision, version consistency, release assets and checksum integrity of the public download.",
-      "evidence": [],
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
       "blockedReason": null
     }
   ]

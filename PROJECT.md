@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 9 October 2026. Phase: **0.3.0 release preparation.** Fetchpath 0.2.0 is published on GitHub; 0.3.0 adds the local web UI and is in owner-authorized release validation. Its engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 9 October 2026. Phase: **0.3.0 published.** Fetchpath 0.3.0 is published on GitHub after owner-authorized validation; it adds the local web UI. Its engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Confirmed purpose
 
@@ -40,7 +40,7 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 Run `node tools/tasks.mjs next`: active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). The lanes and review requirements are in §11 of the spec.
 
-0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed.
+0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way.
 
 
 ## Remaining choices

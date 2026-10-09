@@ -31,7 +31,7 @@
 
 ### Limits and release status
 
-0.3.0 publication depends on the [release verdict](docs/development/RELEASE-CANDIDATE.md).
+Published on 9 October 2026 as [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0); see the [release gate](docs/development/RELEASE-CANDIDATE.md).
 Windows 11 x64 only, unsigned. The web UI is for this computer only; there is
 no LAN, remote hub or remote control. Earlier limits of 0.2.0 still hold.
 
@@ -72,7 +72,7 @@ no LAN, remote hub or remote control. Earlier limits of 0.2.0 still hold.
 
 ### Limits and release status
 
-0.2.0 publication depends on the [release verdict](docs/development/RELEASE-CANDIDATE.md).
+Published on 4 October 2026 as [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0).
 Windows 11 x64 only, unsigned; no HTTP/3 or remote hub. Torrents have no pause,
 per-file selection or seeding after completion. No named media website is
 promised. Claude Code's current model-driven download test is owner-deferred;
