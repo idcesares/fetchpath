@@ -5,9 +5,9 @@ use crate::SCHEMA_VERSION;
 use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
-    CacheView, EngineStatus, IntegrityOutcome, JobDetails, JobSnapshot, JobState, LanView,
-    LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, RepositoryView, Rule,
-    SensitiveUrl, SettingsView, WaitingReason,
+    CacheView, EngineStatus, FolderChoice, IntegrityOutcome, JobDetails, JobSnapshot, JobState,
+    LanView, LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, RepositoryView,
+    Rule, SensitiveUrl, SettingsView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -98,6 +98,14 @@ pub enum CommandResult {
     QueueStats {
         stats: QueueStats,
     },
+    /// `ListFolderChoices`: where a signed-in device may save.
+    FolderChoices {
+        choices: Vec<FolderChoice>,
+    },
+    /// `OpenWebUi`: the sign-in link, with its single-use ticket. Never log it.
+    WebUiLink {
+        url: SensitiveUrl,
+    },
     Settings {
         view: SettingsView,
     },
@@ -150,6 +158,8 @@ pub enum CommandResult {
     ShuttingDown,
     /// Browser captures waiting in the inbox were taken in (FP-056).
     CapturesTaken,
+    /// `SignOutBrowsers`: every web UI session ended.
+    BrowsersSignedOut,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

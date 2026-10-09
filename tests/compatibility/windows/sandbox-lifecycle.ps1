@@ -19,7 +19,7 @@ param(
     # FP-099: install with /COMPONENTS=<this> (for example `cli`, or
     # `desktop,cli,mcp,browser,torrent`). Empty is the default fresh install, Full.
     [string] $Components = '',
-    # FP-099: an earlier (pre-components, Full) installer to install and seed first;
+    # FP-099: an earlier default Full installer (0.1.0 or later) to install and seed first;
     # the installer under test is then run over it with -Components.
     [string] $BaselineInstallerPath = ''
 )
@@ -29,7 +29,7 @@ Set-StrictMode -Version Latest
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 if (-not $InstallerPath) {
-    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.2.0_x64-setup.exe'
+    $InstallerPath = Join-Path $repositoryRoot 'target\release\bundle\nsis\Fetchpath_0.3.0_x64-setup.exe'
 }
 if (-not $OutputPath) {
     $OutputPath = Join-Path $repositoryRoot 'docs\development\evidence\windows\sandbox-lifecycle.json'

@@ -611,6 +611,45 @@
           "type": "object"
         },
         {
+          "description": "Where a signed-in device may save: the default folder and the rules'\nfolders (contract D6).",
+          "properties": {
+            "type": {
+              "const": "ListFolderChoices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A single-use sign-in link for the local web UI (FP-104). The engine\nhost answers it, for the person only; it is never recorded.",
+          "properties": {
+            "type": {
+              "const": "OpenWebUi",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Signs out every browser of the local web UI (FP-104). The engine\nhost answers it, for the person only.",
+          "properties": {
+            "type": {
+              "const": "SignOutBrowsers",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "limit": {
               "format": "uint32",
@@ -1207,6 +1246,43 @@
           "type": "object"
         },
         {
+          "description": "`ListFolderChoices`: where a signed-in device may save.",
+          "properties": {
+            "choices": {
+              "items": {
+                "$ref": "#/$defs/FolderChoice"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "FolderChoices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "choices"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`OpenWebUi`: the sign-in link, with its single-use ticket. Never log it.",
+          "properties": {
+            "type": {
+              "const": "WebUiLink",
+              "type": "string"
+            },
+            "url": {
+              "$ref": "#/$defs/SensitiveUrl"
+            }
+          },
+          "required": [
+            "type",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "type": {
               "const": "Settings",
@@ -1441,6 +1517,19 @@
           "properties": {
             "type": {
               "const": "CapturesTaken",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`SignOutBrowsers`: every web UI session ended.",
+          "properties": {
+            "type": {
+              "const": "BrowsersSignedOut",
               "type": "string"
             }
           },
@@ -1719,6 +1808,13 @@
         },
         "theme": {
           "$ref": "#/$defs/Theme"
+        },
+        "web_ui": {
+          "description": "Serve the local web UI on loopback (FP-104). Off by default. Absent\nfrom an update means \"leave it as it is\".",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1831,6 +1927,22 @@
           "type": "string"
         }
       ]
+    },
+    "FolderChoice": {
+      "description": "A folder a signed-in device may save into (`ListFolderChoices`, contract\nD6): the default folder or a rule's folder, as a label and a host path.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "path"
+      ],
+      "type": "object"
     },
     "InstanceId": {
       "format": "uuid",
@@ -3009,8 +3121,8 @@
       "type": "object"
     },
     "Principal": {
-      "description": "Who a connection acts for: user, browser or agent:<name>.",
-      "pattern": "^(user|browser|agent:[a-z0-9][a-z0-9._-]{0,63})$",
+      "description": "Who a connection acts for: user, browser, agent:<name> or device:<id>.",
+      "pattern": "^(user|browser|agent:[a-z0-9][a-z0-9._-]{0,63}|device:[a-z0-9]{1,64})$",
       "type": "string"
     },
     "Progress": {

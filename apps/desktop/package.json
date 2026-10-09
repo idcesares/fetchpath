@@ -1,11 +1,12 @@
 {
   "name": "fetchpath-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:web": "tsc && vite build --mode web",
     "preview": "vite preview",
     "tauri": "tauri",
     "release": "tauri build --config src-tauri/tauri.release.conf.json && node src-tauri/tools/write-checksums.mjs"

@@ -492,6 +492,7 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         density: None,
         instance_name: None,
         hub_mode: None,
+        web_ui: None,
         disk_reserve_bytes: None,
     };
     for command in [
@@ -2039,4 +2040,277 @@ fn turning_automatic_mode_off_restores_the_rate() {
     .unwrap();
     let held = job(send(&s.agent, later(&s.granted.join("c.bin"))).unwrap());
     assert_eq!(reasons(&held), [ApprovalReason::RateLimit]);
+}
+
+/// A local web UI browser session (D6, FP-104): sees and submits as the
+/// person, only into the offered folders, and never approves, changes
+/// settings or reopens what the person declined.
+#[test]
+fn a_device_sees_every_job_submits_into_offered_folders_and_never_approves() {
+    let s = setup(granting);
+    set_default_folder(&s.user, Some(&s.granted));
+    let device = Principal::try_from("device:0f3a").unwrap();
+    let browser = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(device.clone());
+
+    let choices = match send(&browser, Command::ListFolderChoices).unwrap() {
+        CommandResult::FolderChoices { choices } => choices,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(choices.len(), 1);
+    assert_eq!(choices[0].path, s.granted.display().to_string());
+    assert_eq!(choices[0].label, "granted");
+
+    let own = job(send(&s.user, later(&s.outside.join("person.bin"))).unwrap());
+    let waiting = job(send(&s.agent, later(&s.outside.join("agent.bin"))).unwrap());
+    assert_eq!(waiting.state, JobState::AwaitingApproval);
+    assert_eq!(list(&browser, JobFilter::All).len(), 2, "every job");
+    assert_eq!(get(&browser, &own.job_id).job_id, own.job_id);
+    assert!(
+        send(
+            &browser,
+            Command::JobDetails {
+                job_id: own.job_id.clone()
+            }
+        )
+        .is_ok()
+    );
+    let stream = CommandEnvelope::new(
+        ClientId::random(),
+        Command::SubscribeQueue { after_cursor: 0 },
+    );
+    assert!(browser.subscribe(&stream).is_ok());
+
+    // Into an offered folder, by full path or bare name, it never waits.
+    let added = job(send(&browser, later(&s.granted.join("web.bin"))).unwrap());
+    assert_eq!(added.state, JobState::Queued);
+    assert_eq!(added.principal, device);
+    assert_eq!(added.approval, None);
+    let mut bare = later(Path::new("bare.bin"));
+    if let Command::CreateJob {
+        request: JobRequest::File { destination, .. },
+    } = &mut bare
+    {
+        destination.path = "bare.bin".into();
+    }
+    assert_eq!(job(send(&browser, bare).unwrap()).state, JobState::Queued);
+
+    // Anywhere else, with credentials or replacing a file, it is refused.
+    assert_eq!(
+        code(send(&browser, later(&s.outside.join("x.bin")))),
+        "policy.not_permitted"
+    );
+    assert_eq!(
+        code(send(
+            &browser,
+            file(
+                "http://me:secret@127.0.0.1:9/a.bin",
+                &s.granted.join("y.bin")
+            )
+        )),
+        "policy.credentials_not_allowed"
+    );
+    let mut replace = later(&s.granted.join("z.bin"));
+    if let Command::CreateJob {
+        request: JobRequest::File { destination, .. },
+    } = &mut replace
+    {
+        destination.conflict = ConflictPolicy::ReplaceExisting;
+    }
+    assert_eq!(code(send(&browser, replace)), "policy.replace_not_allowed");
+    // A batch with one draft outside queues none of them.
+    let draft = |path: &Path| JobRequest::File {
+        input: JobInput::Url {
+            url: url("http://127.0.0.1:9/b.bin"),
+        },
+        destination: DestinationIntent {
+            path: path.display().to_string(),
+            conflict: ConflictPolicy::Ask,
+        },
+        not_before: Some(Timestamp::from_unix_ms(
+            Timestamp::now().unix_ms() + 3_600_000,
+        )),
+        expected_sha256: None,
+    };
+    let before = list(&s.user, JobFilter::All).len();
+    assert_eq!(
+        code(send(
+            &browser,
+            Command::CreateJobs {
+                requests: vec![
+                    draft(&s.granted.join("b1.bin")),
+                    draft(&s.outside.join("b2.bin"))
+                ],
+            }
+        )),
+        "policy.not_permitted"
+    );
+    assert_eq!(list(&s.user, JobFilter::All).len(), before);
+
+    // It controls the person's jobs, but approvals, settings, moving a job,
+    // changing its link or checksum and shutdown stay with the person.
+    let paused = job(send(
+        &browser,
+        Command::Pause {
+            job_id: own.job_id.clone(),
+        },
+    )
+    .unwrap());
+    assert_eq!(paused.state, JobState::Paused);
+    for command in [
+        Command::ApproveJob {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::DenyJob {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::GetSettings,
+        Command::GetAgentPolicies,
+        Command::ListRules,
+        Command::EngineShutdown,
+        Command::Retry {
+            job_id: own.job_id.clone(),
+            expected_sha256: Some("ab".repeat(32)),
+        },
+        Command::RefreshSource {
+            job_id: own.job_id.clone(),
+            destination: None,
+            expected_sha256: None,
+            source: JobInput::Url {
+                url: url("http://127.0.0.1:9/other.bin"),
+            },
+        },
+        Command::ResolveDestination {
+            job_id: own.job_id.clone(),
+            decision: DestinationDecision::ChooseNewPath {
+                path: s.granted.join("moved.bin").display().to_string(),
+                expected_sha256: None,
+            },
+        },
+    ] {
+        assert_eq!(code(send(&browser, command)), "policy.not_permitted");
+    }
+    assert_eq!(
+        get(&s.user, &waiting.job_id).state,
+        JobState::AwaitingApproval
+    );
+
+    // What the person declined stays declined.
+    send(
+        &s.user,
+        Command::DenyJob {
+            job_id: waiting.job_id.clone(),
+        },
+    )
+    .unwrap();
+    assert!(
+        send(
+            &browser,
+            Command::Retry {
+                job_id: waiting.job_id.clone(),
+                expected_sha256: None,
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(get(&s.user, &waiting.job_id).state, JobState::Cancelled);
+}
+
+/// A browser driven by an agent must not carry the agent's jobs past the
+/// person: nothing a device sends releases a wait, a withdrawn request stays
+/// withdrawn, and a retried agent job is checked against the agent's grants.
+#[test]
+fn a_device_never_releases_or_widens_what_an_agent_asked_for() {
+    let s = setup(granting);
+    set_default_folder(&s.user, Some(&s.granted));
+    let browser = InProcessClient::manual(Arc::clone(&s.engine))
+        .with_principal(Principal::try_from("device:0f3a").unwrap());
+
+    let waiting = job(send(&s.agent, later(&s.outside.join("a.bin"))).unwrap());
+    for command in [
+        Command::Start {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::Resume {
+            job_id: waiting.job_id.clone(),
+        },
+        Command::Retry {
+            job_id: waiting.job_id.clone(),
+            expected_sha256: None,
+        },
+    ] {
+        let _ = send(&browser, command);
+        assert_eq!(
+            get(&s.user, &waiting.job_id).state,
+            JobState::AwaitingApproval
+        );
+    }
+
+    // Withdrawn by the agent: only the person can ask again.
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: waiting.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    assert!(
+        send(
+            &browser,
+            Command::Retry {
+                job_id: waiting.job_id.clone(),
+                expected_sha256: None,
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(get(&s.user, &waiting.job_id).state, JobState::Cancelled);
+
+    // Cancelled inside its grant, then the grant is taken away.
+    let inside = job(send(&s.agent, later(&s.granted.join("b.bin"))).unwrap());
+    send(
+        &s.agent,
+        Command::Cancel {
+            job_id: inside.job_id.clone(),
+            retain_partial: false,
+        },
+    )
+    .unwrap();
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&s.root.join("elsewhere"))),
+        },
+    )
+    .unwrap();
+    let retried = job(send(
+        &browser,
+        Command::Retry {
+            job_id: inside.job_id.clone(),
+            expected_sha256: None,
+        },
+    )
+    .unwrap());
+    assert_eq!(retried.state, JobState::AwaitingApproval);
+    assert_eq!(reasons(&retried), [ApprovalReason::OutsideGrantedFolders]);
+}
+
+/// A schedule past 9999-12-31 has no four-digit-year timestamp, so no
+/// client could read the queue back; it is refused for every principal.
+#[test]
+fn a_schedule_past_the_year_9999_is_refused() {
+    let setup = setup(granting);
+    let mut command = file("http://127.0.0.1:9/file.bin", &setup.granted.join("a.bin"));
+    if let Command::CreateJob {
+        request: JobRequest::File { not_before, .. },
+    } = &mut command
+    {
+        *not_before = Some(Timestamp::from_unix_ms(253_402_300_800_000));
+    }
+    assert_eq!(
+        code(send(&setup.user, command.clone())),
+        "input.invalid_request"
+    );
+    assert_eq!(code(send(&setup.agent, command)), "input.invalid_request");
 }

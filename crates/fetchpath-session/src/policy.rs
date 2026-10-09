@@ -38,6 +38,7 @@ pub(crate) fn not_permitted(principal: &Principal, command: &Command) -> Protoco
             match principal {
                 Principal::Browser => "The browser extension".to_owned(),
                 Principal::Agent(name) => format!("The agent {name}"),
+                Principal::Device(_) => "A browser session".to_owned(),
                 Principal::User => "This client".to_owned(),
             },
             command.name()
@@ -70,6 +71,39 @@ pub(crate) fn too_many_pending() -> ProtocolError {
     )
 }
 
+/// What a signed-in device may not send: links with credentials, stored
+/// captures or local torrent files (contract D6, decision O6).
+pub(crate) fn check_device_input(input: &JobInput) -> Result<(), ProtocolError> {
+    match input {
+        JobInput::Url { url } if !has_userinfo(url.expose()) => Ok(()),
+        _ => Err(policy_error(
+            "policy.credentials_not_allowed",
+            "A browser session cannot send a link with a user name or password, a stored capture or a torrent file. Add this download in Fetchpath on this PC.",
+        )),
+    }
+}
+
+pub(crate) fn device_replace_not_allowed() -> ProtocolError {
+    policy_error(
+        "policy.replace_not_allowed",
+        "A browser session cannot replace an existing file. Choose another file name.",
+    )
+}
+
+pub(crate) fn device_adds_files_only() -> ProtocolError {
+    policy_error(
+        "policy.not_permitted",
+        "A browser session adds file downloads only. Add video, audio and torrents in Fetchpath on this PC.",
+    )
+}
+
+pub(crate) fn outside_folder_choices() -> ProtocolError {
+    policy_error(
+        "policy.not_permitted",
+        "A browser session saves only into the folders Fetchpath offers. Choose one of them.",
+    )
+}
+
 /// May `principal` send `command` at all? Ownership of the job it names is
 /// checked separately, and answers as if the job did not exist.
 pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), ProtocolError> {
@@ -78,6 +112,28 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
         Principal::Browser => matches!(
             command,
             Command::CreateJob { .. } | Command::TakeBrowserCaptures
+        ),
+        // The person through a signed-in device (D6): view and submit only.
+        // Approvals, settings, access and shutdown stay with `user`, and a
+        // device neither moves a job nor changes its link (FP-104).
+        Principal::Device(_) => matches!(
+            command,
+            Command::CreateJob { .. }
+                | Command::CreateJobs { .. }
+                | Command::Start { .. }
+                | Command::Pause { .. }
+                | Command::Resume { .. }
+                | Command::Cancel { .. }
+                | Command::Retry { .. }
+                | Command::RemoveJob { .. }
+                | Command::ListJobs { .. }
+                | Command::GetJob { .. }
+                | Command::JobDetails { .. }
+                | Command::QueueStats
+                | Command::ListFolderChoices
+                | Command::SubscribeJob { .. }
+                | Command::SubscribeQueue { .. }
+                | Command::EngineStatus
         ),
         Principal::Agent(_) => match command {
             Command::CreateJob { .. }
@@ -112,6 +168,7 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
         decision: DestinationDecision::ReplaceExisting,
         ..
     } = command
+        && principal.agent().is_some()
     {
         return Err(replace_not_allowed());
     }

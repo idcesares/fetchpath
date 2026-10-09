@@ -490,6 +490,19 @@ principals); nothing changes before that code lands.
   `replace_existing` stay local-only for remote person devices. A revoked
   credential's uncommitted commands are refused; the ledger fingerprint
   includes the remote principal, as D1 does for agents.
+- **Local web UI device (FP-104, 8 October 2026).** A browser session of the
+  loopback web UI is `device:<id>`, one id per sign-in, derived by the
+  listener; the pipe refuses a declared `device:`. It sees every job and
+  submits as the person, without agent holds, but only file downloads into
+  `ListFolderChoices` (default and rule folders, label and host path), and
+  never with credentials in the link, a stored capture or
+  `replace_existing`. It may start, pause, resume, cancel, retry without a
+  new checksum and remove. Cancelling or removing an agent's request that
+  awaits approval withdraws it, which only stops work and is allowed. It
+  cannot approve, deny, move a job, change its link, or retry a job that was
+  denied, withdrawn or expired. Source:
+  `crates/fetchpath-session/src/policy.rs` (`authorize`), `engine.rs`
+  (`origin`). A job store holding a `device:` job is not readable by 0.2.0.
 - **Approval expiry.** A request still awaiting approval after its configured
   period (default 7 days) becomes `cancelled` with `policy.approval_expired`.
 - **Disk reserve.** Every drive keeps a reserve: the `disk_reserve_bytes`

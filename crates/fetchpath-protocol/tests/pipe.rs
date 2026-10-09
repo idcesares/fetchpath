@@ -308,7 +308,8 @@ fn a_connection_declares_its_principal_in_the_handshake_and_a_bad_one_is_refused
     let _person = connect(&engine).unwrap();
     assert!(matches!(engine.next(), Seen::Authenticated(p) if p == "user"));
 
-    for declared in ["agent:Not Valid", "root", "agent:"] {
+    // A device is derived from its sign-in, never declared (D6).
+    for declared in ["agent:Not Valid", "root", "agent:", "device:0f3a"] {
         let mut file = raw_open(&engine.name);
         write_frame(
             &mut file,

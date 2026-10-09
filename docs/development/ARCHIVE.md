@@ -52,3 +52,10 @@ format changes.
 ## FP-095 retirement
 
 `apps/desktop/public/icon.png` was removed: the window and empty state now draw the Fetchpath mark inline from the design system, and the app icons are generated from `apps/desktop/src-tauri/icons/source.svg`. Legacy colour aliases (`--surface`, `--muted`, `--accent` and the rest) and the duplicated light-theme blocks in `apps/desktop/src/styles.css` are gone; components use only `--fp-*` tokens.
+
+## FP-105 retirement
+
+The 0.2.0 gate evidence was replaced by the 0.3.0 gate on 9 October 2026:
+`evidence/release/fp103-gate.json` and `evidence/windows/fp103-clean-install.json`,
+`fp103-upgrade.json` and `fp103-agent-installer.json`. They and the 0.2.0
+`RELEASE-CANDIDATE.md` remain at tag `v0.2.0`.

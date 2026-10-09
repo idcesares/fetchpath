@@ -4,7 +4,7 @@ Fetchpath is a download manager for Windows 11. It keeps a queue of your
 downloads, pauses and resumes them, survives restarts, and checks that what
 arrived is exactly what you asked for. It can also save video and audio.
 
-This guide covers version 0.2.0, in release preparation. Check the
+This guide covers version 0.3.0. Check the
 [release page](https://github.com/idcesares/fetchpath/releases/latest) for
 published versions. You don't need to read it all: the first
 two sections are enough to start. After that, use it as a reference.
@@ -20,6 +20,7 @@ two sections are enough to start. After that, use it as a reference.
 - [Torrents and magnets](#torrents-and-magnets)
 - [Video and audio](#video-and-audio)
 - [Sending links from your browser](#sending-links-from-your-browser)
+- [Your downloads in a browser](#your-downloads-in-a-browser)
 - [Settings](#settings)
 - [Requests from AI agents](#requests-from-ai-agents)
 - [Download speed](#download-speed)
@@ -40,14 +41,14 @@ using it lawfully and checking whether its sources and files are safe. The
 option, sets the terms for using Fetchpath.
 
 1. From the [Fetchpath release page](https://github.com/idcesares/fetchpath/releases/latest),
-   download two files for 0.2.0:
-   `Fetchpath_0.2.0_x64-setup.exe` and `SHA256SUMS.txt`.
+   download two files for 0.3.0:
+   `Fetchpath_0.3.0_x64-setup.exe` and `SHA256SUMS.txt`.
 2. *Recommended:* check the installer arrived intact. In File Explorer, open
    the folder you saved them to, click the address bar, type `powershell` and
    press <kbd>Enter</kbd>. Then run:
 
    ```powershell
-   (Get-FileHash .\Fetchpath_0.2.0_x64-setup.exe).Hash.ToLower()
+   (Get-FileHash .\Fetchpath_0.3.0_x64-setup.exe).Hash.ToLower()
    Get-Content .\SHA256SUMS.txt
    ```
 
@@ -55,7 +56,7 @@ option, sets the terms for using Fetchpath.
    the matching installer's line in `SHA256SUMS.txt`. This checks that your copy
    matches the release asset; it does not replace a publisher signature.
    If they differ, delete both files and download them again.
-3. Double-click `Fetchpath_0.2.0_x64-setup.exe` and follow the installer.
+3. Double-click `Fetchpath_0.3.0_x64-setup.exe` and follow the installer.
    Choose **Full** (recommended: the app, the terminal command, AI agent
    support, browser integration and the torrent helper)
    or **Custom** to pick components, as described in
@@ -135,7 +136,7 @@ audio tools in a deployment, run `fetchpath tools install --yes` afterwards.
 Agent connection or cleanup failures use exit code **11**; resolve the reported
 configuration problem and retry while Fetchpath remains installed.
 
-**"Windows protected your PC."** Fetchpath 0.2.0 isn't signed with a
+**"Windows protected your PC."** Fetchpath 0.3.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
 it and warns when you run the installer. If you downloaded it from the
 official release page and the checksum matched in step 2, choose
@@ -389,11 +390,34 @@ downloads you start in the browser go to Fetchpath instead. If the native host
 refuses a handoff, the extension tries to restart the browser download. It's
 off until you turn it on.
 
-**Why "Developer mode"?** Version 0.2.0 isn't listed in the Chrome Web Store
+**Why "Developer mode"?** Version 0.3.0 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
 yourself. Chrome may remind you about developer-mode extensions when it
 starts; that's expected. Firefox only allows signed add-ons, so Firefox isn't
 supported in this version.
+
+## Your downloads in a browser
+
+Fetchpath can also show your download list in a browser on this computer, at
+`fetchpath.localhost`. It is off until you turn it on: in Settings, under
+General, **Web UI**, tick **Show the queue in a browser on this computer**,
+then choose **Open in browser** there or in the
+notification area icon's menu. `fetchpath web open` does the same from a
+terminal. Your default browser opens already signed in; any current Chrome,
+Edge or Firefox works.
+
+The page looks like the window and shares its list. From it you can add links
+into the folders Fetchpath offers, pause, resume, start now, cancel, retry,
+remove, open a download's folder on this computer and see its details.
+Everything else stays in the window: approving or denying requests, changing a
+download's link, folder or checksum, settings, rules, agents and sharing.
+
+Only this computer can open the page; it is not reachable from your network.
+Each **Open in browser** signs one browser in with a link that works once,
+within a minute. Sign-ins end when the engine stops, and **Sign out all
+browsers** (or `fetchpath web sign-out`) ends them at once; turning the web UI
+off does too. Downloads keep running when you close the page, and an open page
+keeps the engine running like any other Fetchpath app.
 
 ## Settings
 
@@ -410,6 +434,7 @@ on GitHub.
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
 | Video and audio | Sets up `yt-dlp` and `ffmpeg`. |
+| Web UI | Shows your downloads in a browser on this computer; **Open in browser** and **Sign out all browsers**. See [Your downloads in a browser](#your-downloads-in-a-browser). |
 | Browser extension | Shows whether the browser connection is installed, and helps you add the extension. |
 | Rules | Where a new download goes and how, by the site it comes from, its type or its size: a folder, a video quality, a required checksum or a limit on connections. Rules are tried in order and the first that matches decides. **Test a link** says which rule decides and why. |
 | Cache | Copies of downloads that matched a checksum, so the same file downloaded again doesn't use the network. Shows how much it holds, sets how much it may keep (the oldest copies go first), and **Clear cache**. Clearing it never touches your saved files. |
@@ -449,8 +474,10 @@ and requests outside its granted folders still wait.
 
 These controls assume no malicious program already runs as your Windows user.
 They protect the download API; an agent host with shell access already has
-the same file access as you. There is no remote hub or remote-control listener
-in 0.2.0.
+the same file access as you. The only listener is the optional
+[web UI](#your-downloads-in-a-browser), on this computer only, and a browser
+signed in to it cannot approve requests; there is no remote hub or
+remote-control listener in 0.3.0.
 
 ## Download speed
 

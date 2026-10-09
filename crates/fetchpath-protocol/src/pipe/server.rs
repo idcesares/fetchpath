@@ -210,8 +210,12 @@ impl PendingConnection {
         }
         let principal = match principal {
             None => Principal::User,
+            // A device is derived from its sign-in credential, never
+            // declared (contract D6).
             Some(text) => Principal::try_from(text)
-                .map_err(|_| self.stream.fail(handshake_failed("unknown principal")))?,
+                .ok()
+                .filter(|principal| principal.device().is_none())
+                .ok_or_else(|| self.stream.fail(handshake_failed("unknown principal")))?,
         };
         let client_nonce = Nonce::from_hex(&client_nonce)
             .ok_or_else(|| self.stream.fail(handshake_failed("bad client nonce")))?;

@@ -7,11 +7,13 @@ mod engine;
 mod lan;
 mod mcp;
 mod queue;
+mod remote;
 mod reveal;
 mod rules;
 mod tools;
 mod tui;
 mod wait;
+mod web;
 mod when;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -38,6 +40,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
   fetchpath hub [on | off]                    keep the engine running in the background
+  fetchpath web on | off | open | sign-out    the web UI on this computer (off until you turn it on)
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
   fetchpath cache [status | clear]            verified copies kept for downloads with a checksum
   fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
@@ -112,6 +115,7 @@ fn main() {
         Some("settings") => queue::settings(&args[1..]),
         Some("engine") => engine::run(&args[1..]),
         Some("hub") => queue::hub(&args[1..]),
+        Some("web") => web::run(&args[1..]),
         Some("tools") => tools::run(&args[1..]),
         Some("folder") => reveal::run(&args[1..]),
         Some("rules") => rules::run(&args[1..]),

@@ -28,7 +28,7 @@ param(
     # the installer under test over it with -Components: the upgrade and
     # change-components path.
     [string] $BaselineInstallerPath = '',
-    [string] $ExpectedVersion = '0.2.0'
+    [string] $ExpectedVersion = '0.3.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -243,10 +243,15 @@ try {
             desktopShortcut = (Test-Path -LiteralPath $desktopShortcut)
             storedInstallType = Get-Stored 'FetchpathInstallType'
         }
+        if ($observation.baseline.exitCode -ne 0) {
+            $baselineLog = Join-Path $env:TEMP 'fetchpath-install.log'
+            $observation.baseline.log = if (Test-Path -LiteralPath $baselineLog) { [System.IO.File]::ReadAllText($baselineLog) } else { $null }
+        }
         Assert-True ($observation.baseline.exitCode -eq 0) "The baseline installer exited with code $($observation.baseline.exitCode)."
         Assert-True ($observation.baseline.desktopExecutable -and $observation.baseline.browserHostExecutable) 'The published baseline did not install its desktop and browser host.'
         Assert-True ($observation.baseline.nativeHostKeysRegistered -eq 3 -and $observation.baseline.startMenuShortcut -and $observation.baseline.desktopShortcut) 'The baseline did not register the keys and shortcuts.'
-        Assert-True ($null -eq $observation.baseline.storedInstallType) 'The baseline already stores a selection; it must be the build from before components.'
+        # A build from before components (0.1.0) stores no selection; a later one, a default Full.
+        Assert-True ($null -eq $observation.baseline.storedInstallType -or $observation.baseline.storedInstallType -eq 'full') "The baseline stores the selection $($observation.baseline.storedInstallType); it must be a default Full install."
 
         # Seed what an upgrade must keep: a finished download in history, a changed
         # setting, a file in the data folder, and a download that is still running.

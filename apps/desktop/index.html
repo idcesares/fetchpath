@@ -91,22 +91,7 @@
         <button id="dismiss-onboarding" class="quiet compact" type="button">Got it</button>
       </section>
 
-      <section class="queue-heading" aria-labelledby="queue-title">
-        <h1 id="queue-title" tabindex="-1">Downloads</h1>
-        <label class="search" for="queue-search">
-          <span class="sr-only">Search downloads</span>
-          <input id="queue-search" type="search" autocomplete="off" placeholder="Search files or sources" />
-        </label>
-      </section>
-
-      <div id="queue-filters" class="filters" role="group" aria-label="Filter downloads">
-        <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
-        <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
-        <button class="filter" type="button" data-filter="paused" aria-pressed="false">Paused</button>
-        <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>
-        <button class="filter" type="button" data-filter="completed" aria-pressed="false">Completed</button>
-        <button class="filter" type="button" data-filter="failed" aria-pressed="false">Needs attention</button>
-      </div>
+      <template data-mount="queue-top"></template>
 
       <!-- Power mode only. Additive: nothing here duplicates or replaces a
            control that is available without it. -->
@@ -122,26 +107,8 @@
         <p id="engine-status-text" class="error"></p>
         <button id="engine-start" class="secondary" type="button" hidden>Start Fetchpath</button>
       </div>
-      <div class="queue-status-row">
-        <p id="queue-summary" class="queue-summary">No downloads yet.</p>
-        <div class="queue-bulk-actions">
-          <button id="pause-all" class="secondary" type="button" hidden>Pause all</button>
-          <button id="resume-all" class="secondary" type="button" hidden>Resume all</button>
-          <button id="cancel-download" class="secondary danger" type="button" hidden>Cancel current download</button>
-        </div>
-      </div>
 
-      <section id="queue-empty" class="empty-state" aria-labelledby="empty-title" hidden>
-        <span class="mark large" aria-hidden="true"><svg class="i" width="28" height="28"><use href="#i-logo" /></svg></span>
-        <h2 id="empty-title">Nothing downloading yet</h2>
-        <p>Copy a link and paste it here with <kbd>Ctrl</kbd> <kbd>V</kbd>, or add one yourself.</p>
-        <button id="empty-add" type="button" aria-haspopup="dialog"><svg class="i" aria-hidden="true"><use href="#i-plus" /></svg>Add a download</button>
-        <p class="reassure">Large files resume if you close the app.</p>
-      </section>
-
-      <section id="job-card" class="queue" aria-label="Download queue" hidden>
-        <div id="job-list" role="list"></div>
-      </section>
+      <template data-mount="queue-body"></template>
 
       <section class="background" aria-labelledby="background-title">
         <h2 id="background-title">Running in the background</h2>
@@ -348,47 +315,7 @@
       </div>
     </dialog>
 
-    <dialog id="details-dialog" class="card dialog details-dialog" aria-labelledby="details-title">
-      <header class="details-header">
-        <div>
-          <h2 id="details-title">Download details</h2>
-          <p id="details-source" class="job-source"></p>
-        </div>
-        <output id="details-status" class="status"></output>
-      </header>
-
-      <dl id="details-figures" class="stats-grid details-figures" aria-live="off"></dl>
-
-      <section class="details-section" aria-labelledby="details-speed-title">
-        <h3 id="details-speed-title">Speed</h3>
-        <svg id="details-graph" class="speed-graph" role="img" viewBox="0 0 600 140" preserveAspectRatio="none"
-             aria-labelledby="details-graph-label">
-          <title id="details-graph-label">Speed over the last minute</title>
-        </svg>
-        <p id="details-graph-note" class="hint"></p>
-      </section>
-
-      <section class="details-section" aria-labelledby="details-map-title">
-        <h3 id="details-map-title">File</h3>
-        <svg id="details-map" class="file-map" role="img" viewBox="0 0 600 18" preserveAspectRatio="none"
-             aria-labelledby="details-map-label">
-          <title id="details-map-label">Which parts of the file have arrived</title>
-        </svg>
-        <p class="hint legend">
-          <span class="swatch written" aria-hidden="true"></span> Written to disk
-          <span class="swatch inflight" aria-hidden="true"></span> Arriving now
-          <span class="swatch pending" aria-hidden="true"></span> Not yet requested
-        </p>
-        <ol id="details-segments" class="segments" aria-label="Connections"></ol>
-        <p id="details-segments-note" class="hint"></p>
-      </section>
-
-      <dl id="details-info" class="details-info"></dl>
-
-      <div class="dialog-actions">
-        <button id="details-close" type="button">Close</button>
-      </div>
-    </dialog>
+    <template data-mount="details-dialog"></template>
 
     <dialog id="settings-dialog" class="card dialog settings-dialog" aria-labelledby="settings-title">
       <h2 id="settings-title">Settings</h2>
@@ -639,6 +566,20 @@
           </select>
           <p id="disk-reserve-note" class="field-note">Downloads never fill a drive past this. One that would waits, shown as Waiting for disk space, and starts by itself when there is room.</p>
           <p id="hub-mode-note" class="field-note">Fetchpath keeps running with no window open, starts when you sign in to Windows, and keeps the computer awake while downloads run, not while idle. It is not a Windows service: after a restart it runs again only once you sign in.</p>
+        </fieldset>
+
+        <fieldset class="settings-group" data-settings-panel="general">
+          <legend>Web UI</legend>
+          <label class="check">
+            <input id="setting-web-ui" type="checkbox" aria-describedby="web-ui-note" />
+            <span>Show the queue in a browser on this computer</span>
+          </label>
+          <p id="web-ui-note" class="field-note">Opens at fetchpath.localhost, on this computer only. A browser can add, pause, resume, cancel and remove downloads; approvals and link changes stay here.</p>
+          <div class="media-tools-actions">
+            <button id="web-ui-open" class="secondary" type="button">Open in browser</button>
+            <button id="web-ui-sign-out" class="quiet" type="button">Sign out all browsers</button>
+          </div>
+          <p id="web-ui-state" class="hint field-note" aria-live="polite"></p>
         </fieldset>
 
         <fieldset class="settings-group" data-settings-panel="general">

@@ -232,6 +232,7 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
         }),
         instance_name: Some(settings.display_instance_name()),
         hub_mode: Some(settings.hub_mode),
+        web_ui: Some(settings.web_ui),
         disk_reserve_bytes: Some(settings.disk_reserve_bytes),
     }
 }
@@ -276,6 +277,7 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
             Some(name) => Some(name.clone()),
         },
         hub_mode: wire.hub_mode.unwrap_or(current.hub_mode),
+        web_ui: wire.web_ui.unwrap_or(current.web_ui),
         disk_reserve_bytes: wire
             .disk_reserve_bytes
             .unwrap_or(current.disk_reserve_bytes),

@@ -128,6 +128,10 @@ pub struct Settings {
     /// awake while downloads run. Off by default and written only when on.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hub_mode: bool,
+    /// Serve the local web UI on loopback (FP-104). Off by default and
+    /// written only when on.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub web_ui: bool,
     /// Free space left on every drive Fetchpath saves to (FP-101). 0, the
     /// default, is automatic: the larger of 5 GiB and 5 % of the drive.
     /// Written only when chosen.
@@ -173,6 +177,7 @@ impl Default for Settings {
             density: Density::Comfortable,
             instance_name: None,
             hub_mode: false,
+            web_ui: false,
             disk_reserve_bytes: 0,
         }
     }

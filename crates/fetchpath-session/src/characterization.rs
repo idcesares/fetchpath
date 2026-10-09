@@ -112,6 +112,8 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             instance_name: None,
             // Added after 0.1.0 (FP-101); a 0.1.0 file leaves it off.
             hub_mode: false,
+            // Added after 0.2.0 (FP-104); an older file leaves it off.
+            web_ui: false,
             // Added after 0.1.0 (FP-101); a 0.1.0 file has the automatic one.
             disk_reserve_bytes: 0,
         }

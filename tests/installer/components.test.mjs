@@ -274,7 +274,7 @@ test('quiet and passive setup show nothing and download nothing', () => {
 test('without Desktop the finish page unticks and guards Run and the desktop shortcut', () => {
   const show = code(block('Function FpFinishShow'));
   assert.match(show, /\$\{IfNot\} \$\{SectionIsSelected\} \$\{SecDesktop\}\nSendMessage \$mui\.FinishPage\.Run \$\{BM_SETCHECK\} \$\{BST_UNCHECKED\} 0\nSendMessage \$mui\.FinishPage\.ShowReadme \$\{BM_SETCHECK\} \$\{BST_UNCHECKED\} 0/);
-  assert.match(code(block('Function RunMainBinary')), /^\$\{If\} \$FpDesktopOn = 1\nnsis_tauri_utils::RunAsUser/);
+  assert.match(code(block('Function RunMainBinary')), /^\$\{If\} \$FpDesktopOn = 1\n(?:\$\{If\} \$FpConnectBrowser = 1\n)?nsis_tauri_utils::RunAsUser/);
   assert.match(code(block('Function CreateOrUpdateDesktopShortcut')), /^\$\{If\} \$FpDesktopOn <> 1\nReturn/);
 });
 

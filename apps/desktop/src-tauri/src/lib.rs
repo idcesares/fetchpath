@@ -701,13 +701,18 @@ fn connect_browser(app: AppHandle, browser: String) -> Result<(), String> {
 /// Opens only Fetchpath's own project page in the system browser.
 #[tauri::command]
 fn open_project_page() -> Result<(), String> {
+    if !open_in_browser("https://github.com/idcesares/fetchpath") {
+        return Err("Could not open the project page in your browser.".into());
+    }
+    Ok(())
+}
+
+/// Hands an http(s) address to the system browser.
+fn open_in_browser(url: &str) -> bool {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    let url: Vec<u16> = "https://github.com/idcesares/fetchpath"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    let url: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut(),
@@ -718,10 +723,57 @@ fn open_project_page() -> Result<(), String> {
             SW_SHOWNORMAL,
         )
     };
-    if (result as isize) <= 32 {
-        return Err("Could not open the project page in your browser.".into());
+    (result as isize) > 32
+}
+
+/// `http://fetchpath.localhost:PORT/...` exactly: a port of digits right
+/// after the host, so no user info can move the link to another host.
+fn is_web_ui_link(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://fetchpath.localhost:") else {
+        return false;
+    };
+    let port = rest.split('/').next().unwrap_or("");
+    (1..=5).contains(&port.len())
+        && port.bytes().all(|b| b.is_ascii_digit())
+        && rest.as_bytes().get(port.len()) == Some(&b'/')
+}
+
+/// Opens the queue in the browser (FP-104) through a single-use link the
+/// engine issues. The link signs the browser in, so it goes only to the
+/// browser and only when it names the engine's own loopback page.
+fn open_web_ui_now(engine: &EngineLink) -> Result<(), String> {
+    match engine.send(Command::OpenWebUi).map_err(text)? {
+        CommandResult::WebUiLink { url } => {
+            if !is_web_ui_link(url.expose()) {
+                return Err("The engine answered with an unexpected web UI address.".into());
+            }
+            if open_in_browser(url.expose()) {
+                Ok(())
+            } else {
+                Err("Could not open the web UI in your browser.".into())
+            }
+        }
+        other => Err(unexpected(&other)),
     }
-    Ok(())
+}
+
+#[tauri::command]
+async fn open_web_ui(engine: Engine<'_>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || open_web_ui_now(&engine)).await
+}
+
+/// Ends every browser session; the browsers must be opened from here again.
+#[tauri::command]
+async fn sign_out_browsers(engine: Engine<'_>) -> Result<(), String> {
+    let engine = Arc::clone(&engine);
+    off_thread(
+        move || match engine.send(Command::SignOutBrowsers).map_err(text)? {
+            CommandResult::BrowsersSignedOut => Ok(()),
+            other => Err(unexpected(&other)),
+        },
+    )
+    .await
 }
 
 /// The media helpers live in the engine's data folder, where it looks.
@@ -1121,6 +1173,8 @@ pub fn run() {
             connect_browser,
             connect_browser_requested,
             open_project_page,
+            open_web_ui,
+            sign_out_browsers,
             approve_download,
             deny_download,
             list_agents,
@@ -1207,6 +1261,7 @@ pub fn run() {
                 let _ = handle.emit("fetchpath://engine", state);
             });
             let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
+            let web = MenuItem::with_id(app, "web", "Open in browser", true, None::<&str>)?;
             let quit = MenuItem::with_id(
                 app,
                 "quit",
@@ -1235,6 +1290,7 @@ pub fn run() {
                     &status,
                     &PredefinedMenuItem::separator(app)?,
                     &show,
+                    &web,
                     &PredefinedMenuItem::separator(app)?,
                     &start,
                     &quit,
@@ -1249,6 +1305,18 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
+                    // A refusal (the web UI is off, the engine is down) is
+                    // shown in the window, where it can be turned on.
+                    "web" => {
+                        let app = app.clone();
+                        let engine = Arc::clone(&app.state::<Arc<EngineLink>>());
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(message) = off_thread(move || open_web_ui_now(&engine)).await {
+                                show_main_window(&app);
+                                let _ = app.emit("fetchpath://web-ui-problem", message);
+                            }
+                        });
+                    }
                     // The window and tray go; downloads carry on in the
                     // engine, which stops by itself once it has nothing left
                     // to do.
@@ -1335,6 +1403,22 @@ fn show_main_window(app: &AppHandle) {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn web_ui_link_names_only_the_loopback_page() {
+        assert!(is_web_ui_link("http://fetchpath.localhost:47474/open?t=x"));
+        for bad in [
+            "http://fetchpath.localhost:47474@other.host/open",
+            "http://fetchpath.localhost:x@other.host/",
+            "http://fetchpath.localhost:/open",
+            "http://fetchpath.localhost:47474",
+            "http://fetchpath.localhost.other:47474/",
+            "https://fetchpath.localhost:47474/",
+            "http://fetchpath.localhost:123456/",
+        ] {
+            assert!(!is_web_ui_link(bad), "{bad}");
+        }
+    }
 
     fn failed(destination: &str, checksum: Option<&str>) -> JobSnapshot {
         serde_json::from_value(serde_json::json!({
