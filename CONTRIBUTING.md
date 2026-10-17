@@ -30,8 +30,29 @@ node tools/media-tools/pin.mjs --check     # media helper pins still match their
 
 The runner uses an explicit repository test list so ignored worktrees and copied
 plugin caches are not discovered as tests. `npm test` uses the same runner.
-The native-host test runs `target/debug/fetchpath-browser-host.exe`,
-so after a `cargo clean` run `cargo build --workspace` first.
+The native-host test runs `target/debug/fetchpath-browser-host.exe`. On a fresh
+checkout or after `cargo clean`, first install the locked frontend dependencies
+and build both bundles, then build the workspace:
+
+```powershell
+corepack pnpm --dir apps/desktop install --frozen-lockfile
+corepack pnpm --dir apps/desktop build
+corepack pnpm --dir apps/desktop build:web
+$env:FETCHPATH_REQUIRE_WEB = "1"
+cargo build --workspace --locked
+node tools/tests.mjs
+```
+
+Building the bundles before Cargo matches CI: the desktop and engine embed them.
+`FETCHPATH_REQUIRE_WEB` prevents a missing web bundle from silently producing the
+placeholder page. Repository checks without native binaries are not a complete
+passing baseline.
+
+Transfer tests need a Windows filesystem supporting staging operations (use
+NTFS), with enough room for their small fixtures and build output. Ordinary
+download fixtures set an explicit small disk reserve; dedicated reserve tests
+exercise the automatic policy and storage waiting separately. This avoids
+making recovery tests depend on the host having 5% of its entire volume free.
 
 The Rust workspace needs Rust 1.98+; CI validates with Rust 1.98.1:
 
@@ -84,7 +105,7 @@ publishers, so it is ignored by default:
 The desktop application needs `pnpm` through corepack:
 
 ```powershell
-corepack pnpm --dir apps/desktop install
+corepack pnpm --dir apps/desktop install --frozen-lockfile
 & $cargo build -p fetchpath                    # the engine the app starts, beside it
 corepack pnpm --dir apps/desktop tauri dev     # run it
 corepack pnpm --dir apps/desktop release       # optimized build and installer, with the CLI

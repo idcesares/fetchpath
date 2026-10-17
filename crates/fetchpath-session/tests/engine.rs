@@ -20,8 +20,26 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+// Transfer fixtures use a tiny explicit reserve instead of the host drive's ratio.
+fn fixture_session(
+    path: PathBuf,
+    max_active: usize,
+    browser: Option<PathBuf>,
+) -> std::io::Result<Session> {
+    let session = Session::load_with_browser(path, max_active, browser)?;
+    let mut settings = session.settings();
+    settings.disk_reserve_bytes = 1;
+    session.update_settings(settings).unwrap();
+    Ok(session)
+}
+
 fn open(path: &Path) -> InProcessClient {
     let session = Arc::new(Session::load_with_browser(path.to_path_buf(), 3, None).unwrap());
+    InProcessClient::manual(Engine::new(session))
+}
+
+fn open_transfer(path: &Path) -> InProcessClient {
+    let session = Arc::new(fixture_session(path.to_path_buf(), 3, None).unwrap());
     InProcessClient::manual(Engine::new(session))
 }
 
@@ -451,7 +469,7 @@ fn completion_wakes_reconciliation_and_starts_a_resumed_job_without_a_tick() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue-v1.json");
     let engine = InProcessClient::manual(Engine::new(Arc::new(
-        Session::load_with_browser(path.clone(), 1, None).unwrap(),
+        fixture_session(path.clone(), 1, None).unwrap(),
     )));
     let gates = Arc::new((Mutex::new([false; 2]), Condvar::new()));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -574,7 +592,7 @@ fn completion_wakes_reconciliation_and_starts_a_resumed_job_without_a_tick() {
 fn a_subscriber_that_never_reads_cannot_hold_up_the_queue() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queue-v1.json");
-    let session = Arc::new(Session::load_with_browser(path, 8, None).unwrap());
+    let session = Arc::new(fixture_session(path, 8, None).unwrap());
     let engine = InProcessClient::new(Engine::new(session));
     // Subscribed, then never read from again.
     let mut stalled = engine
@@ -752,7 +770,7 @@ fn a_crash_before_commit_loses_the_command_so_the_resend_creates_one_job() {
 #[test]
 fn a_failure_reaches_clients_as_a_code_and_action_and_unknown_ones_are_not_retryable() {
     let dir = tempfile::tempdir().unwrap();
-    let engine = open(&dir.path().join("queue-v1.json"));
+    let engine = open_transfer(&dir.path().join("queue-v1.json"));
     // Nothing listens on port 9: a transport failure the queue may retry.
     let job = job_of(
         &engine
@@ -945,7 +963,7 @@ fn a_batch_creates_every_job_or_none_and_a_resend_creates_nothing_more() {
 #[test]
 fn the_person_can_correct_the_expected_checksum_before_a_retry() {
     let dir = tempfile::tempdir().unwrap();
-    let engine = open(&dir.path().join("queue-v1.json"));
+    let engine = open_transfer(&dir.path().join("queue-v1.json"));
     let body = b"checked bytes".repeat(1000);
     let base = serve(body.clone());
     let destination = dir.path().join("checked.bin");
@@ -1013,8 +1031,7 @@ fn a_media_page_from_the_browser_is_offered_for_review_once() {
     let queue = dir.path().join("queue-v1.json");
     let downloads = dir.path().join("Downloads");
     std::fs::create_dir_all(&downloads).unwrap();
-    let session =
-        Arc::new(Session::load_with_browser(queue.clone(), 3, Some(downloads.clone())).unwrap());
+    let session = Arc::new(fixture_session(queue.clone(), 3, Some(downloads.clone())).unwrap());
     let engine = InProcessClient::manual(Engine::new(session));
     let page = "https://www.youtube.com/watch?v=abc123";
     BridgeStore::new(dir.path().to_path_buf())

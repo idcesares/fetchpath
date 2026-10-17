@@ -41,8 +41,19 @@ device rules in [D6](../architecture/JOB-CONTRACT.md) (FP-104 bullet). The queue
 - Independent strong review: pass with fixes. Fixed: the release build now builds and requires the web bundle; the
   desktop's link check rejects user info and non-numeric ports; the page reloads at most once until a socket opens.
 
+## Local acceptance follow-up (FP-107, 17 October 2026)
+
+[Local quality evidence](LOCAL-QUALITY.md) records the current scratch-engine
+Chrome walkthrough. The awaiting-approval view shows the reason, offers no
+Approve/Deny control, and its announcement directs the person to Fetchpath on
+this PC. Modal alerts stay in the modal accessibility tree; a rejected draft
+returns focus to Links, Escape restores the opener, and the dismissed draft
+alert does not appear in Details. Pause/Resume now retains focus on the
+replacement row action in the shared desktop/browser queue.
+
 ## Limitations that still hold
 
-- The awaiting-approval device view was not exercised in a browser.
-- No immutable caching of hashed assets. Live regions may stay silent while a modal is open.
+- No immutable caching of hashed assets.
+- Audible screen-reader output was not tested in the follow-up; Chrome
+  accessibility-tree placement and keyboard focus were checked.
 - 0.2.0 cannot read a job store that holds a browser job (CHANGELOG upgrade note).

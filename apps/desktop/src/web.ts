@@ -85,8 +85,19 @@ function openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void {
   const active = document.activeElement;
   dialogOpener = active instanceof HTMLElement && active !== document.body ? active : null;
   dialog.showModal();
+  placeLiveRegions();
   focus.focus();
 }
+
+// A modal makes the rest of the page inert, including its live regions.
+// Keep announcements in the active dialog, as the desktop does.
+function placeLiveRegions(): void {
+  const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+  const home = open.length ? open[open.length - 1] : document.body;
+  if (liveStatus.parentElement !== home) home.prepend(liveStatus, liveAlert);
+}
+
+for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("close", placeLiveRegions);
 
 function restoreDialogFocus(fallback: HTMLElement): void {
   const opener = dialogOpener?.isConnected && dialogOpener.offsetParent !== null ? dialogOpener : null;
@@ -211,6 +222,10 @@ function showFormError(message: string): void {
 }
 
 function clearFormError(): void {
+  if (announcedAlert === formError.textContent) {
+    announcedAlert = "";
+    liveAlert.textContent = "";
+  }
   formError.textContent = "";
   formError.hidden = true;
 }
@@ -286,7 +301,10 @@ function openComposer(): void {
 addOpenButton.addEventListener("click", openComposer);
 emptyAddButton.addEventListener("click", openComposer);
 addCancelButton.addEventListener("click", () => addDialog.close());
-addDialog.addEventListener("close", () => restoreDialogFocus(addOpenButton));
+addDialog.addEventListener("close", () => {
+  clearFormError();
+  restoreDialogFocus(addOpenButton);
+});
 for (const control of [urlInput, folderSelect, fileNameInput, scheduleInput]) {
   control.addEventListener("input", renderPreview);
   control.addEventListener("change", renderPreview);
@@ -312,6 +330,9 @@ form.addEventListener("submit", async (event) => {
     await refreshQueue();
   } catch (error) {
     showFormError(messageOf(error));
+    // Disabling the submit button drops its focus. Return to the links so
+    // keyboard users can correct the rejected draft without finding it again.
+    urlInput.focus();
   } finally {
     startButton.disabled = false;
     renderPreview();

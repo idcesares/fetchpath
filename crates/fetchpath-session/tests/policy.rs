@@ -41,9 +41,22 @@ fn helper() -> Principal {
     Principal::Agent(agent_name())
 }
 
+// Transfer fixtures use a tiny explicit reserve instead of the host drive's ratio.
+fn fixture_session(
+    path: PathBuf,
+    max_active: usize,
+    browser: Option<PathBuf>,
+) -> std::io::Result<Session> {
+    let session = Session::load_with_browser(path, max_active, browser)?;
+    let mut settings = session.settings();
+    settings.disk_reserve_bytes = 1;
+    session.update_settings(settings).unwrap();
+    Ok(session)
+}
+
 fn open(queue: &Path) -> Arc<Engine> {
     Engine::new(Arc::new(
-        Session::load_with_browser(queue.to_path_buf(), 3, None).unwrap(),
+        fixture_session(queue.to_path_buf(), 3, None).unwrap(),
     ))
 }
 
@@ -1641,7 +1654,7 @@ fn a_checksum_download_is_reused_from_the_cache_for_the_person_but_never_for_an_
     let dir = tempfile::tempdir().unwrap();
     let granted = dir.path().join("granted");
     std::fs::create_dir_all(&granted).unwrap();
-    let session = Session::load_with_browser(dir.path().join("queue-v1.json"), 3, None).unwrap();
+    let session = fixture_session(dir.path().join("queue-v1.json"), 3, None).unwrap();
     session.use_cache(dir.path().join("cache"));
     let engine = Engine::new(Arc::new(session));
     let (user, agent) = clients(&engine);

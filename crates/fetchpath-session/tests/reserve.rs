@@ -155,6 +155,7 @@ fn a_download_waits_for_room_and_starts_by_itself_when_there_is() {
 fn a_running_download_stops_at_the_reserve_and_finishes_once_there_is_room() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, client) = open(dir.path());
+    reserve(&client, 1);
     // About six seconds at full speed, of unknown size.
     let body: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 241) as u8).collect();
     let link = serve(body.clone(), false, Duration::from_millis(45));

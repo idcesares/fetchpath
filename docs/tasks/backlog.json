@@ -1292,7 +1292,7 @@
         "A08"
       ],
       "acceptance": "Clicking the toolbar button opens a popup that shows whether Fetchpath is connected and sends the current page; a page on a media site becomes a media download rather than a saved HTML page; sending a link starts Fetchpath if it is not running; verified in a real Chromium.",
-      "verification": "Implemented and unit-tested (five extension tests, two desktop tests): toolbar popup with connection probe, send page, recent sends and opt-in automatic capture with hand-back; page and video menus; host launches or wakes Fetchpath; captured media pages open Add download. Not yet exercised in a real Chromium, which is what remains before done. Verified by the user in a real Chromium on 24 September 2026: popup connection status and send page, media page to video download, sent link starting a closed Fetchpath.",
+      "verification": "Implemented and unit-tested (five extension tests, two desktop tests): toolbar popup with connection probe, send page, recent sends and opt-in automatic capture with hand-back; page and video menus; host launches or wakes Fetchpath; captured media pages open Add download. Verified by the user in a real Chromium on 24 September 2026: popup connection status and send page, media page to video download, sent link starting a closed Fetchpath.",
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
       ],
@@ -3286,6 +3286,77 @@
       "verification": "Update the release candidate record in place with the tested revision, artifact and commands/results; dependency advisory and secret checks; workspace tests, clippy, formatting, frontend and web builds, repository tests and licenses; clean Windows installer, public 0.2.0 upgrade, agent installer and sign-in harnesses. Confirm CI on the merged revision, version consistency, release assets and checksum integrity of the public download.",
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-106",
+      "title": "Restore the post-0.3.0 local development baseline",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-105"
+      ],
+      "status": "done",
+      "owner": "codex (lead; baseline and local acceptance)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "docs/tasks/backlog.json",
+        "CONTRIBUTING.md",
+        "docs/development/README.md",
+        "docs/development/FIELD-FEEDBACK.md",
+        "docs/development/WEB-UI.md",
+        "docs/development/WORKFLOW.md",
+        "docs/development/LOCAL-QUALITY.md",
+        "apps/cli/tests",
+        "crates/fetchpath-session/tests",
+        "crates/fetchpath-session/src/lib.rs",
+        "apps/desktop/src-tauri/tests/engine.rs"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Build the required native binaries and desktop/web bundles from the locked dependencies; establish current repository and Rust test/static-check results; reconcile stale development status without rewriting historical release evidence.",
+      "verification": "Run locked workspace build/tests, fmt, strict clippy, desktop/web builds, Node checks and backlog validation; record actual results and remaining environmental limitations.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-107",
+      "title": "Verify and repair local web and download recovery journeys",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-105"
+      ],
+      "status": "done",
+      "owner": "codex (lead; isolated local UX acceptance)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop/src",
+        "apps/cli/tests",
+        "tests/compatibility",
+        "docs/development/WEB-UI.md",
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/development/DESKTOP-QUEUE-RECOVERY.md",
+        "docs/tasks/backlog.json",
+        "apps/desktop/web.html",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Exercise the awaiting-approval local web view in a real browser, modal announcements and keyboard recovery, browser capture, interrupted downloads, disk reserve and expired links using isolated test data. Repair reproducible local UX defects; preserve security and persistence contracts and owner-deferred remote/power-loss work.",
+      "verification": "Use a scratch engine and deterministic fixtures, real-browser observations for web acceptance, and relevant behavioral regressions for repairs. Record limitations precisely; independent strong review is required if repairs cross protected boundaries.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md",
+        "docs/development/WEB-UI.md"
       ],
       "blockedReason": null
     }

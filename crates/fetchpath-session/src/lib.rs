@@ -696,6 +696,8 @@ impl Session {
     fn in_memory(max_active: usize) -> Self {
         let mut stored = Settings {
             max_active_downloads: max_active,
+            // Tiny fixtures must not depend on the host drive's free-space ratio.
+            disk_reserve_bytes: 1,
             ..Settings::default()
         };
         stored.clamp();
@@ -5400,6 +5402,9 @@ mod tests {
 
         let waiting_id = {
             let jobs = Session::load(state_path.clone(), 1).unwrap();
+            let mut settings = jobs.settings();
+            settings.disk_reserve_bytes = 1;
+            jobs.update_settings(settings).unwrap();
             let created = jobs
                 .enqueue(vec![JobDraft {
                     checksum: None,
@@ -5707,6 +5712,9 @@ mod tests {
 
         let jobs =
             Session::load_with_browser(state_path.clone(), 1, Some(download_dir.clone())).unwrap();
+        let mut settings = jobs.settings();
+        settings.disk_reserve_bytes = 1;
+        jobs.update_settings(settings).unwrap();
         let queued = jobs.list().unwrap();
         assert_eq!(queued.len(), 1);
         let completed = wait_for_terminal(&jobs, &queued[0].job_id);

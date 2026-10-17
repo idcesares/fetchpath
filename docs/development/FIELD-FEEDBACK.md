@@ -45,7 +45,7 @@ back to a file with its own name; `https://example.com/` stayed a file. Two
 defects found on the way and fixed: the file name suggested for a file survived
 the switch to video, and content showed beneath the dialog's pinned buttons.
 
-## FP-042 — browser capture from the toolbar (in progress)
+## FP-042 — browser capture from the toolbar
 
 The toolbar button did nothing: the extension had no popup and acted only from
 a right-click menu nobody was told about. It now has a popup that probes the
@@ -64,8 +64,9 @@ being saved as its HTML.
 Covered by tests: five new extension tests (automatic capture off by default,
 hand-off, hand-back on failure, no prompt without site permission, `blob:`
 fallback) and two desktop tests (a captured YouTube page goes to review, and
-page-versus-file classification). **Not yet run in a real Chromium**; that is
-what keeps FP-042 in progress.
+page-versus-file classification). The owner verified it in real Chromium on 24 September 2026: popup connection
+status and send page, media page to video download, and a sent link starting
+a closed Fetchpath (FP-042 backlog verification).
 
 ## Checks
 

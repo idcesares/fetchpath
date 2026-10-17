@@ -22,7 +22,21 @@ use std::time::{Duration, Instant};
 
 const EXE: &str = env!("CARGO_BIN_EXE_fetchpath");
 
+fn transfer_settings(home: &EngineHome) {
+    let settings = home.dir().join("settings-v1.json");
+    if !settings.exists() {
+        // Keep transfer fixtures independent of the host drive's automatic reserve.
+        std::fs::create_dir_all(home.dir()).unwrap();
+        std::fs::write(
+            settings,
+            serde_json::json!({ "schemaVersion": 1, "diskReserveBytes": 1 }).to_string(),
+        )
+        .unwrap();
+    }
+}
+
 fn engine(home: &EngineHome, grace_ms: u64) -> Child {
+    transfer_settings(home);
     Process::new(EXE)
         .args(["engine", "--idle-grace-ms", &grace_ms.to_string()])
         .env("FETCHPATH_APP_DATA_DIR", home.dir())
@@ -576,6 +590,7 @@ fn stopping_for_an_update_waits_for_the_engine_and_holds_new_ones_off() {
     let installed = dir.path().join("fetchpath.exe");
     std::fs::copy(EXE, &installed).unwrap();
 
+    transfer_settings(&home);
     let mut running = Process::new(&installed)
         .args(["engine", "--idle-grace-ms", "30000"])
         .env("FETCHPATH_APP_DATA_DIR", home.dir())

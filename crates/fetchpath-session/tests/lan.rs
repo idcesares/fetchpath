@@ -15,12 +15,25 @@ use fetchpath_session::Session;
 use fetchpath_session::engine::{Engine, InProcessClient};
 use sha2::Digest;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// Transfer fixtures use a tiny explicit reserve instead of the host drive's ratio.
+fn fixture_session(
+    path: PathBuf,
+    max_active: usize,
+    browser: Option<PathBuf>,
+) -> std::io::Result<Session> {
+    let session = Session::load_with_browser(path, max_active, browser)?;
+    let mut settings = session.settings();
+    settings.disk_reserve_bytes = 1;
+    session.update_settings(settings).unwrap();
+    Ok(session)
+}
+
 fn engine(dir: &Path) -> Arc<Engine> {
-    let session = Session::load_with_browser(dir.join("queue-v1.json"), 3, None).unwrap();
+    let session = fixture_session(dir.join("queue-v1.json"), 3, None).unwrap();
     session.use_cache(dir.join("cache"));
     session.use_lan(dir.join("lan"), dir.join("cache"));
     Engine::new(Arc::new(session))

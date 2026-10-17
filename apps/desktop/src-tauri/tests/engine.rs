@@ -199,6 +199,13 @@ fn job(link: &EngineLink) -> JobSnapshot {
 fn the_window_follows_the_engine_and_recovers_when_it_is_killed() {
     let dir = tempfile::tempdir().unwrap();
     let home = EngineHome::at(dir.path().join("data"));
+    // Keep transfer fixtures independent of the host drive's automatic reserve.
+    std::fs::create_dir_all(home.dir()).unwrap();
+    std::fs::write(
+        home.dir().join("settings-v1.json"),
+        serde_json::json!({ "schemaVersion": 1, "diskReserveBytes": 1 }).to_string(),
+    )
+    .unwrap();
     let exe = engine_exe();
     let body: Vec<u8> = (0..4_000_000_u32)
         .map(|index| (index % 251) as u8)

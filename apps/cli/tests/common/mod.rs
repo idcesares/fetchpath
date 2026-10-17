@@ -32,6 +32,8 @@ impl Home {
             data.join("settings-v1.json"),
             serde_json::json!({
                 "schemaVersion": 1,
+                // Tiny fixtures must not depend on the host drive's free-space ratio.
+                "diskReserveBytes": 1,
                 "defaultDestinationDir": dir.path().join("profile").join("Downloads"),
             })
             .to_string(),

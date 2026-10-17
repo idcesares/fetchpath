@@ -467,9 +467,13 @@ export function createQueueView(ctx: QueueContext): QueueView {
       (job) => job.state === "awaiting_approval" && observedStates.get(job.jobId) !== "awaiting_approval",
     );
     if (asking.length === 1) {
-      ctx.announceProblem(`${approvalText(asking[0])} Approve or deny it in the queue.`);
+      ctx.announceProblem(`${approvalText(asking[0])} ${ctx.capabilities.approve
+        ? "Approve or deny it in the queue."
+        : "Approve or deny it in Fetchpath on this PC."}`);
     } else if (asking.length > 1) {
-      ctx.announceProblem(`${asking.length} agent requests wait for your approval. Approve or deny them in the queue.`);
+      ctx.announceProblem(`${asking.length} agent requests wait for your approval. ${ctx.capabilities.approve
+        ? "Approve or deny them in the queue."
+        : "Approve or deny them in Fetchpath on this PC."}`);
     }
     for (const job of jobs) {
       next.set(job.jobId, job.state);
@@ -644,6 +648,15 @@ export function createQueueView(ctx: QueueContext): QueueView {
     } finally {
       button.disabled = false;
       if (button.isConnected) button.focus({ preventScroll: true });
+      else if (document.activeElement === document.body) {
+        // The action can replace its own row (Pause becomes Resume). Disabling
+        // the old button already released focus before renderQueue could save
+        // it, so recover on the updated row or the stable queue heading.
+        const next = jobList.querySelector<HTMLButtonElement>(
+          `button[data-job-id="${CSS.escape(jobId)}"]:not(:disabled)`,
+        );
+        (next ?? queueTitle).focus({ preventScroll: true });
+      }
     }
 
   });

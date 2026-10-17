@@ -80,6 +80,8 @@ Every file an agent may read costs tokens in every later session, so:
 
 `node tools/tasks.mjs check` validates the backlog and its evidence paths.
 `node --test` runs the repository, fixture, extension and installer tests.
-Rust and desktop checks are in [CONTRIBUTING.md](../../CONTRIBUTING.md); CI
-runs only the Node checks. CI cannot be called passed until a remote run
+Rust and desktop checks are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+[CI](../../.github/workflows/checks.yml) also builds both frontends and runs
+Rust tests, strict clippy, formatting, the isolated helper-policy regression,
+and dependency/notice checks. CI cannot be called passed until a remote run
 occurs.
