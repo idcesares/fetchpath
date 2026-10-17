@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 // under `tauri build` (STATIC_VCRUNTIME), so a plain `cargo build` of them is
 // not representative and they are not checked here.
 const shipped = [
+  fileURLToPath(new URL('../../target/release/fetchpath-startup.exe', import.meta.url)),
+  fileURLToPath(new URL('../../apps/desktop/src-tauri/binaries/fetchpath-startup-x86_64-pc-windows-msvc.exe', import.meta.url)),
   fileURLToPath(new URL('../../target/release/fetchpath.exe', import.meta.url)),
   fileURLToPath(new URL('../../apps/desktop/src-tauri/binaries/fetchpath-x86_64-pc-windows-msvc.exe', import.meta.url)),
   fileURLToPath(new URL('../../target/release/fetchpath-torrent-helper.exe', import.meta.url)),

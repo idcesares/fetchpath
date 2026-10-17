@@ -157,6 +157,7 @@ FunctionEnd
   Push $R9
   ReadRegStr $R9 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Fetchpath engine"
   ${If} $R9 == '"$INSTDIR\fetchpath.exe" engine'
+  ${OrIf} $R9 == '"$INSTDIR\fetchpath-startup.exe"'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Fetchpath engine"
   ${EndIf}
   Pop $R9

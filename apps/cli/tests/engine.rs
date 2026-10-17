@@ -767,3 +767,63 @@ fn an_always_on_engine_stays_up_until_it_is_turned_off() {
     set(false);
     assert_eq!(exited_within(&mut child, Duration::from_secs(10)), Some(0));
 }
+
+// Explorer/Windows Run launches the windowless sibling, not the console CLI.
+#[test]
+fn sign_in_launcher_is_windowless_and_reuses_the_engine() {
+    let startup = env!("CARGO_BIN_EXE_fetchpath-startup");
+    for (exe, expected) in [(startup, 2u16), (EXE, 3u16)] {
+        let image = std::fs::read(exe).unwrap();
+        let pe = u32::from_le_bytes(image[0x3c..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&image[pe..pe + 4], b"PE\0\0");
+        let subsystem = u16::from_le_bytes(image[pe + 24 + 68..pe + 24 + 70].try_into().unwrap());
+        assert_eq!(
+            subsystem, expected,
+            "{exe}: GUI startup and console CLI must stay distinct"
+        );
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    let start = || {
+        // No CREATE_NO_WINDOW here: the executable itself must be windowless.
+        let mut child = Process::new(startup)
+            .env("FETCHPATH_APP_DATA_DIR", home.dir())
+            .spawn()
+            .unwrap();
+        exited_within(&mut child, Duration::from_secs(20)).expect("startup launcher did not exit")
+    };
+    assert_eq!(start(), 0);
+    let client = attached(&home);
+    let status = || {
+        client
+            .send(&ClientId::random(), Command::EngineStatus)
+            .unwrap()
+    };
+    let before = match status() {
+        CommandResult::EngineStatus { status } => status,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(start(), 0);
+    let after = match status() {
+        CommandResult::EngineStatus { status } => status,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(before.started_at, after.started_at);
+    assert_eq!(before.instance, after.instance);
+    client
+        .send(&ClientId::random(), Command::EngineShutdown)
+        .unwrap();
+}
+
+#[test]
+fn sign_in_launcher_respects_the_installer_update_hold() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = EngineHome::at(dir.path().to_path_buf());
+    home.hold_for_update().unwrap();
+    let mut child = Process::new(env!("CARGO_BIN_EXE_fetchpath-startup"))
+        .env("FETCHPATH_APP_DATA_DIR", home.dir())
+        .spawn()
+        .unwrap();
+    assert_eq!(exited_within(&mut child, Duration::from_secs(15)), Some(1));
+    assert!(!home.endpoint_path().exists());
+}

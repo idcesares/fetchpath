@@ -17,7 +17,10 @@ fn wide(text: &str) -> Vec<u16> {
 
 /// The command Windows runs at sign-in.
 pub fn command_line(exe: &std::path::Path) -> String {
-    format!("\"{}\" engine", exe.display())
+    format!(
+        "\"{}\"",
+        exe.with_file_name("fetchpath-startup.exe").display()
+    )
 }
 
 /// Adds or removes the Run value. Failures are reported, not fatal: the
@@ -55,12 +58,12 @@ pub fn apply(enabled: bool) {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_sign_in_command_quotes_the_path_and_starts_the_engine() {
+    fn the_sign_in_command_quotes_the_sibling_windowless_launcher() {
         assert_eq!(
             super::command_line(std::path::Path::new(
                 r"C:\Program Files\Fetchpath\fetchpath.exe"
             )),
-            r#""C:\Program Files\Fetchpath\fetchpath.exe" engine"#
+            r#""C:\Program Files\Fetchpath\fetchpath-startup.exe""#
         );
     }
 }

@@ -56,6 +56,16 @@ test('the update hold is the one the engine honors, and setup lifts it', () => {
 
 test('uninstall removes the sign-in start only when it points at this install', () => {
   const body = macro('FETCHPATH_REMOVE_SIGN_IN').join('\n');
-  assert.match(body, /\$\{If\} \$R9 == '"\$INSTDIR\\fetchpath\.exe" engine'\n\s*DeleteRegValue HKCU/);
+  assert.match(body, /\$\{If\} \$R9 == '"\$INSTDIR\\fetchpath\.exe" engine'\n\s*\$\{OrIf\} \$R9 == '"\$INSTDIR\\fetchpath-startup\.exe"'\n\s*DeleteRegValue HKCU/);
   assert.ok(macro('NSIS_HOOK_POSTUNINSTALL').includes('!insertmacro FETCHPATH_REMOVE_SIGN_IN'));
+});
+
+test('the windowless sign-in launcher ships as a Core sidecar', () => {
+  const release = JSON.parse(readFileSync(new URL('../../apps/desktop/src-tauri/tauri.release.conf.json', import.meta.url), 'utf8'));
+  assert.ok(release.bundle.externalBin.includes('binaries/fetchpath-startup'));
+  const stage = readFileSync(new URL('../../apps/desktop/src-tauri/tools/stage-cli.mjs', import.meta.url), 'utf8');
+  assert.ok(stage.includes("'fetchpath-startup.exe'"));
+  const nsi = readFileSync(new URL('../../apps/desktop/src-tauri/installer.nsi', import.meta.url), 'utf8');
+  // Sidecars other than the browser and torrent helpers belong to mandatory Core.
+  assert.match(nsi, /!else\n\s+!define FP_BIN_OWNER "core"/);
 });

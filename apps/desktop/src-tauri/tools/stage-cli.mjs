@@ -44,3 +44,8 @@ const torrentBuilt = path.join(root, 'target', 'release', 'fetchpath-torrent-hel
 const torrentStaged = path.join(stagedDir, `fetchpath-torrent-helper-${triple}.exe`);
 copyFileSync(torrentBuilt, torrentStaged);
 console.log(`staged ${path.relative(root, torrentStaged)}`);
+
+// Core includes the windowless sign-in launcher even without Desktop or Terminal.
+const startupStaged = path.join(stagedDir, `fetchpath-startup-${triple}.exe`);
+copyFileSync(path.join(root, 'target', 'release', 'fetchpath-startup.exe'), startupStaged);
+console.log(`staged ${path.relative(root, startupStaged)}`);

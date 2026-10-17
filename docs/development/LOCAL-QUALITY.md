@@ -49,6 +49,25 @@ The query-free recovery fixture resumed with nonzero Range offsets and published
 A query-bearing link instead required a refreshed source after restart, as
 intended because private query values are not saved.
 
+## Windows sign-in (FP-108)
+
+Windows Run previously invoked the console executable as `fetchpath.exe engine`,
+leaving its blank console open for the engine lifetime. Sign-in now invokes
+`fetchpath-startup.exe`, a Windows GUI executable that uses the existing
+windowless launch/attach path. Core always packages it, including installs
+without Desktop; normal CLI use stays a console application. Engine startup
+refreshes opted-in legacy registrations. Uninstall recognizes both commands
+only when they name this install.
+
+Validation: 120 CLI unit tests and 13 engine lifecycle tests passed, including
+GUI/console PE subsystem checks, launcher start/reattach with stable instance
+and start time, and refusal during an installer update hold. Installer checks passed (49 passed, 7 skips for unavailable release artifacts
+and Tauri CLI); repository structure checks passed (7). Strict CLI/engine
+clippy, workspace formatting, backlog validation and whitespace checks passed.
+Independent GPT-6 Astra review found no actionable issues.
+No installed user copy was changed; a rebuilt installer is needed to deploy
+this repair. No physical reboot or installer rebuild was performed.
+
 ## Limits
 
 No installer rebuild, physical reboot, power-loss test, new media-site corpus,

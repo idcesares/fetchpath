@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-08",
+  "updated": "2026-10-17",
   "tasks": [
     {
       "id": "FP-001",
@@ -3357,6 +3357,38 @@
       "evidence": [
         "docs/development/LOCAL-QUALITY.md",
         "docs/development/WEB-UI.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-108",
+      "title": "Start the engine at Windows sign-in without a terminal window",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-107"
+      ],
+      "status": "done",
+      "owner": "codex (lead; startup launcher, registration and packaging)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps/cli",
+        "apps/desktop/src-tauri/tools/stage-cli.mjs",
+        "apps/desktop/src-tauri/tauri.release.conf.json",
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "tests/installer",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "Opt-in Windows sign-in starts the existing engine with no console window, including Terminal-only installs. Normal CLI use, instance ownership and update holds remain unchanged. Uninstall removes only this installation startup entry, including legacy registrations.",
+      "verification": "Run isolated startup lifecycle and executable subsystem regressions, CLI engine tests, installer checks, formatting and backlog validation; independently review the registration and packaging boundary.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
     }
