@@ -79,3 +79,14 @@ the owner's prior real-Chromium verification remains historical evidence.
 Chrome accessibility-tree checks prove region placement and focus, not audible
 Narrator output. Edge/Firefox and theme/scaling observations remain the existing
 FP-104 evidence; they were not repeated here.
+
+## Field fixes (FP-109)
+
+Automatic capture now returns a cancelled download to the browser on any
+failure and when the host does not answer within 10 s. Settings > AI agents
+connects or disconnects Codex and Claude Code through `fetchpath agent-setup`.
+The first-run media step is hidden when helpers are found. The disk reserve
+accepts No limit (stored as 1 byte; `fetchpath settings disk-reserve-bytes
+off`), and a full drive says so. `tools/install/install.ps1` is the headless
+install. Checked: browser background tests, space/core/CLI unit tests, tsc,
+fmt. Not run: the script against a real release; a real-browser capture.

@@ -578,9 +578,15 @@ fn storage_error(store: &CheckpointStore, error: io::Error) -> DownloadError {
 }
 
 pub(crate) fn storage_detail(store: &CheckpointStore, error: io::Error) -> DownloadError {
+    let detail = if error.kind() == io::ErrorKind::StorageFull {
+        "the drive is full. Free some space or choose a folder on another drive, then retry;          the saved progress is kept"
+            .to_owned()
+    } else {
+        error.to_string()
+    };
     DownloadError::Storage {
         path: store.staging().to_path_buf(),
-        detail: error.to_string(),
+        detail,
         staging: store
             .staging()
             .exists()

@@ -203,6 +203,7 @@ const trayNote = required<HTMLParagraphElement>("tray-note");
 
 const onboarding = required<HTMLElement>("onboarding");
 const dismissOnboarding = required<HTMLButtonElement>("dismiss-onboarding");
+const onboardingMedia = required<HTMLElement>("onboarding-media");
 const onboardingOpenMedia = required<HTMLButtonElement>("onboarding-open-media");
 
 const statsPanel = required<HTMLElement>("stats-panel");
@@ -390,7 +391,7 @@ async function showSettings(category?: string): Promise<void> {
   if (category) settingsCategories.find((button) => button.dataset.settingsCategory === category)?.click();
   clearError(settingsError);
   openDialog(settingsDialog, settingsCategories.find((button) => button.getAttribute("aria-pressed") === "true") ?? settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache(), refreshLan()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshAgentHosts(), refreshRules(), refreshCache(), refreshLan()]);
 }
 
 /* Rules (FP-075) -------------------------------------------------------------
@@ -768,6 +769,72 @@ async function refreshAgents(): Promise<void> {
   } catch (error) {
     showError(settingsError, error);
   }
+}
+
+/* Connecting Codex and Claude Code, at install or any time after. */
+
+const agentHosts = required<HTMLElement>("agent-hosts");
+const AGENT_HOSTS = [
+  { key: "codex", id: "codex", label: "Codex" },
+  { key: "claude_code", id: "claude-code", label: "Claude Code" },
+] as const;
+
+interface AgentHostState {
+  available?: boolean;
+  registered?: boolean;
+  owned?: boolean;
+  connection?: string;
+}
+
+async function refreshAgentHosts(): Promise<void> {
+  let status: Record<string, AgentHostState> = {};
+  try {
+    status = JSON.parse(await invoke<string>("agent_host_setup", { action: "status" }));
+  } catch {
+    // No fetchpath command beside this copy (a development build): nothing to offer.
+    agentHosts.replaceChildren();
+    return;
+  }
+  agentHosts.replaceChildren(
+    ...AGENT_HOSTS.map((host) => {
+      const state = status[host.key] ?? {};
+      const row = document.createElement("div");
+      row.className = "agent-row";
+      const text = document.createElement("span");
+      const connected = state.registered === true && state.owned === true;
+      text.textContent = !state.available
+        ? `${host.label}: not found on this PC`
+        : connected
+          ? `${host.label}: connected. Restart it to use Fetchpath.`
+          : state.registered
+            ? `${host.label}: has its own fetchpath entry, left as it is`
+            : `${host.label}: not connected`;
+      row.append(text);
+      if (state.available && (connected || !state.registered)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary compact";
+        button.textContent = connected ? "Disconnect" : "Connect";
+        button.addEventListener("click", async () => {
+          clearError(settingsError);
+          button.disabled = true;
+          try {
+            await invoke("agent_host_setup", { action: connected ? "remove" : "add", host: host.id });
+            agentStatus(
+              connected
+                ? `${host.label} disconnected.`
+                : `${host.label} connected. It can download only into folders you grant.`,
+            );
+          } catch (error) {
+            showError(settingsError, error);
+          }
+          await refreshAgentHosts();
+        });
+        row.append(button);
+      }
+      return row;
+    }),
+  );
 }
 
 function agentStatus(message: string): void {
@@ -1202,12 +1269,16 @@ function applySettingsToForm(view: SettingsView): void {
   webUiInput.checked = settings.webUi === true;
   webUiOpen.disabled = !webUiInput.checked;
   webUiSignOut.disabled = !webUiInput.checked;
-  const reserveGib = Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB);
-  if (![...diskReserveSelect.options].some((option) => option.value === String(reserveGib))) {
+  // One byte is the engine's "no limit"; it would round to Automatic below.
+  const reserveChoice =
+    settings.diskReserveBytes === 1
+      ? "off"
+      : String(Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB));
+  if (![...diskReserveSelect.options].some((option) => option.value === reserveChoice)) {
     // A value set elsewhere, such as from the command line, is shown as it is.
-    diskReserveSelect.add(new Option(`${reserveGib} GB`, String(reserveGib)));
+    diskReserveSelect.add(new Option(`${reserveChoice} GB`, reserveChoice));
   }
-  diskReserveSelect.value = String(reserveGib);
+  diskReserveSelect.value = reserveChoice;
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
@@ -1276,7 +1347,7 @@ instanceNameInput.addEventListener("change", () =>
   void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
 );
 diskReserveSelect.addEventListener("change", () =>
-  void changeSetting({ diskReserveBytes: Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
+  void changeSetting({ diskReserveBytes: diskReserveSelect.value === "off" ? 1 : Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
 );
 hubModeInput.addEventListener("change", () =>
   void changeSetting(
@@ -1449,6 +1520,8 @@ function updateMediaAvailability(): void {
   const ready = toolsStatus?.ready ?? false;
   mediaSetupNeeded.hidden = ready;
   mediaInspectControls.hidden = !ready;
+  // Tools found on this PC (or already set up) need no first-run prompt.
+  onboardingMedia.hidden = ready;
 }
 
 /* Composer ---------------------------------------------------------------- */

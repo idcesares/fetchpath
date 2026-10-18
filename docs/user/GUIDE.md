@@ -114,6 +114,13 @@ keeps working under the same grants after you deselect AI agents or Terminal;
 revoke it with `fetchpath agents revoke`. One configured with the bare
 `fetchpath` command stops starting once the PATH entry is gone.
 
+**Headless installation.** For a remote PC or an agent, `tools/install/install.ps1`
+downloads a release, checks it against `SHA256SUMS.txt`, and installs silently with no
+desktop window by default (`-Components cli,mcp`), optionally connecting
+`-AgentHosts codex,claude-code` and setting up `-MediaTools`. `tools/install/SKILL.md`
+is the same steps as an agent skill. Connecting a host later needs no reinstall:
+`fetchpath agent-setup add codex`, or Settings > AI agents.
+
 **Quiet installation.** These switches go after the setup file name:
 
 | Switch | Effect |
@@ -429,7 +436,7 @@ on GitHub.
 | Setting | What it does |
 | --- | --- |
 | Downloads at the same time | 1 to 8. More at once isn't always faster. |
-| Keep free on every drive | Automatic reserves the larger of 5 GiB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts when there is room; a running file download stops at its saved progress and continues later. Video, audio and torrents are checked at start only. A drive whose free space cannot be measured has no reserve enforcement. |
+| Keep free on every drive | **No limit** keeps nothing aside; a download then waits only if the drive truly has no room. Automatic reserves the larger of 5 GiB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts when there is room; a running file download stops at its saved progress and continues later. Video, audio and torrents are checked at start only. A drive whose free space cannot be measured has no reserve enforcement. |
 | Name and Always on | The name this Fetchpath shows everywhere, and **Always on**: keep it running in the background with no window open, start it when you sign in, and keep the computer awake while downloads run. It is not a Windows service: after a restart it runs only once you sign in. |
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |

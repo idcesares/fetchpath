@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Browser capture hands a download back to the browser on any failure or a silent host.
+- Connect Codex or Claude Code after install in Settings > AI agents.
+- The first-run banner no longer asks for media tools that are already found.
+- Disk reserve: **No limit** option; a full drive now says so plainly.
+- Headless install for remote PCs and agents: `tools/install/install.ps1`.
+
 ## 0.3.0 (9 October 2026)
 
 ### Added

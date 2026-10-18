@@ -3391,6 +3391,40 @@
         "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-109",
+      "title": "Field fixes: capture hand-back, agent connection after install, no-limit disk reserve, headless install",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-108"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "extensions/browser",
+        "apps/desktop",
+        "apps/cli",
+        "crates/fetchpath-core",
+        "crates/fetchpath-session",
+        "tools/install",
+        "docs/user",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "A browser download taken by automatic capture always returns to the browser if Fetchpath cannot take it, including thrown errors and a silent host. Codex and Claude Code can be connected or disconnected after install from Settings. The first-run banner omits the media step when helpers are already found. The disk reserve has a No limit choice, and a full drive reports a plain-language cause. A headless script installs and optionally connects agents and media tools with no window.",
+      "verification": "Browser background tests, session space tests, CLI and core unit tests, TypeScript check, cargo fmt and check; the PowerShell script parses. Not run: the script against a real release, and a real-browser capture.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
     }
   ]
 }

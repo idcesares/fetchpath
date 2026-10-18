@@ -10,6 +10,10 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// The automatic reserve's floor: 5 GiB (decision O5).
 pub const AUTOMATIC_RESERVE_FLOOR: u64 = 5 * GIB;
 
+/// The "no limit" choice: a one-byte reserve, so Fetchpath leaves nothing
+/// aside and a download waits only when the drive truly has no room.
+pub const NO_RESERVE: u64 = 1;
+
 /// Space a stopped download of unknown size needs above the reserve before
 /// it starts again, so it does not stop and start at the boundary.
 pub const RESTART_MARGIN: u64 = GIB / 2;

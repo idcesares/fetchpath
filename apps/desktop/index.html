@@ -78,7 +78,7 @@
             <strong>Paste a link anywhere</strong>
             <span>or choose Add download. Files go to your Downloads folder and never overwrite one already there.</span>
           </li>
-          <li>
+          <li id="onboarding-media">
             <strong>Video and audio</strong>
             <span id="onboarding-media-note">need <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath can set them up for you.</span>
             <button id="onboarding-open-media" class="secondary compact" type="button">Set up media tools</button>
@@ -415,6 +415,7 @@
             Agents such as Claude Code download through <code>fetchpath mcp --agent NAME</code>. What an agent saves
             into the folders you give it starts at once; anything else waits for you in the queue.
           </p>
+          <div id="agent-hosts" class="agents-list" aria-live="polite"></div>
           <div id="agents-list" class="agents-list"></div>
           <label for="agent-new-name">Add an agent by the name it uses</label>
           <div class="destination-row">
@@ -556,6 +557,7 @@
           <label for="setting-disk-reserve">Keep free on every drive</label>
           <select id="setting-disk-reserve" aria-describedby="disk-reserve-note">
             <option value="0">Automatic (5 GB or 5 % of the drive, whichever is larger)</option>
+            <option value="off">No limit (use all free space)</option>
             <option value="1">1 GB</option>
             <option value="2">2 GB</option>
             <option value="5">5 GB</option>
@@ -564,7 +566,7 @@
             <option value="50">50 GB</option>
             <option value="100">100 GB</option>
           </select>
-          <p id="disk-reserve-note" class="field-note">Downloads never fill a drive past this. One that would waits, shown as Waiting for disk space, and starts by itself when there is room.</p>
+          <p id="disk-reserve-note" class="field-note">Downloads never fill a drive past this, unless you choose No limit. One that would waits, shown as Waiting for disk space, and starts by itself when there is room.</p>
           <p id="hub-mode-note" class="field-note">Fetchpath keeps running with no window open, starts when you sign in to Windows, and keeps the computer awake while downloads run, not while idle. It is not a Windows service: after a restart it runs again only once you sign in.</p>
         </fieldset>
 

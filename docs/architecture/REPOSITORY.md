@@ -47,6 +47,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | `tools/bench` / `tests/bench` | Local fixture server, paired download runner (including isolated Chrome native downloads in `tools/bench/chrome-download.mjs`), protocol matrix, fixture tests; provider, chunking and delta comparisons (FP-022, FP-023) |
 | `tools/sync-design-tokens.mjs` | Copies the design tokens into the browser extension (`--check` reports drift) |
 | `tools/licenses` | Third-party notice generation from `Cargo.lock` |
+| `tools/install` | Headless PowerShell installer and the agent skill that drives it |
 | `tools/media-tools` | Pinning media helpers against their publishers' checksums |
 | `tests/installer` | Installer PATH, runtime-import, engine-stop, data-removal, template-fork and component-selection checks |
 | `tests/compatibility` | On-machine browser/media/protocol/Windows harnesses with explicit supported/partial/unsupported/untested states |

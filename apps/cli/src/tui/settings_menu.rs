@@ -35,7 +35,9 @@ enum Field {
 }
 
 /// Disk reserves offered, in GiB; 0 is automatic.
-const RESERVES: &[u64] = &[0, 1, 2, 5, 10, 20, 50, 100];
+/// Choices in GB; `NO_LIMIT` stands for the engine's one-byte "no limit".
+const NO_LIMIT: u64 = u64::MAX;
+const RESERVES: &[u64] = &[0, 1, 2, 5, 10, 20, 50, 100, NO_LIMIT];
 const GIB: u64 = 1024 * 1024 * 1024;
 
 /// Delays offered for the first retry, in seconds.
@@ -167,6 +169,7 @@ impl SettingsMenu {
                     "Keep free on every drive",
                     match s.disk_reserve_bytes.unwrap_or(0) {
                         0 => "automatic (5 GB or 5 %)".to_owned(),
+                        1 => "no limit".to_owned(),
                         bytes => format!("{} GB", bytes / GIB),
                     },
                     "←/→ to change; downloads wait rather than fill a drive past it",
@@ -295,13 +298,18 @@ impl SettingsMenu {
                     DELAYS[(at + by).clamp(0, DELAYS.len() as i64 - 1) as usize];
             }),
             Field::DiskReserve => self.apply(engine, |s| {
-                let gib = s.disk_reserve_bytes.unwrap_or(0) / GIB;
+                let bytes = s.disk_reserve_bytes.unwrap_or(0);
+                let gib = if bytes == 1 { NO_LIMIT } else { bytes / GIB };
                 let at = RESERVES
                     .iter()
                     .position(|reserve| *reserve >= gib)
                     .unwrap_or(RESERVES.len() - 1) as i64;
-                s.disk_reserve_bytes =
-                    Some(RESERVES[(at + by).clamp(0, RESERVES.len() as i64 - 1) as usize] * GIB);
+                s.disk_reserve_bytes = Some(
+                    match RESERVES[(at + by).clamp(0, RESERVES.len() as i64 - 1) as usize] {
+                        NO_LIMIT => 1,
+                        gib => gib * GIB,
+                    },
+                );
             }),
             Field::Theme => self.apply(engine, |s| {
                 let themes = [

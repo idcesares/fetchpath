@@ -55,6 +55,7 @@ function harness() {
     browser,
     crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000001" },
     setTimeout() {},
+    clearTimeout() {},
   });
   vm.runInContext(readFileSync(new URL("../policy.js", import.meta.url), "utf8"), context);
   vm.runInContext(readFileSync(new URL("../background.js", import.meta.url), "utf8"), context);
@@ -120,6 +121,7 @@ function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
     browser,
     crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000002" },
     setTimeout() {},
+    clearTimeout() {},
   });
   vm.runInContext(readFileSync(new URL("../policy.js", import.meta.url), "utf8"), context);
   vm.runInContext(readFileSync(new URL("../background.js", import.meta.url), "utf8"), context);

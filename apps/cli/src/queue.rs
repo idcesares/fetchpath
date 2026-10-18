@@ -1382,14 +1382,16 @@ fn setting_value(
                 Value::String(text.to_owned())
             }
         }
-        // The disk reserve: "auto", or a size such as 10GB.
+        // The disk reserve: "auto", "off" (no limit), or a size such as 10GB.
         _ if key == "disk_reserve_bytes" => {
             if text.eq_ignore_ascii_case("auto") {
                 Value::Number(0.into())
+            } else if text.eq_ignore_ascii_case("off") || text.eq_ignore_ascii_case("none") {
+                Value::Number(1.into())
             } else {
                 Value::Number(
                     crate::rules::size(text)
-                        .map_err(|_| wrong("auto or a size such as 10GB"))?
+                        .map_err(|_| wrong("auto, off or a size such as 10GB"))?
                         .into(),
                 )
             }

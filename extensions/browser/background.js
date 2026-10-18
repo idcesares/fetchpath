@@ -62,10 +62,24 @@ async function setBadge(text, color) {
   setTimeout(() => void browserApi.action.setBadgeText({ text: "" }), 2500);
 }
 
+// The host answers within about 3 s even while it starts the engine. A host
+// that never answers must not leave a cancelled browser download unrecovered.
+const HOST_TIMEOUT_MS = 10000;
+
+function sendToHost(message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("native host timed out")), HOST_TIMEOUT_MS);
+  });
+  return Promise.race([browserApi.runtime.sendNativeMessage(HOST_NAME, message), timeout]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
 /** Asks the Fetchpath host whether it is installed and answering. */
 async function probe() {
   try {
-    const response = await browserApi.runtime.sendNativeMessage(HOST_NAME, {
+    const response = await sendToHost({
       type: "probe",
       schema_version: SCHEMA_VERSION,
     });
@@ -120,7 +134,7 @@ async function sendLink(rawUrl, tab, { prompt = true } = {}) {
 
   let response;
   try {
-    response = await browserApi.runtime.sendNativeMessage(HOST_NAME, request);
+    response = await sendToHost(request);
   } catch (error) {
     response = { accepted: false, reason: "native_host_unavailable" };
     await recordEvent({
@@ -171,7 +185,13 @@ async function onDownloadCreated(item) {
 
   await browserApi.downloads.cancel(item.id);
   await browserApi.downloads.erase({ id: item.id });
-  const response = await sendLink(rawUrl, { url: item.referrer || null }, { prompt: false });
+  let response;
+  try {
+    response = await sendLink(rawUrl, { url: item.referrer || null }, { prompt: false });
+  } catch (error) {
+    // Any failure after the cancel returns the download to the browser.
+    response = { accepted: false, reason: "capture_failed" };
+  }
   if (response?.accepted !== true) {
     handingBack.add(rawUrl);
     await browserApi.downloads.download({ url: rawUrl });
