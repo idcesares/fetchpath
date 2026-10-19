@@ -3520,6 +3520,33 @@
         "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-113",
+      "title": "0.4.0 release gate",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-112"
+      ],
+      "status": "blocked",
+      "owner": "claude (lead); owner publishes",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "docs/development/RELEASE-CANDIDATE.md",
+        "CHANGELOG.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "The 0.4.0 installer is built, installed clean and as an upgrade over 0.3.0, and the desktop and web UI run with the tightened policy. CI passes on the release commit. The owner tags and publishes.",
+      "verification": "Workspace, clippy, fmt, node, extension, tsc and vite checks passed; see RELEASE-CANDIDATE.md for what was not run.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
+      "blockedReason": "The release build was stopped twice by low memory on the build PC; the installer, install checks and CI are pending. Next: free memory, run `corepack pnpm --dir apps/desktop release`, install with tools/install/install.ps1 -SetupFile, load the web UI, then push and open the PR."
     }
   ]
 }
