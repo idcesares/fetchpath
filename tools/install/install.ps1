@@ -43,12 +43,14 @@ $repo = 'idcesares/fetchpath'
 # Not Write-Error: with ErrorActionPreference=Stop it would throw and lose the exit code.
 function Fail($message, $code = 1) { [Console]::Error.WriteLine("fetchpath install: $message"); exit $code }
 
-if ($Components -notmatch '^(full|[a-z]+(,[a-z]+)*)$') { Fail 'Components must be names such as cli,mcp.' 2 }
+if ($Components -notmatch '^(full|[a-z]+(,[a-z]+)*)\z') { Fail 'Components must be names such as cli,mcp.' 2 }
 if ($AgentHosts.Count -gt 0 -and $Components -ne 'full' -and $Components -notmatch '\bmcp\b') {
   Fail '-AgentHosts needs the mcp component.' 2
 }
-if ($Version -ne 'latest' -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[\w.]+)?$') { Fail 'Version must look like v0.3.0.' 2 }
-if ($Sha256 -and $Sha256 -notmatch '^[0-9a-fA-F]{64}$') { Fail '-Sha256 must be 64 hex characters.' 2 }
+if ($Version -ne 'latest' -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[\w.]+)?\z') { Fail 'Version must look like v0.3.0.' 2 }
+if ($Sha256 -and $Sha256 -notmatch '^[0-9a-fA-F]{64}\z') { Fail '-Sha256 must be 64 hex characters.' 2 }
+if ($Sha256 -and -not $SetupFile) { Fail '-Sha256 is only used with -SetupFile; a download is checked against SHA256SUMS.txt.' 2 }
+if ($InstallDir -and ($InstallDir -match '["\r\n]' -or -not [IO.Path]::IsPathRooted($InstallDir))) { Fail '-InstallDir must be a full path without quotes.' 2 }
 foreach ($h in $AgentHosts) { if ($h -notin 'codex', 'claude-code') { Fail "Unknown agent host '$h'." 2 } }
 
 # Where Fetchpath is installed for this user: -InstallDir, else the folder setup
@@ -76,9 +78,13 @@ try {
     $api = if ($Version -eq 'latest') { "https://api.github.com/repos/$repo/releases/latest" }
            else { "https://api.github.com/repos/$repo/releases/tags/$Version" }
     $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'fetchpath-install' }
-    $exe = $release.assets | Where-Object { $_.name -like 'Fetchpath_*_x64-setup.exe' } | Select-Object -First 1
-    $sums = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
-    if (-not $exe -or -not $sums) { Fail "Release $($release.tag_name) has no setup or SHA256SUMS.txt." 3 }
+    $base = "https://github.com/$repo/releases/download/"
+    $exes = @($release.assets | Where-Object { $_.name -match '^Fetchpath_\d+\.\d+\.\d+(-[\w.]+)?_x64-setup\.exe\z' })
+    $sumsList = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' })
+    if ($exes.Count -ne 1 -or $sumsList.Count -ne 1) { Fail "Release $($release.tag_name) must have exactly one setup and one SHA256SUMS.txt." 3 }
+    $exe = $exes[0]
+    $sums = $sumsList[0]
+    if (-not $exe.browser_download_url.StartsWith($base) -or -not $sums.browser_download_url.StartsWith($base)) { Fail 'Release assets are not hosted by this repository.' 3 }
     $setup = Join-Path $work $exe.name
     $sumsFile = Join-Path $work 'SHA256SUMS.txt'
     Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $setup -UseBasicParsing
@@ -101,7 +107,7 @@ try {
   $process = Start-Process -FilePath $setup -ArgumentList $setupArgs -Wait -PassThru
   if ($process.ExitCode -ne 0) {
     $log = Join-Path $env:TEMP 'fetchpath-install.log'
-    $why = if (Test-Path $log) { (Get-Content $log -Tail 5) -join ' | ' } else { 'no log' }
+    $why = if ((Test-Path $log) -and (Get-Item $log).LastWriteTime -ge $process.StartTime) { (Get-Content $log -Tail 5) -join ' | ' } else { 'no log' }
     # 10: unusable /COMPONENTS; 11: agent connection failed (Fetchpath stays installed).
     Fail "Setup exited with code $($process.ExitCode). $why" $process.ExitCode
   }
@@ -110,10 +116,7 @@ try {
   $folder = Get-InstallFolder
   $cliPath = Join-Path $folder 'fetchpath.exe'
   if (-not (Test-Path -LiteralPath $cliPath)) {
-    $cli = Get-Command fetchpath -ErrorAction SilentlyContinue
-    if ($cli) { $cliPath = $cli.Source }
-  }
-  if (-not (Test-Path -LiteralPath $cliPath)) {
+    if ($MediaTools) { Fail 'Media tools need the cli component.' 2 }
     Write-Output "Installed. The fetchpath command is not part of these components."
   } else {
     if ($MediaTools) {

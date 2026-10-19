@@ -166,7 +166,7 @@ try {
             Assert-G2 (@($ranges | Where-Object { $_ -gt 0 }).Count -gt 0) 'No checkpoint range was resumed after sign-in'
             Start-Sleep -Seconds 65
             Assert-G2 (@(Engine-Process).Count -eq 1 -and @(Engine-Process)[0].ProcessId -eq $pidAfter) 'Automatically started engine exited after the last download and client'
-            $result=@{ passed=$true; environment='Windows Sandbox'; osBuild=[Environment]::OSVersion.Version.ToString(); version='0.3.0'; newLogonVerified=$true; desktopExitPassed=$before.desktopExitPassed; automaticEngineStart=$true; sameAutomaticEngineThroughIdle=$true; stableInstance=$true; resumedRange=($ranges | Measure-Object -Maximum).Maximum; savedBytes=$bytes.Length; bytesVerified=$true; idlePastDefaultGrace=$true; limitation='Actual guest sign-out/sign-in; no reboot or power-loss test' }
+            $result=@{ passed=$true; environment='Windows Sandbox'; osBuild=[Environment]::OSVersion.Version.ToString(); version='0.4.0'; newLogonVerified=$true; desktopExitPassed=$before.desktopExitPassed; automaticEngineStart=$true; sameAutomaticEngineThroughIdle=$true; stableInstance=$true; resumedRange=($ranges | Measure-Object -Maximum).Maximum; savedBytes=$bytes.Length; bytesVerified=$true; idlePastDefaultGrace=$true; limitation='Actual guest sign-out/sign-in; no reboot or power-loss test' }
             [IO.File]::WriteAllText("$out\result.json",($result | ConvertTo-Json))
             Invoke-Fp @('hub','off') | Out-Null
             Invoke-Fp @('engine','stop') | Out-Null

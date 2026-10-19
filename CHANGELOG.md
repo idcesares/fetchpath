@@ -1,15 +1,33 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (19 October 2026)
 
-- Browser capture hands a download back to the browser on any failure or a silent host.
+### Added
+
 - Connect Codex or Claude Code after install in Settings > AI agents.
+- Headless install for remote PCs and agents: `tools/install/install.ps1`
+  (checksum verified; `-Components`, `-AgentHosts`, `-MediaTools`).
+- Disk reserve: a **No limit** option (`fetchpath settings disk-reserve-bytes
+  off`; `auto` and sizes such as `10GB` now work from the command line).
+
+### Changed
+
+- A full drive is reported as `storage.disk_full` with a plain message, and the
+  download waits instead of being retried until space is freed.
 - The first-run banner no longer asks for media tools that are already found.
-- Disk reserve: **No limit** option; a full drive now says so plainly.
-- A full drive is reported as `storage.disk_full` with a plain message and is not retried until space is freed.
-- Headless install for remote PCs and agents: `tools/install/install.ps1`.
-- The popup's Send page no longer does nothing on the first click: a site permission prompt that closes the popup is finished by the extension, the button no longer waits on the connection check, and failures are shown.
-- An agent job is held for approval if its folder no longer lies inside the agent's grants when it starts. The web UI sends stricter response headers.
+- A page sent from the browser is saved with a readable `.html` name taken from
+  its title instead of an extensionless file.
+- Sending a page from the popup survives the browser's site permission prompt,
+  shows why a send failed, and no longer waits on the connection check.
+- Browser capture hands a download back to the browser on any failure or a
+  silent host.
+- An agent's job is held for your approval if its folder no longer lies inside
+  the agent's granted folders when it starts.
+- The web UI sends stricter response headers.
+
+### Upgrade notes
+
+- 0.3.0 can still open a queue written by 0.4.0.
 
 ## 0.3.0 (9 October 2026)
 

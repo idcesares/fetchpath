@@ -20,7 +20,7 @@ Windows 11 x64, current user, no administrator rights, nothing shown or asked.
 
    A rerun without `-Components` keeps what is installed. Options: `-Version v0.3.0`, `-Components cli,mcp,torrent` (or `full`),
    `-AgentHosts codex,claude-code`, `-MediaTools`, `-InstallDir`, or offline
-   `-SetupFile PATH -Sha256 HASH`. Exit codes: 2 bad arguments; 3 checksum or release problem; 10 setup refused the component list; 11 an agent connection failed (Fetchpath stays installed); other values come from setup itself.
+   `-SetupFile PATH -Sha256 HASH`. Exit codes: 2 bad arguments; 3 checksum or release problem; 10 setup refused the component list; 11 an agent connection failed (Fetchpath stays installed); other values come from setup itself, so a message that starts "Setup exited with code" is setup's, even for 2 or 3.
 
 2. Restart the agent host, then check `/mcp`. Verify without a model call:
    `fetchpath agent-setup check claude-code`.
