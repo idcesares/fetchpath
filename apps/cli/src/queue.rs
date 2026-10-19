@@ -1367,6 +1367,20 @@ fn setting_value(
             "false" | "off" | "no" | "0" => Value::Bool(false),
             _ => return Err(wrong("on or off")),
         },
+        // The disk reserve: "auto", "off" (no limit), or a size such as 10GB.
+        _ if key == "disk_reserve_bytes" => {
+            if text.eq_ignore_ascii_case("auto") {
+                Value::Number(0.into())
+            } else if text.eq_ignore_ascii_case("off") || text.eq_ignore_ascii_case("none") {
+                Value::Number(1.into())
+            } else {
+                Value::Number(
+                    crate::rules::size(text)
+                        .map_err(|_| wrong("auto, off or a size such as 10GB"))?
+                        .into(),
+                )
+            }
+        }
         Value::Number(_) => Value::Number(
             text.parse::<u64>()
                 .map_err(|_| wrong("a whole number"))?
@@ -1380,20 +1394,6 @@ fn setting_value(
             } else {
                 // A name, kept as the person wrote it.
                 Value::String(text.to_owned())
-            }
-        }
-        // The disk reserve: "auto", "off" (no limit), or a size such as 10GB.
-        _ if key == "disk_reserve_bytes" => {
-            if text.eq_ignore_ascii_case("auto") {
-                Value::Number(0.into())
-            } else if text.eq_ignore_ascii_case("off") || text.eq_ignore_ascii_case("none") {
-                Value::Number(1.into())
-            } else {
-                Value::Number(
-                    crate::rules::size(text)
-                        .map_err(|_| wrong("auto, off or a size such as 10GB"))?
-                        .into(),
-                )
             }
         }
         // Optional folders: "none" clears them.
@@ -1525,5 +1525,20 @@ mod torrent_intake_tests {
             Some(true)
         );
         assert!(parse(&args(&["--no-discover-peers"]), &allowed).is_err());
+    }
+}
+
+#[cfg(test)]
+mod setting_tests {
+    use super::*;
+
+    #[test]
+    fn the_disk_reserve_takes_auto_off_and_sizes() {
+        let current = serde_json::json!(0);
+        let set = |text| setting_value("disk_reserve_bytes", &current, text).unwrap();
+        assert_eq!(set("auto"), serde_json::json!(0));
+        assert_eq!(set("off"), serde_json::json!(1));
+        assert_eq!(set("10GB"), serde_json::json!(10u64 << 30));
+        assert!(setting_value("disk_reserve_bytes", &current, "lots").is_err());
     }
 }
