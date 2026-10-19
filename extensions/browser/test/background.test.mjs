@@ -13,11 +13,13 @@ function harness() {
       local: {
         async get() { return { ...state }; },
         async set(values) { Object.assign(state, values); },
+        async remove(key) { delete state[key]; },
       },
     },
     permissions: {
       async contains() { return true; },
       async request() { return true; },
+      onAdded: noOpEvent,
     },
     cookies: {
       async getAll() {
@@ -90,7 +92,7 @@ function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
   let messageListener;
   const noOpEvent = { addListener() {} };
   const browser = {
-    storage: { local: { async get() { return { ...state }; }, async set(values) { Object.assign(state, values); } } },
+    storage: { local: { async get() { return { ...state }; }, async set(values) { Object.assign(state, values); }, async remove(key) { delete state[key]; } } },
     permissions: {
       async contains({ origins }) { return siteAllowed || !origins; },
       async request() { throw new Error("no user gesture on the automatic path"); },

@@ -8,6 +8,7 @@
 - Disk reserve: **No limit** option; a full drive now says so plainly.
 - A full drive is reported as `storage.disk_full` with a plain message and is not retried until space is freed.
 - Headless install for remote PCs and agents: `tools/install/install.ps1`.
+- The popup's Send page no longer does nothing on the first click: a site permission prompt that closes the popup is finished by the extension, the button no longer waits on the connection check, and failures are shown.
 
 ## 0.3.0 (9 October 2026)
 

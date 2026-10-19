@@ -78,14 +78,15 @@ function sendToHost(message) {
 
 /** Asks the Fetchpath host whether it is installed and answering. */
 async function probe() {
-  try {
-    const response = await sendToHost({
-      type: "probe",
-      schema_version: SCHEMA_VERSION,
-    });
-    return { connected: response?.accepted === true, reason: response?.reason ?? null };
-  } catch (error) {
-    return { connected: false, reason: "native_host_unavailable" };
+  // The first native message after the worker wakes can fail once; a second try
+  // tells a real absence from a hiccup.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await sendToHost({ type: "probe", schema_version: SCHEMA_VERSION });
+      return { connected: response?.accepted === true, reason: response?.reason ?? null };
+    } catch (error) {
+      if (attempt >= 1) return { connected: false, reason: "native_host_unavailable" };
+    }
   }
 }
 
@@ -244,6 +245,17 @@ browserApi.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
+// A permission prompt can close the popup before it sends. When the grant
+// arrives and the popup has not claimed the send, finish it here.
+browserApi.permissions.onAdded.addListener(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const { pendingSend } = await browserApi.storage.local.get("pendingSend");
+  if (!pendingSend) return;
+  await browserApi.storage.local.remove("pendingSend");
+  if (Date.now() - pendingSend.at > 120000) return;
+  await sendLink(pendingSend.url, { url: pendingSend.url }, { prompt: false, pageTitle: pendingSend.pageTitle });
+});
+
 browserApi.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "get_state") return readState();
   if (message?.type === "probe") return probe();
@@ -252,6 +264,7 @@ browserApi.runtime.onMessage.addListener((message, sender) => {
     // the click, because a request made here would have lost the gesture.
     // The popup button sends the page, so it is named like the menu entry.
     const pageTitle = typeof message.pageTitle === "string" ? message.pageTitle : undefined;
+    if (message.claimPending) void browserApi.storage.local.remove("pendingSend");
     return sendLink(message.url, sender.tab ?? { url: message.url }, { prompt: false, pageTitle });
   }
   if (message?.type === "set_auto_capture") {

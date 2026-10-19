@@ -45,7 +45,7 @@ async function render() {
   statusText.dataset.state = connected ? "ok" : "bad";
   statusText.textContent = connected ? "Connected to Fetchpath" : "Fetchpath isn't answering";
   statusHelp.hidden = connected;
-  sendPage.disabled = !connected || !httpUrl(tab?.url ?? "");
+  sendPage.disabled = !httpUrl(tab?.url ?? "");
   autoCapture.checked = state?.autoCapture === true;
 
   const events = (state?.events ?? []).filter((event) => event.redactedUrl).slice(-5).reverse();
@@ -61,22 +61,42 @@ async function render() {
 }
 
 sendPage.addEventListener("click", async () => {
-  const tab = await activeTab();
-  const url = httpUrl(tab?.url ?? "");
-  if (!url) return;
-  // Requested here, inside the click: a request made by the background script
-  // after this message would no longer count as the person's action.
-  const granted = await api.permissions.request({ origins: [`${url.protocol}//${url.hostname}/*`] });
-  if (!granted) {
-    show(REASONS.site_permission_denied, false);
-    return;
-  }
   sendPage.disabled = true;
-  const response = await api.runtime.sendMessage({ type: "send_link", url: tab.url, pageTitle: tab.title ?? "" });
-  sendPage.disabled = false;
-  if (response?.accepted) show("Sent. Fetchpath will open with it.", true);
-  else show(REASONS[response?.reason] ?? `Fetchpath couldn't take it (${response?.reason ?? "unknown"}).`, false);
-  await render();
+  show("Sending…", true);
+  try {
+    const tab = await activeTab();
+    const url = httpUrl(tab?.url ?? "");
+    if (!url) {
+      show(REASONS.unsupported_scheme, false);
+      return;
+    }
+    const origins = [`${url.protocol}//${url.hostname}/*`];
+    // Requested here, inside the click: a request made by the background script
+    // after this message would no longer count as the person's action.
+    if (!(await api.permissions.contains({ origins }))) {
+      // The browser's permission prompt can close this popup before the answer
+      // arrives. The background script finishes the send when it is granted.
+      await api.storage.local.set({ pendingSend: { url: tab.url, pageTitle: tab.title ?? "", at: Date.now() } });
+      if (!(await api.permissions.request({ origins }))) {
+        await api.storage.local.remove("pendingSend");
+        show(REASONS.site_permission_denied, false);
+        return;
+      }
+    }
+    const response = await api.runtime.sendMessage({
+      type: "send_link",
+      url: tab.url,
+      pageTitle: tab.title ?? "",
+      claimPending: true,
+    });
+    if (response?.accepted) show("Sent. Fetchpath will open with it.", true);
+    else show(REASONS[response?.reason] ?? `Fetchpath couldn't take it (${response?.reason ?? "unknown"}).`, false);
+  } catch (error) {
+    show(`Fetchpath couldn't send this page (${error?.message ?? "unknown"}).`, false);
+  } finally {
+    sendPage.disabled = false;
+  }
+  await render().catch(() => {});
 });
 
 autoCapture.addEventListener("change", async () => {
