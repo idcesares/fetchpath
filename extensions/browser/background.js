@@ -250,7 +250,9 @@ browserApi.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "send_link" && message.url) {
     // From the popup the site permission was already requested there, inside
     // the click, because a request made here would have lost the gesture.
-    return sendLink(message.url, sender.tab ?? { url: message.url }, { prompt: false });
+    // The popup button sends the page, so it is named like the menu entry.
+    const pageTitle = typeof message.pageTitle === "string" ? message.pageTitle : undefined;
+    return sendLink(message.url, sender.tab ?? { url: message.url }, { prompt: false, pageTitle });
   }
   if (message?.type === "set_auto_capture") {
     return browserApi.storage.local

@@ -72,7 +72,7 @@ sendPage.addEventListener("click", async () => {
     return;
   }
   sendPage.disabled = true;
-  const response = await api.runtime.sendMessage({ type: "send_link", url: tab.url });
+  const response = await api.runtime.sendMessage({ type: "send_link", url: tab.url, pageTitle: tab.title ?? "" });
   sendPage.disabled = false;
   if (response?.accepted) show("Sent. Fetchpath will open with it.", true);
   else show(REASONS[response?.reason] ?? `Fetchpath couldn't take it (${response?.reason ?? "unknown"}).`, false);
