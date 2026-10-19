@@ -27,7 +27,7 @@ use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 /// it would not send the cookie back.
 const COOKIE_ATTRIBUTES: &str = "HttpOnly; SameSite=Strict; Path=/";
 
-const POLICY: &str = "default-src 'self'; frame-ancestors 'none'";
+const POLICY: &str = "default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'";
 
 const SIGNED_OUT: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <title>Fetchpath</title></head><body><h1>Fetchpath</h1>\
@@ -46,11 +46,9 @@ fn reply(status: StatusCode, content_type: Option<&str>, body: &'static [u8]) ->
     headers.insert(CONTENT_SECURITY_POLICY, value(POLICY));
     headers.insert(REFERRER_POLICY, value("no-referrer"));
     headers.insert(X_CONTENT_TYPE_OPTIONS, value("nosniff"));
+    headers.insert(CACHE_CONTROL, value("no-store"));
     if let Some(content_type) = content_type {
         headers.insert(CONTENT_TYPE, value(content_type));
-        if content_type.starts_with("text/html") {
-            headers.insert(CACHE_CONTROL, value("no-store"));
-        }
     }
     response
 }

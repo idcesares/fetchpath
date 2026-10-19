@@ -312,6 +312,8 @@ struct QueueRecord {
     approval: Option<Approval>,
     /// The person approved this job past its agent's size limit.
     size_approved: bool,
+    /// The person approved this job outside its agent's granted folders.
+    folder_approved: bool,
     view: JobSnapshot,
 }
 
@@ -594,6 +596,8 @@ struct PersistedRecord {
     approval: Option<Approval>,
     #[serde(default, skip_serializing_if = "is_false")]
     size_approved: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    folder_approved: bool,
     view: JobSnapshot,
 }
 
@@ -1660,6 +1664,8 @@ impl Session {
         {
             record.destination = destination;
             record.torrent_auto = false;
+            // An approval outside the grants was for the place the person saw.
+            record.folder_approved = false;
         }
         // An empty field clears the checksum; anything else replaces it.
         if let Some(checksum) = checksum {
@@ -1914,6 +1920,9 @@ impl Session {
             .unwrap_or_default();
         if reasons.contains(&ApprovalReason::SizeLimit) {
             record.size_approved = true;
+        }
+        if reasons.contains(&ApprovalReason::OutsideGrantedFolders) {
+            record.folder_approved = true;
         }
         record.finished_at_ms = None;
         record.view.finished_at_ms = None;
@@ -2602,6 +2611,21 @@ impl Session {
             if record.job.is_none() && !record.view.waiting_for_space {
                 continue;
             }
+            // Folder grants are checked again as the job starts: a junction
+            // can be pointed elsewhere between the request and now, and the
+            // agent's grants may have changed. The person's approval stands.
+            if let Principal::Agent(agent) = &record.principal
+                && !record.folder_approved
+                && !policy::inside_grants(&record.grant_path(), &self.agent_policy(agent).folders)
+            {
+                // Kept, cancelled: approving joins it before the job is rebuilt.
+                if let Some(job) = record.job.as_ref() {
+                    job.cancel();
+                }
+                record.view.waiting_for_space = false;
+                record.hold(vec![ApprovalReason::OutsideGrantedFolders]);
+                continue;
+            }
             // The disk reserve (FP-101): a download starts only when its
             // drive has room for what it still needs above the reserve,
             // after what running downloads there still need. Otherwise it
@@ -3245,6 +3269,7 @@ impl QueueRecord {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3328,6 +3353,7 @@ impl QueueRecord {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3613,6 +3639,7 @@ impl QueueRecord {
             principal: saved.principal,
             approval: saved.approval,
             size_approved: saved.size_approved,
+            folder_approved: saved.folder_approved,
             view,
         }
     }
@@ -3658,6 +3685,7 @@ impl QueueRecord {
             principal: saved.principal,
             approval: saved.approval,
             size_approved: saved.size_approved,
+            folder_approved: saved.folder_approved,
             view,
         }
     }
@@ -4422,6 +4450,7 @@ fn write_queue(
                 principal: record.principal.clone(),
                 approval: record.approval.clone(),
                 size_approved: record.size_approved,
+                folder_approved: record.folder_approved,
                 view: record.view.clone(),
             })
             .collect(),
@@ -4910,6 +4939,7 @@ mod tests {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view,
         };
         let restored =

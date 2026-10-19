@@ -219,12 +219,15 @@ fn a_ticket_signs_one_browser_in_once() {
     assert_eq!(cookie.len(), 64);
     let attributes = first.header("set-cookie").unwrap();
     assert!(attributes.contains("HttpOnly") && attributes.contains("SameSite=Strict"));
-    assert!(
-        first
-            .header("content-security-policy")
-            .unwrap()
-            .contains("frame-ancestors")
-    );
+    let policy = first.header("content-security-policy").unwrap();
+    for directive in ["frame-ancestors", "base-uri", "object-src"] {
+        assert!(
+            policy.contains(directive),
+            "{directive} missing from {policy}"
+        );
+    }
+    assert_eq!(first.header("referrer-policy"), Some("no-referrer"));
+    assert_eq!(first.header("cache-control"), Some("no-store"));
 
     let again = get(port, &host, &link, &[]);
     assert!(again.cookie().is_none(), "a ticket worked twice");

@@ -3491,6 +3491,35 @@
         "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-112",
+      "title": "Agent folder grants checked again as a job starts; stricter web UI response headers",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-111"
+      ],
+      "status": "done",
+      "owner": "claude (lead; four read-only checks)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "apps/cli/src/remote",
+        "apps/desktop/src-tauri/tauri.conf.json",
+        "extensions/browser",
+        "SECURITY.md"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "An agent job whose destination no longer lies inside its granted folders when it starts waits for the person instead of writing there, unless the person already approved the folder. The loopback web UI sends no-store on every reply and a CSP without base or object sources. The popup send path is covered by a test.",
+      "verification": "fetchpath-session and remote tests, extension tests with the debug host, clippy and fmt.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
     }
   ]
 }

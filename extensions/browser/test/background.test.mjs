@@ -83,6 +83,18 @@ test("excluded origins never reach native messaging and explicit authenticated s
   assert.doesNotMatch(persistedExtensionState, /top-secret|cookie-secret|account=private/);
 });
 
+test("the popup's send names the page from its title and claims the pending send", async () => {
+  const app = harness();
+  app.state.pendingSend = { url: "https://example.test/", pageTitle: "Example Domain", at: Date.now() };
+  const sent = await app.sendMessage(
+    { type: "send_link", url: "https://example.test/", pageTitle: "Example Domain", claimPending: true },
+    {},
+  );
+  assert.equal(sent.accepted, true);
+  assert.equal(app.nativeRequests[0].request.suggested_filename, "Example Domain.html");
+  assert.equal(app.state.pendingSend, undefined, "the popup took the send, so the grant handler must not repeat it");
+});
+
 function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
   const state = {};
   const nativeRequests = [];

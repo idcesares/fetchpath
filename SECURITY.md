@@ -50,7 +50,8 @@ available; RSA public server-key verification is unaffected.
 ## Out of scope
 
 - A malicious program already running as the same Windows user; Fetchpath
-  does not defend against it.
+  does not defend against it. This includes one that borrows an agent's name:
+  an agent name is a label for the person's grants, not a credential.
 - SmartScreen and Smart App Control warnings about the unsigned installer.
 - Whether a particular website works with `yt-dlp`, and flaws in `yt-dlp`
   or `ffmpeg` themselves; report those upstream.
