@@ -25,6 +25,7 @@ installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
 | Repository | `node tools/tests.mjs` (with the debug host built): 99 passed. `node tools/tasks.mjs check` passed. Extension tests: 13 passed. |
 | Desktop and web | `tsc`, `pnpm build` and `pnpm build:web` passed. `pnpm audit --prod`: no known vulnerabilities. |
 | Reviews | Independent strong review of the new start-time folder-grant check (FP-112): four findings, all repaired, repair recheck passed. Independent strong review of `tools/install/install.ps1` (FP-109, never reviewed before): eight findings, repaired; the script parses and rejects bad arguments. |
+| CI | GitHub `checks` passed on PR #32 at commit 6660571 (14 min; an earlier duplicate run was cancelled by the newer one). |
 | Real PC | An earlier build of this tree (before the folder-grant check and the popup change) was installed, upgraded over 0.3.0 and run: headless install, upgrade, agent host connect and removal, uninstall keeping data. See LOCAL-QUALITY.md. |
 
 ## Not run
@@ -34,7 +35,7 @@ installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
   (no browser load has confirmed nothing is blocked).
 - A real-browser popup send, and the reported first-click failure was never reproduced; the popup changes address its likeliest causes only.
 - `tests/compatibility/windows/ui-accessibility.ps1` and the Sandbox harnesses.
-- GitHub CI for this branch, `cargo audit` and secret scanning (tools not installed).
+- `cargo audit` and secret scanning (tools not installed on the build PC).
 
 ## Dependency advisories
 
