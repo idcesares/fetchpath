@@ -5,13 +5,16 @@ gate, kept in Git at tag `v0.3.0` with its evidence.
 
 ## Verdict
 
-**Candidate, not published.** Branch `release/0.4.0`. The release installer
-was not built for this version: both build attempts were stopped by the
-machine running out of memory. Nothing is tagged or published. Publishing
-(tag, GitHub release, `SHA256SUMS.txt`, the 0.4.0 download names in README and
-GUIDE) is the owner's decision and happens after the installer is built,
-installed and checked. The installer will be unsigned; a hash checks bytes,
-not publisher authenticity.
+**Ready for the owner to publish; not published.** Branch `release/0.4.0`
+(PR #32). The installer builds and works on this PC. Nothing is tagged or
+published. Publishing (merge, tag, GitHub release with `SHA256SUMS.txt`, then
+the 0.4.0 download names in README and GUIDE) is the owner's decision. The
+installer is unsigned; its hash checks bytes, not publisher authenticity.
+
+Built installer `Fetchpath_0.4.0_x64-setup.exe`, SHA-256
+`f9c860f3f515f2665bb47f066fd24430ed06861b5d6555a23cd2593f85ef46c6`
+(local build; rebuild from the release commit before publishing, since the
+hash depends on the build machine).
 
 0.4.0 is a minor release: it adds in-app agent connection, the headless
 installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
@@ -26,15 +29,16 @@ installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
 | Desktop and web | `tsc`, `pnpm build` and `pnpm build:web` passed. `pnpm audit --prod`: no known vulnerabilities. |
 | Reviews | Independent strong review of the new start-time folder-grant check (FP-112): four findings, all repaired, repair recheck passed. Independent strong review of `tools/install/install.ps1` (FP-109, never reviewed before): eight findings, repaired; the script parses and rejects bad arguments. |
 | CI | GitHub `checks` passed on PR #32 at commit 6660571 (14 min; an earlier duplicate run was cancelled by the newer one). |
+| Package | Release build passed (after two attempts were stopped by low memory). Installed over the previous build with `install.ps1 -SetupFile` and the hash above: the CLI, extension and desktop report 0.4.0, the desktop started, and agent registrations were not touched. |
+| Web UI | With the web UI on, the live listener sends `no-store`, `no-referrer`, `nosniff` and the CSP with `base-uri`, `object-src` and `form-action`; it was turned off again. A signed-in page load was not observed. |
+| Accessibility | `ui-accessibility.ps1` against the installed 0.4.0 desktop (tightened CSP): passed, no failures. |
 | Real PC | An earlier build of this tree (before the folder-grant check and the popup change) was installed, upgraded over 0.3.0 and run: headless install, upgrade, agent host connect and removal, uninstall keeping data. See LOCAL-QUALITY.md. |
 
 ## Not run
 
-- The 0.4.0 release build, installer, clean install and 0.3.0-to-0.4.0 upgrade.
-- The desktop and the loopback web UI with the tightened Content-Security-Policy
-  (no browser load has confirmed nothing is blocked).
-- A real-browser popup send, and the reported first-click failure was never reproduced; the popup changes address its likeliest causes only.
-- `tests/compatibility/windows/ui-accessibility.ps1` and the Sandbox harnesses.
+- A clean install and a public 0.3.0-to-0.4.0 upgrade through the Sandbox harnesses (this PC's upgrade was from an earlier build of the same line).
+- A signed-in web UI page in a browser with the new CSP (the sign-in link opens only the default browser).
+- A real-browser popup send; the reported first-click failure was never reproduced, so the popup change addresses its likeliest causes only.
 - `cargo audit` and secret scanning (tools not installed on the build PC).
 
 ## Dependency advisories

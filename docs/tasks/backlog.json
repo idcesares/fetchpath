@@ -3546,7 +3546,7 @@
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
       ],
-      "blockedReason": "The release build was stopped twice by low memory on the build PC; the installer, install checks and CI are pending. Next: free memory, run `corepack pnpm --dir apps/desktop release`, install with tools/install/install.ps1 -SetupFile, load the web UI, then push and open the PR."
+      "blockedReason": "Waiting for the owner to merge PR #32, rebuild the installer from the release commit, tag, publish and then update the README and GUIDE download names. Sandbox clean-install and upgrade harnesses were not run."
     }
   ]
 }
