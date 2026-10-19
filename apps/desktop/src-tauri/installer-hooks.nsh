@@ -214,21 +214,6 @@ FunctionEnd
   ; Every selected program file is now in place; handshake checks may start
   ; the local engine, so lift the update hold before those checks.
   Delete "${FETCHPATH_UPDATE_HOLD}"
-  ; Owned registrations follow upgrades and custom install paths. Deselection
-  ; removes registrations before any future executable removal, even with data kept.
-  ${If} ${SectionIsSelected} ${SecMcp}
-    !insertmacro FETCHPATH_AGENT_COMMAND "reconcile"
-    ${If} $FpAgentCodex = 1
-      !insertmacro FETCHPATH_AGENT_COMMAND "add codex"
-      !insertmacro FETCHPATH_AGENT_COMMAND "check codex"
-    ${EndIf}
-    ${If} $FpAgentClaude = 1
-      !insertmacro FETCHPATH_AGENT_COMMAND "add claude-code"
-      !insertmacro FETCHPATH_AGENT_COMMAND "check claude-code"
-    ${EndIf}
-  ${Else}
-    !insertmacro FETCHPATH_AGENT_COMMAND "cleanup"
-  ${EndIf}
   ${If} ${SectionIsSelected} ${SecBrowser}
     WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
     WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\${FETCHPATH_HOST}" "" "$INSTDIR\${FETCHPATH_HOST}.chromium.json"
@@ -244,6 +229,23 @@ FunctionEnd
     !insertmacro FETCHPATH_USER_PATH Add
   ${Else}
     !insertmacro FETCHPATH_USER_PATH Remove
+  ${EndIf}
+  ; Agent setup runs last: a failure quits with exit code 11, so the browser keys
+  ; and PATH above are already written and the installed state matches the code.
+  ; Owned registrations follow upgrades and custom install paths. Deselection
+  ; removes registrations before any future executable removal, even with data kept.
+  ${If} ${SectionIsSelected} ${SecMcp}
+    !insertmacro FETCHPATH_AGENT_COMMAND "reconcile"
+    ${If} $FpAgentCodex = 1
+      !insertmacro FETCHPATH_AGENT_COMMAND "add codex"
+      !insertmacro FETCHPATH_AGENT_COMMAND "check codex"
+    ${EndIf}
+    ${If} $FpAgentClaude = 1
+      !insertmacro FETCHPATH_AGENT_COMMAND "add claude-code"
+      !insertmacro FETCHPATH_AGENT_COMMAND "check claude-code"
+    ${EndIf}
+  ${Else}
+    !insertmacro FETCHPATH_AGENT_COMMAND "cleanup"
   ${EndIf}
   ; Tauri calls this hook after the installed files are in place. Quiet and
   ; passive setup must never download optional software without a person

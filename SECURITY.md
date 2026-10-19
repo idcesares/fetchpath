@@ -17,6 +17,7 @@ Only the latest release receives security fixes.
   replaced or written outside its folder.
 - The engine's pipe and its secret, the browser native host, and the
   installer's handling of the engine, PATH and user data.
+- The headless installer (`tools/install/install.ps1`): release download and checksum verification, and what it installs, connects or grants.
 - Instance identity across reconnection, and guided agent-host configuration
   ownership, recovery and removal without changing unrelated host settings.
 - The agent boundary: `fetchpath mcp` acting beyond the folders, limits and

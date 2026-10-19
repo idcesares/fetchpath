@@ -27,14 +27,14 @@ Usage:
   fetchpath --help
 
 The download queue, kept by the Fetchpath engine:
-  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--wait]
-  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait]
+  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--upload] [--wait]
+  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait] [--json]
   fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
   fetchpath ls [--active | --failed]          fetchpath show JOB...
   fetchpath pause | resume | cancel | retry | rm JOB...
   fetchpath approvals                         agents' requests that wait for you
   fetchpath approve | deny JOB...             answer an agent's request that waits for you
-  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N]
+  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]
   fetchpath watch [JOB]                       fetchpath inspect LINK
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]

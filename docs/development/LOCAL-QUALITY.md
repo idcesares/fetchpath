@@ -90,3 +90,5 @@ accepts No limit (stored as 1 byte; `fetchpath settings disk-reserve-bytes
 off`), and a full drive says so. `tools/install/install.ps1` is the headless
 install. Checked: browser background tests, space/core/CLI unit tests, tsc,
 fmt. Not run: the script against a real release; a real-browser capture.
+
+FP-110: drive space is measured off the queue lock (2 s cache, first look waits at most 100 ms, so a dead share reads as unmeasurable for that pass); a cancel during a reserve stop wins; setup writes browser keys and PATH before reconnecting agents (exit 11 unchanged; NSIS not run). Known: `remote::tests::turning_it_off_closes_sockets_and_the_port` failed once in a full parallel run on the fixed port 47474 and passed alone.

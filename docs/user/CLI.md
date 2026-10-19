@@ -9,9 +9,12 @@ fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--upload] [--wait]
 fetchpath torrent MAGNET|HTTPS_LINK|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait] [--json]
 fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
-fetchpath ls | show | pause | resume | cancel | retry | rm | watch | history | folder
+fetchpath ls [--all | --active | --failed] | show | pause | resume | cancel | retry | rm | watch | history | folder
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
 fetchpath approvals | approve JOB... | deny JOB... | agents ...
+fetchpath hub [on | off]
+fetchpath web on | off | open | sign-out
+fetchpath agent-setup status | add | check | remove | cleanup | reconcile
 fetchpath mcp [--agent NAME]
 fetchpath tools [install [--yes] | use FOLDER]
 fetchpath cache [status | clear]
@@ -177,7 +180,7 @@ only rules by site and type apply to it. `--wait` stays until the downloads
 end and exits with their code.
 
 ```powershell
-fetchpath ls                 # every download, newest first; --active, --failed
+fetchpath ls                 # every download, newest first; --active, --failed (--all is the default)
 fetchpath show 2             # one download in full
 fetchpath pause 1 3          # several at once
 fetchpath resume 3f1c        # the start of its id works too
@@ -230,7 +233,7 @@ in the order. A rule's folder applies only when you give no `--to`.
 `fetchpath settings` lists every setting, `fetchpath settings NAME` shows one
 and `fetchpath settings NAME VALUE` changes it. Switches take `on` or `off`,
 folders take a path or `none`. `disk-reserve-bytes` is the space kept free on
-every drive: `auto` (the larger of 5 GB and 5 % of the drive), `off` (no
+every drive: `auto` (the larger of 5 GiB and 5 % of the drive), `off` (no
 limit: a download waits only when the drive has no room) or a size such
 as `10GB`; a download that would cross it waits as `needs disk space` and
 starts by itself when there is room. The engine keeps values in range and prints the
@@ -347,7 +350,7 @@ line into the window's history saying where the file went or why it stopped.
 - The mouse works in lists, menus and cards: click to choose, wheel to move,
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
-- Commands start with `/`: `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
+- Commands start with `/`: `/add`, `/torrent`, `/folder`, `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
   `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/rules`, `/agents`, `/hub`, `/tools`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
   and `/quit`. `/agents` and `/hub` take the same words as `fetchpath agents`
   and `fetchpath hub`, and `/settings` has the name of this Fetchpath and the

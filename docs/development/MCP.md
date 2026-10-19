@@ -53,7 +53,7 @@ already). Standard output carries only protocol messages.
   own entry only (contract D3). Integrity carries the outcome, the expected
   and observed SHA-256 and a meaning that never claims the publisher.
   Awaiting approval carries the reasons and an explanation to relay. A
-  tool error outside the input, policy, contract and engine families is
+  tool error outside the input, policy and contract families is
   labelled as untrusted detail. An agent's history search matches a
   destination's folders only inside its grant, elsewhere just the file name
   (engine, `Command::History`), so searching cannot spell out a hidden

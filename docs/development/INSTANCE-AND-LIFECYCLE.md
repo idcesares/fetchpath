@@ -4,7 +4,7 @@ FP-101, the local slice (S1) of the
 [instance access and remote hub design](../architecture/specs/2026-10-03-instance-access-and-remote-hub-design.md),
 contract [D6](../architecture/JOB-CONTRACT.md#d6--instances-remote-principals-and-capacity-fp-091-3-october-2026)
 and [D7](../architecture/JOB-CONTRACT.md#d7--automatic-mode-for-an-agent-fp-101-3-october-2026).
-No network listener: remote access is FP-092, deferred to the third release.
+No remote listener (FP-092, deferred); the only listener is the loopback web UI (FP-104, see [WEB-UI.md](WEB-UI.md)).
 
 ## What was built
 

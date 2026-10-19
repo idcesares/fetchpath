@@ -40,3 +40,12 @@ test('component removal and uninstall clean owned connections before binary/data
   const command = macro('FETCHPATH_AGENT_COMMAND');
   assert.match(command, /\$R9 != 0[\s\S]*?Delete "\$\{FETCHPATH_UPDATE_HOLD\}"[\s\S]*?SetErrorLevel 11[\s\S]*?Quit/);
 });
+
+test('browser keys and PATH are written before agent setup can quit with 11', () => {
+  const post = hooks.match(/!macro NSIS_HOOK_POSTINSTALL\b([\s\S]*?)!macroend/)?.[1];
+  assert.ok(post);
+  const keys = post.indexOf('WriteRegStr HKCU "Software');
+  const path = post.indexOf('FETCHPATH_USER_PATH Add');
+  const agent = post.indexOf('FETCHPATH_AGENT_COMMAND "reconcile"');
+  assert.ok(keys >= 0 && path > keys && agent > path);
+});

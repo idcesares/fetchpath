@@ -108,7 +108,7 @@ current Tailscale documentation and a real tailnet in S2's first gate.
 
 ### Listener
 
-A remote module in the engine (`apps/cli/src/remote`, planned) serves, on one
+A remote module in the engine (`apps/cli/src/remote`; the loopback web UI shipped in FP-104, the remote part is planned) serves, on one
 loopback port chosen at hub-mode setup:
 
 - `GET /` and static assets: the browser client, embedded in `fetchpath.exe`.

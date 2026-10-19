@@ -140,8 +140,9 @@ neither `desktop` nor `cli`, or `mcp` without one of them. Quiet setup does not
 add the terminal for you. The reason is written to `%TEMP%\fetchpath-install.log`.
 Exit code 1 is Cancel and 2 is setup's own failure. To install the video and
 audio tools in a deployment, run `fetchpath tools install --yes` afterwards.
-Agent connection or cleanup failures use exit code **11**; resolve the reported
-configuration problem and retry while Fetchpath remains installed.
+Agent connection or cleanup failures use exit code **11**. Setup has already
+registered the browser connection and the `fetchpath` command by then; resolve the
+reported configuration problem and retry while Fetchpath remains installed.
 
 **"Windows protected your PC."** Fetchpath 0.3.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
@@ -215,8 +216,9 @@ Video and audio downloads can't be paused. You can cancel them and start again.
 Downloads run in the background, so closing the window never stops them.
 By default the window goes to the notification area (near the clock); click
 the Fetchpath icon there to bring it back. **Close desktop and tray (downloads continue)** in that icon's
-menu ends the window and the icon, and downloads still finish. **Stop engine
-(stops downloads)** asks first, then stops them; the window shows the engine
+menu ends the window and the icon, and downloads still finish. **Close desktop,
+tray and engine (stops downloads)** also stops the engine, and **Stop engine
+(stops downloads)** stops it but leaves the window open and asks first; the window shows the engine
 as stopped until you start it again. Fetchpath's
 background part stops by itself about a minute after the last download ends
 and every window is closed, unless **Always on** or LAN sharing keeps it
@@ -450,7 +452,7 @@ on GitHub.
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
-| Appearance | Match Windows, Light or Dark. |
+| Appearance | Match Windows, Light, Dark or High contrast. |
 
 Everything works with the keyboard alone. Press **Keyboard help** for the
 shortcuts.
@@ -548,6 +550,10 @@ or manually created host entries are preserved; follow any cleanup warning and
 remove them from the host yourself. A configuration cleanup error stops removal
 while Fetchpath is still installed, so you can resolve the error and retry.
 See [agent setup and removal](CLI.md#guided-setup-codex-and-claude-code).
+
+A silent uninstall that could not remove the application data (when requested with
+`/DELETEAPPDATA`) exits with code **3**: Fetchpath is removed, the leftover data is
+listed in `%TEMP%etchpath-uninstall.log`, and you delete the folders yourself.
 
 ## When something goes wrong
 
