@@ -59,3 +59,15 @@ The 0.2.0 gate evidence was replaced by the 0.3.0 gate on 9 October 2026:
 `evidence/release/fp103-gate.json` and `evidence/windows/fp103-clean-install.json`,
 `fp103-upgrade.json` and `fp103-agent-installer.json`. They and the 0.2.0
 `RELEASE-CANDIDATE.md` remain at tag `v0.2.0`.
+
+## Record consolidation (drift audit, 18 October 2026)
+
+Dated per-task sections were merged into one current-state record each; the old text is at the named commit
+(`git show <commit>:<path>`).
+
+- `docs/development/WEB-UI.md` at `7b8a643`: dated verification and FP-107 follow-up sections, review narrative.
+- `docs/development/ADAPTIVE-HTTP.md` at `3f4f9ed`: FP-084 baseline and FP-085 rounds-scheduler tables, per-task
+  results sections, review transcripts.
+- `docs/development/WINDOWS-PACKAGING.md` at `5ed5b0d`: per-task narrative, repeated limits sections.
+- `docs/development/DESKTOP-CHECKSUM.md` at `5497d55`: command log and test-count deltas, dated walkthrough section.
+- `docs/development/MEDIA-INTEGRATION.md` at `9779b2a`: dated FP-039 follow-up paragraphs.

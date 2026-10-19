@@ -92,3 +92,5 @@ install. Checked: browser background tests, space/core/CLI unit tests, tsc,
 fmt. Not run: the script against a real release; a real-browser capture.
 
 FP-110: drive space is measured off the queue lock (2 s cache, first look waits at most 100 ms, so a dead share reads as unmeasurable for that pass); a cancel during a reserve stop wins; setup writes browser keys and PATH before reconnecting agents (exit 11 unchanged; NSIS not run). Known: `remote::tests::turning_it_off_closes_sockets_and_the_port` failed once in a full parallel run on the fixed port 47474 and passed alone.
+
+FP-111: a page sent from the browser menu is named from its title with `.html` (it was saved as an extensionless file, seen in the field); a repeat capture of the same page still makes a second copy. Waiting-for-space rows explain themselves; the remote-listener tests serialise on the shared port. Records ADAPTIVE-HTTP, WINDOWS-PACKAGING, DESKTOP-CHECKSUM, WEB-UI and MEDIA-INTEGRATION were consolidated (old text in ARCHIVE.md). Not run: a real-browser page send, a vite build, the accessibility script.

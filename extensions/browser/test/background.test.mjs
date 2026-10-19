@@ -177,3 +177,14 @@ test("sending a video element falls back to its page when the source is a stream
   await app.menu({ menuItemId: "fetchpath-send-media", srcUrl: "blob:https://video.example.test/1" }, page);
   assert.equal(app.nativeRequests[0].url, page.url);
 });
+
+test("the page menu names an extensionless page from its title; link and media sends keep the URL's name", async () => {
+  const app = automaticHarness();
+  const tab = { url: "https://www.linkedin.com/in/alcinei-oliveira-42781750/", title: "Alcinei Oliveira" };
+  await app.menu({ menuItemId: "fetchpath-send-page" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "Alcinei Oliveira.html");
+  await app.menu({ menuItemId: "fetchpath-send-link", linkUrl: "https://www.linkedin.com/in/someone-else" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "someone-else");
+  await app.menu({ menuItemId: "fetchpath-send-media" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "alcinei-oliveira-42781750");
+});

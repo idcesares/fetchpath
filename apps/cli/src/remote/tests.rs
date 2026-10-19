@@ -12,14 +12,21 @@ use tokio_tungstenite::tungstenite::{self, Message, WebSocket};
 
 const COOKIE: &str = sessions::COOKIE_NAME;
 
+/// Every fixture binds from the same first port; one at a time keeps a
+/// parallel test from taking the port another has just released.
+static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture {
     _dir: tempfile::TempDir,
     engine: Arc<Engine>,
     connections: Arc<AtomicUsize>,
     web: Web,
+    // Last, so the sockets close before the next fixture may bind.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 fn fixture(ticket_ttl: Option<Duration>) -> Fixture {
+    let serial = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let session = Session::load_with_browser(dir.path().join("queue.json"), 2, None).unwrap();
     let engine = Engine::new(Arc::new(session));
@@ -38,6 +45,7 @@ fn fixture(ticket_ttl: Option<Duration>) -> Fixture {
         engine,
         connections,
         web,
+        _serial: serial,
     }
 }
 

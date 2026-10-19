@@ -19,8 +19,8 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 
 ### Download a file
 
-1. Select **Add link** (`Ctrl+L`), paste a URL, optionally name it, and select a destination.
-2. Choose **Add to queue**. The item enters `Queued`, then `Connecting`, then `Downloading` only after confirmation from the download engine.
+1. Select **Add download** (`Ctrl+L`) or paste a link anywhere outside a text box, paste a URL, optionally name it, and select a destination.
+2. Choose **Add to queue**. The item enters `Queued`, then `Downloading` only after confirmation from the download engine.
 3. Pause/resume is immediate in the interface and is reconciled with the engine. Completion shows the saved location and an **Open folder** action.
 4. When one of the person's rules decides for the first link, its name and reason show under the destination and its folder is proposed; a folder the person picked is kept and the note says so. A rule that requires a checksum says so here.
 5. Optionally, under **Advanced options**, paste the SHA-256 a publisher lists for the file. Fetchpath then saves the file only if it matches. Surrounding spaces, either case and a `sha256:` prefix are accepted. A checksum describes one file, so it is refused on a batch, and it is not offered for video or audio, which are assembled locally.
@@ -35,7 +35,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 
 1. A failed item stays visible with a human-readable reason and next action (retry, edit link, sign in where supported, or copy diagnostics).
 2. Network/transient failures retry only when enabled in settings; the queue shows the next retry time.
-3. Authentication, source expiry, disk-space, and permission failures require an explicit user action.
+3. Authentication, source expiry and permission failures require an explicit user action. A download held back by the disk reserve shows **Waiting for disk space** with the next step (free space or change the limit in Settings), is listed under **Needs attention**, and starts by itself once there is room.
 
 ### Answer an agent's request
 
@@ -49,7 +49,7 @@ Fetchpath is a Windows-first download manager that makes a link feel safe and si
 | State | Plain-language presentation | Available action |
 | --- | --- | --- |
 | Scheduled | “Scheduled for &lt;time&gt;” | Start now, pause, cancel |
-| Queued | “Queued” | Pause, cancel |
+| Queued | “Queued”; “Waiting for disk space” when the drive is below the reserve | Pause, cancel |
 | Waiting for approval | “Waiting for approval”, naming the agent, the file, its size, the folder and why it asks; listed under Needs attention and announced | Approve, deny |
 | Downloading | Percent, received of total, speed, time remaining | Pause, cancel |
 | Paused | “Paused”, with the bytes already verified | Resume, cancel |

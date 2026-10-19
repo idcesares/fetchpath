@@ -583,7 +583,7 @@ lanJoin.addEventListener("click", async () => {
     await refreshLan();
     lanJoinResult.textContent = `Paired with ${device.label}, fingerprint ${device.fingerprint}. Check that the other computer shows the same.`;
   } catch (error) {
-    lanJoinResult.textContent = String(error);
+    lanJoinResult.textContent = errorMessage(error);
   } finally {
     lanJoin.disabled = false;
   }
@@ -602,10 +602,20 @@ cacheQuotaInput.addEventListener("change", async () => {
   const gigabytes = Number(cacheQuotaInput.value);
   if (!Number.isFinite(gigabytes) || gigabytes <= 0) {
     await refreshCache();
+    showError(settingsError, "Enter a cache size in GB, such as 2.");
     return;
   }
-  // The engine clamps the quota to its bounds; the form then shows what it kept.
-  await changeSetting({ cacheQuotaBytes: Math.round(gigabytes * GB) }, "Cache size updated.");
+  // The engine clamps the quota to its bounds; say so when it will.
+  const min = Number(cacheQuotaInput.min) * GB;
+  const max = Number(cacheQuotaInput.max) * GB;
+  const requested = Math.round(gigabytes * GB);
+  const kept = Math.min(Math.max(requested, min || requested), max || requested);
+  await changeSetting(
+    { cacheQuotaBytes: requested },
+    kept === requested
+      ? "Cache size updated."
+      : `The cache keeps between ${formatBytes(min)} and ${formatBytes(max)}, so it was set to ${formatBytes(kept)}.`,
+  );
   await refreshCache();
 });
 
@@ -1125,7 +1135,7 @@ document.addEventListener("paste", (event) => {
   if (target?.closest("input, textarea, select, [contenteditable]")) return;
   if (settingsDialog.open || shortcutsDialog.open) return;
   const text = event.clipboardData?.getData("text")?.trim() ?? "";
-  const links = text.split(/\s+/).filter((part) => /^https?:\/\//i.test(part));
+  const links = text.split(/\s+/).filter((part) => /^(?:https?:\/\/|magnet:\?|hf:\/\/)/i.test(part));
   if (!links.length) return;
   event.preventDefault();
   openComposer(links.join("\n"));
@@ -1150,7 +1160,7 @@ async function refreshBrowserSetup(): Promise<void> {
     renderBrowserSetup(await invoke<BrowserSetupStatus>("browser_setup_status"));
   } catch (error) {
     browserSetupState.textContent = "Could not check the browser extension.";
-    browserSetupDetail.textContent = String(error);
+    browserSetupDetail.textContent = errorMessage(error);
   }
 }
 
@@ -1270,13 +1280,15 @@ function applySettingsToForm(view: SettingsView): void {
   webUiOpen.disabled = !webUiInput.checked;
   webUiSignOut.disabled = !webUiInput.checked;
   // One byte is the engine's "no limit"; it would round to Automatic below.
-  const reserveChoice =
-    settings.diskReserveBytes === 1
-      ? "off"
-      : String(Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB));
+  for (const stale of diskReserveSelect.querySelectorAll("option[data-custom]")) stale.remove();
+  const reserveBytes = settings.diskReserveBytes ?? 0;
+  const whole = reserveBytes % RESERVE_GIB === 0;
+  const reserveChoice = reserveBytes === 1 ? "off" : whole ? String(reserveBytes / RESERVE_GIB) : `b${reserveBytes}`;
   if (![...diskReserveSelect.options].some((option) => option.value === reserveChoice)) {
     // A value set elsewhere, such as from the command line, is shown as it is.
-    diskReserveSelect.add(new Option(`${reserveChoice} GB`, reserveChoice));
+    const custom = new Option(whole ? `${reserveChoice} GiB` : `${formatBytes(reserveBytes)} (set elsewhere)`, reserveChoice);
+    custom.dataset.custom = "";
+    diskReserveSelect.add(custom);
   }
   diskReserveSelect.value = reserveChoice;
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
@@ -1347,7 +1359,7 @@ instanceNameInput.addEventListener("change", () =>
   void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
 );
 diskReserveSelect.addEventListener("change", () =>
-  void changeSetting({ diskReserveBytes: diskReserveSelect.value === "off" ? 1 : Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
+  diskReserveSelect.value.startsWith("b") ? undefined : void changeSetting({ diskReserveBytes: diskReserveSelect.value === "off" ? 1 : Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
 );
 hubModeInput.addEventListener("change", () =>
   void changeSetting(
@@ -1411,9 +1423,13 @@ settingClearDestination.addEventListener("click", () => {
   void changeSetting({ defaultDestinationDir: null }, "New downloads will use your Windows Downloads folder.");
 });
 
-dismissOnboarding.addEventListener("click", () => {
+dismissOnboarding.addEventListener("click", async () => {
   onboarding.hidden = true;
-  void changeSettingWithoutDialog({ onboardingCompleted: true });
+  if (!(await changeSettingWithoutDialog({ onboardingCompleted: true }))) {
+    onboarding.hidden = false;
+    showNotice("Could not save that you dismissed this. It will show again next time.");
+    return;
+  }
   addOpenButton.focus({ preventScroll: true });
 });
 
@@ -1421,14 +1437,14 @@ onboardingOpenMedia.addEventListener("click", () => void showSettings("integrati
 mediaOpenSettings.addEventListener("click", () => void showSettings("integrations"));
 
 /** Settings changed from outside the dialog, where there is no form to update. */
-async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<void> {
-  if (!settingsView) return;
+async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<boolean> {
+  if (!settingsView) return false;
   try {
     settingsView = await invoke<SettingsView>("update_settings", { next: { ...settingsView.settings, ...patch } });
     applySettingsToForm(settingsView);
+    return true;
   } catch {
-    // A failed preference write is not worth interrupting the queue for; the
-    // panel will show the stored value again the next time it opens.
+    return false;
   }
 }
 
@@ -1733,7 +1749,7 @@ async function analyzeRepository(url: string): Promise<void> {
     const view = await invoke<RepositoryView>("inspect_repository", { url });
     if (repositoryUrl === url) showRepository(view);
   } catch (error) {
-    if (repositoryUrl === url) showRepository(null, String(error));
+    if (repositoryUrl === url) showRepository(null, errorMessage(error));
   }
 }
 
@@ -2474,9 +2490,12 @@ function setMediaDestination(variant: MediaVariant, replaceExtension = false): v
   }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+}
+
 function showError(element: HTMLElement, error: unknown): void {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  const message = errorMessage(error);
   element.textContent = message;
   element.hidden = false;
   if (element === settingsError) {

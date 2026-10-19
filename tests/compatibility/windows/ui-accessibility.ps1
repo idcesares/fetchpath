@@ -310,7 +310,7 @@ try {
         @{ id = 'choose-destination'; type = 'Button'; name = 'destination file' },
         @{ id = 'start-download'; type = 'Button'; name = 'queue' },
         @{ id = 'add-cancel'; type = 'Button'; name = 'Cancel' },
-        @{ id = 'clear-schedule'; type = 'Button'; name = 'Start when ready' },
+        @{ id = 'clear-schedule'; type = 'Button'; name = 'Clear start time' },
         @{ id = 'download-kind'; type = 'Group'; name = 'Download type' },
         @{ id = 'media-options'; type = 'Group'; name = 'Video and audio options' }
     )

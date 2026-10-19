@@ -89,7 +89,7 @@ async function probe() {
   }
 }
 
-async function sendLink(rawUrl, tab, { prompt = true } = {}) {
+async function sendLink(rawUrl, tab, { prompt = true, pageTitle } = {}) {
   const url = policy.parseHttpUrl(rawUrl);
   const state = await readState();
   if (!url) {
@@ -116,7 +116,7 @@ async function sendLink(rawUrl, tab, { prompt = true } = {}) {
     capture_id: crypto.randomUUID(),
     method: "GET",
     url: rawUrl,
-    suggested_filename: policy.suggestedFilename(rawUrl),
+    suggested_filename: pageTitle === undefined ? policy.suggestedFilename(rawUrl) : policy.pageFilename(rawUrl, pageTitle),
     referrer: policy.normalizeOrigin(tab?.url) === url.origin ? tab.url : null,
     cookies: cookies.map((cookie) => ({
       name: cookie.name,
@@ -236,7 +236,7 @@ browserApi.contextMenus.onClicked.addListener((info, tab) => {
     const source = policy.parseHttpUrl(info.srcUrl ?? "") ? info.srcUrl : tab?.url;
     if (source) void sendLink(source, tab);
   } else if (info.menuItemId === MENU_SEND_PAGE && tab?.url) {
-    void sendLink(tab.url, tab);
+    void sendLink(tab.url, tab, { pageTitle: tab.title ?? "" });
   } else if (info.menuItemId === MENU_EXCLUDE_SITE && tab?.url) {
     void setOriginExcluded(tab.url, true);
   } else if (info.menuItemId === MENU_INCLUDE_SITE && tab?.url) {

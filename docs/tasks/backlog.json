@@ -3458,6 +3458,39 @@
         "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-111",
+      "title": "Page-send filenames, desktop feedback fixes, record consolidation, test determinism",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-110"
+      ],
+      "status": "done",
+      "owner": "claude (lead; four bounded agents)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "extensions/browser",
+        "apps/desktop/index.html",
+        "apps/desktop/src",
+        "apps/cli/src",
+        "docs",
+        "tests/compatibility/windows/ui-accessibility.ps1",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "A page sent from the browser menu is saved with a readable .html name. The desktop explains disk-space waits, accepts magnet and hf links when pasted, and reports settings and errors accurately. Dated development records are single current-state records. The remote-listener tests no longer race on the shared port.",
+      "verification": "Extension, TypeScript, clippy, fmt, node and CLI test runs. Not run: a real-browser page send, a vite build, or the Windows accessibility script.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
     }
   ]
 }
