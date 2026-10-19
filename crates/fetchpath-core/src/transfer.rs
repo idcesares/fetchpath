@@ -579,8 +579,7 @@ fn storage_error(store: &CheckpointStore, error: io::Error) -> DownloadError {
 
 pub(crate) fn storage_detail(store: &CheckpointStore, error: io::Error) -> DownloadError {
     let detail = if error.kind() == io::ErrorKind::StorageFull {
-        "the drive is full. Free some space or choose a folder on another drive, then retry;          the saved progress is kept"
-            .to_owned()
+        crate::DRIVE_FULL.to_owned()
     } else {
         error.to_string()
     };
@@ -1127,7 +1126,12 @@ mod tests {
                 etag: "\"v1\"",
             }]);
             let faults = FailOnce(Mutex::new(Some(point)));
-            assert!(download_with_faults(request(url, destination.clone()), &faults).is_err());
+            let error = download_with_faults(request(url, destination.clone()), &faults)
+                .unwrap_err()
+                .to_string();
+            if matches!(point, FaultPoint::PayloadWrite) {
+                assert!(error.starts_with("storage.disk_full at "), "{error}");
+            }
             worker.join().unwrap();
             assert!(!destination.exists());
             fs::remove_dir_all(dir).unwrap();

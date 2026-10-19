@@ -136,7 +136,10 @@ async function sendLink(rawUrl, tab, { prompt = true } = {}) {
   try {
     response = await sendToHost(request);
   } catch (error) {
-    response = { accepted: false, reason: "native_host_unavailable" };
+    // A timeout is not "unavailable": the host may still have taken the
+    // capture, so the hand-back can download the file twice rather than lose it.
+    const timedOut = error?.message === "native host timed out";
+    response = { accepted: false, reason: timedOut ? "native_host_timeout" : "native_host_unavailable" };
     await recordEvent({
       captureId: request.capture_id,
       accepted: false,
@@ -183,8 +186,12 @@ async function onDownloadCreated(item) {
   // Without cookie access Fetchpath could fail where the browser would not.
   if (!(await ensureOriginPermission(url, false))) return;
 
-  await browserApi.downloads.cancel(item.id);
-  await browserApi.downloads.erase({ id: item.id });
+  try {
+    await browserApi.downloads.cancel(item.id);
+  } catch (error) {
+    return; // Not cancelled: the browser keeps the download.
+  }
+  await browserApi.downloads.erase({ id: item.id }).catch(() => {});
   let response;
   try {
     response = await sendLink(rawUrl, { url: item.referrer || null }, { prompt: false });

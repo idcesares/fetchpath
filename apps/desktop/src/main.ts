@@ -1079,7 +1079,7 @@ async function refreshCliStatus(): Promise<void> {
   if (path) {
     cliState.textContent = "The fetchpath command is installed.";
     cliDetail.textContent =
-      "Open a new terminal and type fetchpath --help. Downloads started there run on their own and do not appear in this list.";
+      "Open a new terminal and type fetchpath --help. Downloads started there use the same engine and appear in this list.";
   } else {
     cliState.textContent = "The fetchpath command is not installed beside this copy of Fetchpath.";
     cliDetail.textContent = "The Fetchpath installer adds it. A copy run from elsewhere, such as a development build, does not.";

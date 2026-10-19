@@ -5,6 +5,18 @@ mod checkpoint;
 mod transfer;
 mod verified;
 
+/// The detail of a write that failed because the drive is full. A full drive
+/// is `storage.disk_full`, not `storage.failed`, so clients can say so.
+pub(crate) const DRIVE_FULL: &str = "the drive is full. Free some space or choose a folder on another drive, then retry; the saved progress is kept";
+
+pub(crate) fn storage_code(detail: &str) -> &'static str {
+    if detail == DRIVE_FULL {
+        "storage.disk_full"
+    } else {
+        "storage.failed"
+    }
+}
+
 pub use fetchpath_http::{LinkFacts, SegmentProgress};
 
 /// Looks at an HTTP(S) link's headers without downloading it. Errors carry
@@ -291,7 +303,12 @@ impl std::fmt::Display for DownloadError {
                 detail,
                 staging,
             } => {
-                write!(f, "storage.failed at {}: {detail}", path.display())?;
+                write!(
+                    f,
+                    "{} at {}: {detail}",
+                    storage_code(detail),
+                    path.display()
+                )?;
                 write_retained(f, staging)
             }
             Self::ChecksumMismatch {

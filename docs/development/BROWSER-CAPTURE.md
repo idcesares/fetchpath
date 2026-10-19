@@ -106,6 +106,10 @@ browser principal in `crates/fetchpath-session/tests/policy.rs`.
 
 ### Limitations
 
+- The extension gives the host 10 s. If it times out after the host took the
+  capture, automatic capture hands the download back to the browser and the
+  file can be downloaded twice; the popup history shows `native_host_timeout`.
+  A duplicate was preferred to a lost download.
 - The host waits up to 3 s for an engine to answer. After that the capture
   still reaches the queue when the engine it started comes up, but a browser
   that ends the host at once could also end an engine it failed to move out

@@ -102,6 +102,9 @@ export function friendlyError(job: JobSnapshot): string {
       ? "The checksum saved with this download can't be read, so it won't be downloaded unchecked. Edit the checksum to continue."
       : "The downloaded file doesn't match the checksum you entered, so nothing was saved. Check the checksum, or retry if the download may have been damaged.";
   }
+  if (job.error?.startsWith("storage.disk_full")) {
+    return "The drive is full, so Fetchpath stopped and kept your progress. Free some space or choose a folder on another drive, then retry.";
+  }
   return job.error ?? "The download stopped. Retry when the source is available.";
 }
 

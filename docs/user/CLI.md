@@ -444,7 +444,7 @@ separate from Fetchpath's folder grants and download approvals. A host running
 with a never-approve policy may refuse a download tool even when Fetchpath
 would allow it.
 Registration grants no download access: choose folders separately with `fetchpath agents
-grant NAME FOLDER` or Settings > Agent access. Requests outside a grant wait
+grant NAME FOLDER` or Settings > Agents and rules. Requests outside a grant wait
 for your approval. Automatic mode is a separate choice.
 
 Existing entries are preserved. If `fetchpath` already exists, setup explains
@@ -499,7 +499,7 @@ starts the full executable path with arguments `mcp --agent NAME`; remove that
 server from its configuration when finished. Manual Codex and Claude Code
 entries can be removed with `codex mcp remove fetchpath` and `claude mcp remove
 --scope user fetchpath`. To revoke an agent's download access, use `fetchpath agents revoke` or
-Settings > Agent access.
+Settings > Agents and rules.
 
 The agent gets these tools: `download` (a file, or a video at a quality;
 optionally waiting, with progress), `inspect_link`, `list_downloads`,

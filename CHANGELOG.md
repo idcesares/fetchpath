@@ -6,6 +6,7 @@
 - Connect Codex or Claude Code after install in Settings > AI agents.
 - The first-run banner no longer asks for media tools that are already found.
 - Disk reserve: **No limit** option; a full drive now says so plainly.
+- A full drive is reported as `storage.disk_full` with a plain message and is not retried until space is freed.
 - Headless install for remote PCs and agents: `tools/install/install.ps1`.
 
 ## 0.3.0 (9 October 2026)

@@ -270,7 +270,12 @@ impl std::fmt::Display for VerifiedDownloadError {
                 write!(f, "verification.failed: {detail}; nothing was published")
             }
             Self::Storage { path, detail, .. } => {
-                write!(f, "storage.failed at {}: {detail}", path.display())
+                write!(
+                    f,
+                    "{} at {}: {detail}",
+                    crate::storage_code(detail),
+                    path.display()
+                )
             }
         }
     }

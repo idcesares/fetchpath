@@ -3939,7 +3939,8 @@ fn failure_code(view: &JobSnapshot) -> Option<String> {
 /// message with no code at all, waits for a person, as the job contract (§9)
 /// requires.
 fn retried_automatically(code: &str) -> bool {
-    !code.starts_with("internal.")
+    // A full drive repeats until a person frees space.
+    !code.starts_with("internal.") && code != "storage.disk_full"
 }
 
 /// True for an HTTP client error that repeating will not change, such as 404

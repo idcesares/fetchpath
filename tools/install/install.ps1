@@ -40,13 +40,25 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $repo = 'idcesares/fetchpath'
 
-function Fail($message, $code = 1) { Write-Error "fetchpath install: $message"; exit $code }
+# Not Write-Error: with ErrorActionPreference=Stop it would throw and lose the exit code.
+function Fail($message, $code = 1) { [Console]::Error.WriteLine("fetchpath install: $message"); exit $code }
 
 if ($Components -notmatch '^(full|[a-z]+(,[a-z]+)*)$') { Fail 'Components must be names such as cli,mcp.' 2 }
 if ($AgentHosts.Count -gt 0 -and $Components -ne 'full' -and $Components -notmatch '\bmcp\b') {
   Fail '-AgentHosts needs the mcp component.' 2
 }
+if ($Version -ne 'latest' -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[\w.]+)?$') { Fail 'Version must look like v0.3.0.' 2 }
+if ($Sha256 -and $Sha256 -notmatch '^[0-9a-fA-F]{64}$') { Fail '-Sha256 must be 64 hex characters.' 2 }
 foreach ($h in $AgentHosts) { if ($h -notin 'codex', 'claude-code') { Fail "Unknown agent host '$h'." 2 } }
+
+# Where Fetchpath is installed for this user: -InstallDir, else the folder setup
+# recorded when it installed, else Setup's per-user default.
+function Get-InstallFolder {
+  if ($InstallDir) { return $InstallDir }
+  $key = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Fetchpath' -ErrorAction SilentlyContinue
+  if ($key -and $key.InstallLocation) { return $key.InstallLocation.Trim('"') }
+  return Join-Path $env:LOCALAPPDATA 'Fetchpath'
+}
 
 # Each run gets its own empty folder: nothing downloaded is run from where it landed beside other files.
 $work = Join-Path ([IO.Path]::GetTempPath()) ("fetchpath-install-" + [guid]::NewGuid().ToString('N'))
@@ -55,7 +67,9 @@ New-Item -ItemType Directory -Path $work | Out-Null
 try {
   if ($SetupFile) {
     if (-not $Sha256) { Fail '-SetupFile needs -Sha256 from a source you trust.' 2 }
-    $setup = (Resolve-Path -LiteralPath $SetupFile).Path
+    # Hash and run one private copy, not a file others may be able to replace.
+    $setup = Join-Path $work (Split-Path $SetupFile -Leaf)
+    Copy-Item -LiteralPath $SetupFile -Destination $setup
     $expected = $Sha256.ToLowerInvariant()
   } else {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -69,15 +83,19 @@ try {
     $sumsFile = Join-Path $work 'SHA256SUMS.txt'
     Invoke-WebRequest -Uri $exe.browser_download_url -OutFile $setup -UseBasicParsing
     Invoke-WebRequest -Uri $sums.browser_download_url -OutFile $sumsFile -UseBasicParsing
-    $line = Get-Content -LiteralPath $sumsFile | Where-Object { $_ -match [regex]::Escape($exe.name) } | Select-Object -First 1
-    if (-not $line) { Fail "SHA256SUMS.txt does not list $($exe.name)." 3 }
+    $line = Get-Content -LiteralPath $sumsFile | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($exe.name) + '$') } | Select-Object -First 2
+    if (@($line).Count -ne 1) { Fail "SHA256SUMS.txt does not list $($exe.name)." 3 }
     $expected = ($line -split '\s+')[0].ToLowerInvariant()
   }
 
   $actual = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($actual -ne $expected) { Fail "Checksum mismatch for $(Split-Path $setup -Leaf). Nothing was installed." 3 }
 
-  $setupArgs = @('/S', "/COMPONENTS=$Components")
+  # An existing install keeps its components unless -Components was given, so
+  # a rerun never removes a desktop app or browser bridge it did not mention.
+  $existing = Test-Path -LiteralPath (Join-Path (Get-InstallFolder) 'fetchpath.exe')
+  $setupArgs = @('/S')
+  if ($PSBoundParameters.ContainsKey('Components') -or -not $existing) { $setupArgs += "/COMPONENTS=$Components" }
   if ($AgentHosts.Count -gt 0) { $setupArgs += "/AGENTHOSTS=$($AgentHosts -join ',')" }
   if ($InstallDir) { $setupArgs += "/D=$InstallDir" }   # /D must be last
   $process = Start-Process -FilePath $setup -ArgumentList $setupArgs -Wait -PassThru
@@ -89,7 +107,7 @@ try {
   }
 
   # This session's PATH predates the install, so look in the install folder first.
-  $folder = if ($InstallDir) { $InstallDir } else { Join-Path $env:LOCALAPPDATA 'Programs\Fetchpath' }
+  $folder = Get-InstallFolder
   $cliPath = Join-Path $folder 'fetchpath.exe'
   if (-not (Test-Path -LiteralPath $cliPath)) {
     $cli = Get-Command fetchpath -ErrorAction SilentlyContinue

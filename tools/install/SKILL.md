@@ -15,13 +15,12 @@ Windows 11 x64, current user, no administrator rights, nothing shown or asked.
    ```powershell
    irm https://raw.githubusercontent.com/idcesares/fetchpath/main/tools/install/install.ps1 -OutFile $env:TEMP\fp-install.ps1
    # Read it, then:
-   powershell -NoProfile -File $env:TEMP\fp-install.ps1 -AgentHosts claude-code -MediaTools
+   powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\fp-install.ps1 -AgentHosts claude-code -MediaTools
    ```
 
-   Options: `-Version v0.3.0`, `-Components cli,mcp,torrent` (or `full`),
+   A rerun without `-Components` keeps what is installed. Options: `-Version v0.3.0`, `-Components cli,mcp,torrent` (or `full`),
    `-AgentHosts codex,claude-code`, `-MediaTools`, `-InstallDir`, or offline
-   `-SetupFile PATH -Sha256 HASH`. Exit code 10: unusable component list; 11:
-   an agent connection failed (Fetchpath stays installed); 3: checksum.
+   `-SetupFile PATH -Sha256 HASH`. Exit codes: 2 bad arguments; 3 checksum or release problem; 10 setup refused the component list; 11 an agent connection failed (Fetchpath stays installed); other values come from setup itself.
 
 2. Restart the agent host, then check `/mcp`. Verify without a model call:
    `fetchpath agent-setup check claude-code`.
