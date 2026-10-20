@@ -12,14 +12,21 @@ use tokio_tungstenite::tungstenite::{self, Message, WebSocket};
 
 const COOKIE: &str = sessions::COOKIE_NAME;
 
+/// Every fixture binds from the same first port; one at a time keeps a
+/// parallel test from taking the port another has just released.
+static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Fixture {
     _dir: tempfile::TempDir,
     engine: Arc<Engine>,
     connections: Arc<AtomicUsize>,
     web: Web,
+    // Last, so the sockets close before the next fixture may bind.
+    _serial: std::sync::MutexGuard<'static, ()>,
 }
 
 fn fixture(ticket_ttl: Option<Duration>) -> Fixture {
+    let serial = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let session = Session::load_with_browser(dir.path().join("queue.json"), 2, None).unwrap();
     let engine = Engine::new(Arc::new(session));
@@ -38,6 +45,7 @@ fn fixture(ticket_ttl: Option<Duration>) -> Fixture {
         engine,
         connections,
         web,
+        _serial: serial,
     }
 }
 
@@ -211,12 +219,15 @@ fn a_ticket_signs_one_browser_in_once() {
     assert_eq!(cookie.len(), 64);
     let attributes = first.header("set-cookie").unwrap();
     assert!(attributes.contains("HttpOnly") && attributes.contains("SameSite=Strict"));
-    assert!(
-        first
-            .header("content-security-policy")
-            .unwrap()
-            .contains("frame-ancestors")
-    );
+    let policy = first.header("content-security-policy").unwrap();
+    for directive in ["frame-ancestors", "base-uri", "object-src"] {
+        assert!(
+            policy.contains(directive),
+            "{directive} missing from {policy}"
+        );
+    }
+    assert_eq!(first.header("referrer-policy"), Some("no-referrer"));
+    assert_eq!(first.header("cache-control"), Some("no-store"));
 
     let again = get(port, &host, &link, &[]);
     assert!(again.cookie().is_none(), "a ticket worked twice");

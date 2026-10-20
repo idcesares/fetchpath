@@ -1,6 +1,6 @@
 # Desktop checksum verification
 
-Task FP-031. Recorded 23 September 2026.
+Task FP-031.
 
 ## What a person can now do
 
@@ -54,35 +54,16 @@ The guided media-tool setup now passes its recorded SHA-256 to the engine too,
 so a mismatched helper is refused before it is published. The existing check
 after download remains.
 
-## Commands actually run
+## How it was verified
 
-```
-cargo test --workspace --locked --offline
-cargo clippy --workspace --all-targets --offline -- -D warnings
-cargo fmt --check
-npx tsc --noEmit -p apps/desktop
-npx vite build            (in apps/desktop)
-node tools/tasks.mjs check
-```
+Checks: `cargo test --workspace --locked --offline`, `cargo clippy --workspace --all-targets --offline -- -D warnings`,
+`cargo fmt --check`, `npx tsc --noEmit -p apps/desktop`, the production frontend build and
+`node tools/tasks.mjs check`, all clean. New tests cover the three publication points, the pasted-checksum
+normalizer, the job builder that accepts a checksum only before the job starts, and in the desktop: match,
+mismatch with no automatic retry, a malformed checksum refused, a blank checksum meaning none, a batch refused,
+retry with a corrected checksum, and a corrupted saved checksum failing closed on restart.
 
-Results on 23 September 2026, Windows 11 Pro 26200 x64:
-
-- `cargo test --workspace --locked` — 223 passed, 0 failed, 4 ignored (already
-  ignored before this work). The baseline before this task was 210.
-- `fetchpath-core` — 57 tests, up from 51: the three publication points, the
-  pasted-checksum normalizer, and the job builder that accepts a checksum
-  only before the job starts.
-- `fetchpath-desktop` — 42 tests, up from 35: match, mismatch with no
-  automatic retry, a malformed checksum refused, a blank checksum meaning
-  none, a batch refused, retry with a corrected checksum, and a corrupted
-  saved checksum failing closed on restart.
-- Clippy with `-D warnings`, `cargo fmt --check`, the TypeScript check and the
-  production frontend build — clean.
-- `node tools/tasks.mjs check` — PASS.
-
-## Verified adversarially
-
-Each guard was removed in turn to confirm that its test detects the gap:
+Adversarially, each guard was removed in turn to confirm that its test detects the gap:
 
 - Removing the pending-recovery check fails
   `a_pending_publication_is_checked_before_it_is_completed_on_recovery`.
@@ -103,17 +84,15 @@ weaker guarantee.
 
 ## Known limitations
 
-1. **The UI walkthrough has not been run for this change.**
-   `apps/desktop/tools/ui-smoke.ps1` now includes a mismatch and a match
-   scenario, but running it drives the real window and injects keystrokes. It
-   waits for the person's go-ahead.
-2. **A mismatch after a crash that already published** is reported, not
+1. **A mismatch after a crash that already published** is reported, not
    repaired. The file stays where it was, with its real digest shown.
-3. **Browser-captured downloads carry no checksum.** The extension does not
+2. **Browser-captured downloads carry no checksum.** The extension does not
    offer the field.
-4. **No cache reuse yet.** A checksum makes a download eligible for the bounded
+3. **No cache reuse yet.** A checksum makes a download eligible for the bounded
    cache, but the desktop does not use the cache until FP-032.
-
-## UI walkthrough (23 September 2026)
-
-Run through the real release executable over the DevTools protocol, with no global input: a checksum pasted as `  SHA256:` plus capitals and spaces matched and the file was published; a wrong checksum published nothing, discarded the staging, showed Expected and Received with Edit checksum and Retry, and was not retried automatically. The checksum field is in the accessibility harness tab order with its accessible name. `apps/desktop/tools/ui-smoke.ps1` was not run because it sends global keystrokes. See [release readiness](ARCHIVE.md).
+4. The UI walkthrough ran through the release executable over the DevTools protocol with no global input: a
+   checksum pasted as `  SHA256:` plus capitals and spaces matched and the file was published; a wrong checksum
+   published nothing, discarded the staging, showed Expected and Received with Edit checksum and Retry, and was not
+   retried automatically; the field is in the accessibility harness tab order with its accessible name.
+   `apps/desktop/tools/ui-smoke.ps1` (mismatch and match scenarios) was not run because it sends global keystrokes.
+   See [release readiness](ARCHIVE.md).

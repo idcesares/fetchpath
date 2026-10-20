@@ -103,11 +103,11 @@ fn usage(message: &str) -> i32 {
 }
 
 /// An error the agent can read and relay. The code is stable. Input,
-/// policy, contract and engine messages are Fetchpath's own; any other may
-/// quote a server or a helper, so it is labelled as untrusted.
+/// policy and contract messages are Fetchpath's own; any other may quote a
+/// server or a helper, so it is labelled as untrusted.
 fn failed(error: &ProtocolError) -> String {
     let code = error.code.as_str();
-    let own = ["input.", "policy.", "contract.", "engine."]
+    let own = ["input.", "policy.", "contract."]
         .iter()
         .any(|family| code.starts_with(family));
     if own {

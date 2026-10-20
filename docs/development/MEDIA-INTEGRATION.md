@@ -1,6 +1,6 @@
 # Media download integration
 
-Verified on 2026-09-21 for FP-014.
+FP-014 (integration), FP-039 (pinned helpers).
 
 ## User flow
 
@@ -24,7 +24,7 @@ Media and ordinary file downloads share the bounded desktop queue, history, sche
 
 The application discovers tools from `FETCHPATH_YT_DLP` plus `FETCHPATH_FFMPEG_DIR`, from a directory named by `FETCHPATH_MEDIA_TOOLS_DIR`, or from a packaged `media-tools` directory beside the application executable. A tool directory contains `yt-dlp.exe` and either FFmpeg executables directly or in `bin/`. Fetchpath does not invoke helper self-update.
 
-## Verification
+## How it was verified
 
 The production adapter was exercised against the repository's locally generated, non-copyright DASH fixture. Engine inspection returned a 360p video choice and best-available audio choice. The selected video path downloaded separate DASH streams, muxed them to MP4, verified H.264 video plus AAC audio, and published 1,974,606 bytes. The audio path extracted MP3, verified an audio stream, and published 100,812 bytes. Both durations were 12 seconds. Exact hashes and tool identities are in `evidence/media/media-integration.json`.
 
@@ -34,15 +34,6 @@ Automated tests cover variant sorting/deduplication, expected-stream verificatio
 
 This proves the production integration against lawful local DASH plus the earlier HLS/DASH spike coverage. It does not claim compatibility with arbitrary public sites. Before a public release, the project still needs an explicit supported-source corpus, repeatable compatibility runs for that corpus, and a distribution/licensing decision for the helper binaries. Helper updates must remain controlled and compatibility-tested.
 
-## Pinned helpers (FP-039, 23 September 2026)
+## Pinned helpers and guided setup
 
-yt-dlp 2026.08.19 and the GyanD ffmpeg 9.0.2 essentials build are pinned in `adapters/media/media-tools.json` against their publishers' checksum files. The first real guided install exposed and fixed an archive-flattening defect; the ignored network test `guided_install_fetches_verifies_and_runs_the_pinned_helpers` now passes. No public site is promised. See [release readiness](ARCHIVE.md).
-
-On 26 September 2026 the guided setup moved from the desktop into
-`adapters/media/src/setup.rs` with its manifest, so the desktop's Settings and
-the terminal's `fetchpath tools` share one installer and one pin list; it
-gained a per-step progress hook. Missing helpers now fail with the stable
-code `media.helper_unavailable` (action `configure_media_tools`). A real
-guided install from the terminal fetched and verified both pinned helpers
-into a scratch data folder, and a 360p YouTube download then saved a
-28.8 MiB MP4.
+yt-dlp 2026.08.19 and the GyanD ffmpeg 9.0.2 essentials build are pinned in `adapters/media/media-tools.json` against their publishers' checksum files. The guided setup lives in `adapters/media/src/setup.rs` with its manifest, so the desktop's Settings and the terminal's `fetchpath tools` share one installer and one pin list, with a per-step progress hook. Missing helpers fail with the stable code `media.helper_unavailable` (action `configure_media_tools`). The ignored network test `guided_install_fetches_verifies_and_runs_the_pinned_helpers` passes, and a real terminal guided install fetched and verified both helpers into a scratch data folder; a 360p YouTube download then saved a 28.8 MiB MP4. No public site is promised. See [release readiness](ARCHIVE.md).

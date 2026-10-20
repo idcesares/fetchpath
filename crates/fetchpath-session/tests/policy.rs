@@ -2327,3 +2327,39 @@ fn a_schedule_past_the_year_9999_is_refused() {
     );
     assert_eq!(code(send(&setup.agent, command)), "input.invalid_request");
 }
+
+#[test]
+fn a_folder_swapped_for_a_junction_after_the_request_holds_the_job_as_it_starts() {
+    let s = setup(granting);
+    let sub = s.granted.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let mut command = later(&sub.join("a.bin"));
+    if let Command::CreateJob {
+        request: JobRequest::File { not_before, .. },
+    } = &mut command
+    {
+        *not_before = Some(Timestamp::from_unix_ms(Timestamp::now().unix_ms() + 1_500));
+    }
+    let queued = job(send(&s.agent, command).unwrap());
+    assert_eq!(
+        queued.state,
+        JobState::Queued,
+        "inside the grant when asked"
+    );
+
+    // Before it starts, the folder becomes a junction that leads outside.
+    std::fs::remove_dir(&sub).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&sub)
+        .arg(&s.outside)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+
+    let held = wait_for(&s.engine, &s.agent, &queued.job_id, |job| {
+        job.state == JobState::AwaitingApproval
+    });
+    assert_eq!(reasons(&held), [ApprovalReason::OutsideGrantedFolders]);
+    assert!(!s.outside.join("a.bin").exists());
+}

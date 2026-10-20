@@ -205,7 +205,7 @@ Proposed optimization promotion gate: at least a 10% median improvement in its d
 
 ## 10. Acceptance contract
 
-All criteria below are currently **not implemented and not tested**. They define future evidence requirements.
+These criteria define the evidence each area needs. Their status is tracked per task in `docs/tasks/backlog.json`; a criterion counts as met only with the evidence it names.
 
 | ID | Required behavior | Evidence |
 |---|---|---|
@@ -227,7 +227,7 @@ All criteria below are currently **not implemented and not tested**. They define
 
 The user confirmed video/audio downloading as a first-public-release requirement on 19 September 2026. The initial supported site/format corpus and helper packaging remain engineering tasks, tracked in the repository backlog.
 
-Before implementation locks packaging, select a supported Windows baseline and architectures, the distribution/license model, and desktop framework through a small responsiveness/accessibility/installer spike. No backend or UI framework is declared the fastest without that evidence. Later spending on code signing, CI hardware, servers, or models requires an actual budget decision, not an assumed cost commitment.
+Before implementation locks packaging, select a supported Windows baseline and architectures and the distribution/license model. The desktop framework is decided: Tauri 2, see [DESKTOP-FRAMEWORK.md](DESKTOP-FRAMEWORK.md). No backend or UI framework is declared the fastest without that evidence. Later spending on code signing, CI hardware, servers, or models requires an actual budget decision, not an assumed cost commitment.
 
 Stop general technology research now: enough evidence exists to define the first slices. Resume focused research when a milestone reaches a concrete unknown, such as authenticated browser capture, media extractor lifecycle, native HTTP/3 packaging, or power-loss recovery. Keep FEC, custom protocols, proprietary manifest design, and speculative zero-copy rewrites out of the critical path until a measured workload justifies them.
 

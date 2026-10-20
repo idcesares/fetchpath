@@ -62,20 +62,35 @@ async function setBadge(text, color) {
   setTimeout(() => void browserApi.action.setBadgeText({ text: "" }), 2500);
 }
 
+// The host answers within about 3 s even while it starts the engine. A host
+// that never answers must not leave a cancelled browser download unrecovered.
+const HOST_TIMEOUT_MS = 10000;
+
+function sendToHost(message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("native host timed out")), HOST_TIMEOUT_MS);
+  });
+  return Promise.race([browserApi.runtime.sendNativeMessage(HOST_NAME, message), timeout]).finally(() =>
+    clearTimeout(timer),
+  );
+}
+
 /** Asks the Fetchpath host whether it is installed and answering. */
 async function probe() {
-  try {
-    const response = await browserApi.runtime.sendNativeMessage(HOST_NAME, {
-      type: "probe",
-      schema_version: SCHEMA_VERSION,
-    });
-    return { connected: response?.accepted === true, reason: response?.reason ?? null };
-  } catch (error) {
-    return { connected: false, reason: "native_host_unavailable" };
+  // The first native message after the worker wakes can fail once; a second try
+  // tells a real absence from a hiccup.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await sendToHost({ type: "probe", schema_version: SCHEMA_VERSION });
+      return { connected: response?.accepted === true, reason: response?.reason ?? null };
+    } catch (error) {
+      if (attempt >= 1) return { connected: false, reason: "native_host_unavailable" };
+    }
   }
 }
 
-async function sendLink(rawUrl, tab, { prompt = true } = {}) {
+async function sendLink(rawUrl, tab, { prompt = true, pageTitle } = {}) {
   const url = policy.parseHttpUrl(rawUrl);
   const state = await readState();
   if (!url) {
@@ -102,7 +117,7 @@ async function sendLink(rawUrl, tab, { prompt = true } = {}) {
     capture_id: crypto.randomUUID(),
     method: "GET",
     url: rawUrl,
-    suggested_filename: policy.suggestedFilename(rawUrl),
+    suggested_filename: pageTitle === undefined ? policy.suggestedFilename(rawUrl) : policy.pageFilename(rawUrl, pageTitle),
     referrer: policy.normalizeOrigin(tab?.url) === url.origin ? tab.url : null,
     cookies: cookies.map((cookie) => ({
       name: cookie.name,
@@ -120,9 +135,12 @@ async function sendLink(rawUrl, tab, { prompt = true } = {}) {
 
   let response;
   try {
-    response = await browserApi.runtime.sendNativeMessage(HOST_NAME, request);
+    response = await sendToHost(request);
   } catch (error) {
-    response = { accepted: false, reason: "native_host_unavailable" };
+    // A timeout is not "unavailable": the host may still have taken the
+    // capture, so the hand-back can download the file twice rather than lose it.
+    const timedOut = error?.message === "native host timed out";
+    response = { accepted: false, reason: timedOut ? "native_host_timeout" : "native_host_unavailable" };
     await recordEvent({
       captureId: request.capture_id,
       accepted: false,
@@ -169,9 +187,19 @@ async function onDownloadCreated(item) {
   // Without cookie access Fetchpath could fail where the browser would not.
   if (!(await ensureOriginPermission(url, false))) return;
 
-  await browserApi.downloads.cancel(item.id);
-  await browserApi.downloads.erase({ id: item.id });
-  const response = await sendLink(rawUrl, { url: item.referrer || null }, { prompt: false });
+  try {
+    await browserApi.downloads.cancel(item.id);
+  } catch (error) {
+    return; // Not cancelled: the browser keeps the download.
+  }
+  await browserApi.downloads.erase({ id: item.id }).catch(() => {});
+  let response;
+  try {
+    response = await sendLink(rawUrl, { url: item.referrer || null }, { prompt: false });
+  } catch (error) {
+    // Any failure after the cancel returns the download to the browser.
+    response = { accepted: false, reason: "capture_failed" };
+  }
   if (response?.accepted !== true) {
     handingBack.add(rawUrl);
     await browserApi.downloads.download({ url: rawUrl });
@@ -209,12 +237,23 @@ browserApi.contextMenus.onClicked.addListener((info, tab) => {
     const source = policy.parseHttpUrl(info.srcUrl ?? "") ? info.srcUrl : tab?.url;
     if (source) void sendLink(source, tab);
   } else if (info.menuItemId === MENU_SEND_PAGE && tab?.url) {
-    void sendLink(tab.url, tab);
+    void sendLink(tab.url, tab, { pageTitle: tab.title ?? "" });
   } else if (info.menuItemId === MENU_EXCLUDE_SITE && tab?.url) {
     void setOriginExcluded(tab.url, true);
   } else if (info.menuItemId === MENU_INCLUDE_SITE && tab?.url) {
     void setOriginExcluded(tab.url, false);
   }
+});
+
+// A permission prompt can close the popup before it sends. When the grant
+// arrives and the popup has not claimed the send, finish it here.
+browserApi.permissions.onAdded.addListener(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const { pendingSend } = await browserApi.storage.local.get("pendingSend");
+  if (!pendingSend) return;
+  await browserApi.storage.local.remove("pendingSend");
+  if (Date.now() - pendingSend.at > 120000) return;
+  await sendLink(pendingSend.url, { url: pendingSend.url }, { prompt: false, pageTitle: pendingSend.pageTitle });
 });
 
 browserApi.runtime.onMessage.addListener((message, sender) => {
@@ -223,7 +262,10 @@ browserApi.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === "send_link" && message.url) {
     // From the popup the site permission was already requested there, inside
     // the click, because a request made here would have lost the gesture.
-    return sendLink(message.url, sender.tab ?? { url: message.url }, { prompt: false });
+    // The popup button sends the page, so it is named like the menu entry.
+    const pageTitle = typeof message.pageTitle === "string" ? message.pageTitle : undefined;
+    if (message.claimPending) void browserApi.storage.local.remove("pendingSend");
+    return sendLink(message.url, sender.tab ?? { url: message.url }, { prompt: false, pageTitle });
   }
   if (message?.type === "set_auto_capture") {
     return browserApi.storage.local

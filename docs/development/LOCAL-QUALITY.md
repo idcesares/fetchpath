@@ -79,3 +79,22 @@ the owner's prior real-Chromium verification remains historical evidence.
 Chrome accessibility-tree checks prove region placement and focus, not audible
 Narrator output. Edge/Firefox and theme/scaling observations remain the existing
 FP-104 evidence; they were not repeated here.
+
+## Field fixes (FP-109)
+
+Automatic capture now returns a cancelled download to the browser on any
+failure and when the host does not answer within 10 s. Settings > AI agents
+connects or disconnects Codex and Claude Code through `fetchpath agent-setup`.
+The first-run media step is hidden when helpers are found. The disk reserve
+accepts No limit (stored as 1 byte; `fetchpath settings disk-reserve-bytes
+off`), and a full drive says so. `tools/install/install.ps1` is the headless
+install. Checked: browser background tests, space/core/CLI unit tests, tsc,
+fmt. Not run: the script against a real release; a real-browser capture.
+
+FP-110: drive space is measured off the queue lock (2 s cache, first look waits at most 100 ms, so a dead share reads as unmeasurable for that pass); a cancel during a reserve stop wins; setup writes browser keys and PATH before reconnecting agents (exit 11 unchanged; NSIS not run). Known: `remote::tests::turning_it_off_closes_sockets_and_the_port` failed once in a full parallel run on the fixed port 47474 and passed alone.
+
+FP-111: a page sent from the browser menu is named from its title with `.html` (it was saved as an extensionless file, seen in the field); a repeat capture of the same page still makes a second copy. Waiting-for-space rows explain themselves; the remote-listener tests serialise on the shared port. Records ADAPTIVE-HTTP, WINDOWS-PACKAGING, DESKTOP-CHECKSUM, WEB-UI and MEDIA-INTEGRATION were consolidated (old text in ARCHIVE.md). Not run: a real-browser page send, a vite build, the accessibility script.
+
+Real-PC run, 18 October 2026 (FP-111 build, unsigned): `install.ps1` kept a Full install on a rerun without -Components, connected and removed an agent host, uninstalled (data kept, browser key and PATH entry removed), installed cli+mcp from the real 0.3.0 release (checksum verified, no desktop), then upgraded to Full with the new setup (agent registration kept); desktop and engine started, helpers reported ready. Found and fixed: `fetchpath settings disk-reserve-bytes auto|off|10GB` never worked (the numeric arm shadowed it). Still true: a URL with no file name (a root page) is saved as extensionless `download`; the name is fixed before the response is seen.
+
+FP-112: an agent job is checked against its folder grants again as it starts (a junction swapped after the request holds it for approval; a folder the person approved stays approved). The loopback web UI replies with `Cache-Control: no-store` and a CSP with `base-uri`/`object-src`; the desktop CSP gained both. Verified with the session and remote tests and a regression test that fails without the check. Not run: the desktop built with the new CSP, or the web UI loaded in a browser.

@@ -13,6 +13,7 @@ import {
   isActive,
   jobLabel,
   matchesFilter,
+  waitingForSpaceText,
   matchesSearch,
 } from "./format";
 
@@ -184,6 +185,7 @@ export function createQueueView(ctx: QueueContext): QueueView {
       job.notBeforeMs ?? "",
       job.qualityLabel ?? "",
       job.attempt,
+      job.waitingForSpace ? "space" : "",
       job.agent ?? "",
       job.approvalReasons.join(","),
     ].join("\u0001");
@@ -239,6 +241,14 @@ export function createQueueView(ctx: QueueContext): QueueView {
       schedule.className = "schedule-note";
       schedule.textContent = `Scheduled for ${new Date(job.notBeforeMs).toLocaleString()}`;
       article.append(schedule);
+    }
+
+    const spaceText = waitingForSpaceText(job);
+    if (spaceText) {
+      const space = document.createElement("p");
+      space.className = "schedule-note";
+      space.textContent = spaceText;
+      article.append(space);
     }
 
     if (job.state === "awaiting_approval") {

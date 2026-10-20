@@ -12,7 +12,7 @@ The Windows native host independently enforces its fixed Chrome/Edge extension o
 
 Signed query values, the origin-only referrer, and cookies are serialized into a current-user DPAPI envelope with application entropy. The public durable inbox contains only an opaque `credential_ref`, request fingerprint, safe filename, and query-free URL. Acknowledgement occurs only after the protected envelope and create-only inbox command have been flushed and synced. Reusing the same capture ID and fingerprint returns the existing result; a different fingerprint is an idempotency conflict.
 
-The desktop polls this inbox with its normal queue refresh. It commits the queue record before marking the inbox processed, and detects an already-ingested credential reference after a crash between those steps. Browser jobs choose a non-conflicting filename in the user's Downloads directory. The protected context is retained for restart/retry, omitted from queue JSON and UI state, and removed after completion or history removal.
+The desktop polls this inbox with its normal queue refresh. It commits the queue record before marking the inbox processed, and detects an already-ingested credential reference after a crash between those steps. Browser jobs choose a non-conflicting filename in the user's Downloads directory. A context-menu page send whose URL has no file extension suggests `<tab title>.html` (sanitised, at most 50 characters, no reserved names), else `<host>-<segment>.html`; link, media and extension-bearing names are unchanged. The protected context is retained for restart/retry, omitted from queue JSON and UI state, and removed after completion or history removal.
 
 ## Verification
 
@@ -106,6 +106,10 @@ browser principal in `crates/fetchpath-session/tests/policy.rs`.
 
 ### Limitations
 
+- The extension gives the host 10 s. If it times out after the host took the
+  capture, automatic capture hands the download back to the browser and the
+  file can be downloaded twice; the popup history shows `native_host_timeout`.
+  A duplicate was preferred to a lost download.
 - The host waits up to 3 s for an engine to answer. After that the capture
   still reaches the queue when the engine it started comes up, but a browser
   that ends the host at once could also end an engine it failed to move out

@@ -13,11 +13,13 @@ function harness() {
       local: {
         async get() { return { ...state }; },
         async set(values) { Object.assign(state, values); },
+        async remove(key) { delete state[key]; },
       },
     },
     permissions: {
       async contains() { return true; },
       async request() { return true; },
+      onAdded: noOpEvent,
     },
     cookies: {
       async getAll() {
@@ -55,6 +57,7 @@ function harness() {
     browser,
     crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000001" },
     setTimeout() {},
+    clearTimeout() {},
   });
   vm.runInContext(readFileSync(new URL("../policy.js", import.meta.url), "utf8"), context);
   vm.runInContext(readFileSync(new URL("../background.js", import.meta.url), "utf8"), context);
@@ -80,6 +83,18 @@ test("excluded origins never reach native messaging and explicit authenticated s
   assert.doesNotMatch(persistedExtensionState, /top-secret|cookie-secret|account=private/);
 });
 
+test("the popup's send names the page from its title and claims the pending send", async () => {
+  const app = harness();
+  app.state.pendingSend = { url: "https://example.test/", pageTitle: "Example Domain", at: Date.now() };
+  const sent = await app.sendMessage(
+    { type: "send_link", url: "https://example.test/", pageTitle: "Example Domain", claimPending: true },
+    {},
+  );
+  assert.equal(sent.accepted, true);
+  assert.equal(app.nativeRequests[0].request.suggested_filename, "Example Domain.html");
+  assert.equal(app.state.pendingSend, undefined, "the popup took the send, so the grant handler must not repeat it");
+});
+
 function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
   const state = {};
   const nativeRequests = [];
@@ -89,7 +104,7 @@ function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
   let messageListener;
   const noOpEvent = { addListener() {} };
   const browser = {
-    storage: { local: { async get() { return { ...state }; }, async set(values) { Object.assign(state, values); } } },
+    storage: { local: { async get() { return { ...state }; }, async set(values) { Object.assign(state, values); }, async remove(key) { delete state[key]; } } },
     permissions: {
       async contains({ origins }) { return siteAllowed || !origins; },
       async request() { throw new Error("no user gesture on the automatic path"); },
@@ -120,6 +135,7 @@ function automaticHarness({ hostAccepts = true, siteAllowed = true } = {}) {
     browser,
     crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000002" },
     setTimeout() {},
+    clearTimeout() {},
   });
   vm.runInContext(readFileSync(new URL("../policy.js", import.meta.url), "utf8"), context);
   vm.runInContext(readFileSync(new URL("../background.js", import.meta.url), "utf8"), context);
@@ -174,4 +190,15 @@ test("sending a video element falls back to its page when the source is a stream
   const page = { url: "https://video.example.test/watch?v=abc" };
   await app.menu({ menuItemId: "fetchpath-send-media", srcUrl: "blob:https://video.example.test/1" }, page);
   assert.equal(app.nativeRequests[0].url, page.url);
+});
+
+test("the page menu names an extensionless page from its title; link and media sends keep the URL's name", async () => {
+  const app = automaticHarness();
+  const tab = { url: "https://www.linkedin.com/in/alcinei-oliveira-42781750/", title: "Alcinei Oliveira" };
+  await app.menu({ menuItemId: "fetchpath-send-page" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "Alcinei Oliveira.html");
+  await app.menu({ menuItemId: "fetchpath-send-link", linkUrl: "https://www.linkedin.com/in/someone-else" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "someone-else");
+  await app.menu({ menuItemId: "fetchpath-send-media" }, tab);
+  assert.equal(app.nativeRequests.at(-1).suggested_filename, "alcinei-oliveira-42781750");
 });

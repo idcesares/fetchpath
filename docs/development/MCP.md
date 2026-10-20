@@ -19,8 +19,8 @@ already). Standard output carries only protocol messages.
   size and rate holds, credential and replacement refusals, and job
   ownership exactly as for any agent client. The MCP layer only shapes what
   the agent sees. Engine calls run on tokio's blocking pool.
-- **Tools.** `download` (url, folder, file_name, kind auto|file|media,
-  quality, sha256, wait, timeout_seconds), `inspect_link`, `list_downloads`,
+- **Tools.** `download` (url, folder, file_name, kind auto|file|media|torrent,
+  quality, sha256, discover_peers and upload (torrents; each waits for approval), wait, timeout_seconds), `inspect_link`, `list_downloads`,
   `get_download`, `wait_for_download`, `pause`, `resume` (a failed download
   is retried), `cancel`, `search_history`. `download` goes through the same
   `queue::add_named` as `fetchpath add`: the link is looked at, a video
@@ -53,7 +53,7 @@ already). Standard output carries only protocol messages.
   own entry only (contract D3). Integrity carries the outcome, the expected
   and observed SHA-256 and a meaning that never claims the publisher.
   Awaiting approval carries the reasons and an explanation to relay. A
-  tool error outside the input, policy, contract and engine families is
+  tool error outside the input, policy and contract families is
   labelled as untrusted detail. An agent's history search matches a
   destination's folders only inside its grant, elsewhere just the file name
   (engine, `Command::History`), so searching cannot spell out a hidden
@@ -246,8 +246,8 @@ lifecycle evidence belongs in [WINDOWS-PACKAGING](WINDOWS-PACKAGING.md).
 
 - The harness grants a folder from the command line rather than through
   the Windows folder picker, which UI Automation of the webview cannot
-  drive. The terminal has `/approvals`, `/approve` and `/deny` but no
-  `/agents`; access is changed in Settings or with `fetchpath agents`.
+  drive. The terminal has `/approvals`, `/approve`, `/deny` and `/agents`;
+  access is also changed in Settings or with `fetchpath agents`.
 - Settings reads agents when it opens; a change made elsewhere meanwhile
   shows the next time.
 - Each tool call other than a wait opens its own pipe connection.

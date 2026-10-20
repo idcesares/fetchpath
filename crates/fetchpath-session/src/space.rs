@@ -4,11 +4,17 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
 /// The automatic reserve's floor: 5 GiB (decision O5).
 pub const AUTOMATIC_RESERVE_FLOOR: u64 = 5 * GIB;
+
+/// The "no limit" choice: a one-byte reserve, so Fetchpath leaves nothing
+/// aside and a download waits only when the drive truly has no room.
+pub const NO_RESERVE: u64 = 1;
 
 /// Space a stopped download of unknown size needs above the reserve before
 /// it starts again, so it does not stop and start at the boundary.
@@ -38,7 +44,7 @@ pub(crate) struct Budget {
     chosen: u64,
     roots: HashMap<PathBuf, Option<PathBuf>>,
     drives: HashMap<PathBuf, Drive>,
-    probe: fn(&Path) -> Option<(PathBuf, Space)>,
+    probe: Box<dyn Fn(&Path) -> Measurement>,
 }
 
 struct Drive {
@@ -47,16 +53,15 @@ struct Drive {
 }
 
 impl Budget {
-    pub(crate) fn new(chosen: u64) -> Self {
-        Self::with_probe(chosen, probe)
-    }
-
-    pub(crate) fn with_probe(chosen: u64, probe: fn(&Path) -> Option<(PathBuf, Space)>) -> Self {
+    pub(crate) fn with_probe(
+        chosen: u64,
+        probe: impl Fn(&Path) -> Option<(PathBuf, Space)> + 'static,
+    ) -> Self {
         Self {
             chosen,
             roots: HashMap::new(),
             drives: HashMap::new(),
-            probe,
+            probe: Box::new(probe),
         }
     }
 
@@ -129,9 +134,92 @@ impl Budget {
     }
 }
 
+/// How long a measurement of a folder's drive is reused.
+const MEASUREMENT_TTL: Duration = Duration::from_secs(2);
+
+/// The longest a caller waits for a folder's very first measurement. A dead
+/// or slow share is measured on its own thread and reads as unmeasurable
+/// (never holding a download back) until it answers.
+const FIRST_MEASUREMENT_WAIT: Duration = Duration::from_millis(100);
+
+type Measurement = Option<(PathBuf, Space)>;
+
+#[derive(Default)]
+struct Entry {
+    measured: Option<(Instant, Measurement)>,
+    inflight: bool,
+}
+
+/// Drive measurements taken off the caller's thread, so a queue lock is
+/// never held across a probe of a slow or unreachable drive.
+pub(crate) struct SpaceCache {
+    probe: fn(&Path) -> Measurement,
+    entries: Mutex<HashMap<PathBuf, Entry>>,
+    ready: Condvar,
+}
+
+impl SpaceCache {
+    pub(crate) fn new(probe: fn(&Path) -> Measurement) -> Arc<Self> {
+        Arc::new(Self {
+            probe,
+            entries: Mutex::default(),
+            ready: Condvar::new(),
+        })
+    }
+
+    /// The last measurement of `folder`'s drive, refreshed in the background
+    /// once it is older than the TTL.
+    pub(crate) fn lookup(self: &Arc<Self>, folder: &Path) -> Measurement {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = entries.entry(folder.to_path_buf()).or_default();
+        if let Some((at, value)) = &entry.measured
+            && at.elapsed() < MEASUREMENT_TTL
+        {
+            return value.clone();
+        }
+        let stale = entry.measured.as_ref().map(|(_, value)| value.clone());
+        let started = !entry.inflight;
+        if started {
+            entry.inflight = true;
+            let cache = Arc::clone(self);
+            let folder = folder.to_path_buf();
+            std::thread::spawn(move || {
+                let value = (cache.probe)(&folder);
+                let mut entries = cache.entries.lock().unwrap_or_else(|p| p.into_inner());
+                let entry = entries.entry(folder).or_default();
+                entry.measured = Some((Instant::now(), value));
+                entry.inflight = false;
+                cache.ready.notify_all();
+            });
+        }
+        match stale {
+            Some(value) => value,
+            None if started => {
+                let (entries, _) = self
+                    .ready
+                    .wait_timeout_while(entries, FIRST_MEASUREMENT_WAIT, |entries| {
+                        entries.get(folder).is_none_or(|entry| entry.inflight)
+                    })
+                    .unwrap_or_else(|p| p.into_inner());
+                entries
+                    .get(folder)
+                    .and_then(|entry| entry.measured.as_ref())
+                    .and_then(|(_, value)| value.clone())
+            }
+            None => None,
+        }
+    }
+
+    /// A budget for one pass of the queue that reads this cache.
+    pub(crate) fn budget(self: &Arc<Self>, chosen: u64) -> Budget {
+        let cache = Arc::clone(self);
+        Budget::with_probe(chosen, move |folder| cache.lookup(folder))
+    }
+}
+
 /// The drive holding `folder` (its nearest existing ancestor) and its space.
 #[cfg(windows)]
-fn probe(folder: &Path) -> Option<(PathBuf, Space)> {
+pub(crate) fn probe(folder: &Path) -> Option<(PathBuf, Space)> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetVolumePathNameW};
 
@@ -161,7 +249,7 @@ fn probe(folder: &Path) -> Option<(PathBuf, Space)> {
 }
 
 #[cfg(not(windows))]
-fn probe(_folder: &Path) -> Option<(PathBuf, Space)> {
+pub(crate) fn probe(_folder: &Path) -> Option<(PathBuf, Space)> {
     None
 }
 

@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
 
-const hostPath = resolve("target/debug/fetchpath-browser-host.exe");
+const hostPath = resolve(process.env.CARGO_TARGET_DIR ?? "target", "debug/fetchpath-browser-host.exe");
 const caller = "chrome-extension://lfikhkjdpjcjaboanknaabncpkbgoele/";
 
 // The host starts the desktop app that sits beside it after a capture. Run a

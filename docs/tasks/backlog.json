@@ -3391,6 +3391,162 @@
         "docs/development/LOCAL-QUALITY.md"
       ],
       "blockedReason": null
+    },
+    {
+      "id": "FP-109",
+      "title": "Field fixes: capture hand-back, agent connection after install, no-limit disk reserve, headless install",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-108"
+      ],
+      "status": "done",
+      "owner": "claude (lead)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "extensions/browser",
+        "apps/desktop",
+        "apps/cli",
+        "crates/fetchpath-core",
+        "crates/fetchpath-session",
+        "tools/install",
+        "docs/user",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "A browser download taken by automatic capture always returns to the browser if Fetchpath cannot take it, including thrown errors and a silent host. Codex and Claude Code can be connected or disconnected after install from Settings. The first-run banner omits the media step when helpers are already found. The disk reserve has a No limit choice, and a full drive reports a plain-language cause. A headless script installs and optionally connects agents and media tools with no window.",
+      "verification": "Browser background tests, session space tests, CLI and core unit tests, TypeScript check, cargo fmt and check; the PowerShell script parses. Not run: the script against a real release, and a real-browser capture.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-110",
+      "title": "Queue lock held during drive measurement, lost cancel at the reserve, installer step order, documentation drift",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-109"
+      ],
+      "status": "done",
+      "owner": "claude (lead; three bounded agents)",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session",
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "tests/installer",
+        "docs",
+        "SECURITY.md",
+        "apps/cli/src/main.rs",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A12"
+      ],
+      "acceptance": "Cancel, pause and list are not blocked by a slow drive measurement, and a cancel during a reserve stop is not lost. A failed agent reconnection no longer skips browser registration or PATH. Documentation matches the code it describes.",
+      "verification": "Session tests that failed before the fix and pass after; installer tests; clippy, fmt and node tests. Not run: NSIS or a real install.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-111",
+      "title": "Page-send filenames, desktop feedback fixes, record consolidation, test determinism",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-110"
+      ],
+      "status": "done",
+      "owner": "claude (lead; four bounded agents)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "extensions/browser",
+        "apps/desktop/index.html",
+        "apps/desktop/src",
+        "apps/cli/src",
+        "docs",
+        "tests/compatibility/windows/ui-accessibility.ps1",
+        "docs/tasks/backlog.json",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "A page sent from the browser menu is saved with a readable .html name. The desktop explains disk-space waits, accepts magnet and hf links when pasted, and reports settings and errors accurately. Dated development records are single current-state records. The remote-listener tests no longer race on the shared port.",
+      "verification": "Extension, TypeScript, clippy, fmt, node and CLI test runs. Not run: a real-browser page send, a vite build, or the Windows accessibility script.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-112",
+      "title": "Agent folder grants checked again as a job starts; stricter web UI response headers",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-111"
+      ],
+      "status": "done",
+      "owner": "claude (lead; four read-only checks)",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "apps/cli/src/remote",
+        "apps/desktop/src-tauri/tauri.conf.json",
+        "extensions/browser",
+        "SECURITY.md"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "An agent job whose destination no longer lies inside its granted folders when it starts waits for the person instead of writing there, unless the person already approved the folder. The loopback web UI sends no-store on every reply and a CSP without base or object sources. The popup send path is covered by a test.",
+      "verification": "fetchpath-session and remote tests, extension tests with the debug host, clippy and fmt.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "blockedReason": null
+    },
+    {
+      "id": "FP-113",
+      "title": "0.4.0 release gate",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-112"
+      ],
+      "status": "blocked",
+      "owner": "claude (lead); owner publishes",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "docs/development/RELEASE-CANDIDATE.md",
+        "CHANGELOG.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
+      "acceptance": "The 0.4.0 installer is built, installed clean and as an upgrade over 0.3.0, and the desktop and web UI run with the tightened policy. CI passes on the release commit. The owner tags and publishes.",
+      "verification": "Workspace, clippy, fmt, node, extension, tsc and vite checks passed; see RELEASE-CANDIDATE.md for what was not run.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ],
+      "blockedReason": "Waiting for the owner to merge PR #32, rebuild the installer from the release commit, tag, publish and then update the README and GUIDE download names. Sandbox clean-install and upgrade harnesses were not run."
     }
   ]
 }

@@ -39,6 +39,6 @@ one your task names.
 
 - [Local development quality](LOCAL-QUALITY.md) — FP-106/107: reproducible builds, test fixtures and local recovery/keyboard journeys.
 
-- [Release gate](RELEASE-CANDIDATE.md) — the current 0.3.0 acceptance matrix, security scope and publication verdict (FP-105).
+- [Release gate](RELEASE-CANDIDATE.md) — the current 0.4.0 candidate gate, security scope and publication verdict (FP-113).
 - [Windows UX and packaging](WINDOWS-PACKAGING.md) — FP-017.
 - [First end-user test](FIELD-FEEDBACK.md) — FP-040 onward.

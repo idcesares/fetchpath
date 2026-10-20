@@ -29,8 +29,10 @@ export function matchesFilter(job: JobSnapshot, filter: QueueFilter): boolean {
   if (filter === "all") return true;
   if (filter === "active") return isActive(job.state);
   if (filter === "paused") return job.state === "paused";
-  if (filter === "scheduled") return job.state === "scheduled" || job.state === "queued";
+  // A download held for disk space needs the person (free space, or the limit), so it is filed there.
+  if (filter === "scheduled") return (job.state === "scheduled" || job.state === "queued") && !job.waitingForSpace;
   if (filter === "completed") return job.state === "completed";
+  if (isWaitingForSpace(job)) return true;
   return job.state === "failed" || job.state === "needs_source" || job.state === "awaiting_approval";
 }
 
@@ -61,9 +63,20 @@ export function isActive(state: JobState): boolean {
   return state === "running" || state === "cancelling";
 }
 
+function isWaitingForSpace(job: JobSnapshot): boolean {
+  return !!job.waitingForSpace && (job.state === "queued" || job.state === "scheduled");
+}
+
+/** Why a download waits for disk space and what to do about it. */
+export function waitingForSpaceText(job: JobSnapshot): string | null {
+  return isWaitingForSpace(job)
+    ? "Waiting for disk space. Free some space, or change the limit in Settings. It starts by itself."
+    : null;
+}
+
 /** The state word, or why a queued download has not started. */
 export function jobLabel(job: JobSnapshot): string {
-  if (job.waitingForSpace && (job.state === "queued" || job.state === "scheduled")) {
+  if (isWaitingForSpace(job)) {
     return "Waiting for disk space";
   }
   return stateLabel(job.state);
@@ -101,6 +114,9 @@ export function friendlyError(job: JobSnapshot): string {
     return job.error?.includes("checksum_unreadable")
       ? "The checksum saved with this download can't be read, so it won't be downloaded unchecked. Edit the checksum to continue."
       : "The downloaded file doesn't match the checksum you entered, so nothing was saved. Check the checksum, or retry if the download may have been damaged.";
+  }
+  if (job.error?.startsWith("storage.disk_full")) {
+    return "The drive is full, so Fetchpath stopped and kept your progress. Free some space or choose a folder on another drive, then retry.";
   }
   return job.error ?? "The download stopped. Retry when the source is available.";
 }

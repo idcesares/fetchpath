@@ -203,6 +203,7 @@ const trayNote = required<HTMLParagraphElement>("tray-note");
 
 const onboarding = required<HTMLElement>("onboarding");
 const dismissOnboarding = required<HTMLButtonElement>("dismiss-onboarding");
+const onboardingMedia = required<HTMLElement>("onboarding-media");
 const onboardingOpenMedia = required<HTMLButtonElement>("onboarding-open-media");
 
 const statsPanel = required<HTMLElement>("stats-panel");
@@ -390,7 +391,7 @@ async function showSettings(category?: string): Promise<void> {
   if (category) settingsCategories.find((button) => button.dataset.settingsCategory === category)?.click();
   clearError(settingsError);
   openDialog(settingsDialog, settingsCategories.find((button) => button.getAttribute("aria-pressed") === "true") ?? settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshRules(), refreshCache(), refreshLan()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshAgentHosts(), refreshRules(), refreshCache(), refreshLan()]);
 }
 
 /* Rules (FP-075) -------------------------------------------------------------
@@ -582,7 +583,7 @@ lanJoin.addEventListener("click", async () => {
     await refreshLan();
     lanJoinResult.textContent = `Paired with ${device.label}, fingerprint ${device.fingerprint}. Check that the other computer shows the same.`;
   } catch (error) {
-    lanJoinResult.textContent = String(error);
+    lanJoinResult.textContent = errorMessage(error);
   } finally {
     lanJoin.disabled = false;
   }
@@ -601,10 +602,20 @@ cacheQuotaInput.addEventListener("change", async () => {
   const gigabytes = Number(cacheQuotaInput.value);
   if (!Number.isFinite(gigabytes) || gigabytes <= 0) {
     await refreshCache();
+    showError(settingsError, "Enter a cache size in GB, such as 2.");
     return;
   }
-  // The engine clamps the quota to its bounds; the form then shows what it kept.
-  await changeSetting({ cacheQuotaBytes: Math.round(gigabytes * GB) }, "Cache size updated.");
+  // The engine clamps the quota to its bounds; say so when it will.
+  const min = Number(cacheQuotaInput.min) * GB;
+  const max = Number(cacheQuotaInput.max) * GB;
+  const requested = Math.round(gigabytes * GB);
+  const kept = Math.min(Math.max(requested, min || requested), max || requested);
+  await changeSetting(
+    { cacheQuotaBytes: requested },
+    kept === requested
+      ? "Cache size updated."
+      : `The cache keeps between ${formatBytes(min)} and ${formatBytes(max)}, so it was set to ${formatBytes(kept)}.`,
+  );
   await refreshCache();
 });
 
@@ -768,6 +779,72 @@ async function refreshAgents(): Promise<void> {
   } catch (error) {
     showError(settingsError, error);
   }
+}
+
+/* Connecting Codex and Claude Code, at install or any time after. */
+
+const agentHosts = required<HTMLElement>("agent-hosts");
+const AGENT_HOSTS = [
+  { key: "codex", id: "codex", label: "Codex" },
+  { key: "claude_code", id: "claude-code", label: "Claude Code" },
+] as const;
+
+interface AgentHostState {
+  available?: boolean;
+  registered?: boolean;
+  owned?: boolean;
+  connection?: string;
+}
+
+async function refreshAgentHosts(): Promise<void> {
+  let status: Record<string, AgentHostState> = {};
+  try {
+    status = JSON.parse(await invoke<string>("agent_host_setup", { action: "status" }));
+  } catch {
+    // No fetchpath command beside this copy (a development build): nothing to offer.
+    agentHosts.replaceChildren();
+    return;
+  }
+  agentHosts.replaceChildren(
+    ...AGENT_HOSTS.map((host) => {
+      const state = status[host.key] ?? {};
+      const row = document.createElement("div");
+      row.className = "agent-row";
+      const text = document.createElement("span");
+      const connected = state.registered === true && state.owned === true;
+      text.textContent = !state.available
+        ? `${host.label}: not found on this PC`
+        : connected
+          ? `${host.label}: connected. Restart it to use Fetchpath.`
+          : state.registered
+            ? `${host.label}: has its own fetchpath entry, left as it is`
+            : `${host.label}: not connected`;
+      row.append(text);
+      if (state.available && (connected || !state.registered)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary compact";
+        button.textContent = connected ? "Disconnect" : "Connect";
+        button.addEventListener("click", async () => {
+          clearError(settingsError);
+          button.disabled = true;
+          try {
+            await invoke("agent_host_setup", { action: connected ? "remove" : "add", host: host.id });
+            agentStatus(
+              connected
+                ? `${host.label} disconnected.`
+                : `${host.label} connected. It can download only into folders you grant.`,
+            );
+          } catch (error) {
+            showError(settingsError, error);
+          }
+          await refreshAgentHosts();
+        });
+        row.append(button);
+      }
+      return row;
+    }),
+  );
 }
 
 function agentStatus(message: string): void {
@@ -1012,7 +1089,7 @@ async function refreshCliStatus(): Promise<void> {
   if (path) {
     cliState.textContent = "The fetchpath command is installed.";
     cliDetail.textContent =
-      "Open a new terminal and type fetchpath --help. Downloads started there run on their own and do not appear in this list.";
+      "Open a new terminal and type fetchpath --help. Downloads started there use the same engine and appear in this list.";
   } else {
     cliState.textContent = "The fetchpath command is not installed beside this copy of Fetchpath.";
     cliDetail.textContent = "The Fetchpath installer adds it. A copy run from elsewhere, such as a development build, does not.";
@@ -1058,7 +1135,7 @@ document.addEventListener("paste", (event) => {
   if (target?.closest("input, textarea, select, [contenteditable]")) return;
   if (settingsDialog.open || shortcutsDialog.open) return;
   const text = event.clipboardData?.getData("text")?.trim() ?? "";
-  const links = text.split(/\s+/).filter((part) => /^https?:\/\//i.test(part));
+  const links = text.split(/\s+/).filter((part) => /^(?:https?:\/\/|magnet:\?|hf:\/\/)/i.test(part));
   if (!links.length) return;
   event.preventDefault();
   openComposer(links.join("\n"));
@@ -1083,7 +1160,7 @@ async function refreshBrowserSetup(): Promise<void> {
     renderBrowserSetup(await invoke<BrowserSetupStatus>("browser_setup_status"));
   } catch (error) {
     browserSetupState.textContent = "Could not check the browser extension.";
-    browserSetupDetail.textContent = String(error);
+    browserSetupDetail.textContent = errorMessage(error);
   }
 }
 
@@ -1202,12 +1279,18 @@ function applySettingsToForm(view: SettingsView): void {
   webUiInput.checked = settings.webUi === true;
   webUiOpen.disabled = !webUiInput.checked;
   webUiSignOut.disabled = !webUiInput.checked;
-  const reserveGib = Math.round((settings.diskReserveBytes ?? 0) / RESERVE_GIB);
-  if (![...diskReserveSelect.options].some((option) => option.value === String(reserveGib))) {
+  // One byte is the engine's "no limit"; it would round to Automatic below.
+  for (const stale of diskReserveSelect.querySelectorAll("option[data-custom]")) stale.remove();
+  const reserveBytes = settings.diskReserveBytes ?? 0;
+  const whole = reserveBytes % RESERVE_GIB === 0;
+  const reserveChoice = reserveBytes === 1 ? "off" : whole ? String(reserveBytes / RESERVE_GIB) : `b${reserveBytes}`;
+  if (![...diskReserveSelect.options].some((option) => option.value === reserveChoice)) {
     // A value set elsewhere, such as from the command line, is shown as it is.
-    diskReserveSelect.add(new Option(`${reserveGib} GB`, String(reserveGib)));
+    const custom = new Option(whole ? `${reserveChoice} GiB` : `${formatBytes(reserveBytes)} (set elsewhere)`, reserveChoice);
+    custom.dataset.custom = "";
+    diskReserveSelect.add(custom);
   }
-  diskReserveSelect.value = String(reserveGib);
+  diskReserveSelect.value = reserveChoice;
   confirmRemoveInput.checked = settings.confirmRemoveCompleted;
   powerModeInput.checked = settings.powerMode;
   themeSelect.value = settings.theme;
@@ -1276,7 +1359,7 @@ instanceNameInput.addEventListener("change", () =>
   void changeSetting({ instanceName: instanceNameInput.value.trim() }, "Name saved."),
 );
 diskReserveSelect.addEventListener("change", () =>
-  void changeSetting({ diskReserveBytes: Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
+  diskReserveSelect.value.startsWith("b") ? undefined : void changeSetting({ diskReserveBytes: diskReserveSelect.value === "off" ? 1 : Number(diskReserveSelect.value) * RESERVE_GIB }, "Saved."),
 );
 hubModeInput.addEventListener("change", () =>
   void changeSetting(
@@ -1340,9 +1423,13 @@ settingClearDestination.addEventListener("click", () => {
   void changeSetting({ defaultDestinationDir: null }, "New downloads will use your Windows Downloads folder.");
 });
 
-dismissOnboarding.addEventListener("click", () => {
+dismissOnboarding.addEventListener("click", async () => {
   onboarding.hidden = true;
-  void changeSettingWithoutDialog({ onboardingCompleted: true });
+  if (!(await changeSettingWithoutDialog({ onboardingCompleted: true }))) {
+    onboarding.hidden = false;
+    showNotice("Could not save that you dismissed this. It will show again next time.");
+    return;
+  }
   addOpenButton.focus({ preventScroll: true });
 });
 
@@ -1350,14 +1437,14 @@ onboardingOpenMedia.addEventListener("click", () => void showSettings("integrati
 mediaOpenSettings.addEventListener("click", () => void showSettings("integrations"));
 
 /** Settings changed from outside the dialog, where there is no form to update. */
-async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<void> {
-  if (!settingsView) return;
+async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<boolean> {
+  if (!settingsView) return false;
   try {
     settingsView = await invoke<SettingsView>("update_settings", { next: { ...settingsView.settings, ...patch } });
     applySettingsToForm(settingsView);
+    return true;
   } catch {
-    // A failed preference write is not worth interrupting the queue for; the
-    // panel will show the stored value again the next time it opens.
+    return false;
   }
 }
 
@@ -1449,6 +1536,8 @@ function updateMediaAvailability(): void {
   const ready = toolsStatus?.ready ?? false;
   mediaSetupNeeded.hidden = ready;
   mediaInspectControls.hidden = !ready;
+  // Tools found on this PC (or already set up) need no first-run prompt.
+  onboardingMedia.hidden = ready;
 }
 
 /* Composer ---------------------------------------------------------------- */
@@ -1660,7 +1749,7 @@ async function analyzeRepository(url: string): Promise<void> {
     const view = await invoke<RepositoryView>("inspect_repository", { url });
     if (repositoryUrl === url) showRepository(view);
   } catch (error) {
-    if (repositoryUrl === url) showRepository(null, String(error));
+    if (repositoryUrl === url) showRepository(null, errorMessage(error));
   }
 }
 
@@ -2401,9 +2490,12 @@ function setMediaDestination(variant: MediaVariant, replaceExtension = false): v
   }
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+}
+
 function showError(element: HTMLElement, error: unknown): void {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  const message = errorMessage(error);
   element.textContent = message;
   element.hidden = false;
   if (element === settingsError) {

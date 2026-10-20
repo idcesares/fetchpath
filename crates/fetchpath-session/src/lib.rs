@@ -65,6 +65,8 @@ pub struct Session {
     halted: std::sync::atomic::AtomicBool,
     /// When running downloads' drives were last measured (FP-101).
     space_checked_ms: std::sync::atomic::AtomicU64,
+    /// Drive measurements, taken off the queue lock.
+    space: Arc<space::SpaceCache>,
     /// Set when the queue was written by a newer Fetchpath (FP-070): the
     /// saved list is shown as it is, nothing starts, and nothing is written
     /// over it. Holds the explanation.
@@ -310,6 +312,8 @@ struct QueueRecord {
     approval: Option<Approval>,
     /// The person approved this job past its agent's size limit.
     size_approved: bool,
+    /// The person approved this job outside its agent's granted folders.
+    folder_approved: bool,
     view: JobSnapshot,
 }
 
@@ -592,6 +596,8 @@ struct PersistedRecord {
     approval: Option<Approval>,
     #[serde(default, skip_serializing_if = "is_false")]
     size_approved: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    folder_approved: bool,
     view: JobSnapshot,
 }
 
@@ -683,6 +689,7 @@ impl Session {
             retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(read_only.is_some()),
             space_checked_ms: std::sync::atomic::AtomicU64::new(0),
+            space: space::SpaceCache::new(space::probe),
             read_only,
             agents: Mutex::new(policy::AgentsFile::load(&agents_path)),
             agents_path: Some(agents_path),
@@ -715,6 +722,7 @@ impl Session {
             retired_torrent_metadata: Mutex::new(Vec::new()),
             halted: std::sync::atomic::AtomicBool::new(false),
             space_checked_ms: std::sync::atomic::AtomicU64::new(0),
+            space: space::SpaceCache::new(space::probe),
             read_only: None,
             agents: Mutex::new(BTreeMap::new()),
             agents_path: None,
@@ -1443,9 +1451,24 @@ impl Session {
         // again; it reads as what its worker reports.
         let stopping = state.space_stopped.remove(job_id);
         let record = find_record_mut(&mut state, job_id)?;
+        // Its worker was already taken to be joined (or it was requeued
+        // without one), so there is nothing to cancel but the wait itself:
+        // end it here, or the requeue would start the file again.
+        let held_for_space = record.job.is_none()
+            && record.view.state == "queued"
+            && (stopping || record.view.waiting_for_space);
         if stopping {
             record.view.waiting_for_space = false;
             refresh_record(record);
+        }
+        if held_for_space {
+            record.view.waiting_for_space = false;
+            record.view.state = "cancelled".into();
+            record.view.error = None;
+            record.view.action = None;
+            record.view.retryable = false;
+            record.finished_at_ms = Some(now_ms());
+            record.view.finished_at_ms = record.finished_at_ms;
         }
         // Cancelling a job that waits for approval ends it; the person no
         // longer has anything to decide.
@@ -1467,7 +1490,7 @@ impl Session {
                 "already_terminal" if awaiting => "accepted",
                 outcome => outcome,
             }
-        } else if awaiting {
+        } else if awaiting || held_for_space {
             "accepted"
         } else {
             "already_terminal"
@@ -1641,6 +1664,8 @@ impl Session {
         {
             record.destination = destination;
             record.torrent_auto = false;
+            // An approval outside the grants was for the place the person saw.
+            record.folder_approved = false;
         }
         // An empty field clears the checksum; anything else replaces it.
         if let Some(checksum) = checksum {
@@ -1896,6 +1921,9 @@ impl Session {
         if reasons.contains(&ApprovalReason::SizeLimit) {
             record.size_approved = true;
         }
+        if reasons.contains(&ApprovalReason::OutsideGrantedFolders) {
+            record.folder_approved = true;
+        }
         record.finished_at_ms = None;
         record.view.finished_at_ms = None;
         let prepared = match record.live_url.clone() {
@@ -2078,7 +2106,7 @@ impl Session {
         }
         self.space_checked_ms
             .store(now, std::sync::atomic::Ordering::SeqCst);
-        let mut budget = space::Budget::new(settings.disk_reserve_bytes);
+        let mut budget = self.space.budget(settings.disk_reserve_bytes);
         let QueueState {
             records,
             space_stopped,
@@ -2583,6 +2611,21 @@ impl Session {
             if record.job.is_none() && !record.view.waiting_for_space {
                 continue;
             }
+            // Folder grants are checked again as the job starts: a junction
+            // can be pointed elsewhere between the request and now, and the
+            // agent's grants may have changed. The person's approval stands.
+            if let Principal::Agent(agent) = &record.principal
+                && !record.folder_approved
+                && !policy::inside_grants(&record.grant_path(), &self.agent_policy(agent).folders)
+            {
+                // Kept, cancelled: approving joins it before the job is rebuilt.
+                if let Some(job) = record.job.as_ref() {
+                    job.cancel();
+                }
+                record.view.waiting_for_space = false;
+                record.hold(vec![ApprovalReason::OutsideGrantedFolders]);
+                continue;
+            }
             // The disk reserve (FP-101): a download starts only when its
             // drive has room for what it still needs above the reserve,
             // after what running downloads there still need. Otherwise it
@@ -2596,7 +2639,7 @@ impl Session {
                 })
                 .map(|total| total.saturating_sub(record.view.bytes_received));
             let budget = budget.get_or_insert_with(|| {
-                let mut budget = space::Budget::new(settings.disk_reserve_bytes);
+                let mut budget = self.space.budget(settings.disk_reserve_bytes);
                 for (destination, remaining) in &running {
                     budget.running(destination, *remaining);
                 }
@@ -3226,6 +3269,7 @@ impl QueueRecord {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3309,6 +3353,7 @@ impl QueueRecord {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3594,6 +3639,7 @@ impl QueueRecord {
             principal: saved.principal,
             approval: saved.approval,
             size_approved: saved.size_approved,
+            folder_approved: saved.folder_approved,
             view,
         }
     }
@@ -3639,6 +3685,7 @@ impl QueueRecord {
             principal: saved.principal,
             approval: saved.approval,
             size_approved: saved.size_approved,
+            folder_approved: saved.folder_approved,
             view,
         }
     }
@@ -3939,7 +3986,8 @@ fn failure_code(view: &JobSnapshot) -> Option<String> {
 /// message with no code at all, waits for a person, as the job contract (§9)
 /// requires.
 fn retried_automatically(code: &str) -> bool {
-    !code.starts_with("internal.")
+    // A full drive repeats until a person frees space.
+    !code.starts_with("internal.") && code != "storage.disk_full"
 }
 
 /// True for an HTTP client error that repeating will not change, such as 404
@@ -4402,6 +4450,7 @@ fn write_queue(
                 principal: record.principal.clone(),
                 approval: record.approval.clone(),
                 size_approved: record.size_approved,
+                folder_approved: record.folder_approved,
                 view: record.view.clone(),
             })
             .collect(),
@@ -4890,6 +4939,7 @@ mod tests {
             principal: Principal::User,
             approval: None,
             size_approved: false,
+            folder_approved: false,
             view,
         };
         let restored =
@@ -6490,6 +6540,77 @@ mod tests {
             assert!(record.restart_url.is_none());
             assert!(!record.view.source.contains("secret-value"));
         }
+    }
+
+    /// A cancel that lands while a download stopped at the disk reserve is
+    /// being joined, or after it was requeued without a worker, must win.
+    #[test]
+    fn a_cancel_during_a_reserve_stop_is_not_lost() {
+        let jobs = Session::in_memory(0);
+        let dir = tempfile::tempdir().unwrap();
+        let started = jobs
+            .enqueue(vec![JobDraft {
+                checksum: None,
+                url: "http://127.0.0.1:9/file.bin".into(),
+                destination: dir.path().join("a.bin").display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap()
+            .remove(0);
+        // A drive nothing fits on, so a requeued download stays waiting.
+        jobs.settings.lock().unwrap().disk_reserve_bytes = 1 << 60;
+        for stopping in [true, false] {
+            {
+                let mut state = jobs.inner.lock().unwrap();
+                let record = find_record_mut(&mut state, &started.job_id).unwrap();
+                record.job = None;
+                record.view.state = "queued".into();
+                record.view.waiting_for_space = true;
+                if stopping {
+                    state.space_stopped.insert(started.job_id.clone());
+                }
+            }
+            let response = jobs.cancel(&started.job_id).unwrap();
+            assert_eq!(response.outcome, "accepted", "stopping={stopping}");
+            assert_eq!(response.job.state, "cancelled", "stopping={stopping}");
+            assert!(!response.job.waiting_for_space);
+            // Nothing restarts it afterwards.
+            jobs.reconcile_locked(&mut jobs.inner.lock().unwrap());
+            let state = jobs.inner.lock().unwrap();
+            let record = find_record(&state, &started.job_id).unwrap();
+            assert_eq!(record.view.state, "cancelled");
+            assert!(record.job.is_none());
+        }
+    }
+
+    fn slow_probe(_folder: &Path) -> Option<(PathBuf, space::Space)> {
+        std::thread::sleep(Duration::from_millis(2_000));
+        None
+    }
+
+    /// A dead network share must not hold the queue lock while it is measured.
+    #[test]
+    fn a_slow_drive_measurement_never_blocks_the_queue() {
+        let mut jobs = Session::in_memory(1);
+        jobs.space = space::SpaceCache::new(slow_probe);
+        let dir = tempfile::tempdir().unwrap();
+        let started = std::time::Instant::now();
+        let job = jobs
+            .enqueue(vec![JobDraft {
+                checksum: None,
+                url: "http://127.0.0.1:9/file.bin".into(),
+                destination: dir.path().join("a.bin").display().to_string(),
+                not_before_ms: None,
+            }])
+            .unwrap()
+            .remove(0);
+        jobs.list().unwrap();
+        jobs.cancel(&job.job_id).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(1_000),
+            "queue calls waited {:?} on a drive measurement",
+            started.elapsed()
+        );
     }
 }
 

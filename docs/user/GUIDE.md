@@ -4,7 +4,7 @@ Fetchpath is a download manager for Windows 11. It keeps a queue of your
 downloads, pauses and resumes them, survives restarts, and checks that what
 arrived is exactly what you asked for. It can also save video and audio.
 
-This guide covers version 0.3.0. Check the
+This guide covers version 0.4.0. Check the
 [release page](https://github.com/idcesares/fetchpath/releases/latest) for
 published versions. You don't need to read it all: the first
 two sections are enough to start. After that, use it as a reference.
@@ -41,14 +41,14 @@ using it lawfully and checking whether its sources and files are safe. The
 option, sets the terms for using Fetchpath.
 
 1. From the [Fetchpath release page](https://github.com/idcesares/fetchpath/releases/latest),
-   download two files for 0.3.0:
-   `Fetchpath_0.3.0_x64-setup.exe` and `SHA256SUMS.txt`.
+   download two files for 0.4.0:
+   `Fetchpath_0.4.0_x64-setup.exe` and `SHA256SUMS.txt`.
 2. *Recommended:* check the installer arrived intact. In File Explorer, open
    the folder you saved them to, click the address bar, type `powershell` and
    press <kbd>Enter</kbd>. Then run:
 
    ```powershell
-   (Get-FileHash .\Fetchpath_0.3.0_x64-setup.exe).Hash.ToLower()
+   (Get-FileHash .\Fetchpath_0.4.0_x64-setup.exe).Hash.ToLower()
    Get-Content .\SHA256SUMS.txt
    ```
 
@@ -56,7 +56,7 @@ option, sets the terms for using Fetchpath.
    the matching installer's line in `SHA256SUMS.txt`. This checks that your copy
    matches the release asset; it does not replace a publisher signature.
    If they differ, delete both files and download them again.
-3. Double-click `Fetchpath_0.3.0_x64-setup.exe` and follow the installer.
+3. Double-click `Fetchpath_0.4.0_x64-setup.exe` and follow the installer.
    Choose **Full** (recommended: the app, the terminal command, AI agent
    support, browser integration and the torrent helper)
    or **Custom** to pick components, as described in
@@ -114,6 +114,13 @@ keeps working under the same grants after you deselect AI agents or Terminal;
 revoke it with `fetchpath agents revoke`. One configured with the bare
 `fetchpath` command stops starting once the PATH entry is gone.
 
+**Headless installation.** For a remote PC or an agent, `tools/install/install.ps1`
+downloads a release, checks it against `SHA256SUMS.txt`, and installs silently with no
+desktop window by default (`-Components cli,mcp`), optionally connecting
+`-AgentHosts codex,claude-code` and setting up `-MediaTools`. `tools/install/SKILL.md`
+is the same steps as an agent skill. Connecting a host later needs no reinstall:
+`fetchpath agent-setup add codex`, or Settings > AI agents.
+
 **Quiet installation.** These switches go after the setup file name:
 
 | Switch | Effect |
@@ -133,10 +140,11 @@ neither `desktop` nor `cli`, or `mcp` without one of them. Quiet setup does not
 add the terminal for you. The reason is written to `%TEMP%\fetchpath-install.log`.
 Exit code 1 is Cancel and 2 is setup's own failure. To install the video and
 audio tools in a deployment, run `fetchpath tools install --yes` afterwards.
-Agent connection or cleanup failures use exit code **11**; resolve the reported
-configuration problem and retry while Fetchpath remains installed.
+Agent connection or cleanup failures use exit code **11**. Setup has already
+registered the browser connection and the `fetchpath` command by then; resolve the
+reported configuration problem and retry while Fetchpath remains installed.
 
-**"Windows protected your PC."** Fetchpath 0.3.0 isn't signed with a
+**"Windows protected your PC."** Fetchpath 0.4.0 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
 it and warns when you run the installer. If you downloaded it from the
 official release page and the checksum matched in step 2, choose
@@ -208,8 +216,9 @@ Video and audio downloads can't be paused. You can cancel them and start again.
 Downloads run in the background, so closing the window never stops them.
 By default the window goes to the notification area (near the clock); click
 the Fetchpath icon there to bring it back. **Close desktop and tray (downloads continue)** in that icon's
-menu ends the window and the icon, and downloads still finish. **Stop engine
-(stops downloads)** asks first, then stops them; the window shows the engine
+menu ends the window and the icon, and downloads still finish. **Close desktop,
+tray and engine (stops downloads)** also stops the engine, and **Stop engine
+(stops downloads)** stops it but leaves the window open and asks first; the window shows the engine
 as stopped until you start it again. Fetchpath's
 background part stops by itself about a minute after the last download ends
 and every window is closed, unless **Always on** or LAN sharing keeps it
@@ -390,7 +399,7 @@ downloads you start in the browser go to Fetchpath instead. If the native host
 refuses a handoff, the extension tries to restart the browser download. It's
 off until you turn it on.
 
-**Why "Developer mode"?** Version 0.3.0 isn't listed in the Chrome Web Store
+**Why "Developer mode"?** Version 0.4.0 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
 yourself. Chrome may remind you about developer-mode extensions when it
 starts; that's expected. Firefox only allows signed add-ons, so Firefox isn't
@@ -429,7 +438,7 @@ on GitHub.
 | Setting | What it does |
 | --- | --- |
 | Downloads at the same time | 1 to 8. More at once isn't always faster. |
-| Keep free on every drive | Automatic reserves the larger of 5 GiB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space**, and starts when there is room; a running file download stops at its saved progress and continues later. Video, audio and torrents are checked at start only. A drive whose free space cannot be measured has no reserve enforcement. |
+| Keep free on every drive | **No limit** keeps nothing aside; a download then waits only if the drive truly has no room. Automatic reserves the larger of 5 GiB and 5 % of the drive. A download that would cross it waits, shown as **Waiting for disk space** under **Needs attention** with what to do (free space, or change this limit), and starts by itself when there is room; a running file download stops at its saved progress and continues later. Video, audio and torrents are checked at start only. A drive whose free space cannot be measured has no reserve enforcement. |
 | Name and Always on | The name this Fetchpath shows everywhere, and **Always on**: keep it running in the background with no window open, start it when you sign in, and keep the computer awake while downloads run. It is not a Windows service: after a restart it runs only once you sign in. |
 | Default save folder | Where new downloads and links from your browser go. |
 | Retry connection problems automatically | Retries only network and server trouble, up to the number of attempts you choose. Problems that need you, such as a file that already exists or an expired sign-in, always wait for you. |
@@ -443,7 +452,7 @@ on GitHub.
 | Keep running in the notification area | Whether closing the window keeps its icon in the notification area. Downloads continue either way. |
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
-| Appearance | Match Windows, Light or Dark. |
+| Appearance | Match Windows, Light, Dark or High contrast. |
 
 Everything works with the keyboard alone. Press **Keyboard help** for the
 shortcuts.
@@ -477,7 +486,7 @@ They protect the download API; an agent host with shell access already has
 the same file access as you. The only listener is the optional
 [web UI](#your-downloads-in-a-browser), on this computer only, and a browser
 signed in to it cannot approve requests; there is no remote hub or
-remote-control listener in 0.3.0.
+remote-control listener in 0.4.0.
 
 ## Download speed
 
@@ -541,6 +550,10 @@ or manually created host entries are preserved; follow any cleanup warning and
 remove them from the host yourself. A configuration cleanup error stops removal
 while Fetchpath is still installed, so you can resolve the error and retry.
 See [agent setup and removal](CLI.md#guided-setup-codex-and-claude-code).
+
+A silent uninstall that could not remove the application data (when requested with
+`/DELETEAPPDATA`) exits with code **3**: Fetchpath is removed, the leftover data is
+listed in `%TEMP%etchpath-uninstall.log`, and you delete the folders yourself.
 
 ## When something goes wrong
 
