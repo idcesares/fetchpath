@@ -635,8 +635,8 @@
         "FP-019",
         "FP-049"
       ],
-        "status": "done",
-        "owner": "codex (lead)",
+      "status": "done",
+      "owner": "codex (lead)",
       "modelTier": "terra-medium",
       "files": [
         "adapters/torrent",
@@ -646,12 +646,12 @@
         "apps/desktop",
         "Cargo.toml",
         "Cargo.lock",
-          "docs/architecture/REPOSITORY.md",
-          "docs/development",
-          "docs/user/CLI.md",
-          "PROJECT.md",
-          "SECURITY.md",
-          "docs/tasks/backlog.json"
+        "docs/architecture/REPOSITORY.md",
+        "docs/development",
+        "docs/user/CLI.md",
+        "PROJECT.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
       ],
       "acceptanceIds": [
         "A02",
@@ -660,9 +660,9 @@
       ],
       "acceptance": "Integrate librqbit in an isolated Windows helper coordinated by the session. Torrent and magnet jobs use bounded peers and bandwidth, explicit discovery and upload policy, safe paths and no-overwrite publication. The protocol exposes the job kind to desktop, CLI, TUI and agents; agents cannot enable sharing or discovery without the person's approval.",
       "verification": "Build the affected crates and package path; review input, path, process and policy boundaries. The owner waived an optional torrent test campaign on 28 September 2026.",
-        "evidence": [
-          "docs/development/TORRENTS.md"
-        ],
+      "evidence": [
+        "docs/development/TORRENTS.md"
+      ],
       "blockedReason": null,
       "priority": "P2"
     },
@@ -2484,102 +2484,190 @@
       "id": "FP-079",
       "title": "Make the torrent helper run on a clean Windows install",
       "milestone": "M13",
-      "dependsOn": ["FP-021"],
+      "dependsOn": [
+        "FP-021"
+      ],
       "status": "done",
       "owner": "codex (lead)",
       "priority": "P0",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["adapters/torrent/build.rs", "tests/installer/runtime-imports.test.mjs", "docs/development/TORRENTS.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A04", "A10"],
+      "files": [
+        "adapters/torrent/build.rs",
+        "tests/installer/runtime-imports.test.mjs",
+        "docs/development/TORRENTS.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A10"
+      ],
       "acceptance": "The installed torrent helper starts on a clean supported Windows 11 x64 image without a separately installed Visual C++ redistributable. The package includes the helper beside fetchpath.exe, and a regression check catches a renewed VCRUNTIME or MSVCP import.",
       "verification": "Inspect the helper PE imports in a fresh release build, check the staged and installed package, then repeat the owner's Windows Sandbox launch path. Obtain an independent strong review of the runtime and packaging boundary.",
-      "evidence": ["docs/development/TORRENTS.md", "docs/development/evidence/windows/sandbox-lifecycle.json"],
+      "evidence": [
+        "docs/development/TORRENTS.md",
+        "docs/development/evidence/windows/sandbox-lifecycle.json"
+      ],
       "blockedReason": null
     },
     {
       "id": "FP-080",
       "title": "Accept torrent links and local metadata naturally in every client",
       "milestone": "M13",
-      "dependsOn": ["FP-021"],
+      "dependsOn": [
+        "FP-021"
+      ],
       "status": "done",
       "owner": "codex (lead)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["adapters/torrent", "crates/fetchpath-session", "crates/fetchpath-protocol", "apps/cli", "apps/desktop", "docs/development/TORRENTS.md", "docs/user/CLI.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A02", "A09", "A10"],
+      "files": [
+        "adapters/torrent",
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "apps/cli",
+        "apps/desktop",
+        "docs/development/TORRENTS.md",
+        "docs/user/CLI.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A09",
+        "A10"
+      ],
       "acceptance": "Pasting a magnet or HTTPS .torrent link selects Torrent in the desktop and terminal add flows; the command line and desktop also accept a local .torrent file. Peer discovery and upload remain explicit, agent and path boundaries remain intact, and all clients create the same engine job.",
       "verification": "Behavioral parsing and integration tests for each input type and client, protocol schema check if changed, desktop typecheck and a real installed-app pass.",
-      "evidence": ["docs/development/TORRENTS.md"],
+      "evidence": [
+        "docs/development/TORRENTS.md"
+      ],
       "blockedReason": null
     },
     {
       "id": "FP-081",
       "title": "Offer optional browser and media setup during installation",
       "milestone": "M13",
-      "dependsOn": ["FP-069"],
+      "dependsOn": [
+        "FP-069"
+      ],
       "status": "done",
       "owner": "codex packaging agent",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
-      "files": ["apps/desktop/src-tauri/installer-hooks.nsh", "apps/desktop/src-tauri", "extensions/browser", "docs/user/GUIDE.md", "docs/development/WINDOWS-PACKAGING.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A07", "A10", "A12"],
+      "files": [
+        "apps/desktop/src-tauri/installer-hooks.nsh",
+        "apps/desktop/src-tauri",
+        "extensions/browser",
+        "docs/user/GUIDE.md",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10",
+        "A12"
+      ],
       "acceptance": "Setup clearly offers optional browser extension and media-tool steps without enabling browser capture or downloading helpers implicitly. The browser flow obeys store identity and browser consent requirements; the media flow uses the existing pinned helper installer. Both remain discoverable after installation.",
       "verification": "Inspect generated NSIS pages and quiet-install behavior; exercise each choice on a clean Windows image and check extension identity, pinned helper verification, and cancellation.",
-      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/BROWSER-CAPTURE.md", "docs/development/MEDIA-INTEGRATION.md"],
+      "evidence": [
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/development/MEDIA-INTEGRATION.md"
+      ],
       "blockedReason": null
     },
     {
       "id": "FP-082",
       "title": "Make desktop settings responsive and add project attribution",
       "milestone": "M13",
-      "dependsOn": ["FP-055"],
+      "dependsOn": [
+        "FP-055"
+      ],
       "status": "done",
       "owner": "codex desktop agent",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
-      "files": ["apps/desktop/index.html", "apps/desktop/src/styles.css", "apps/desktop/src/main.ts", "apps/desktop/src-tauri/Cargo.toml", "apps/desktop/src-tauri/src/lib.rs", "Cargo.lock", "docs/development/WINDOWS-PACKAGING.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A09", "A12"],
+      "files": [
+        "apps/desktop/index.html",
+        "apps/desktop/src/styles.css",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src-tauri/Cargo.toml",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "Cargo.lock",
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A12"
+      ],
       "acceptance": "Settings have one clear vertical scroll path, controls remain reachable and editable as the window narrows or zoom increases, related settings are easy to find, and a discreet project link opens the official GitHub repository in a browser.",
       "verification": "Desktop typecheck and real window review at several sizes and zoom levels, including keyboard navigation and the external link.",
-      "evidence": ["docs/development/WINDOWS-PACKAGING.md"],
+      "evidence": [
+        "docs/development/WINDOWS-PACKAGING.md"
+      ],
       "blockedReason": null
     },
     {
       "id": "FP-083",
       "title": "Design a stream-first, work-stealing HTTP scheduler",
       "milestone": "M14",
-      "dependsOn": ["FP-015", "FP-022"],
+      "dependsOn": [
+        "FP-015",
+        "FP-022"
+      ],
       "status": "done",
       "owner": "claude (lead)",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
-      "files": ["docs/architecture/specs/2026-09-29-stream-first-http-scheduler-design.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A03", "A05", "A09"],
+      "files": [
+        "docs/architecture/specs/2026-09-29-stream-first-http-scheduler-design.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A05",
+        "A09"
+      ],
       "acceptance": "A spec replaces lock-step rounds with: a stream-first open whose first-response rules cover capped, unknown-total, empty and non-range responses; continuous lanes with time-sized claims bounded by a time-based max_ahead; stealing and stall replacement made safe by clipping every write at its claim boundary; bounded retries; a doubling concurrency controller with bias-corrected windows and non-blocking budget permits fair across downloads; positional writes with a read-back prefix digest, 1 s checkpoints on a commit thread and a stated pause/crash loss bound; and HTTP/2 multiplexing off until FP-086. Range identity, checkpoint format, If-Range, credential and redirect boundaries are unchanged, and each mechanism names the FP-084 profile it must win.",
       "verification": "Independent strong review of identity, persistence ordering, concurrency and the performance attribution, with its required changes applied; the spec cites the code it changes.",
-      "evidence": ["docs/architecture/specs/2026-09-29-stream-first-http-scheduler-design.md"],
+      "evidence": [
+        "docs/architecture/specs/2026-09-29-stream-first-http-scheduler-design.md"
+      ],
       "blockedReason": null
     },
     {
       "id": "FP-084",
       "title": "Benchmark HTTP speed against curl, aria2 and a browser under shaped profiles",
       "milestone": "M14",
-      "dependsOn": ["FP-018"],
+      "dependsOn": [
+        "FP-018"
+      ],
       "status": "done",
       "owner": "claude sonnet bench agent",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
-      "files": ["tools/bench", "tests/bench", "docs/development/ADAPTIVE-HTTP.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A05", "A09"],
+      "files": [
+        "tools/bench",
+        "tests/bench",
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09"
+      ],
       "acceptance": "The harness runs paired, randomized downloads through the engine, curl, aria2 (defaults and -x16) and wget2 where installed, on fixture profiles the server shapes itself: per-connection rate limit, per-client limit, added delay, stalls, a redirect to a second origin, and weak or absent ETags; plus a recorded internet corpus (a GitHub release asset, a Hugging Face file, a mirror). It records time to a verified file, goodput, CPU-seconds/GiB, peak memory, connections opened and a concurrent latency probe, with uncertainty; compares the transfer layer and the engine at identical limits; and measures the cost of out-of-order writes past the end of file on NTFS. The current engine's results become the recorded baseline.",
       "verification": "Fixture tests for each profile; one baseline run committed as evidence with tool versions and settings.",
-      "evidence": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence/http-adaptive/fp084-baseline.json"],
+      "evidence": [
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence/http-adaptive/fp084-baseline.json"
+      ],
       "blockedReason": null
     },
     {
@@ -2644,20 +2732,36 @@
       "id": "FP-086",
       "title": "Share connections and pin redirects per download",
       "milestone": "M14",
-      "dependsOn": ["FP-085"],
+      "dependsOn": [
+        "FP-085"
+      ],
       "status": "done",
       "owner": "lead",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["crates/fetchpath-http", "docs/development/ADAPTIVE-HTTP.md",
+      "files": [
+        "crates/fetchpath-http",
+        "docs/development/ADAPTIVE-HTTP.md",
         "SECURITY.md",
         "tools/bench/benchmark.mjs",
-        "tools/bench/README.md", "docs/development/evidence/http-adaptive", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A03", "A06", "A07", "A09"],
+        "tools/bench/README.md",
+        "docs/development/evidence/http-adaptive",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A06",
+        "A07",
+        "A09"
+      ],
       "acceptance": "Ranges share one curl connection pool (HTTP/2 multiplexing where negotiated, separate connections where the origin limits each one), and a redirect is resolved once per download and pinned while the size and strong ETag still match, re-resolved on 403, 404, 410 or expiry. Credentials and cookies never follow a redirect to another origin, and the Hugging Face file comes within 10% of curl's median in the FP-084 corpus or the record states why not.",
       "verification": "Tests for pinned-URL expiry, identity change after a redirect, and cross-origin credential stripping; FP-084 paired runs; independent strong review of the redirect and credential boundary.",
-      "evidence": ["docs/development/ADAPTIVE-HTTP.md", "docs/development/evidence/http-adaptive/fp086-fixture.json", "docs/development/evidence/http-adaptive/fp086-internet.json"],
+      "evidence": [
+        "docs/development/ADAPTIVE-HTTP.md",
+        "docs/development/evidence/http-adaptive/fp086-fixture.json",
+        "docs/development/evidence/http-adaptive/fp086-internet.json"
+      ],
       "blockedReason": null
     },
     {
@@ -2701,17 +2805,36 @@
       "id": "FP-088",
       "title": "Start and settle engine jobs without waiting for the reconcile tick",
       "milestone": "M14",
-      "dependsOn": ["FP-085"],
+      "dependsOn": [
+        "FP-085"
+      ],
       "status": "done",
       "owner": "Codex (Sol/medium implementation; Astra/low independent review)",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "strong",
-      "files": ["crates/fetchpath-session", "crates/fetchpath-core/src/lib.rs", "adapters/media/src/lib.rs", "adapters/torrent/src/lib.rs", "apps/cli/src/engine", "apps/cli/src/wait.rs", "docs/development/ENGINE-SESSION.md", "docs/tasks/backlog.json"],
-      "acceptanceIds": ["A04", "A09"],
+      "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-core/src/lib.rs",
+        "adapters/media/src/lib.rs",
+        "adapters/torrent/src/lib.rs",
+        "apps/cli/src/engine",
+        "apps/cli/src/wait.rs",
+        "docs/development/ENGINE-SESSION.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A09"
+      ],
       "acceptance": "A job created, resumed or finished through the engine is scheduled and reconciled as soon as its command or transfer completes, not on the next 250 ms tick (crates/fetchpath-session/src/engine.rs TICK_INTERVAL, apps/cli/src/engine/mod.rs), and the command line learns of completion from the event instead of a poll. The tick stays as a fallback for timers and progress sampling. On the FP-084 unshaped profile, engine time minus in-process core time falls by at least half from about 0.6 s per download; persistence ordering and event durability are unchanged.",
       "verification": "Session and engine tests for immediate scheduling and completion; FP-084 paired runs engine against in-process core; independent strong review of persistence ordering.",
-      "evidence": ["docs/development/ENGINE-SESSION.md", "docs/development/evidence/engine-session/fp088-latency.json", "crates/fetchpath-session/tests/engine.rs", "apps/cli/src/wait.rs"],
+      "evidence": [
+        "docs/development/ENGINE-SESSION.md",
+        "docs/development/evidence/engine-session/fp088-latency.json",
+        "crates/fetchpath-session/tests/engine.rs",
+        "apps/cli/src/wait.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -2744,7 +2867,11 @@
       ],
       "acceptance": "A torrent added without a destination uses the same engine-owned default download root and applicable folder rules as other downloads; desktop and TUI do not require a Save as field. The engine chooses a safe torrent-specific child folder from metadata, including magnets whose name arrives later, and handles collisions without overwriting or merging existing content. A person may optionally choose another root before submission or change the default in settings. Agent defaults still resolve within granted folders or wait for approval. Post-start relocation is separate scope. An omitted destination has consistent engine-owned semantics across all clients; each surface shows the resolved host and destination before submission where a preview exists, and in job details afterward.",
       "verification": "Test omitted and explicit destinations through desktop, CLI/TUI and MCP; metadata-late magnets, malicious names, duplicate names and destination races; verify staged publication and agent folder grants. Desktop typecheck and an installed-app walkthrough reproduce and resolve the empty Save as rejection reported on 1 October 2026. Independent strong review of path and publication boundaries. Check that equivalent requests across surfaces resolve to the same engine folder policy without client-owned queue or default logic.",
-      "evidence": ["docs/development/TORRENTS.md", "adapters/torrent/src/main.rs", "crates/fetchpath-session/tests/policy.rs"],
+      "evidence": [
+        "docs/development/TORRENTS.md",
+        "adapters/torrent/src/main.rs",
+        "crates/fetchpath-session/tests/policy.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -2778,7 +2905,11 @@
       ],
       "acceptance": "Pasting a magnet or HTTPS .torrent link, or adding local metadata in the TUI, recognizes a torrent and starts normal peer discovery without requiring --discover-peers. Define and apply the same user-submission default across desktop and CLI, with a visible explanation of peer address exposure and a way to disable discovery. Explicitly supersede the previous user discovery opt-in contract; do not silently reinterpret it. Upload and seeding remain separate opt-in choices. MCP agents still require the person's approval for discovery or upload, and no browser capture or speed profile gains that permission implicitly. Persist the effective policy for retry and restart. An obvious stop control ends peer activity. Supported pause/cancel behavior and unsupported torrent actions are explained consistently across surfaces.",
       "verification": "Test pasted links, magnets and local metadata with no discovery flag, explicit discovery-off, desktop parity, retry/restart and agent requests. Installed TUI walkthrough resolves the rejection shown on 1 October 2026. Independent strong review of principal classification, consent and persistence; update affected contracts and guides together. Verify discovery-off and stopping peer activity; confirm no agent surface bypasses the same engine policy.",
-      "evidence": ["docs/development/TORRENTS.md", "docs/architecture/JOB-CONTRACT.md", "crates/fetchpath-session/tests/policy.rs"],
+      "evidence": [
+        "docs/development/TORRENTS.md",
+        "docs/architecture/JOB-CONTRACT.md",
+        "crates/fetchpath-session/tests/policy.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -2808,14 +2939,23 @@
       ],
       "acceptance": "Produce a bounded design extending the existing single-owner engine to explicitly selected local or remote instances without separate surface-owned queues. Specify stable instance identity, endpoint selection, version negotiation, authenticated principals, revocation, reconnect/event replay and command deduplication. Treat paths and folder defaults as belonging to the selected host. Compare a private-network gateway (Tailscale is the user's candidate) with direct public exposure; prefer private access for the first slice and make all remote serving opt-in. Address remote credentials, browser-origin protections, secret/path redaction, connection loss and engine lifetime while serving an idle hub. Separate remote control from delivery of completed files; specify a minimal browser client and agent adapter, and decisions still needing the person. No deployment or network exposure in this design task. Structure the design and implementation gates as local usability, remote control, completed-file retrieval, then optional automatic delivery. Give each instance a stable identity plus a readable user-assigned name, require explicit endpoint selection, and display the selected host and host-owned folder for consequential actions. Design an explicit opt-in hub mode that remains reachable while idle, restores serving and persisted jobs after reboot under the supported user-session lifecycle, and distinguishes disconnected, sleeping and offline/unknown states without claiming reachability it cannot establish. Downloads continue on client disconnect; reconnect replays events and retried commands remain idempotent. Define separate grants for viewing jobs, submitting downloads, approving requests and retrieving selected completed outputs; agents cannot self-approve. Specify a reachable human approval surface, pending/rejected/expired request behavior and an unattended path within pre-granted limits. Define engine-owned disk capacity limits, incomplete/staged-file accounting, concurrent-job limits and retention controls; deletion of completed downloads requires explicit user policy rather than inferred cleanup permission. The minimal browser surface is queue, add, job details and approvals, with retrieval added in a later slice rather than all desktop settings. Direct browser control must work without an agent; agents are optional clients for interpretation and coordination. Treat independent background operation as a first-class product feature: the engine owns downloads while desktop, terminal and agents connect or disconnect. Define the optional desktop tray as a management client rather than engine lifetime ownership. Specify engine status, active-work summary, remote-access status and pending approvals, with unambiguous separate actions for hiding/closing the interface, disabling remote access and stopping the engine. Preserve headless operation without any tray process; hub mode keeps serving when the desktop exits. Distinguish ordinary idle shutdown from opt-in hub lifetime and explain supported sign-in/reboot behavior without implying a system service.",
       "verification": "Trace the design to current engine/protocol and agent-policy contracts; walkthrough local desktop plus remote browser plus remote agent controlling one home queue. Independent strong review of authentication, authorization, replay and browser boundaries; record concrete implementation gates and deferred choices. Walk through wrong-host prevention, idle serving, supported reboot recovery, disconnect during a transfer, sleeping/unreachable host, remotely reachable approval and a full disk. Name measurable implementation gates for lifecycle, resource budgets and each separate permission; retain unresolved choices explicitly. Walk through close-to-tray, desktop Quit with active downloads, headless CLI/MCP operation, explicit engine stop and hub serving after desktop exit; verify labels describe the actual scope of each action.",
-      "evidence": ["docs/architecture/specs/2026-10-03-instance-access-and-remote-hub-design.md","docs/architecture/JOB-CONTRACT.md"],
+      "evidence": [
+        "docs/architecture/specs/2026-10-03-instance-access-and-remote-hub-design.md",
+        "docs/architecture/JOB-CONTRACT.md"
+      ],
       "blockedReason": "Deferred by the owner on 3 October 2026 to the third release (after 0.2.0): remote connection needs to mature first. The design is written and its decisions O1 to O8 and contract D6 were accepted the same day; the required independent strong review of authentication, authorization, replay and browser boundaries is deferred with it. Next action when resumed: confirm the design still holds, run that review against the spec and D6, apply its findings, then mark done."
     },
     {
       "id": "FP-092",
       "title": "Build remote control: private gateway, device access and the minimal web client",
       "milestone": "M15",
-      "dependsOn": ["FP-091","FP-101","FP-089","FP-090","FP-094"],
+      "dependsOn": [
+        "FP-091",
+        "FP-101",
+        "FP-089",
+        "FP-090",
+        "FP-094"
+      ],
       "status": "blocked",
       "owner": null,
       "priority": "P3",
@@ -2898,7 +3038,10 @@
       ],
       "acceptance": "Define a cohesive, distinctive and polished Fetchpath visual direction using the existing identity as a starting point. Deliver reusable semantic tokens for color, typography, spacing, sizing, radii, elevation, iconography, density and motion, with theme mappings and an explicit source of truth and ownership. Specify common button, input, checkbox, dialog, navigation, queue row, progress, status, error, empty-state and approval patterns; include instance identity and destination hierarchy for future remote clients. Provide rendered representative desktop and narrow-browser compositions plus a terminal adaptation, so visual quality can be judged rather than inferred from prose. Desktop, web and extension can reuse visual assets/tokens where practical; CLI/TUI adapt semantic colors, terminology and hierarchy to terminal constraints without forcing GUI components or adding engine presentation dependencies. Preserve keyboard access, named controls, 4.5:1 text contrast, non-color status cues, 200% scaling, high-contrast and reduced-motion behavior. Describe incremental migration using existing dependencies, licensed font/icon assets and maintainable components rather than a mandatory framework rewrite. Keep one concise design specification and practical examples; register new committed assets/components in the repository map.",
       "verification": "Visually review representative queue, add-torrent, settings, approval, error and empty states in supported themes, widths and densities; check text contrast and keyboard hierarchy. Confirm token ownership, GUI reuse and terminal fallback mappings are executable for downstream tasks and consistent with the existing UX contract. No screenshot snapshot tests for decorative details.",
-      "evidence": ["docs/architecture/specs/2026-10-01-design-system-design.md", "design/tokens.css"],
+      "evidence": [
+        "docs/architecture/specs/2026-10-01-design-system-design.md",
+        "design/tokens.css"
+      ],
       "blockedReason": null
     },
     {
@@ -2929,7 +3072,10 @@
       ],
       "acceptance": "Apply FP-094 tokens and reusable control/state patterns to the desktop queue, add flow, job details, settings, approvals and browser extension capture surfaces. Deliver a visually polished hierarchy with consistent alignment, typography, spacing, icons and action emphasis while keeping the queue primary. Fix the oversized and poorly grouped torrent checkboxes/dialog shown in the 1 October screenshots; destination is optional and discovery/upload wording follows FP-089/FP-090. All existing workflows, accessible names, focus return, keyboard shortcuts and honest engine-confirmed state remain intact. Long paths, names and errors remain usable at narrow sizes and 200% scaling; required actions stay reachable with a clear scroll path. Preserve settings and existing user theme choices. Use existing dependencies and avoid unrelated host/engine rewrites. Make background operation understandable in the desktop and tray: clearly distinguish Show Fetchpath, close/hide interface and stop engine. Present engine connection/running status and active-work summary from confirmed engine state; explain that downloads can continue after the desktop and tray exit. Prepare coherent placement for hub status and pending approvals, but gate remote controls on implemented FP-091/FP-092 capabilities rather than shipping nonfunctional toggles.",
       "verification": "Desktop typecheck/build and applicable extension checks; real UI walkthrough of add, batch, torrent, settings, approval and failure states at supported widths, scaling and themes, including keyboard-only operation and existing accessibility checks. Review before/after visual evidence locally and retain only concise evidence needed for the acceptance claim. Walk through close-to-tray enabled/disabled, desktop Quit during a download, reconnect and intentionally stopped engine; verify no label or missing tray icon implies that work has stopped.",
-      "evidence": ["design/tokens.css", "docs/development/evidence/windows/ui-accessibility.json"],
+      "evidence": [
+        "design/tokens.css",
+        "docs/development/evidence/windows/ui-accessibility.json"
+      ],
       "blockedReason": null
     },
     {
@@ -2958,7 +3104,9 @@
       ],
       "acceptance": "Adapt FP-094 semantic colors, status vocabulary, density and hierarchy to the inline TUI and dashboard, including inspected-link cards, queue rows, help, settings, approvals and errors. Produce a cohesive polished terminal experience that remains readable in narrow terminals, light/dark and high-contrast themes, plain/no-color mode and ASCII glyph fallback. Preserve user-selected themes, density and keybindings, scrollback/selectable output, focus and resizing behavior, and all existing commands. Scriptable CLI output stays stable and machine-readable output gains no decorative sequences. Torrent defaults and peer choices follow FP-089/FP-090; destination and future instance identity remain clear without excessive decoration.",
       "verification": "Run focused rendering/configuration and CLI output-contract checks where affected; walkthrough inline and dashboard modes with narrow/wide terminals, resize, no-color and ASCII fallback, existing user themes and long filenames/errors. Verify status remains understandable without color and machine-readable output retains its existing contract.",
-      "evidence": ["apps/cli/src/tui/view.rs"],
+      "evidence": [
+        "apps/cli/src/tui/view.rs"
+      ],
       "blockedReason": null
     },
     {
@@ -2985,7 +3133,10 @@
       ],
       "acceptance": "Create an attractive repository banner consistent with FP-094 visual identity, including the Fetchpath name and a concise accurate product message, and integrate it locally into the README with meaningful alt text. Deliver a reusable editable source and an optimized static render in a mapped repository asset location; compose text sharply and check legibility at typical GitHub README widths in light/dark contexts. Preserve the quick-start and installation hierarchy, make the first screen feel polished, and use current shipped capabilities rather than implying planned web/remote/torrent functionality is released. Brand assets have clear rights/provenance and no embedded private information. Avoid large redundant asset variants or a wholesale documentation rewrite. Changing the GitHub social-preview setting or publishing externally is separate scope. Prominently communicate the existing one-engine/background-download feature with an accurate short explanation of desktop/tray versus engine lifetime and a link to management instructions; describe hub mode only once shipped.",
       "verification": "Inspect banner and README rendering at desktop and narrow widths, check image size, alt text and relative links, and confirm every product claim matches published release capabilities. Keep source/render links and a short account of visual verification; repository structure/link checks pass. Confirm background/tray claims against the implemented lifecycle and user guide, including the fact that desktop Quit does not stop active downloads.",
-      "evidence": ["docs/assets/banner.svg", "README.md"],
+      "evidence": [
+        "docs/assets/banner.svg",
+        "README.md"
+      ],
       "blockedReason": null
     },
     {
@@ -3015,7 +3166,9 @@
       ],
       "acceptance": "Design a clear Full installation preset and Custom installation checkbox page with concise component descriptions. Engine/Core is required and cannot be deselected; at least one usable interface must be selected among available Desktop, CLI/TUI, MCP and future Web components. Define prerequisites for MCP-only and web-only choices so installation never leaves the person unable to connect, grant permissions or manage the instance; do not assume an MCP process supplies a human approval UI. Identify optional browser integration, torrent and media helpers separately from interfaces, including sizes, bundled versus later download behavior and dependencies. Full selects only components available in that build, not planned capabilities. The engine, CLI/TUI and MCP currently share fetchpath.exe: decide explicitly whether selection controls installed entry points/enabled capabilities or requires a measured packaging split, and describe actual disk impact honestly. Removing Desktop should not require its UI runtime if the chosen packaging supports a headless install. Keep the per-user install and one engine owner. Specify quiet-install defaults/options, persisted selections, upgrade/repair behavior, adding/removing components later, and shared binary/helper ownership. Installing a component never implicitly grants agents access, starts remote serving, enables sharing/seeding, registers external agent clients or downloads optional tools without the stated choice. Apply the design system within native installer constraints. Web selection remains gated on FP-092 and no public-network exposure is implied.",
       "verification": "Inspect the current generated NSIS package and executable boundaries; produce a selection/dependency matrix for Desktop-only, CLI/TUI-only, MCP-only and future Web-only, Full, Custom with no interface, quiet install and upgrade from existing full installs. Independent strong review of lifecycle, policy defaults and component-removal boundaries. Record any packaging split as a separate explicit implementation gate rather than assume selectable binaries already exist.",
-      "evidence": ["docs/architecture/specs/2026-10-02-installer-components-design.md"],
+      "evidence": [
+        "docs/architecture/specs/2026-10-02-installer-components-design.md"
+      ],
       "blockedReason": null
     },
     {
@@ -3048,7 +3201,12 @@
       ],
       "acceptance": "Implement the accepted FP-098 Full/Custom component contract using the existing installer/package conventions. Core is always selected; require one usable available interface, enforce module prerequisites, show descriptions and real installation/download consequences, and keep unshipped Web unavailable until FP-092 passes. Create shortcuts, PATH entries, browser registration and capability entry points only as specified by the chosen components, accounting for shared fetchpath.exe engine launch needs. Remember selections across upgrade and support later component changes without deleting queue/settings or binaries still required by selected components. Honor explicit choices in quiet installation and repair, preserve the single-owner engine stop/restart ordering, and avoid enabling remote access, sharing or agent grants from Full alone. Support an install without Desktop according to the accepted packaging design. Do not invent or introduce an unreviewed binary split.",
       "verification": "Clean Windows image runs for Full and representative Custom/headless selections, no-interface rejection, prerequisite handling, quiet defaults/options, upgrade with active downloads and preserved selections, and adding/removing components. Check installed files, entry points, browser registrations and runtime prerequisites against the matrix; run focused installer/lifecycle tests and independent strong review.",
-      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/evidence/windows/sandbox-components-full.json", "docs/development/evidence/windows/sandbox-components-terminal-only.json", "docs/development/evidence/windows/sandbox-components-upgrade-to-terminal.json"],
+      "evidence": [
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows/sandbox-components-full.json",
+        "docs/development/evidence/windows/sandbox-components-terminal-only.json",
+        "docs/development/evidence/windows/sandbox-components-upgrade-to-terminal.json"
+      ],
       "blockedReason": null
     },
     {
@@ -3081,7 +3239,12 @@
       ],
       "acceptance": "Retain program removal on every uninstall and a separate unchecked-by-default choice to remove Fetchpath-owned settings and application data. Reuse the existing Delete application data option where possible, with a clear summary of settings, queue/history, rules, principal grants/secrets, terminal preferences, browser/webview storage, managed helper caches and installation metadata actually covered. Inventory all owned paths and registrations, including custom component selections when implemented, and explain retained data when cleanup is not chosen. Stop and hold the engine and helpers before cleanup so no process recreates state; remove application-owned registrations, shortcuts and selected program components predictably. Never delete completed user downloads, arbitrary destination folders, shared runtimes or unrelated files. Verify resolved cleanup targets remain inside explicit application-owned roots and do not follow junctions/reparse points into unrelated data; report locked or failed removals honestly. Quiet uninstall keeps data unless an explicit documented cleanup option is supported. Do not silently broaden an existing data checkbox to new user-content deletion. Future hub/agent credentials and access must be retired according to the accepted component/lifecycle design.",
       "verification": "Exercise interactive keep-data and delete-data choices on a clean Windows image; the current packaging record explicitly lacks the latter run. Check program files/registrations are removed in both cases; saved data persists only when chosen, completed downloads and sentinel files outside owned roots survive, and no engine/helper remains or recreates data. Test quiet retention, explicit cleanup if supported, locked paths and junction/reparse hazards with focused fixtures. Independent strong review of deletion scope, secrets and stop-before-cleanup ordering; update the existing packaging record with reachable evidence.",
-      "evidence": ["docs/development/WINDOWS-PACKAGING.md", "docs/development/evidence/windows/sandbox-delete-data.json", "docs/development/evidence/windows/sandbox-lifecycle.json", "tests/installer/data-removal.test.mjs"],
+      "evidence": [
+        "docs/development/WINDOWS-PACKAGING.md",
+        "docs/development/evidence/windows/sandbox-delete-data.json",
+        "docs/development/evidence/windows/sandbox-lifecycle.json",
+        "tests/installer/data-removal.test.mjs"
+      ],
       "blockedReason": null
     },
     {
@@ -3528,7 +3691,7 @@
       "dependsOn": [
         "FP-112"
       ],
-      "status": "blocked",
+      "status": "done",
       "owner": "claude (lead); owner publishes",
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -3542,11 +3705,10 @@
         "A12"
       ],
       "acceptance": "The 0.4.0 installer is built, installed clean and as an upgrade over 0.3.0, and the desktop and web UI run with the tightened policy. CI passes on the release commit. The owner tags and publishes.",
-      "verification": "Workspace, clippy, fmt, node, extension, tsc and vite checks passed; see RELEASE-CANDIDATE.md for what was not run.",
+      "verification": "Workspace, clippy, fmt, node, extension, tsc and vite checks passed; see RELEASE-CANDIDATE.md for what was not run. Published as v0.4.0 on 20 October 2026 after the owner authorized it; Sandbox clean-install and upgrade harnesses were not run (recorded).",
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
-      ],
-      "blockedReason": "Waiting for the owner to merge PR #32, rebuild the installer from the release commit, tag, publish and then update the README and GUIDE download names. Sandbox clean-install and upgrade harnesses were not run."
+      ]
     }
   ]
 }

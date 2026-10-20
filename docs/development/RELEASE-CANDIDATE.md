@@ -5,16 +5,14 @@ gate, kept in Git at tag `v0.3.0` with its evidence.
 
 ## Verdict
 
-**Ready for the owner to publish; not published.** Branch `release/0.4.0`
-(PR #32). The installer builds and works on this PC. Nothing is tagged or
-published. Publishing (merge, tag, GitHub release with `SHA256SUMS.txt`, then
-the 0.4.0 download names in README and GUIDE) is the owner's decision. The
-installer is unsigned; its hash checks bytes, not publisher authenticity.
+**Published 20 October 2026** as `v0.4.0` after the owner authorized it. PR #32
+was merged (`bb1e325`) and the installer rebuilt from that commit. The installer
+is unsigned; its hash checks bytes, not publisher authenticity.
 
 Built installer `Fetchpath_0.4.0_x64-setup.exe`, SHA-256
-`f9c860f3f515f2665bb47f066fd24430ed06861b5d6555a23cd2593f85ef46c6`
-(local build; rebuild from the release commit before publishing, since the
-hash depends on the build machine).
+`434468124ccbd4b24778264af2763e728116c91bd719e7bde1e3698244deb487`
+(rebuilt from `bb1e325`, the published asset; the earlier candidate build
+hashed differently).
 
 0.4.0 is a minor release: it adds in-app agent connection, the headless
 installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
