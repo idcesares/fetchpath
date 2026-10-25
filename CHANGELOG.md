@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1 (25 October 2026)
+
+### Security
+
+- Updated the SFTP library (russh 0.64.1) to include two upstream fixes.
+- Updated the desktop build tooling (vite 8.3.4) to clear six advisories in its
+  development server. The installed app does not ship it.
+- Routine updates of tokio, hyper-util, uuid and toml_edit.
+
+### Upgrade notes
+
+- No data or protocol change. 0.4.0 and 0.4.1 read each other's queue.
+
 ## 0.4.0 (19 October 2026)
 
 ### Added

@@ -14,7 +14,7 @@ file. It also handles torrents, video and audio, and Hugging Face models.
 
 **[Download Fetchpath](https://github.com/idcesares/fetchpath/releases/latest)**
 (Windows 11, x64), install it, then paste a link into the window.
-This page describes **0.4.0**; the release page lists
+This page describes **0.4.1**; the release page lists
 the published versions. See [Installing](#installing) first: Fetchpath isn't
 code-signed. The
 [user guide](docs/user/GUIDE.md) covers everything else.
@@ -91,7 +91,7 @@ code-signed. The
 ## Requirements
 
 Microsoft-serviced Windows 11 releases on a 64-bit Intel or AMD PC. ARM-based PCs aren't supported in
-0.4.0.
+0.4.1.
 
 ## Installing
 
@@ -101,7 +101,7 @@ using it lawfully and checking whether its sources and files are safe. Its
 [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) licence, at your option,
 sets the terms for using Fetchpath.
 
-For 0.4.0, download `Fetchpath_0.4.0_x64-setup.exe` and `SHA256SUMS.txt` from the
+For 0.4.1, download `Fetchpath_0.4.1_x64-setup.exe` and `SHA256SUMS.txt` from the
 [release page](https://github.com/idcesares/fetchpath/releases/latest), check one against the other, and run the installer. It installs just for
 you and doesn't need administrator rights. Then open Fetchpath from the Start
 menu. The [user guide](docs/user/GUIDE.md#install) walks through each step.
@@ -122,7 +122,7 @@ and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md
 - Torrents have no pause, individual file selection or seeding after completion.
 - Always on starts after Windows sign-in; it is not a service. The web UI
   is reachable from this computer only; there is no remote hub or remote
-  control in 0.4.0.
+  control in 0.4.1.
 - Fetchpath doesn't claim to download faster than your browser does.
 - Not code-signed, and x64 only.
 
