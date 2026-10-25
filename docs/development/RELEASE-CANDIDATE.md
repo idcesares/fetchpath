@@ -1,3 +1,24 @@
+# 0.4.1 security patch (FP-114)
+
+**Published 25 October 2026** as `v0.4.1` after the owner authorized it, built
+from merge commit `79a1658`. Installer `Fetchpath_0.4.1_x64-setup.exe`,
+SHA-256 `83408017ca47d183330750f6b8bcf26a6211c3c831716003ba0ff92ef6a1726b`
+(unsigned; the hash checks bytes, not the publisher). An earlier build of the
+same tree hashed differently, so only this one is the asset.
+
+It carries russh 0.64.1 (two upstream fixes), vite 8.3.4 (dev server only; the
+installed app does not ship it) and routine tokio, hyper-util, uuid and
+toml_edit updates. No product, data or protocol change.
+
+Evidence: fmt, strict clippy, `cargo test --workspace --locked` (710 passed, 0
+failed, 9 ignored), `node tools/tests.mjs` (99 passed), backlog and notices
+checks; GitHub CI passed on PR #39. Installed over 0.4.0 on this PC: the CLI
+reports 0.4.1 and the installed binary matches the build. Not run: the Sandbox
+clean-install and upgrade harnesses, a desktop window check, `cargo audit`. The
+SFTP path has no live-server test. `sha2` 0.11 (does not compile without changes
+to the checksum code) and Tauri 2.12 (needs Rust and npm updated together) are
+deferred as Dependabot PRs #27, #28, #30 and #36. The 0.4.0 record follows.
+
 # 0.4.0 release gate
 
 FP-113, recorded 19 October 2026 on Windows 11 x64. This replaces the 0.3.0

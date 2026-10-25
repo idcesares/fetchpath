@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 24 October 2026. Phase: **0.4.0 published.** Fetchpath 0.4.0 is published on GitHub after owner-authorized validation. It adds in-app Codex and Claude Code connection, a headless installer, and a disk reserve with no limit. The local web UI arrived in 0.3.0. The engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 24 October 2026. Phase: **0.4.1 published** (security patch of 0.4.0, see [the record](docs/development/RELEASE-CANDIDATE.md)). Fetchpath 0.4.0 was published on GitHub after owner-authorized validation. It adds in-app Codex and Claude Code connection, a headless installer, and a disk reserve with no limit. The local web UI arrived in 0.3.0. The engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Confirmed purpose
 
@@ -42,7 +42,7 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 `node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). It is empty: nothing is in progress and no task is ready. FP-091, FP-092, and FP-093 stay blocked. The backlog remains the task list.
 
-0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way.
+0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way. On 25 October 2026, [v0.4.1](https://github.com/idcesares/fetchpath/releases/tag/v0.4.1) followed as a dependency security patch.
 
 
 ## Remaining choices
