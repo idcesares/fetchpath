@@ -3711,6 +3711,30 @@
       "evidence": [
         "docs/development/RELEASE-CANDIDATE.md"
       ]
+    },
+    {
+      "id": "FP-114",
+      "title": "0.4.1 security patch release",
+      "milestone": "M17",
+      "dependsOn": [
+        "FP-113"
+      ],
+      "status": "done",
+      "owner": "claude (lead); owner published",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "files": [
+        "docs/development/RELEASE-CANDIDATE.md",
+        "CHANGELOG.md"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "CI on main is green again and the published installer carries the dependency security fixes (russh 0.64.1, vite 8.3.4 for the dev server).",
+      "verification": "Workspace 710 passed, node tests 99 passed, strict clippy, fmt, backlog and notices checks passed; GitHub CI passed on PR #39. Installed over 0.4.0 on this PC: CLI reports 0.4.1 and the binary matches the build. Published as v0.4.1 on 25 October 2026 after the owner authorized it. Sandbox clean-install and upgrade harnesses were not run.",
+      "evidence": [
+        "docs/development/RELEASE-CANDIDATE.md"
+      ]
     }
   ]
 }
