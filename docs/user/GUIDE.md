@@ -4,7 +4,7 @@ Fetchpath is a download manager for Windows 11. It keeps a queue of your
 downloads, pauses and resumes them, survives restarts, and checks that what
 arrived is exactly what you asked for. It can also save video and audio.
 
-This guide covers version 0.4.0. Check the
+This guide covers version 0.4.1. Check the
 [release page](https://github.com/idcesares/fetchpath/releases/latest) for
 published versions. You don't need to read it all: the first
 two sections are enough to start. After that, use it as a reference.
@@ -41,14 +41,14 @@ using it lawfully and checking whether its sources and files are safe. The
 option, sets the terms for using Fetchpath.
 
 1. From the [Fetchpath release page](https://github.com/idcesares/fetchpath/releases/latest),
-   download two files for 0.4.0:
-   `Fetchpath_0.4.0_x64-setup.exe` and `SHA256SUMS.txt`.
+   download two files for 0.4.1:
+   `Fetchpath_0.4.1_x64-setup.exe` and `SHA256SUMS.txt`.
 2. *Recommended:* check the installer arrived intact. In File Explorer, open
    the folder you saved them to, click the address bar, type `powershell` and
    press <kbd>Enter</kbd>. Then run:
 
    ```powershell
-   (Get-FileHash .\Fetchpath_0.4.0_x64-setup.exe).Hash.ToLower()
+   (Get-FileHash .\Fetchpath_0.4.1_x64-setup.exe).Hash.ToLower()
    Get-Content .\SHA256SUMS.txt
    ```
 
@@ -56,7 +56,7 @@ option, sets the terms for using Fetchpath.
    the matching installer's line in `SHA256SUMS.txt`. This checks that your copy
    matches the release asset; it does not replace a publisher signature.
    If they differ, delete both files and download them again.
-3. Double-click `Fetchpath_0.4.0_x64-setup.exe` and follow the installer.
+3. Double-click `Fetchpath_0.4.1_x64-setup.exe` and follow the installer.
    Choose **Full** (recommended: the app, the terminal command, AI agent
    support, browser integration and the torrent helper)
    or **Custom** to pick components, as described in
@@ -144,7 +144,7 @@ Agent connection or cleanup failures use exit code **11**. Setup has already
 registered the browser connection and the `fetchpath` command by then; resolve the
 reported configuration problem and retry while Fetchpath remains installed.
 
-**"Windows protected your PC."** Fetchpath 0.4.0 isn't signed with a
+**"Windows protected your PC."** Fetchpath 0.4.1 isn't signed with a
 code-signing certificate, so Microsoft Defender SmartScreen doesn't recognise
 it and warns when you run the installer. If you downloaded it from the
 official release page and the checksum matched in step 2, choose
@@ -400,7 +400,7 @@ downloads you start in the browser go to Fetchpath instead. If the native host
 refuses a handoff, the extension tries to restart the browser download. It's
 off until you turn it on.
 
-**Why "Developer mode"?** Version 0.4.0 isn't listed in the Chrome Web Store
+**Why "Developer mode"?** Version 0.4.1 isn't listed in the Chrome Web Store
 or Edge Add-ons yet, so the browser treats it as an extension you added
 yourself. Chrome may remind you about developer-mode extensions when it
 starts; that's expected. Firefox only allows signed add-ons, so Firefox isn't
@@ -487,7 +487,7 @@ They protect the download API; an agent host with shell access already has
 the same file access as you. The only listener is the optional
 [web UI](#your-downloads-in-a-browser), on this computer only, and a browser
 signed in to it cannot approve requests; there is no remote hub or
-remote-control listener in 0.4.0.
+remote-control listener in 0.4.1.
 
 ## Download speed
 
