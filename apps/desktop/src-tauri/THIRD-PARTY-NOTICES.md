@@ -283,7 +283,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | hyper | 1.11.1 | MIT | Read from the crate manifest in the local registry |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
-| hyper-util | 0.1.20 | MIT | Read from the crate manifest in the local registry |
+| hyper-util | 0.1.21 | MIT | Read from the crate manifest in the local registry |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | ico | 0.5.0 | MIT | Read from the crate manifest in the local registry |
@@ -620,7 +620,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | time-macros | 0.2.32 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tinystr | 0.8.4 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
-| tokio | 1.53.1 | MIT | Read from the crate manifest in the local registry |
+| tokio | 1.54.1 | MIT | Read from the crate manifest in the local registry |
 | tokio-macros | 2.7.2 | MIT | Read from the crate manifest in the local registry |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tokio-socks | 0.5.3 | MIT | Read from the crate manifest in the local registry |
@@ -668,7 +668,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | urlencoding | 2.1.3 | MIT | Read from the crate manifest in the local registry |
 | urlpattern | 0.3.0 | MIT | Read from the crate manifest in the local registry |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
-| uuid | 1.26.1 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| uuid | 1.29.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | vcpkg | 0.2.15 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | version_check | 0.9.5 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | version-compare | 0.2.1 | MIT | Read from the crate manifest in the local registry |
