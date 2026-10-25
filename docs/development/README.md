@@ -8,7 +8,7 @@ one your task names.
 - [Task packet template](../tasks/TEMPLATE.md).
 - [Retired records](ARCHIVE.md) — removed records and the commit that holds them.
 
-## Engine platform (current phase)
+## Engine platform
 
 - [Engine platform design](../architecture/specs/2026-09-24-engine-platform-design.md) — FP-047; its task map (§11) lists every platform task.
 - [Engine session](ENGINE-SESSION.md) — FP-048/049/051/070/088: the queue in `fetchpath-session`, its characterization, durable events, immediate scheduling, and a newer build's queue kept.

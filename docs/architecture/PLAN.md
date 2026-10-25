@@ -2,6 +2,8 @@
 
 Revision 0.3 · Research checked 19 September 2026 · Product direction incorporates the user's answers; implementation choices remain proposals
 
+Status, 24 October 2026: 0.4.0 is published. The sections below stay the 19 September proposal. Shipped behavior and limits are in [PROJECT.md](../../PROJECT.md), [the README](../../README.md), and [the changelog](../../CHANGELOG.md). Torrents, Hugging Face, paired LAN, and the local web UI shipped. HTTP/3, Firefox, in-app FTP/SFTP, a Metalink open flow, remote control, and extension-store publishing did not. FTP and SFTP stop at the transport crate. The extension is Chrome and Edge in developer mode. Builds stay unsigned and x64-only, and no media site is promised. `fetchpath hub` keeps the local engine running; it is not a remote listener. The backlog has no ready task.
+
 Confirmed product direction and open decisions are owned by [PROJECT.md](../../PROJECT.md). Model routing is in [the task workflow](../development/WORKFLOW.md).
 
 ## 1. What we should optimize

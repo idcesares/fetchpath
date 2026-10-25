@@ -30,9 +30,9 @@ The production adapter was exercised against the repository's locally generated,
 
 Automated tests cover variant sorting/deduplication, expected-stream verification, input protocol boundaries, output redaction, helper crash classification, expired-session classification, Windows process-tree cancellation with no publication or retained staging, desktop queue recovery action, and the pre-existing queue/browser contract.
 
-## Remaining release gates
+## Limits that still hold
 
-This proves the production integration against lawful local DASH plus the earlier HLS/DASH spike coverage. It does not claim compatibility with arbitrary public sites. Before a public release, the project still needs an explicit supported-source corpus, repeatable compatibility runs for that corpus, and a distribution/licensing decision for the helper binaries. Helper updates must remain controlled and compatibility-tested.
+This proves the production integration against lawful local DASH plus the earlier HLS/DASH spike coverage. It does not claim compatibility with arbitrary public sites. 0.1.0 through 0.4.0 shipped without a supported-site corpus, and no particular website is promised. yt-dlp and ffmpeg stay optional pinned downloads and are not part of Fetchpath. Helper updates must remain controlled and compatibility-tested.
 
 ## Pinned helpers and guided setup
 

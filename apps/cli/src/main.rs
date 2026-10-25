@@ -39,7 +39,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath folder JOB                        show its file in File Explorer
   fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
   fetchpath engine status | stop
-  fetchpath hub [on | off]                    keep the engine running in the background
+  fetchpath hub [on | off]                    keep this computer's engine running in the background
   fetchpath web on | off | open | sign-out    the web UI on this computer (off until you turn it on)
   fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
   fetchpath cache [status | clear]            verified copies kept for downloads with a checksum

@@ -1,6 +1,8 @@
 # Instance access and an optional remote download hub
 
 Status: accepted by the user · 3 October 2026 · remote slices S2 to S4 and the required strong review deferred by the user to the third release (after 0.2.0) · local web UI slice S1b (§17) proposed 8 October 2026: direction accepted by the user, decisions O9 to O13 settled (§15) · Task FP-091, S1b FP-104 · Milestone M15 ·
+
+Current status, 24 October 2026: 0.3.0 shipped S1b, the loopback web UI. 0.4.0 shipped without S2–S4. Those slices and FP-091's strong review are still undone, so the 3 October deferral no longer names a future release. `fetchpath hub` keeps the local engine running on this computer. The S2 remote listener is not built.
 Acceptance ids A01, A09, A13. Extends [the engine platform design](2026-09-24-engine-platform-design.md)
 and [the job contract](../JOB-CONTRACT.md) (D1 to D5). No deployment or
 network exposure is part of this task.

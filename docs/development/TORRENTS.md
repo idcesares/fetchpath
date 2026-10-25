@@ -27,7 +27,8 @@ Build evidence for the first implementation: `cargo check --workspace --locked`,
 `cargo check -p fetchpath-torrent --features helper --locked`, desktop
 `pnpm exec tsc --noEmit`, and the package staging build. The owner waived the
 optional torrent test campaign on 28 September 2026. This is unreleased work;
-the 0.1.0 installer does not contain the helper.
+the 0.1.0 installer does not contain the helper. Current status: 0.2.0 and
+later installers include the helper.
 
 Commit-tree verification on 29 September fixed a missed persisted-record test
 field, and a review found two retry boundaries: refreshing an agent torrent now
@@ -72,5 +73,5 @@ root before submission, and torrent jobs cannot be
 paused in place. A magnet's private source may need to be supplied again
 after an engine restart. There is no per-file selection or seeding after
 completion. Peer traffic and untrusted torrent metadata remain subject to
-the dependency's implementation; future releases should exercise this path
-with representative swarms before publication.
+the dependency's implementation. 0.2.0 published torrents without
+representative-swarm evidence; that exercise is still outstanding.

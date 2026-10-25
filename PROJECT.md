@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 9 October 2026. Phase: **0.3.0 published.** Fetchpath 0.3.0 is published on GitHub after owner-authorized validation; it adds the local web UI. Its engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 24 October 2026. Phase: **0.4.0 published.** Fetchpath 0.4.0 is published on GitHub after owner-authorized validation. It adds in-app Codex and Claude Code connection, a headless installer, and a disk reserve with no limit. The local web UI arrived in 0.3.0. The engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 
 ## Confirmed purpose
 
@@ -11,7 +11,7 @@ The user builds with agents in Codex and Claude Code, using proportional model e
 ## Source of truth
 
 - Product/technical direction: [architecture plan](docs/architecture/PLAN.md) and [job contract](docs/architecture/JOB-CONTRACT.md).
-- Engine platform (current phase): [platform design](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+- Engine platform: [platform design](docs/architecture/specs/2026-09-24-engine-platform-design.md).
 - UX journeys: [UX contract](docs/product/UX.md).
 - Task state, dependencies, ownership, and evidence: [backlog](docs/tasks/backlog.json).
 - Repository boundaries: [repository map](docs/architecture/REPOSITORY.md). Per-area evidence and limitations: [development records](docs/development/README.md).
@@ -27,7 +27,9 @@ The 0.2.0 release adds torrents and magnets with a packaged isolated helper, sha
 
 The 0.3.0 release adds the optional local web UI at `fetchpath.localhost` (FP-104): the same list in a browser on this computer, signed in by a single-use link, with view and submit rights only; approvals, settings and sharing stay in the desktop. It also fixes closing to the tray after a second launch and adds tray engine controls and guided Chrome/Edge connection. 0.2.0 cannot read a queue holding a download added from a browser.
 
-The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed; physical reboot and sudden power-loss evidence remain incomplete. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote hub work is deferred beyond 0.2.0. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
+The 0.4.0 release adds in-app agent connection, the headless installer, and a disk reserve with no limit. 0.3.0 can still open a 0.4.0 queue.
+
+The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed; physical reboot and sudden power-loss evidence remain incomplete. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote access was deferred beyond 0.2.0 and is still unbuilt in 0.4.0. `fetchpath hub` keeps the local engine running on this computer and does not listen for other computers. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
 
 ## Direction (decided 24 September 2026)
 
@@ -38,9 +40,9 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 ## Next development
 
-Run `node tools/tasks.mjs next`: active work first, then ready tasks by priority (P0 critical path, P1 headline outcome, P2 next, P3 later or research). The lanes and review requirements are in §11 of the spec.
+`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). It is empty: nothing is in progress and no task is ready. FP-077, FP-091, FP-092, and FP-093 stay blocked. The backlog remains the task list.
 
-0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way.
+0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way.
 
 
 ## Remaining choices
