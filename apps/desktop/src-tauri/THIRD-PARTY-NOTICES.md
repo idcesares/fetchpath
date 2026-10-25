@@ -543,7 +543,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| serde_spanned | 1.1.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| serde_spanned | 1.1.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_with | 3.23.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_with_macros | 3.23.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -632,12 +632,12 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_datetime | 0.6.3 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_datetime | 0.7.5+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_edit | 0.19.15 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_edit | 0.20.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| toml_edit | 0.25.15+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| toml_parser | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| toml_writer | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| toml_edit | 0.25.16+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tower | 0.5.3 | MIT | Read from the crate manifest in the local registry |
 | tower-http | 0.6.11 | MIT | Read from the crate manifest in the local registry |
 | tower-layer | 0.3.3 | MIT | Read from the crate manifest in the local registry |
