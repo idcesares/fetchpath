@@ -1,0 +1,20 @@
+﻿{
+  "task": "FP-077",
+  "waiver": true,
+  "passed": false,
+  "powerCutPerformed": false,
+  "hyperVModule": false,
+  "windowsSandboxIsNotSufficient": true,
+  "a04": "accepted limit, not demonstrated",
+  "durableModePromoted": false,
+  "harness": [
+    "tests/compatibility/windows/power-loss.ps1",
+    "tests/compatibility/windows/power-loss-inner.ps1"
+  ],
+  "host": {
+    "caption": "Microsoft Windows 11 Pro",
+    "build": "26300"
+  },
+  "reason": "The owner concluded FP-077 on 24 October 2026. The abrupt power cut will not be run. This PC has no Hyper-V VM cmdlets, and nothing was powered off.",
+  "recordedAt": "2026-10-24T21:15:00-03:00"
+}

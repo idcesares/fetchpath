@@ -38,6 +38,7 @@ installer and a "no limit" disk reserve. 0.3.0 can still open a 0.4.0 queue.
 - A signed-in web UI page in a browser with the new CSP (the sign-in link opens only the default browser).
 - A real-browser popup send; the reported first-click failure was never reproduced, so the popup change addresses its likeliest causes only.
 - `cargo audit` and secret scanning (tools not installed on the build PC).
+- FP-077 power-loss was waived on 24 October 2026. The cut will not be run. `tests/compatibility/windows/power-loss.ps1` remains the harness. A04 is an accepted limit, not a demonstrated proof. Windows Sandbox stop is not a power-loss test.
 
 ## Dependency advisories
 
@@ -64,9 +65,9 @@ no vulnerabilities.
 ## Acceptance and limits
 
 A01, A09 and A13 for the web UI rest on FP-104's tests, G10 and review. The
-0.2.0 acceptance evidence still applies to the unchanged engine; A04 (no
-sudden power-loss test) and A06 (no HTTP/3) remain partial. No Internet speed
-advantage is claimed.
+0.2.0 acceptance evidence still applies to the unchanged engine. A04 (no
+sudden power-loss test) is an accepted limit, not a demonstrated proof. A06
+(no HTTP/3) remains partial. No Internet speed advantage is claimed.
 
 Windows 11 x64 only; no ARM64, remote hub, LAN access or remote control. The
 web UI's awaiting-approval view was not exercised in a browser. Going back to

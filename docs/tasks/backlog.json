@@ -2427,8 +2427,8 @@
       "dependsOn": [
         "FP-069"
       ],
-      "status": "blocked",
-      "owner": null,
+      "status": "done",
+      "owner": "cursor",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2442,10 +2442,12 @@
         "A04",
         "A05"
       ],
-      "acceptance": "An abrupt Windows VM stop during a checkpointed download and near publication is followed by restart and inspection: no unverified or partially written destination is reported complete, an existing destination remains intact, and recovery stays within the documented recoverable profile. Record the actual filesystem and VM conditions; do not promote this to a durable-mode promise from one run.",
-      "verification": "Run the Windows power-interruption harness against a real build and record checksums, queue state and publication outcomes. Obtain an independent strong-model review of the persistence boundary and harness before marking done.",
-      "evidence": [],
-      "blockedReason": "Deferred by the owner on 28 September 2026 as an optional post-release validation. A persistent Windows 11 x64 VM on NTFS with abrupt power-off control is also unavailable here. Existing process-kill and fault-injection tests do not demonstrate OS or power-loss behavior. Revisit when this validation becomes a priority: cut power during checkpoint and around publication, inspect queue and destination bytes after boot, and obtain an independent strong review. Keep the recoverable-only promise until that evidence exists."
+      "acceptance": "An abrupt Windows VM stop during a checkpointed download and near publication is followed by restart and inspection: no unverified or partially written destination is reported complete, an existing destination remains intact, and recovery stays within the documented recoverable profile. Record the actual filesystem and VM conditions; do not promote this to a durable-mode promise from one run. Owner waiver, 24 October 2026: that cut will not be run. Done records the waiver, not a passing proof. A04 stays an accepted limit and is not demonstrated. The harness under tests/compatibility/windows/ remains; running it is not required to close this task.",
+      "verification": "The checker closes a done task when its evidence file exists. Evidence is the waiver record docs/development/evidence/windows/fp077-power-loss.json: powerCutPerformed is false and the proof is not passed. No VM was powered off.",
+      "evidence": [
+        "docs/development/evidence/windows/fp077-power-loss.json"
+      ],
+      "blockedReason": null
     },
     {
       "id": "FP-078",

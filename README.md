@@ -131,8 +131,9 @@ and the unsigned installer can't be run; see the [user guide](docs/user/GUIDE.md
 See the [changelog](CHANGELOG.md) for changes since 0.1.0 and the
 [release candidate record](docs/development/RELEASE-CANDIDATE.md) for the
 release verdict. Claude Code connection setup is checked; its current
-model-driven download test remains deferred. Real reboot/sign-in recovery
-and sudden power-loss validation remain explicit gaps in the release evidence.
+model-driven download test remains deferred. Guest sign-out/sign-in recovery
+was checked. A physical reboot remains untested. Sudden power loss will not
+be run; that limit is accepted and is not a demonstrated proof.
 
 ## Licence
 

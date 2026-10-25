@@ -29,7 +29,7 @@ The 0.3.0 release adds the optional local web UI at `fetchpath.localhost` (FP-10
 
 The 0.4.0 release adds in-app agent connection, the headless installer, and a disk reserve with no limit. 0.3.0 can still open a 0.4.0 queue.
 
-The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed; physical reboot and sudden power-loss evidence remain incomplete. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote access was deferred beyond 0.2.0 and is still unbuilt in 0.4.0. `fetchpath hub` keeps the local engine running on this computer and does not listen for other computers. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
+The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed. A physical reboot was not part of that check. Sudden power loss will not be run (FP-077): A04 is an accepted limit, not a demonstrated proof. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote access was deferred beyond 0.2.0 and is still unbuilt in 0.4.0. `fetchpath hub` keeps the local engine running on this computer and does not listen for other computers. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
 
 ## Direction (decided 24 September 2026)
 
@@ -40,7 +40,7 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 ## Next development
 
-`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). It is empty: nothing is in progress and no task is ready. FP-077, FP-091, FP-092, and FP-093 stay blocked. The backlog remains the task list.
+`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). It is empty: nothing is in progress and no task is ready. FP-091, FP-092, and FP-093 stay blocked. The backlog remains the task list.
 
 0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way.
 

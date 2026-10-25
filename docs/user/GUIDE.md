@@ -228,7 +228,8 @@ running. To stop downloads, pause or cancel them first.
 window and starts it when you sign in to Windows. While downloading it asks
 Windows to keep the computer awake; it does not wake a sleeping computer or
 run before sign-in. Sign-out/sign-in recovery was verified in Windows
-Sandbox; a physical-machine reboot and sudden power loss remain untested.
+Sandbox. A physical reboot is untested. Sudden power loss will not be run,
+and Fetchpath does not promise recovery across one.
 
 If Fetchpath's background part was stopped on purpose, for example with
 `fetchpath engine stop`, the window says so and offers **Start Fetchpath**;
