@@ -502,7 +502,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | rmcp | 3.4.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rmcp-macros | 3.4.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rsa | 0.10.0-rc.18 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| russh | 0.63.3 | Apache-2.0 | Read from the crate manifest in the local registry |
+| russh | 0.64.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-cryptovec | 0.62.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-sftp | 3.0.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-util | 0.52.0 | Apache-2.0 | Read from the crate manifest in the local registry |
