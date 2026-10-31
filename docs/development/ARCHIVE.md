@@ -71,3 +71,9 @@ Dated per-task sections were merged into one current-state record each; the old 
 - `docs/development/WINDOWS-PACKAGING.md` at `5ed5b0d`: per-task narrative, repeated limits sections.
 - `docs/development/DESKTOP-CHECKSUM.md` at `5497d55`: command log and test-count deltas, dated walkthrough section.
 - `docs/development/MEDIA-INTEGRATION.md` at `9779b2a`: dated FP-039 follow-up paragraphs.
+
+## Unreferenced Windows evidence (29 October 2026)
+
+`evidence/windows/fp105-agent-installer.json`, `fp105-clean-install.json` and `fp105-upgrade.json` were removed
+because nothing in the repository cites them. They remain at `4442a48`
+(`git show 4442a48:<path>`).
