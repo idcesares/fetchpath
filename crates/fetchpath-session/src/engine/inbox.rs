@@ -22,6 +22,15 @@ use std::sync::{Arc, Mutex};
 
 const FILE: &str = "inbox-v1.json";
 
+/// The most the inbox file may hold. Offers are capped per sender and old
+/// finished ones are dropped, so a real file stays far below this; a larger
+/// one is not read.
+const MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// How many quarantined copies stay, so a file that keeps breaking cannot
+/// fill the disk.
+const KEEP_QUARANTINED: usize = 3;
+
 /// How long an offer waits for its recipient (contract D8, as D6).
 pub(crate) const OFFER_EXPIRY_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
@@ -63,16 +72,124 @@ pub(crate) struct Inbox {
     path: Option<PathBuf>,
     offers: Vec<Stored>,
     credentialed: Vec<PathBuf>,
+    /// Set when the file could not be used and the inbox started empty.
+    notice: Option<String>,
+}
+
+/// Reads at most `MAX_BYTES`; a larger file is refused without being read.
+fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the inbox file is too large",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn parse(bytes: &[u8]) -> Result<Persisted, String> {
+    let saved: Persisted = serde_json::from_slice(bytes).map_err(|failure| failure.to_string())?;
+    // A later build's file is not this build's to read or to overwrite.
+    if saved.version != 1 {
+        return Err(format!("unsupported version {}", saved.version));
+    }
+    Ok(saved)
+}
+
+/// Moves a file this build cannot use aside, so the next save does not
+/// replace it, and drops the oldest copies beyond `KEEP_QUARANTINED`.
+fn quarantine(path: &Path) -> std::io::Result<PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let mut target = path.with_extension(format!("json.corrupt-{stamp}"));
+    let mut attempt = 0;
+    while target.exists() {
+        attempt += 1;
+        target = path.with_extension(format!("json.corrupt-{stamp}-{attempt}"));
+    }
+    std::fs::rename(path, &target)?;
+    if let Some((dir, name)) = path.parent().zip(path.file_name()) {
+        let prefix = format!("{}.corrupt-", name.to_string_lossy());
+        let mut copies: Vec<PathBuf> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|found| {
+                found
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(&prefix))
+            })
+            .collect();
+        // Oldest first by the stamp in the name (the file's own modified
+        // time survives a rename), and never the copy just made.
+        let stamp_of = |found: &PathBuf| {
+            let tail = found.file_name().map(|n| n.to_string_lossy().into_owned());
+            let tail = tail.as_deref().and_then(|n| n.strip_prefix(&prefix));
+            let mut parts = tail.unwrap_or_default().splitn(2, '-');
+            let number = |part: Option<&str>| part.and_then(|p| p.parse::<u128>().ok());
+            (number(parts.next()), number(parts.next()))
+        };
+        copies.sort_by_key(stamp_of);
+        let surplus = copies.len().saturating_sub(KEEP_QUARANTINED);
+        for old in copies
+            .into_iter()
+            .take(surplus)
+            .filter(|old| *old != target)
+        {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+    Ok(target)
 }
 
 impl Inbox {
+    /// A missing file is an empty inbox. A file that cannot be read, is too
+    /// large or does not parse is quarantined, never deleted, and the inbox
+    /// starts empty with a notice: a damaged file must not block startup.
     pub(crate) fn load(dir: Option<PathBuf>) -> Self {
         let path = dir.map(|dir| dir.join(FILE));
-        let saved = path
-            .as_deref()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice::<Persisted>(&bytes).ok())
-            .unwrap_or_default();
+        let mut notice = None;
+        let mut path = path;
+        let saved = match path.as_deref().map(|path| (path, read_bounded(path))) {
+            None => Persisted::default(),
+            Some((_, Ok(bytes))) => match parse(&bytes) {
+                Ok(saved) => saved,
+                Err(reason) => {
+                    let (message, kept) = Self::set_aside(path.as_deref().unwrap(), &reason);
+                    notice = Some(message);
+                    if !kept {
+                        path = None;
+                    }
+                    Persisted::default()
+                }
+            },
+            Some((_, Err(failure))) if failure.kind() == std::io::ErrorKind::NotFound => {
+                Persisted::default()
+            }
+            Some((file, Err(failure))) if failure.kind() == std::io::ErrorKind::InvalidData => {
+                let (message, kept) = Self::set_aside(file, &failure.to_string());
+                notice = Some(message);
+                if !kept {
+                    path = None;
+                }
+                Persisted::default()
+            }
+            // The file may be fine and only busy: it is neither moved nor
+            // replaced, and this run keeps the inbox in memory.
+            Some((_, Err(failure))) => {
+                notice = Some(format!(
+                    "The inbox file could not be read ({failure}). The inbox started empty and will not be saved this run; the file was left as it is. Offers and the credentialed-output list it held are not in effect."
+                ));
+                path = None;
+                Persisted::default()
+            }
+        };
         let (mut offers, credentialed) = (saved.offers, saved.credentialed);
         // A copy that a restart cut short did not happen.
         for offer in &mut offers {
@@ -84,7 +201,32 @@ impl Inbox {
             path,
             offers,
             credentialed,
+            notice,
         }
+    }
+
+    /// Moves an unusable file aside. The bool is whether saving may go on:
+    /// when the file cannot be moved it is never replaced.
+    fn set_aside(path: &Path, reason: &str) -> (String, bool) {
+        match quarantine(path) {
+            Ok(moved) => (
+                format!(
+                    "The inbox file could not be used ({reason}). It was moved to {} and the inbox started empty. Offers and the credentialed-output list it held are not in effect.",
+                    moved.display()
+                ),
+                true,
+            ),
+            Err(failure) => (
+                format!(
+                    "The inbox file could not be used ({reason}) and could not be moved aside ({failure}). The inbox started empty and will not be saved this run; the file was left as it is."
+                ),
+                false,
+            ),
+        }
+    }
+
+    pub(crate) fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     fn save(&self) -> Result<(), String> {
@@ -98,7 +240,13 @@ impl Inbox {
         })
         .map_err(|failure| failure.to_string())?;
         let temporary = path.with_extension("tmp");
-        std::fs::write(&temporary, bytes)
+        // Flushed before the rename, so a crash leaves the old file or the
+        // whole new one, never a renamed empty one.
+        let write = std::fs::File::create(&temporary).and_then(|mut file| {
+            file.write_all(&bytes)?;
+            file.sync_all()
+        });
+        write
             .and_then(|()| std::fs::rename(&temporary, path))
             .map_err(|failure| format!("The inbox could not be saved: {failure}"))
     }
@@ -670,4 +818,165 @@ fn spoofs_direction(c: char) -> bool {
         c,
         '\u{061C}' | '\u{200B}' | '\u{200E}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved(dir: &Path) -> PathBuf {
+        let mut inbox = Inbox::load(Some(dir.to_path_buf()));
+        inbox.remember_credentialed(PathBuf::from("kept")).unwrap();
+        dir.join(FILE)
+    }
+
+    fn quarantined(dir: &Path) -> Vec<PathBuf> {
+        let mut found: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".corrupt-"))
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn a_valid_file_loads_without_a_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        saved(dir.path());
+        let inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        assert_eq!(inbox.credentialed, [PathBuf::from("kept")]);
+        assert!(inbox.notice.is_none());
+        assert!(quarantined(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_missing_file_starts_empty_without_a_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        assert!(inbox.notice.is_none() && inbox.offers.is_empty());
+    }
+
+    fn damaged_file_is_quarantined(bytes: Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        std::fs::write(&path, &bytes).unwrap();
+        let mut inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        assert!(inbox.offers.is_empty() && inbox.credentialed.is_empty());
+        assert!(
+            inbox
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains("corrupt-"))
+        );
+        let kept = quarantined(dir.path());
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(&kept[0]).unwrap(), bytes, "bytes preserved");
+        assert!(!path.exists());
+        // The engine still works and the next save does not touch the copy.
+        inbox.remember_credentialed(PathBuf::from("new")).unwrap();
+        assert_eq!(std::fs::read(&kept[0]).unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_truncated_file_is_quarantined() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = std::fs::read(saved(dir.path())).unwrap();
+        damaged_file_is_quarantined(bytes[..bytes.len() / 2].to_vec());
+    }
+
+    #[test]
+    fn a_non_utf8_file_is_quarantined() {
+        damaged_file_is_quarantined(vec![0xff, 0xfe, 0x00, 0x80, 0xc3, 0x28]);
+    }
+
+    #[test]
+    fn an_oversized_file_is_quarantined_unread() {
+        damaged_file_is_quarantined(vec![b' '; MAX_BYTES as usize + 1]);
+    }
+
+    #[test]
+    fn a_file_from_a_later_build_is_kept_not_replaced() {
+        damaged_file_is_quarantined(br#"{"version":2,"offers":[],"credentialed":[]}"#.to_vec());
+    }
+
+    #[test]
+    fn only_the_newest_quarantined_copies_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        for round in 0..(KEEP_QUARANTINED + 2) {
+            std::fs::write(dir.path().join(FILE), format!("bad {round}")).unwrap();
+            Inbox::load(Some(dir.path().to_path_buf()));
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        let kept = quarantined(dir.path());
+        assert_eq!(kept.len(), KEEP_QUARANTINED);
+        let newest = std::fs::read_to_string(kept.last().unwrap()).unwrap();
+        assert_eq!(newest, format!("bad {}", KEEP_QUARANTINED + 1));
+    }
+
+    #[test]
+    fn an_interrupted_write_leaves_the_previous_inbox_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = saved(dir.path());
+        let before = std::fs::read(&path).unwrap();
+        // A crash after a partial temporary write, before the rename.
+        std::fs::write(path.with_extension("tmp"), b"{\"version\":1,\"off").unwrap();
+        let inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        assert_eq!(inbox.credentialed, [PathBuf::from("kept")]);
+        assert!(inbox.notice.is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn a_failed_replace_leaves_the_previous_inbox_and_the_memory_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = saved(dir.path());
+        let before = std::fs::read(&path).unwrap();
+        let mut inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        // A directory where the temporary file belongs makes the write fail.
+        std::fs::create_dir(path.with_extension("tmp")).unwrap();
+        assert!(inbox.remember_credentialed(PathBuf::from("lost")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(inbox.credentialed, [PathBuf::from("kept")]);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_neither_moved_nor_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory cannot be read as a file: a read failure, not a bad file.
+        std::fs::create_dir(dir.path().join(FILE)).unwrap();
+        let mut inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        assert!(inbox.notice.is_some());
+        assert!(quarantined(dir.path()).is_empty());
+        inbox.remember_credentialed(PathBuf::from("x")).unwrap();
+        assert!(dir.path().join(FILE).is_dir(), "never replaced");
+    }
+
+    #[test]
+    fn the_copy_just_made_survives_pruning_whatever_its_modified_time() {
+        let dir = tempfile::tempdir().unwrap();
+        for stamp in 1..=KEEP_QUARANTINED {
+            std::fs::write(dir.path().join(format!("{FILE}.corrupt-{stamp}")), "old").unwrap();
+        }
+        let path = dir.path().join(FILE);
+        std::fs::write(&path, "bad").unwrap();
+        let long_ago = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        let inbox = Inbox::load(Some(dir.path().to_path_buf()));
+        let notice = inbox.notice().unwrap();
+        let moved = quarantined(dir.path())
+            .into_iter()
+            .find(|found| notice.contains(&*found.to_string_lossy()))
+            .expect("the new copy is kept");
+        assert_eq!(std::fs::read_to_string(moved).unwrap(), "bad");
+        assert_eq!(quarantined(dir.path()).len(), KEEP_QUARANTINED);
+    }
 }

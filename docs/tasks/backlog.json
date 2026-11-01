@@ -3948,7 +3948,7 @@
       "dependsOn": [
         "FP-115"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -3962,7 +3962,10 @@
       ],
       "acceptance": "Finding from the FP-115 review (Low): the inbox state file is read without a size bound and a damaged file must not lose open offers or block startup. Bound the read, quarantine a corrupt file and start empty with a visible notice, write by temp file and rename.",
       "verification": "Tests: oversized, truncated and non-UTF-8 inbox files recover without a panic and without silently dropping a valid file; an interrupted write leaves the previous inbox intact.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests/inbox.rs"
+      ]
     },
     {
       "owner": null,
@@ -4035,6 +4038,29 @@
       ],
       "acceptance": "Drift found in the FP-115 review: JOB-CONTRACT D8 says accept re-verifies the file against the manifest and applies the size limit, but the code does not re-hash at accept and does not enforce the cap there. Either implement it or amend D8 with the reason; no silent difference between contract and code.",
       "verification": "Tests: a file changed after the offer is refused at accept with nothing published; an offer above the cap is refused at accept. D8 and the code say the same thing.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-126",
+      "title": "Show the inbox recovery notice in the desktop app and CLI",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-122"
+      ],
+      "status": "todo",
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-session/src/engine.rs",
+        "apps"
+      ],
+      "acceptanceIds": [
+        "A13"
+      ],
+      "acceptance": "Left open by FP-122: Engine::inbox_notice() is only printed to stderr at engine start, which release builds without a console never show. Surface it where the person sees it.",
+      "verification": "A damaged inbox file produces a visible notice in the desktop app and the CLI.",
       "evidence": []
     }
   ]
