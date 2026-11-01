@@ -263,6 +263,10 @@ impl Engine {
 
     fn build(session: Arc<Session>, instance: Option<InstanceId>) -> Arc<Self> {
         let data_dir = session.data_dir();
+        let inbox = inbox::Inbox::load(data_dir);
+        if let Some(notice) = inbox.notice() {
+            eprintln!("fetchpath: {notice}");
+        }
         Arc::new(Self {
             session,
             commands: Mutex::new(()),
@@ -270,7 +274,7 @@ impl Engine {
             sample_cursor: AtomicU64::new(0),
             rates: Mutex::new(RateWindow::default()),
             instance,
-            inbox: Arc::new(Mutex::new(inbox::Inbox::load(data_dir))),
+            inbox: Arc::new(Mutex::new(inbox)),
         })
     }
 
