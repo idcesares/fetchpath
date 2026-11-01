@@ -216,8 +216,14 @@ fn an_agent_cannot_offer_staged_unrelated_or_out_of_grant_files() {
     std::fs::write(&unfinished, b"x").unwrap();
     let share = PathBuf::from(r"\\attacker.invalid\share\a.txt");
     let mixed = PathBuf::from(r"/\attacker.invalid\share\a.txt");
+    // A name that reads as another file (right-to-left override) never reaches
+    // a manifest, whatever the caller typed.
+    let spoofed = s.granted.join("invoice\u{202E}fdp.exe");
+    std::fs::write(&spoofed, b"x").unwrap();
     let mut codes = Vec::new();
-    for path in [&staged, &unrelated, &inside_data, &folder, &missing, &traversal, &unfinished, &share, &mixed] {
+    for path in [
+        &staged, &unrelated, &inside_data, &folder, &missing, &traversal, &unfinished, &share, &mixed, &spoofed,
+    ] {
         codes.push(code(offer_path(&s.agent, path, Principal::User)));
     }
     assert!(
@@ -432,7 +438,9 @@ fn a_download_offers_nothing_and_a_credentialed_one_is_never_offerable() {
     let by_job = send(
         &user,
         Command::OfferFile {
-            source: OfferSource::Job { job_id: other },
+            source: OfferSource::Job {
+                job_id: other.clone(),
+            },
             recipient: helper(),
         },
     );
@@ -445,4 +453,110 @@ fn a_download_offers_nothing_and_a_credentialed_one_is_never_offerable() {
         code(offer_path(&user, &secret, helper())),
         "policy.credentialed_not_allowed"
     );
+
+    // Removing the job's row does not make the output look unknown, and the
+    // refusal survives a restart.
+    send(&user, Command::RemoveJob { job_id: other }).unwrap();
+    assert_eq!(
+        code(offer_path(&agent, &secret, Principal::User)),
+        "policy.credentialed_not_allowed"
+    );
+    let (_, agent) = clients(&engine_in(&s.data));
+    assert_eq!(
+        code(offer_path(&agent, &secret, Principal::User)),
+        "policy.credentialed_not_allowed"
+    );
+}
+
+#[test]
+fn a_refreshed_link_with_credentials_is_refused_and_leaks_nothing() {
+    let address = serve(b"refreshed");
+    let s = setup();
+    // A closed port: the first attempt fails, so the person refreshes it.
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap()
+    };
+    let target = s.granted.join("refreshed.bin");
+    let CommandResult::Job { job } = send(
+        &s.agent,
+        Command::CreateJob {
+            request: JobRequest::File {
+                input: JobInput::Url {
+                    url: SensitiveUrl::try_from(format!("http://{closed}/file.bin")).unwrap(),
+                },
+                destination: DestinationIntent {
+                    path: target.display().to_string(),
+                    conflict: ConflictPolicy::Ask,
+                },
+                not_before: None,
+                expected_sha256: None,
+            },
+        },
+    )
+    .unwrap() else {
+        panic!("not a job")
+    };
+    let state = |client: &InProcessClient| {
+        let CommandResult::Job { job: now } = send(
+            client,
+            Command::GetJob {
+                job_id: job.job_id.clone(),
+            },
+        )
+        .unwrap() else {
+            panic!("not a job")
+        };
+        now.state
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while state(&s.agent) != JobState::Failed {
+        s.engine.tick();
+        assert!(Instant::now() < deadline, "the first attempt never failed");
+        thread::sleep(Duration::from_millis(10));
+    }
+    // D8: a refreshed link may not carry credentials, so the output can
+    // never become offerable with one in its origin. The person is refused
+    // too, and the job stays as it was.
+    let refresh = |link: String| {
+        send(
+            &s.user,
+            Command::RefreshSource {
+                job_id: job.job_id.clone(),
+                source: JobInput::Url {
+                    url: SensitiveUrl::try_from(link).unwrap(),
+                },
+                destination: None,
+                expected_sha256: None,
+            },
+        )
+    };
+    assert_eq!(
+        code(refresh(format!("http://user:hunter2@{address}/file.bin"))),
+        "input.invalid_request"
+    );
+    assert_eq!(state(&s.agent), JobState::Failed);
+
+    // A clean refresh completes, and its origin is the plain address.
+    refresh(format!("http://{address}/file.bin")).unwrap();
+    while state(&s.agent) != JobState::Completed {
+        s.engine.tick();
+        assert!(Instant::now() < deadline, "the refreshed download never finished");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let offer = offered(send(
+        &s.agent,
+        Command::OfferFile {
+            source: OfferSource::Job {
+                job_id: job.job_id.clone(),
+            },
+            recipient: Principal::User,
+        },
+    ));
+    assert_eq!(
+        offer.manifest.origin.as_deref(),
+        Some(format!("http://{address}/file.bin").as_str())
+    );
+    let saved = std::fs::read_to_string(s.data.join("inbox-v1.json")).unwrap_or_default();
+    assert!(!saved.contains("hunter2"));
 }

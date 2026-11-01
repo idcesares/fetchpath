@@ -51,30 +51,39 @@ struct Stored {
 struct Persisted {
     version: u32,
     offers: Vec<Stored>,
+    /// Outputs of downloads that were not credential-free, kept after their
+    /// row is removed so an unknown origin never turns public (D8).
+    #[serde(default)]
+    credentialed: Vec<PathBuf>,
 }
 
 #[derive(Default)]
 pub(crate) struct Inbox {
     path: Option<PathBuf>,
     offers: Vec<Stored>,
+    credentialed: Vec<PathBuf>,
 }
 
 impl Inbox {
     pub(crate) fn load(dir: Option<PathBuf>) -> Self {
         let path = dir.map(|dir| dir.join(FILE));
-        let mut offers = path
+        let saved = path
             .as_deref()
             .and_then(|path| std::fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice::<Persisted>(&bytes).ok())
-            .map(|saved| saved.offers)
             .unwrap_or_default();
+        let (mut offers, credentialed) = (saved.offers, saved.credentialed);
         // A copy that a restart cut short did not happen.
         for offer in &mut offers {
             if offer.state == OfferState::Copying {
                 offer.state = OfferState::Offered;
             }
         }
-        Self { path, offers }
+        Self {
+            path,
+            offers,
+            credentialed,
+        }
     }
 
     fn save(&self) -> Result<(), String> {
@@ -84,12 +93,25 @@ impl Inbox {
         let bytes = serde_json::to_vec(&Persisted {
             version: 1,
             offers: self.offers.clone(),
+            credentialed: self.credentialed.clone(),
         })
         .map_err(|failure| failure.to_string())?;
         let temporary = path.with_extension("tmp");
         std::fs::write(&temporary, bytes)
             .and_then(|()| std::fs::rename(&temporary, path))
             .map_err(|failure| format!("The inbox could not be saved: {failure}"))
+    }
+
+    /// Keeps refusing a removed download's output (and a torrent's folder).
+    pub(crate) fn remember_credentialed(&mut self, output: PathBuf) {
+        if !self.credentialed.contains(&output) {
+            self.credentialed.push(output);
+            let _ = self.save();
+        }
+    }
+
+    fn is_remembered_credentialed(&self, canonical: &Path) -> bool {
+        self.credentialed.iter().any(|made| canonical.starts_with(made))
     }
 
     fn open_from(&self, sender: &Principal) -> usize {
@@ -364,15 +386,25 @@ impl Engine {
             return Err(not_offerable());
         }
         // A file picked by path may be the output of a credentialed download.
-        if !from_job && self.session.is_credentialed_output(&canonical) {
+        if !from_job
+            && (self.session.is_credentialed_output(&canonical)
+                || self
+                    .inbox
+                    .lock()
+                    .expect("inbox poisoned")
+                    .is_remembered_credentialed(&canonical))
+        {
             return Err(credentialed());
         }
         let file_name = canonical
             .file_name()
             .and_then(|name| name.to_str())
             .map(str::to_owned)
-            .filter(|name| !name.chars().any(char::is_control))
-            .filter(|_| crate::plain_path(&path).is_ok())
+            .filter(|name| !name.chars().any(|c| c.is_control() || spoofs_direction(c)))
+            // The name that goes in the manifest is the canonical one: an
+            // 8.3 short name expands to it, so the caller's spelling proves
+            // nothing.
+            .filter(|name| crate::plain_path(&Path::new("C:\\").join(name)).is_ok())
             .ok_or_else(not_offerable)?;
 
         // The agent's limits (contract D1).
@@ -593,4 +625,13 @@ fn copy_checked(source: &Path, manifest: &Manifest, target: &Path) -> Result<(),
     })();
     let _ = std::fs::remove_file(&staging);
     result
+}
+
+/// Bidirectional controls and invisible marks that make a file name read as
+/// something else (`invoice\u{202E}fdp.exe`).
+fn spoofs_direction(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200B}' | '\u{200E}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+    )
 }

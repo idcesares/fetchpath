@@ -3910,6 +3910,128 @@
       "verification": "Walk through send to a paired device, an unpaired device refused, an agent send waiting for approval, and a revoked pairing mid-transfer. Independent strong review of the shared identity and credentials.",
       "blockedReason": "Shares identity and credentials with FP-091, whose independent strong review is still pending. Next action: finish that review, then plan after FP-115.",
       "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-121",
+      "title": "Mark credentialed download output at the file or by hash, not by queue destination",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "docs/architecture/JOB-CONTRACT.md"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Risk left by FP-115: a path offer is judged credentialed only if a live queue row still has the same destination. A removed history row, a moved or renamed file, or a torrent output folder is treated as public, so an agent could offer content that came from cookies, a stored credential or a referer. Make provenance travel with the bytes: mark the output at download time (an alternate data stream or sidecar on the file, and/or a persisted set of content hashes of credentialed outputs) and check it on every path offer, failing closed on unknown provenance for agents while keeping the spec section 3 grant rule for files the engine never produced. Needs a persisted-format decision, so it gets the strong review.",
+      "verification": "Tests: a credentialed download whose row was removed, moved, renamed, copied and (torrent) placed in a folder is still refused for an agent offer; a plain file inside a grant is still offerable; the marker survives a restart. Independent strong review of the persisted format and ordering.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-122",
+      "title": "Harden the inbox file: bounded size, corrupt-file recovery and atomic replace",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the inbox state file is read without a size bound and a damaged file must not lose open offers or block startup. Bound the read, quarantine a corrupt file and start empty with a visible notice, write by temp file and rename.",
+      "verification": "Tests: oversized, truncated and non-UTF-8 inbox files recover without a panic and without silently dropping a valid file; an interrupted write leaves the previous inbox intact.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-123",
+      "title": "Commit the offer ledger before reporting success (save-before-commit ordering)",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/src/engine.rs"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the inbox is saved before the command ledger commit, so a crash between them can leave an offer the client never learned of, or replay a command id. Fix the ordering so the result a client sees is always backed by persisted state, and a retry with the same command id returns the same offer.",
+      "verification": "Test with an injected failure between the two writes: no duplicate offer, no offer without a recorded result, same command id returns the original result after restart. Strong review: persistence ordering.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-124",
+      "title": "Re-check the grant at the moment of reading in offer and accept",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the grant check and the read are separate steps, so a path swapped for a link or a file outside the grant between them could be read. Open once, check the opened handle (canonical path of the handle) against grants and staging rules, then hash and copy from that handle.",
+      "verification": "Test with a swap between check and read (link or file replaced): refused, nothing outside the grant is hashed or copied. Strong review of the agent boundary.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-125",
+      "title": "Align accept with D8: re-hash on accept and enforce the size cap",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "docs/architecture/JOB-CONTRACT.md",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Drift found in the FP-115 review: JOB-CONTRACT D8 says accept re-verifies the file against the manifest and applies the size limit, but the code does not re-hash at accept and does not enforce the cap there. Either implement it or amend D8 with the reason; no silent difference between contract and code.",
+      "verification": "Tests: a file changed after the offer is refused at accept with nothing published; an offer above the cap is refused at accept. D8 and the code say the same thing.",
+      "evidence": []
     }
   ]
 }

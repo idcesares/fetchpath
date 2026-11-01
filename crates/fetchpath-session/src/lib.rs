@@ -1662,6 +1662,9 @@ impl Session {
                         .and_then(|path| torrent_metadata_path(path, &record.id))
                 });
             }
+            // A refreshed link may carry credentials the first one did not;
+            // provenance only ever gets narrower (D8).
+            record.public_origin = record.public_origin && !policy::has_userinfo(&url);
             record.display_url = display_url(&url);
             record.view.source = record.display_url.clone();
             record.restart_url = restartable_url(&url);
@@ -2273,20 +2276,29 @@ impl Session {
     pub(crate) fn published_output(&self, job_id: &str) -> Option<PublishedOutput> {
         let state = self.inner.lock().expect("desktop jobs poisoned");
         let record = find_record(&state, job_id).ok()?;
+        // A stored address with userinfo is never public, even in a queue
+        // saved before the refresh path narrowed `public_origin`, and the
+        // origin shown never carries it.
+        let userinfo = record
+            .restart_url
+            .as_deref()
+            .is_some_and(policy::has_userinfo);
         (record.view.state == "completed").then(|| PublishedOutput {
             path: record.destination.clone(),
             owner: record.principal.clone(),
-            public_origin: record.public_origin,
+            public_origin: record.public_origin && !userinfo,
             origin: record
                 .restart_url
-                .clone()
+                .as_deref()
+                .map(redact_userinfo)
                 .or_else(|| record.display_url.split('?').next().map(str::to_owned)),
         })
     }
 
-    /// True when a download whose output is `path` was not credential-free,
-    /// or is of a kind whose origin was never recorded as public. A file no
-    /// download of this engine made is not credentialed by this test.
+    /// True when a download whose output is `path`, or the folder holding it
+    /// (a torrent), was not credential-free, or is of a kind whose origin was
+    /// never recorded as public. A file no download of this engine made is not
+    /// credentialed by this test.
     pub(crate) fn is_credentialed_output(&self, path: &Path) -> bool {
         let Ok(path) = std::fs::canonicalize(path) else {
             return false;
@@ -2294,7 +2306,18 @@ impl Session {
         let state = self.inner.lock().expect("desktop jobs poisoned");
         state.records.iter().any(|record| {
             !record.public_origin
-                && std::fs::canonicalize(&record.destination).is_ok_and(|made| made == path)
+                && std::fs::canonicalize(&record.destination)
+                    .is_ok_and(|made| path.starts_with(made))
+        })
+    }
+
+    /// Where a job that was not public wrote, so the engine can keep refusing
+    /// that output after the job's row is removed.
+    pub(crate) fn credentialed_destination(&self, job_id: &str) -> Option<PathBuf> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record(&state, job_id).ok()?;
+        (!record.public_origin).then(|| {
+            std::fs::canonicalize(&record.destination).unwrap_or_else(|_| record.destination.clone())
         })
     }
 
