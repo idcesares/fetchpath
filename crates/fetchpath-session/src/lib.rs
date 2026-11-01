@@ -2308,40 +2308,71 @@ impl Session {
 
     /// Marks the output of a finished credentialed job, so the marking
     /// travels with the bytes (contract D8, FP-121). Order: the hash set is
-    /// written first, then the stream (best effort for a file, required for a
-    /// torrent's files, which have no single hash), and only then does the
-    /// record say it is marked. Until then the live row still refuses by path.
-    fn mark_credentialed_output(&self, record: &mut QueueRecord) {
+    /// saved, then the stream is written (also when the save failed, so the
+    /// file still carries a marker), and only a saved hash, or a torrent's
+    /// best-effort pass, sets the row's flag. Until then the live row still
+    /// refuses by path. Returns whether any marker holds for the output.
+    fn mark_credentialed_output(&self, record: &mut QueueRecord) -> bool {
         let destination = std::fs::canonicalize(&record.destination)
             .unwrap_or_else(|_| record.destination.clone());
         let Ok(files) = provenance::files_under(&destination) else {
-            return;
+            return false;
         };
-        let single = files.len() == 1 && files[0] == destination;
-        if single {
-            let hash = record
+        if files.len() == 1 && files[0] == destination {
+            let saved = record
                 .view
                 .observed_sha256
                 .as_deref()
                 .and_then(normalize_sha256)
-                .or_else(|| provenance::hash_file(&destination).ok());
-            let Some(hash) = hash else { return };
-            let mut store = self.provenance.lock().expect("provenance poisoned");
-            if store.remember(&hash).is_err() {
-                return;
-            }
-            let _ = provenance::mark_file(&destination);
-        } else {
-            // A torrent's folder: no single hash, so every file carries the
-            // stream, and the path stays refused through the row.
-            if files
-                .iter()
-                .any(|file| provenance::mark_file(file).is_err())
-            {
-                return;
-            }
+                .or_else(|| provenance::hash_file(&destination).ok())
+                .is_some_and(|hash| {
+                    self.provenance
+                        .lock()
+                        .expect("provenance poisoned")
+                        .remember(&hash)
+                        .is_ok()
+                });
+            let streamed = provenance::mark_if_needed(&destination);
+            record.provenance_marked = saved;
+            return saved || streamed;
         }
+        // A torrent's folder has no single hash, so each file carries the
+        // stream. One pass: a volume that refuses streams would otherwise be
+        // retried at every reconcile. The path stays refused through the row.
+        // Every file is tried, not just until one succeeds.
+        let marked: Vec<bool> = files
+            .iter()
+            .map(|file| provenance::mark_if_needed(file))
+            .collect();
+        let streamed = marked.contains(&true);
         record.provenance_marked = true;
+        streamed
+    }
+
+    /// Makes sure a finished credentialed job's output carries a marker
+    /// before its row is removed (contract D8, FP-121). A job that is public,
+    /// not finished, or already marked needs nothing.
+    pub(crate) fn ensure_output_marked(&self, job_id: &str) -> Result<(), String> {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let Some(record) = state.records.iter_mut().find(|record| record.id == job_id) else {
+            return Ok(());
+        };
+        if record.view.state != "completed"
+            || record.provenance_marked
+            || (record.public_origin
+                && !record
+                    .restart_url
+                    .as_deref()
+                    .is_some_and(policy::has_userinfo))
+        {
+            return Ok(());
+        }
+        if self.mark_credentialed_output(record) {
+            Ok(())
+        } else {
+            Err("This download's file could not be marked as coming from a login, so it was                  not removed from the list. Try again."
+                .into())
+        }
     }
 
     /// True when these bytes are those of a credentialed output (contract D8,

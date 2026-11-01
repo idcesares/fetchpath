@@ -1029,6 +1029,9 @@ impl Engine {
             Command::RemoveJob { job_id } => {
                 // Removing the row must not make a credentialed output look
                 // like a file nobody downloaded.
+                session
+                    .ensure_output_marked(job_id.as_str())
+                    .map_err(input)?;
                 if let Some(output) = session.credentialed_destination(job_id.as_str()) {
                     self.inbox
                         .lock()

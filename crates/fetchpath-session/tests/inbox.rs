@@ -724,3 +724,25 @@ fn an_unreadable_provenance_store_fails_closed_for_agents_and_is_not_overwritten
     offered(offer_path(&user, &plain, helper()));
     assert_eq!(std::fs::read(&store).unwrap(), b"{ not json");
 }
+
+#[cfg(windows)]
+#[test]
+fn a_row_removed_while_the_hash_store_is_unreadable_still_leaves_a_marked_file() {
+    let address = serve(b"private bytes");
+    let s = setup();
+    let (secret, job) = credentialed_download(&s, &address, "secret.bin");
+    let store = s.data.join("provenance-v1.json");
+    std::fs::write(&store, b"{ not json").unwrap();
+    let (_, user, _) = restart(&s);
+    send(&user, Command::RemoveJob { job_id: job }).unwrap();
+
+    // Later the store is repaired by hand; the file's own stream must decide.
+    std::fs::remove_file(&store).unwrap();
+    let moved = s.granted.join("moved.txt");
+    std::fs::rename(&secret, &moved).unwrap();
+    let (_, _, agent) = restart(&s);
+    assert_eq!(
+        code(offer_path(&agent, &moved, Principal::User)),
+        "policy.credentialed_not_allowed"
+    );
+}

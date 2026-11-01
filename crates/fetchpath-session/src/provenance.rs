@@ -124,6 +124,12 @@ pub(crate) fn mark_file(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Writes the stream unless the file already carries it. True when the file
+/// carries it afterwards.
+pub(crate) fn mark_if_needed(path: &Path) -> bool {
+    read_marker(path) == Marker::Credentialed || mark_file(path).is_ok()
+}
+
 #[cfg(windows)]
 pub(crate) fn read_marker(path: &Path) -> Marker {
     use std::io::ErrorKind;
