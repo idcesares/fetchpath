@@ -35,6 +35,8 @@ one your task names.
 - [Torrents and magnets](TORRENTS.md) — FP-021: isolated helper, consent boundaries, publication and current limits.
 - [Efficiency research: chunking, deltas, paths, coding](EFFICIENCY-RESEARCH.md) — FP-023, FP-024.
 
+- [Share relay and encryption framing](SHARE-RELAY.md) — FP-116: thin relay vs iroh and the chunked AES-GCM framing, by measurement.
+
 ## Release
 
 - [Local development quality](LOCAL-QUALITY.md) — FP-106/107: reproducible builds, test fixtures and local recovery/keyboard journeys.

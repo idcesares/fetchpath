@@ -56,7 +56,7 @@ A finished download never creates a link or a send on its own (AGENTS.md: sharin
 
 One share server serves `GET /s/<id>`, Range, and the page that decrypts in the browser. It is its own listener and port. It is never the S1b web UI port or the S2 remote port (remote hub spec §5: a gateway cannot be told apart from local traffic).
 
-**End-to-end encryption.** The link is `https://<host>/s/<id>#<key>`. The key is in the fragment, which browsers never send, so a relay or tunnel vendor carries only ciphertext. The recipient page decrypts a stream (AEAD with chunked framing) without holding the whole file in memory. Decryption needs a secure origin, so a public share needs a real domain and certificate.
+**End-to-end encryption.** The link is `https://<host>/s/<id>#<key>`. The key is in the fragment, which browsers never send, so a relay or tunnel vendor carries only ciphertext of the file. It cannot read the key passively, but a vendor that terminates TLS also serves the decrypting page and could serve a modified one; see the page-integrity rule in [SHARE-RELAY.md](../../development/SHARE-RELAY.md). The recipient page decrypts a stream (AES-256-GCM chunks with a counter nonce and a last-chunk flag, framing in [SHARE-RELAY.md](../../development/SHARE-RELAY.md)) without holding the whole file in memory. Decryption needs a secure origin, so a public share needs a real domain and certificate.
 
 **Three reachability modes, one contract.** Each supplies a public HTTPS base URL; the engine stores `share.mode` and `share.base_url` and checks it.
 
@@ -67,7 +67,7 @@ One share server serves `GET /s/<id>`, Range, and the page that decrypts in the 
 | Direct | Port forward and a domain (DDNS or the person's own) | Obtain a certificate (ACME); expose only the share port |
 
 - **Relay** is stateless, has no accounts, and accepts links only from engines enrolled by its owner (an enrollment key), so it is not an open file host. Whoever runs a relay owns its cost and abuse duty; the project operates none. The default is no relay, which means T3 works only after setup.
-- **Tunnel** vendors are safe to use because of the fragment key. Their terms about large files (for example Cloudflare's CDN terms) are the person's responsibility and the guide says so.
+- **Tunnel** vendors cannot read the file passively because of the fragment key (they could still serve a modified page; see §5). Their terms about large files (for example Cloudflare's CDN terms) are the person's responsibility and the guide says so.
 - **Direct** exposes the home PC to the internet. The setup warns, and the Windows Firewall rule opens the share port only. A DNS API token for certificates (for example a Cloudflare token) is a secret held by the engine and is not the default path; prefer Tunnel for such domains.
 - No automatic router port opening (UPnP) unless the person turns it on explicitly.
 
@@ -109,7 +109,7 @@ The MCP adapter gains `offer_file`, `list_inbox` and `accept`. An agent offer ru
 
 | Id | Question | Leaning |
 |---|---|---|
-| T-O1 | Custom thin relay or iroh's relay with its WebAssembly browser client | Thin custom relay; measure iroh before ruling it out (docs found were 2025-era) |
-| T-O2 | Encryption framing and library | Choose by measurement and review in T3's first gate |
+| T-O1 | Custom thin relay or iroh's relay with its WebAssembly browser client | Resolved (FP-116): thin custom relay. iroh needs a self-built 4.26 MB wasm client (1.39 MB gzipped) and adds a second browser path; see [SHARE-RELAY.md](../../development/SHARE-RELAY.md) |
+| T-O2 | Encryption framing and library | Resolved (FP-116): STREAM-style chunked AES-256-GCM, HKDF-SHA256, WebCrypto in the page, `aes-gcm`/`hkdf` in Rust; X8 review still applies |
 | T-O3 | Does an agent-to-agent inbox across users or machines exist | Not now: same machine only |
 | T-O4 | Whether the person may share a credentialed download anyway (agents never may) | Allowed by explicit choice with a visible warning |

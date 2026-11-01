@@ -3766,24 +3766,27 @@
       "evidence": []
     },
     {
-      "owner": null,
+      "owner": "claude-code",
       "id": "FP-116",
       "title": "Decide share relay and encryption framing by measurement",
       "milestone": "M18",
       "dependsOn": [],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "astra-high",
       "files": [
-        "docs/development",
-        "docs/architecture/specs"
+        "docs/development/SHARE-RELAY.md",
+        "docs/development/README.md",
+        "docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md"
       ],
       "acceptanceIds": [
         "A07"
       ],
       "acceptance": "Resolve T-O1 and T-O2 of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md. Compare a thin custom relay with the iroh relay and its WebAssembly browser client (check current iroh documentation and a real browser build) for browser reachability, streaming decrypt with bounded memory, Range resume, relay statelessness and self-hosting effort; choose the encryption framing and library. Output is one short record and a spec update; throwaway probes stay out of the tree.",
       "verification": "Each candidate measured on the same large file through a real browser; the record states what was measured, what could not be verified and the choice. No unmeasured speed or security claim.",
-      "evidence": []
+      "evidence": [
+        "docs/development/SHARE-RELAY.md"
+      ]
     },
     {
       "owner": null,
