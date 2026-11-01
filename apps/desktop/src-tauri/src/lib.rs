@@ -872,6 +872,63 @@ async fn deny_download(job_id: String, engine: Engine<'_>) -> Result<view::JobVi
     .await
 }
 
+/// Files agents offered you. Only your own clients can answer them.
+#[tauri::command]
+async fn list_inbox(engine: Engine<'_>) -> Result<Vec<view::OfferRow>, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(
+        move || match engine.send(Command::ListInbox).map_err(text)? {
+            CommandResult::Inbox { offers } => Ok(offers.iter().map(view::offer).collect()),
+            other => Err(unexpected(&other)),
+        },
+    )
+    .await
+}
+
+fn offer_row(result: CommandResult) -> Result<view::OfferRow, String> {
+    match result {
+        CommandResult::Offer { offer } => Ok(view::offer(&offer)),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// Copies an offered file into `folder` (or the default save folder). The
+/// engine checks the copy against the offered hash and never replaces a file.
+#[tauri::command]
+async fn accept_offer(
+    offer_id: String,
+    folder: Option<String>,
+    engine: Engine<'_>,
+) -> Result<view::OfferRow, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        offer_row(
+            engine
+                .send(Command::AcceptOffer {
+                    offer_id: self::job_id(&offer_id)?,
+                    destination: folder,
+                })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn decline_offer(offer_id: String, engine: Engine<'_>) -> Result<view::OfferRow, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        offer_row(
+            engine
+                .send(Command::DeclineOffer {
+                    offer_id: self::job_id(&offer_id)?,
+                })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
 fn agent_views(result: CommandResult) -> Result<Vec<view::AgentView>, String> {
     match result {
         CommandResult::AgentPolicies { policies } => Ok(view::agents(&policies)),
@@ -1213,6 +1270,9 @@ pub fn run() {
             sign_out_browsers,
             approve_download,
             deny_download,
+            list_inbox,
+            accept_offer,
+            decline_offer,
             list_agents,
             set_agent,
             revoke_agent,

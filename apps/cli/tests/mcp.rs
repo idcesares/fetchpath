@@ -174,11 +174,15 @@ fn an_agent_downloads_through_mcp_inside_its_grant_and_asks_for_the_rest() {
     assert_eq!(
         names,
         [
+            "accept",
             "cancel",
+            "decline",
             "download",
             "get_download",
             "inspect_link",
             "list_downloads",
+            "list_inbox",
+            "offer_file",
             "pause",
             "resume",
             "search_history",

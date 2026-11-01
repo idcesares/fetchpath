@@ -16,6 +16,8 @@
 //! applies it once; a crash after it returns the stored result on resend.
 
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
+mod inbox;
+
 use crate::policy::{self, RateWindow};
 use crate::{
     JobDraft, MediaDraft, Origin, Session, TorrentDraft, TorrentPolicy, error_code, now_ms, wire,
@@ -190,6 +192,10 @@ impl Drop for DeferGuard<'_> {
 
 /// What a change did, turned into a result once its events are derived.
 enum Outcome {
+    // OfferView is much larger than the other variants. Box it so the enum
+    // stays small (clippy::large_enum_variant).
+    Offer(Box<fetchpath_protocol::send::OfferView>),
+    Inbox(Vec<fetchpath_protocol::send::OfferView>),
     Job(String),
     Jobs(Vec<String>),
     Control(ControlOutcome, String),
@@ -207,6 +213,8 @@ impl Outcome {
             Self::Job(id) | Self::Control(_, id) | Self::Removed(id) => HashSet::from([id.clone()]),
             Self::Jobs(ids) => ids.iter().cloned().collect(),
             Self::Settings
+            | Self::Offer(_)
+            | Self::Inbox(_)
             | Self::AgentPolicies
             | Self::Rules
             | Self::Cache(_)
@@ -226,6 +234,8 @@ pub struct Engine {
     /// This engine's data folder identity (contract D6). `None` only for
     /// engines without one, such as in-process tests.
     instance: Option<InstanceId>,
+    /// Same-machine offers (contract D8).
+    inbox: Arc<Mutex<inbox::Inbox>>,
 }
 
 impl Engine {
@@ -252,6 +262,7 @@ impl Engine {
     }
 
     fn build(session: Arc<Session>, instance: Option<InstanceId>) -> Arc<Self> {
+        let data_dir = session.data_dir();
         Arc::new(Self {
             session,
             commands: Mutex::new(()),
@@ -259,6 +270,7 @@ impl Engine {
             sample_cursor: AtomicU64::new(0),
             rates: Mutex::new(RateWindow::default()),
             instance,
+            inbox: Arc::new(Mutex::new(inbox::Inbox::load(data_dir))),
         })
     }
 
@@ -457,6 +469,12 @@ impl Engine {
                 .ok_or_else(unknown_job)
         };
         let result = match &outcome {
+            Outcome::Offer(offer) => Ok(CommandResult::Offer {
+                offer: offer.as_ref().clone(),
+            }),
+            Outcome::Inbox(offers) => Ok(CommandResult::Inbox {
+                offers: offers.clone(),
+            }),
             Outcome::Job(id) => snapshot_of(id).map(|job| CommandResult::Job { job }),
             Outcome::Jobs(ids) => ids
                 .iter()
@@ -1008,10 +1026,21 @@ impl Engine {
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(input)
             }
-            Command::RemoveJob { job_id } => session
-                .remove(job_id.as_str())
-                .map(|()| Outcome::Removed(job_id.as_str().to_owned()))
-                .map_err(transition),
+            Command::RemoveJob { job_id } => {
+                // Removing the row must not make a credentialed output look
+                // like a file nobody downloaded.
+                if let Some(output) = session.credentialed_destination(job_id.as_str()) {
+                    self.inbox
+                        .lock()
+                        .expect("inbox poisoned")
+                        .remember_credentialed(output)
+                        .map_err(input)?;
+                }
+                session
+                    .remove(job_id.as_str())
+                    .map(|()| Outcome::Removed(job_id.as_str().to_owned()))
+                    .map_err(transition)
+            }
             Command::UpdateSettings { settings } => {
                 let next = wire::session_settings(settings, &session.settings());
                 session.update_settings(next).map_err(input)?;
@@ -1046,6 +1075,10 @@ impl Engine {
                 session.cancel_all_and_join();
                 Ok(Outcome::ShuttingDown)
             }
+            Command::OfferFile { .. }
+            | Command::AcceptOffer { .. }
+            | Command::DeclineOffer { .. }
+            | Command::WithdrawOffer { .. } => self.apply_inbox(principal, command),
             _ => Err(ProtocolError::malformed("not a change")),
         }
     }
@@ -1084,6 +1117,10 @@ impl Engine {
         let visible =
             |job: &model::JobSnapshot| principal.is_person() || job.principal == *principal;
         match command {
+            Command::ListInbox => match self.apply_inbox(principal, command)? {
+                Outcome::Inbox(offers) => Ok(CommandResult::Inbox { offers }),
+                _ => unreachable!("listing the inbox answers with the inbox"),
+            },
             Command::ListJobs { filter } => {
                 let jobs = self
                     .snapshots()?
@@ -1516,6 +1553,7 @@ impl Engine {
     /// Timer fallback: reconcile and offer a progress sample per running job.
     pub fn tick(&self) {
         self.reconcile();
+        self.expire_offers();
         let state = self.session.inner.lock().expect("desktop jobs poisoned");
         let mut durable = self.session.durable.lock().expect("engine state poisoned");
         durable

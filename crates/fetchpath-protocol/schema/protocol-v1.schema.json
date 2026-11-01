@@ -805,6 +805,96 @@
           "type": "object"
         },
         {
+          "description": "Offers a file to another principal of this engine. The engine builds\nthe manifest from the file; the caller only names the source and the\nrecipient.",
+          "properties": {
+            "recipient": {
+              "$ref": "#/$defs/Principal"
+            },
+            "source": {
+              "$ref": "#/$defs/OfferSource"
+            },
+            "type": {
+              "const": "OfferFile",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "source",
+            "recipient"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The offers this principal made or received (the person sees all).",
+          "properties": {
+            "type": {
+              "const": "ListInbox",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The recipient takes a copy into `destination` (a folder; never a\nreplacement). Without one, a person's default folder is used.",
+          "properties": {
+            "destination": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "offer_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "AcceptOffer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offer_id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "offer_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "DeclineOffer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offer_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The sender takes an open offer back.",
+          "properties": {
+            "offer_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "type": {
+              "const": "WithdrawOffer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offer_id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Every rule, in the order they are tried.",
           "properties": {
             "type": {
@@ -1178,6 +1268,43 @@
           "required": [
             "type",
             "jobs"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`OfferFile`, `AcceptOffer`, `DeclineOffer`, `WithdrawOffer` (D8).",
+          "properties": {
+            "offer": {
+              "$ref": "#/$defs/OfferView"
+            },
+            "type": {
+              "const": "Offer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offer"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`ListInbox`.",
+          "properties": {
+            "offers": {
+              "items": {
+                "$ref": "#/$defs/OfferView"
+              },
+              "type": "array"
+            },
+            "type": {
+              "const": "Inbox",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "offers"
           ],
           "type": "object"
         },
@@ -1943,6 +2070,14 @@
         "path"
       ],
       "type": "object"
+    },
+    "HashSource": {
+      "description": "Who attested the manifest's hash.",
+      "enum": [
+        "sender_engine",
+        "unknown"
+      ],
+      "type": "string"
     },
     "InstanceId": {
       "format": "uuid",
@@ -2936,6 +3071,48 @@
         }
       ]
     },
+    "Manifest": {
+      "description": "What the recipient is told about an offer. Built by the engine from the\nfile, never from the caller's words. It holds no filesystem path.",
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "hash_source": {
+          "$ref": "#/$defs/HashSource"
+        },
+        "offered_at": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "origin": {
+          "description": "The download's link without query or user info; absent when unknown\nor when the file was picked.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sender_label": {
+          "description": "`user` or `agent:<name>`. A declared label, not proof of identity.",
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file_name",
+        "size",
+        "sha256",
+        "hash_source",
+        "sender_label",
+        "offered_at"
+      ],
+      "type": "object"
+    },
     "MediaInspection": {
       "description": "What a media page offers. `title` comes from the page and is untrusted\ntext.",
       "properties": {
@@ -3009,6 +3186,100 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "OfferSource": {
+      "description": "What an offer points at. The engine decides whether the source is\nofferable; the caller only names it.",
+      "oneOf": [
+        {
+          "description": "The published output of a completed download.",
+          "properties": {
+            "job_id": {
+              "$ref": "#/$defs/JobId"
+            },
+            "kind": {
+              "const": "job",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A file by path: a person's pick, or for an agent a file inside a\nfolder granted to it.",
+          "properties": {
+            "kind": {
+              "const": "path",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OfferState": {
+      "enum": [
+        "offered",
+        "copying",
+        "completed",
+        "declined",
+        "withdrawn",
+        "expired",
+        "failed",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "OfferView": {
+      "description": "One send job as a client sees it.",
+      "properties": {
+        "job_id": {
+          "$ref": "#/$defs/JobId"
+        },
+        "manifest": {
+          "$ref": "#/$defs/Manifest"
+        },
+        "reason": {
+          "description": "Why the offer ended without a copy (`send.offer_declined`,\n`send.offer_expired`, `send.changed`, `send.source_missing`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipient": {
+          "$ref": "#/$defs/Principal"
+        },
+        "saved_to": {
+          "description": "Where the copy was saved. Shown to a person; to an agent only when it\nlies inside the agent's granted folders.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sender": {
+          "$ref": "#/$defs/Principal"
+        },
+        "state": {
+          "$ref": "#/$defs/OfferState"
+        }
+      },
+      "required": [
+        "job_id",
+        "state",
+        "manifest",
+        "sender",
+        "recipient"
+      ],
+      "type": "object"
     },
     "PairedDevice": {
       "properties": {

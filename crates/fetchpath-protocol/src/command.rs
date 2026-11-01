@@ -3,7 +3,8 @@
 use crate::SCHEMA_VERSION;
 use crate::ids::{ClientId, CommandId, CredentialRef, InstanceId, JobId, Timestamp};
 use crate::model::{EngineSettings, RuleSpec, SensitiveUrl};
-use crate::principal::{AgentName, AgentPolicy};
+use crate::principal::{AgentName, AgentPolicy, Principal};
+use crate::send::OfferSource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -193,6 +194,31 @@ pub enum Command {
         policy: Option<AgentPolicy>,
     },
 
+    // Send and the inbox (contract D8, FP-115). Same machine only.
+    /// Offers a file to another principal of this engine. The engine builds
+    /// the manifest from the file; the caller only names the source and the
+    /// recipient.
+    OfferFile {
+        source: OfferSource,
+        recipient: Principal,
+    },
+    /// The offers this principal made or received (the person sees all).
+    ListInbox,
+    /// The recipient takes a copy into `destination` (a folder; never a
+    /// replacement). Without one, a person's default folder is used.
+    AcceptOffer {
+        offer_id: JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        destination: Option<String>,
+    },
+    DeclineOffer {
+        offer_id: JobId,
+    },
+    /// The sender takes an open offer back.
+    WithdrawOffer {
+        offer_id: JobId,
+    },
+
     // Smart rules (FP-064). The person only.
     /// Every rule, in the order they are tried.
     ListRules,
@@ -286,6 +312,11 @@ impl Command {
             Self::TakeLinkReviews => "TakeLinkReviews",
             Self::TakeBrowserCaptures => "TakeBrowserCaptures",
             Self::UpdateSettings { .. } => "UpdateSettings",
+            Self::OfferFile { .. } => "OfferFile",
+            Self::ListInbox => "ListInbox",
+            Self::AcceptOffer { .. } => "AcceptOffer",
+            Self::DeclineOffer { .. } => "DeclineOffer",
+            Self::WithdrawOffer { .. } => "WithdrawOffer",
             Self::ApproveJob { .. } => "ApproveJob",
             Self::DenyJob { .. } => "DenyJob",
             Self::GetAgentPolicies => "GetAgentPolicies",
@@ -319,6 +350,7 @@ impl Command {
         !matches!(
             self,
             Self::ListJobs { .. }
+                | Self::ListInbox
                 | Self::TakeLinkReviews
                 | Self::TakeBrowserCaptures
                 | Self::GetJob { .. }

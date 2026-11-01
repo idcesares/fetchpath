@@ -25,6 +25,7 @@ pub mod model;
 pub mod pipe;
 pub mod principal;
 pub mod schema;
+pub mod send;
 pub mod view;
 
 /// The protocol's major version, carried by every message.

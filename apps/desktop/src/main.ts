@@ -93,6 +93,22 @@ interface AgentView {
   automatic: boolean;
 }
 
+/** A file an agent offered (FP-115). Every string except the notices is data. */
+interface OfferRow {
+  id: string;
+  state: "offered" | "copying" | "completed" | "declined" | "withdrawn" | "expired" | "failed" | "unknown";
+  open: boolean;
+  fileName: string;
+  size: number;
+  sha256: string;
+  origin: string | null;
+  from: string;
+  savedTo: string | null;
+  reason: string | null;
+  hashNotice: string;
+  senderNotice: string;
+}
+
 interface MediaVariant {
   id: string;
   label: string;
@@ -778,6 +794,111 @@ async function refreshAgents(): Promise<void> {
     renderAgents();
   } catch (error) {
     showError(settingsError, error);
+  }
+}
+
+/* Files agents offered you (FP-115) ------------------------------------------
+   The engine holds the inbox and checks every copy against the offered hash;
+   this lists the open offers and sends the person's answer. Names and links
+   come from the sender: they are only ever set as text. */
+
+const inboxPanel = required<HTMLElement>("inbox-panel");
+const inboxList = required<HTMLDivElement>("inbox-list");
+const inboxStatus = required<HTMLParagraphElement>("inbox-status");
+let inboxOffers: OfferRow[] = [];
+let inboxBusy = false;
+
+async function refreshInbox(): Promise<void> {
+  if (inboxBusy) return;
+  try {
+    const next = await invoke<OfferRow[]>("list_inbox");
+    // Say how a copy ended once it leaves the open list.
+    for (const before of inboxOffers) {
+      if (before.state !== "copying") continue;
+      const after = next.find((offer) => offer.id === before.id);
+      if (after?.state === "completed") announceInbox(`Saved ${after.fileName}${after.savedTo ? ` to ${after.savedTo}` : ""}.`);
+      else if (after?.state === "failed") announceInbox(`${after.fileName} was not saved (${after.reason ?? "failed"}).`);
+    }
+    inboxOffers = next;
+    renderInbox();
+  } catch {
+    // The engine may be starting or stopped; the next pass tries again.
+  }
+}
+
+function announceInbox(message: string): void {
+  inboxStatus.textContent = message;
+  announce(message);
+}
+
+function renderInbox(): void {
+  // Offers waiting for an answer, and those being copied. Finished ones are
+  // reported once, in the status line.
+  const incoming = inboxOffers.filter((offer) => offer.open && !offer.from.startsWith("user"));
+  inboxPanel.hidden = incoming.length === 0 && !inboxStatus.textContent;
+  inboxList.replaceChildren(
+    ...incoming.map((offer) => {
+      const card = document.createElement("section");
+      card.className = "inbox-offer";
+      card.setAttribute("aria-labelledby", `offer-${offer.id}`);
+      const heading = document.createElement("h3");
+      heading.id = `offer-${offer.id}`;
+      heading.textContent = offer.fileName;
+      const facts = document.createElement("p");
+      facts.textContent = `${formatBytes(offer.size)}. Offered by ${offer.from}. ${offer.senderNotice}`;
+      const hash = document.createElement("p");
+      const code = document.createElement("code");
+      code.textContent = offer.sha256;
+      hash.append("SHA-256 ", code);
+      const meaning = document.createElement("p");
+      meaning.className = "hint";
+      meaning.textContent = offer.hashNotice;
+      card.append(heading, facts, hash, meaning);
+      if (offer.origin) {
+        const origin = document.createElement("p");
+        origin.textContent = `Link of the download this file came from: ${offer.origin}`;
+        card.append(origin);
+      }
+      const actions = document.createElement("div");
+      actions.className = "agent-actions";
+      const copying = offer.state === "copying";
+      const accept = document.createElement("button");
+      accept.type = "button";
+      accept.textContent = copying ? "Copying…" : "Accept…";
+      accept.disabled = copying;
+      accept.setAttribute("aria-label", `Accept ${offer.fileName}: choose a folder to copy it into`);
+      accept.addEventListener("click", () => void answerOffer(offer, "accept"));
+      const decline = document.createElement("button");
+      decline.type = "button";
+      decline.className = "secondary";
+      decline.textContent = "Decline";
+      decline.disabled = copying;
+      decline.setAttribute("aria-label", `Decline ${offer.fileName}`);
+      decline.addEventListener("click", () => void answerOffer(offer, "decline"));
+      actions.append(accept, decline);
+      card.append(actions);
+      return card;
+    }),
+  );
+}
+
+async function answerOffer(offer: OfferRow, action: "accept" | "decline"): Promise<void> {
+  inboxBusy = true;
+  try {
+    if (action === "decline") {
+      await invoke<OfferRow>("decline_offer", { offerId: offer.id });
+      announceInbox(`Declined ${offer.fileName}. Nothing was copied.`);
+    } else {
+      const folder = await open({ directory: true, title: `Choose a folder for ${offer.fileName}` });
+      if (typeof folder !== "string") return;
+      await invoke<OfferRow>("accept_offer", { offerId: offer.id, folder });
+      announceInbox(`Copying ${offer.fileName}…`);
+    }
+  } catch (error) {
+    announceInbox(errorMessage(error));
+  } finally {
+    inboxBusy = false;
+    await refreshInbox();
   }
 }
 
@@ -2586,7 +2707,11 @@ async function start(): Promise<void> {
   await refreshQueue();
   // Changes arrive as events; this slower pass catches what has no event of
   // its own, such as a schedule coming due or a link sent from the browser.
-  refreshTimer = window.setInterval(() => void refreshQueue(), 1000);
+  refreshTimer = window.setInterval(() => {
+    void refreshQueue();
+    void refreshInbox();
+  }, 1000);
+  void refreshInbox();
   // Setup's finish page can start the app straight at the browser steps.
   if (await invoke<boolean>("connect_browser_requested").catch(() => false)) void showSettings("integrations");
   // A window hidden in the notification area may have its timers slowed, so

@@ -3737,21 +3737,29 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "claude-code (Sonnet 5.5 lead)",
       "id": "FP-115",
       "title": "Build same-machine send: manifest, inbox and agent offer tools",
       "milestone": "M18",
       "dependsOn": [],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
       "files": [
-        "crates/fetchpath-protocol",
-        "crates/fetchpath-session",
-        "apps/cli",
+        "crates/fetchpath-protocol/src",
+        "crates/fetchpath-session/src/policy.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/engine",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/tests",
+        "crates/fetchpath-protocol/schema",
+        "apps/cli/src/mcp",
+        "apps/cli/src/inbox.rs",
+        "apps/cli/tests/mcp.rs",
         "apps/desktop",
         "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/MCP.md",
         "docs/user",
         "docs/tasks/backlog.json"
       ],
@@ -3763,7 +3771,11 @@
       ],
       "acceptance": "Slice T1 of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md. Record a job-contract decision (D8) first: a send job kind, a manifest (file name, size, sender-engine SHA-256 labelled as not publisher authenticity, origin, declared sender label, time) and the principal permissions. Then build the inbox and the MCP tools offer_file, list_inbox and accept, with accept or decline in the desktop and terminal. Only published outputs, person-picked files, and files inside an agent's granted folders are offerable; credentialed provenance is refused for agents; automatic mode never accepts or offers off-machine; no link or send is created by a download.",
       "verification": "Gates X1 to X3 as tests: no implicit share, credentialed origin refused, agent cannot offer outside its grants, staged or unrelated files. Walk through agent offer then person accept and decline, a reused command id across principals, and an injected file name that changes nothing. Independent strong review of the agent boundary and manifest wording.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/tests/inbox.rs",
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/MCP.md"
+      ]
     },
     {
       "owner": "claude-code",
@@ -3897,6 +3909,128 @@
       "acceptance": "Slice T2 of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md: explicit send to a paired LAN device using the existing pairing identity, with sender-attested manifest, per-send approval for agents, and no relay. Off-LAN delivery waits for S2.",
       "verification": "Walk through send to a paired device, an unpaired device refused, an agent send waiting for approval, and a revoked pairing mid-transfer. Independent strong review of the shared identity and credentials.",
       "blockedReason": "Shares identity and credentials with FP-091, whose independent strong review is still pending. Next action: finish that review, then plan after FP-115.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-121",
+      "title": "Mark credentialed download output at the file or by hash, not by queue destination",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
+        "docs/architecture/JOB-CONTRACT.md"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Risk left by FP-115: a path offer is judged credentialed by output path only (a live queue row, a path kept when the row is removed, or the folder of a torrent). A moved, renamed or copied file is treated as public, so an agent could offer content that came from cookies, a stored credential or a referer. Make provenance travel with the bytes: mark the output at download time (an alternate data stream or sidecar on the file, and/or a persisted set of content hashes of credentialed outputs) and check it on every path offer, failing closed on unknown provenance for agents while keeping the spec section 3 grant rule for files the engine never produced. Needs a persisted-format decision, so it gets the strong review.",
+      "verification": "Tests: a credentialed download that was moved, renamed or copied is still refused for an agent offer; a plain file inside a grant is still offerable; the marker survives a restart. Independent strong review of the persisted format and ordering.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-122",
+      "title": "Harden the inbox file: bounded size, corrupt-file recovery and atomic replace",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the inbox state file is read without a size bound and a damaged file must not lose open offers or block startup. Bound the read, quarantine a corrupt file and start empty with a visible notice, write by temp file and rename.",
+      "verification": "Tests: oversized, truncated and non-UTF-8 inbox files recover without a panic and without silently dropping a valid file; an interrupted write leaves the previous inbox intact.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-123",
+      "title": "Commit the offer ledger before reporting success (save-before-commit ordering)",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/src/engine.rs"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the inbox is saved before the command ledger commit, so a crash between them can leave an offer the client never learned of, or replay a command id. Fix the ordering so the result a client sees is always backed by persisted state, and a retry with the same command id returns the same offer.",
+      "verification": "Test with an injected failure between the two writes: no duplicate offer, no offer without a recorded result, same command id returns the original result after restart. Strong review: persistence ordering.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-124",
+      "title": "Re-check the grant at the moment of reading in offer and accept",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Finding from the FP-115 review (Low): the grant check and the read are separate steps, so a path swapped for a link or a file outside the grant between them could be read. Open once, check the opened handle (canonical path of the handle) against grants and staging rules, then hash and copy from that handle.",
+      "verification": "Test with a swap between check and read (link or file replaced): refused, nothing outside the grant is hashed or copied. Strong review of the agent boundary.",
+      "evidence": []
+    },
+    {
+      "owner": null,
+      "id": "FP-125",
+      "title": "Align accept with D8: re-hash on accept and enforce the size cap",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-115"
+      ],
+      "status": "todo",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "docs/architecture/JOB-CONTRACT.md",
+        "crates/fetchpath-session/tests"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "Drift found in the FP-115 review: JOB-CONTRACT D8 says accept re-verifies the file against the manifest and applies the size limit, but the code does not re-hash at accept and does not enforce the cap there. Either implement it or amend D8 with the reason; no silent difference between contract and code.",
+      "verification": "Tests: a file changed after the offer is refused at accept with nothing published; an offer above the cap is refused at accept. D8 and the code say the same thing.",
       "evidence": []
     }
   ]

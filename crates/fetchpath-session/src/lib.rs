@@ -276,6 +276,14 @@ impl RateEstimate {
     }
 }
 
+/// What the inbox may offer from a completed download (contract D8).
+pub(crate) struct PublishedOutput {
+    pub path: PathBuf,
+    pub owner: Principal,
+    pub public_origin: bool,
+    pub origin: Option<String>,
+}
+
 struct QueueRecord {
     id: String,
     live_url: Option<String>,
@@ -314,6 +322,11 @@ struct QueueRecord {
     size_approved: bool,
     /// The person approved this job outside its agent's granted folders.
     folder_approved: bool,
+    /// The job never used a cookie, a stored credential, a referer or link
+    /// credentials, so its output may be offered to another principal
+    /// (contract D8). Fixed when the job is made; a record saved before this
+    /// existed, and every job of another kind, reads false.
+    public_origin: bool,
     view: JobSnapshot,
 }
 
@@ -598,6 +611,8 @@ struct PersistedRecord {
     size_approved: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     folder_approved: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    public_origin: bool,
     view: JobSnapshot,
 }
 
@@ -1647,6 +1662,9 @@ impl Session {
                         .and_then(|path| torrent_metadata_path(path, &record.id))
                 });
             }
+            // A refreshed link may carry credentials the first one did not;
+            // provenance only ever gets narrower (D8).
+            record.public_origin = record.public_origin && !policy::has_userinfo(&url);
             record.display_url = display_url(&url);
             record.view.source = record.display_url.clone();
             record.restart_url = restartable_url(&url);
@@ -2251,6 +2269,66 @@ impl Session {
             .iter()
             .filter(|record| &record.principal == principal && record.awaiting_approval())
             .count()
+    }
+
+    /// The finished file of a completed download and what may be done with
+    /// it (contract D8). `None` while the job is anything but completed.
+    pub(crate) fn published_output(&self, job_id: &str) -> Option<PublishedOutput> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record(&state, job_id).ok()?;
+        // A stored address with userinfo is never public, even in a queue
+        // saved before the refresh path narrowed `public_origin`, and the
+        // origin shown never carries it.
+        let userinfo = record
+            .restart_url
+            .as_deref()
+            .is_some_and(policy::has_userinfo);
+        (record.view.state == "completed").then(|| PublishedOutput {
+            path: record.destination.clone(),
+            owner: record.principal.clone(),
+            public_origin: record.public_origin && !userinfo,
+            origin: record
+                .restart_url
+                .as_deref()
+                .map(redact_userinfo)
+                .or_else(|| record.display_url.split('?').next().map(str::to_owned)),
+        })
+    }
+
+    /// True when a download whose output is `path`, or the folder holding it
+    /// (a torrent), was not credential-free, or is of a kind whose origin was
+    /// never recorded as public. A file no download of this engine made is not
+    /// credentialed by this test.
+    pub(crate) fn is_credentialed_output(&self, path: &Path) -> bool {
+        let Ok(path) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        state.records.iter().any(|record| {
+            !record.public_origin
+                && std::fs::canonicalize(&record.destination)
+                    .is_ok_and(|made| path.starts_with(made))
+        })
+    }
+
+    /// Where a finished job that was not public wrote, so the engine can keep
+    /// refusing that output after the job's row is removed. A job that did not
+    /// finish wrote nothing there.
+    pub(crate) fn credentialed_destination(&self, job_id: &str) -> Option<PathBuf> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record(&state, job_id).ok()?;
+        (!record.public_origin && record.view.state == "completed").then(|| {
+            std::fs::canonicalize(&record.destination)
+                .unwrap_or_else(|_| record.destination.clone())
+        })
+    }
+
+    /// The folder holding the queue and the other engine files.
+    pub(crate) fn data_dir(&self) -> Option<PathBuf> {
+        self.state_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
     }
 
     /// Who created a job, if it exists.
@@ -3220,6 +3298,9 @@ impl QueueRecord {
         let id = uuid::Uuid::new_v4().to_string();
         let display = display_url(&url);
         let restart_url = restartable_url(&url);
+        let public_origin = credential_ref.is_none()
+            && live_context.is_credential_free()
+            && !policy::has_userinfo(&url);
         let conflict = destination.exists();
         let scheduled = not_before_ms.is_some_and(|due| due > now);
         // The checksum was normalized before it reached here, so this only
@@ -3270,6 +3351,7 @@ impl QueueRecord {
             approval: None,
             size_approved: false,
             folder_approved: false,
+            public_origin,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3354,6 +3436,7 @@ impl QueueRecord {
             approval: None,
             size_approved: false,
             folder_approved: false,
+            public_origin: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3640,6 +3723,7 @@ impl QueueRecord {
             approval: saved.approval,
             size_approved: saved.size_approved,
             folder_approved: saved.folder_approved,
+            public_origin: saved.public_origin,
             view,
         }
     }
@@ -3686,6 +3770,7 @@ impl QueueRecord {
             approval: saved.approval,
             size_approved: saved.size_approved,
             folder_approved: saved.folder_approved,
+            public_origin: saved.public_origin,
             view,
         }
     }
@@ -4451,6 +4536,7 @@ fn write_queue(
                 approval: record.approval.clone(),
                 size_approved: record.size_approved,
                 folder_approved: record.folder_approved,
+                public_origin: record.public_origin,
                 view: record.view.clone(),
             })
             .collect(),
@@ -4940,6 +5026,7 @@ mod tests {
             approval: None,
             size_approved: false,
             folder_approved: false,
+            public_origin: false,
             view,
         };
         let restored =

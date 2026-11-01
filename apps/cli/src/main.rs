@@ -4,6 +4,7 @@ mod cache;
 mod client;
 mod download;
 mod engine;
+mod inbox;
 mod lan;
 mod mcp;
 mod queue;
@@ -34,6 +35,7 @@ The download queue, kept by the Fetchpath engine:
   fetchpath pause | resume | cancel | retry | rm JOB...
   fetchpath approvals                         agents' requests that wait for you
   fetchpath approve | deny JOB...             answer an agent's request that waits for you
+  fetchpath inbox [accept OFFER [--to FOLDER] | decline OFFER]   files an agent offered you
   fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]
   fetchpath watch [JOB]                       fetchpath inspect LINK
   fetchpath folder JOB                        show its file in File Explorer
@@ -121,6 +123,7 @@ fn main() {
         Some("rules") => rules::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
         Some("agents") => agents::run(&args[1..]),
+        Some("inbox") => inbox::run(&args[1..]),
         Some("agent-setup") => agent_setup::run(&args[1..]),
         Some("approvals") => agents::approvals(&args[1..]),
         Some("cache") => cache::run(&args[1..]),
