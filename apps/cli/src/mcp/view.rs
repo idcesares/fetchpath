@@ -615,7 +615,11 @@ pub struct Inbox {
 pub fn offer(view: &OfferView, me: &Principal, folders: &[String]) -> Offer {
     let outgoing = &view.sender == me;
     let settled = !view.state.is_open() || (view.state == OfferState::Offered && outgoing);
-    let saved_path = view.saved_to.as_deref().filter(|path| granted(path, folders)).map(str::to_owned);
+    let saved_path = view
+        .saved_to
+        .as_deref()
+        .filter(|path| granted(path, folders))
+        .map(str::to_owned);
     let summary = match (view.state, outgoing) {
         (OfferState::Offered, true) => "Waiting for the person to accept or decline.",
         (OfferState::Offered, false) => "Waiting for you to accept or decline.",

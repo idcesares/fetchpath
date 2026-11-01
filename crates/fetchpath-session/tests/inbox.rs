@@ -108,7 +108,11 @@ fn inbox(client: &InProcessClient) -> Vec<OfferView> {
     }
 }
 
-fn offer_path(client: &InProcessClient, path: &Path, to: Principal) -> Result<CommandResult, ProtocolError> {
+fn offer_path(
+    client: &InProcessClient,
+    path: &Path,
+    to: Principal,
+) -> Result<CommandResult, ProtocolError> {
     send(
         client,
         Command::OfferFile {
@@ -120,7 +124,11 @@ fn offer_path(client: &InProcessClient, path: &Path, to: Principal) -> Result<Co
     )
 }
 
-fn accept(client: &InProcessClient, id: &JobId, folder: &Path) -> Result<CommandResult, ProtocolError> {
+fn accept(
+    client: &InProcessClient,
+    id: &JobId,
+    folder: &Path,
+) -> Result<CommandResult, ProtocolError> {
     send(
         client,
         Command::AcceptOffer {
@@ -164,7 +172,10 @@ fn an_agent_offers_inside_its_grant_and_the_person_accepts_or_declines() {
     assert_eq!(inbox(&s.user).len(), 1);
 
     // Only the recipient answers; the sender cannot accept its own offer.
-    assert_eq!(code(accept(&s.agent, &offer.job_id, &s.granted)), "contract.unknown_job");
+    assert_eq!(
+        code(accept(&s.agent, &offer.job_id, &s.granted)),
+        "contract.unknown_job"
+    );
     assert_eq!(inbox(&s.agent).len(), 1, "the sender still sees its own");
 
     let accepted = offered(accept(&s.user, &offer.job_id, &s.outside));
@@ -182,7 +193,10 @@ fn an_agent_offers_inside_its_grant_and_the_person_accepts_or_declines() {
 
     // A second copy never replaces the first.
     let again = offered(offer_path(&s.agent, &path, Principal::User));
-    assert_eq!(code(accept(&s.user, &again.job_id, &s.outside)), "send.destination_exists");
+    assert_eq!(
+        code(accept(&s.user, &again.job_id, &s.outside)),
+        "send.destination_exists"
+    );
 
     let declined = offered(send(
         &s.user,
@@ -200,7 +214,9 @@ fn an_agent_offers_inside_its_grant_and_the_person_accepts_or_declines() {
 #[test]
 fn an_agent_cannot_offer_staged_unrelated_or_out_of_grant_files() {
     let s = setup();
-    let staged = s.granted.join(".fetchpath-0123456789abcdef01234567-0123456789abcdef01234567.part");
+    let staged = s
+        .granted
+        .join(".fetchpath-0123456789abcdef01234567-0123456789abcdef01234567.part");
     std::fs::write(&staged, b"x").unwrap();
     let unrelated = s.outside.join("secret.txt");
     std::fs::write(&unrelated, b"x").unwrap();
@@ -211,7 +227,10 @@ fn an_agent_cannot_offer_staged_unrelated_or_out_of_grant_files() {
     let traversal = s.granted.join("..").join("outside").join("secret.txt");
     // Files inside an unfinished download's folder, and network shares (which
     // would make Windows sign in elsewhere), are refused without being opened.
-    let unfinished = s.granted.join(".fetchpath-media-0123").join("media.f137.mp4");
+    let unfinished = s
+        .granted
+        .join(".fetchpath-media-0123")
+        .join("media.f137.mp4");
     std::fs::create_dir_all(unfinished.parent().unwrap()).unwrap();
     std::fs::write(&unfinished, b"x").unwrap();
     let share = PathBuf::from(r"\\attacker.invalid\share\a.txt");
@@ -222,7 +241,16 @@ fn an_agent_cannot_offer_staged_unrelated_or_out_of_grant_files() {
     std::fs::write(&spoofed, b"x").unwrap();
     let mut codes = Vec::new();
     for path in [
-        &staged, &unrelated, &inside_data, &folder, &missing, &traversal, &unfinished, &share, &mixed, &spoofed,
+        &staged,
+        &unrelated,
+        &inside_data,
+        &folder,
+        &missing,
+        &traversal,
+        &unfinished,
+        &share,
+        &mixed,
+        &spoofed,
     ] {
         codes.push(code(offer_path(&s.agent, path, Principal::User)));
     }
@@ -251,7 +279,10 @@ fn a_link_inside_the_grant_cannot_carry_a_file_out_of_it() {
     std::fs::write(&target, b"x").unwrap();
     let link = s.granted.join("link.txt");
     std::os::unix::fs::symlink(&target, &link).unwrap();
-    assert_eq!(code(offer_path(&s.agent, &link, Principal::User)), "send.not_offerable");
+    assert_eq!(
+        code(offer_path(&s.agent, &link, Principal::User)),
+        "send.not_offerable"
+    );
 }
 
 #[test]
@@ -260,16 +291,31 @@ fn only_a_person_to_one_agent_or_an_agent_to_the_person_is_allowed() {
     let path = s.granted.join("a.txt");
     std::fs::write(&path, b"a").unwrap();
     let other = Principal::Agent(AgentName::try_from("other").unwrap());
-    assert_eq!(code(offer_path(&s.agent, &path, other.clone())), "send.recipient_not_allowed");
-    assert_eq!(code(offer_path(&s.agent, &path, helper())), "send.recipient_not_allowed");
-    assert_eq!(code(offer_path(&s.user, &path, Principal::User)), "send.recipient_not_allowed");
+    assert_eq!(
+        code(offer_path(&s.agent, &path, other.clone())),
+        "send.recipient_not_allowed"
+    );
+    assert_eq!(
+        code(offer_path(&s.agent, &path, helper())),
+        "send.recipient_not_allowed"
+    );
+    assert_eq!(
+        code(offer_path(&s.user, &path, Principal::User)),
+        "send.recipient_not_allowed"
+    );
     let to_agent = offered(offer_path(&s.user, &path, helper()));
     // Another agent cannot see or answer it.
     let stranger = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(other);
     assert!(inbox(&stranger).is_empty());
-    assert_eq!(code(accept(&stranger, &to_agent.job_id, &s.granted)), "contract.unknown_job");
+    assert_eq!(
+        code(accept(&stranger, &to_agent.job_id, &s.granted)),
+        "contract.unknown_job"
+    );
     // The agent accepts only into its own folders.
-    assert_eq!(code(accept(&s.agent, &to_agent.job_id, &s.outside)), "policy.not_permitted");
+    assert_eq!(
+        code(accept(&s.agent, &to_agent.job_id, &s.outside)),
+        "policy.not_permitted"
+    );
     let inside = s.granted.join("copy");
     std::fs::create_dir_all(&inside).unwrap();
     assert_eq!(
@@ -307,7 +353,11 @@ fn a_command_id_reused_by_another_principal_never_returns_the_first_result() {
         },
     );
     let first = s.agent.execute(&envelope).unwrap();
-    assert_eq!(s.agent.execute(&envelope).unwrap(), first, "a resend is the same offer");
+    assert_eq!(
+        s.agent.execute(&envelope).unwrap(),
+        first,
+        "a resend is the same offer"
+    );
     assert_eq!(inbox(&s.user).len(), 1);
     let thief = InProcessClient::manual(Arc::clone(&s.engine));
     assert_eq!(
@@ -400,7 +450,12 @@ fn a_download_offers_nothing_and_a_credentialed_one_is_never_offerable() {
     let s = setup();
 
     // X1: a finished download, the agent's own, creates no offer.
-    let public = download(&s, &s.agent, &format!("http://{address}/file.bin"), &s.granted.join("public.bin"));
+    let public = download(
+        &s,
+        &s.agent,
+        &format!("http://{address}/file.bin"),
+        &s.granted.join("public.bin"),
+    );
     assert!(inbox(&s.user).is_empty() && inbox(&s.agent).is_empty());
 
     // Its own output is offerable by job, with the redacted origin.
@@ -416,7 +471,11 @@ fn a_download_offers_nothing_and_a_credentialed_one_is_never_offerable() {
         Some(format!("http://{address}/file.bin").as_str())
     );
 
-    assert_eq!(inbox(&s.user).len(), 1, "only the public output was offered");
+    assert_eq!(
+        inbox(&s.user).len(),
+        1,
+        "only the public output was offered"
+    );
 
     // A link with credentials is refused when the job is made, so the only
     // way an output can lack a public origin is a record that does not
@@ -541,7 +600,10 @@ fn a_refreshed_link_with_credentials_is_refused_and_leaks_nothing() {
     refresh(format!("http://{address}/file.bin")).unwrap();
     while state(&s.agent) != JobState::Completed {
         s.engine.tick();
-        assert!(Instant::now() < deadline, "the refreshed download never finished");
+        assert!(
+            Instant::now() < deadline,
+            "the refreshed download never finished"
+        );
         thread::sleep(Duration::from_millis(10));
     }
     let offer = offered(send(

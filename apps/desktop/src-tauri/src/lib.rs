@@ -876,10 +876,12 @@ async fn deny_download(job_id: String, engine: Engine<'_>) -> Result<view::JobVi
 #[tauri::command]
 async fn list_inbox(engine: Engine<'_>) -> Result<Vec<view::OfferRow>, String> {
     let engine = Arc::clone(&engine);
-    off_thread(move || match engine.send(Command::ListInbox).map_err(text)? {
-        CommandResult::Inbox { offers } => Ok(offers.iter().map(view::offer).collect()),
-        other => Err(unexpected(&other)),
-    })
+    off_thread(
+        move || match engine.send(Command::ListInbox).map_err(text)? {
+            CommandResult::Inbox { offers } => Ok(offers.iter().map(view::offer).collect()),
+            other => Err(unexpected(&other)),
+        },
+    )
     .await
 }
 

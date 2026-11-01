@@ -2318,7 +2318,8 @@ impl Session {
         let state = self.inner.lock().expect("desktop jobs poisoned");
         let record = find_record(&state, job_id).ok()?;
         (!record.public_origin && record.view.state == "completed").then(|| {
-            std::fs::canonicalize(&record.destination).unwrap_or_else(|_| record.destination.clone())
+            std::fs::canonicalize(&record.destination)
+                .unwrap_or_else(|_| record.destination.clone())
         })
     }
 

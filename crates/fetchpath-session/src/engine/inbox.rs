@@ -117,7 +117,9 @@ impl Inbox {
     }
 
     fn is_remembered_credentialed(&self, canonical: &Path) -> bool {
-        self.credentialed.iter().any(|made| canonical.starts_with(made))
+        self.credentialed
+            .iter()
+            .any(|made| canonical.starts_with(made))
     }
 
     fn open_from(&self, sender: &Principal) -> usize {
@@ -381,7 +383,10 @@ impl Engine {
         {
             return Err(not_offerable());
         }
-        if let Some(data) = self.session.data_dir().and_then(|dir| std::fs::canonicalize(dir).ok())
+        if let Some(data) = self
+            .session
+            .data_dir()
+            .and_then(|dir| std::fs::canonicalize(dir).ok())
             && canonical.starts_with(&data)
         {
             return Err(not_offerable());
@@ -526,11 +531,9 @@ impl Engine {
         let folder = match destination.map(str::trim).filter(|text| !text.is_empty()) {
             Some(text) => PathBuf::from(text),
             None => match &access {
-                Some(access) => access
-                    .folders
-                    .first()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| input("Choose a folder inside the folders you were given.".into()))?,
+                Some(access) => access.folders.first().map(PathBuf::from).ok_or_else(|| {
+                    input("Choose a folder inside the folders you were given.".into())
+                })?,
                 None => self
                     .session
                     .settings()
@@ -563,7 +566,11 @@ impl Engine {
         offer.state = OfferState::Copying;
         offer.changed_ms = Timestamp::now().unix_ms();
         let view = Inbox::view(offer, principal);
-        let job = (offer.id.clone(), offer.source.clone(), offer.manifest.clone());
+        let job = (
+            offer.id.clone(),
+            offer.source.clone(),
+            offer.manifest.clone(),
+        );
         inbox.save().map_err(persistence)?;
         drop(inbox);
 
@@ -601,7 +608,10 @@ fn copy_offer(
 fn copy_checked(source: &Path, manifest: &Manifest, target: &Path) -> Result<(), &'static str> {
     let folder = target.parent().ok_or("send.destination_unsupported")?;
     let mut input = std::fs::File::open(source).map_err(|_| "send.source_missing")?;
-    let staging = folder.join(format!(".fetchpath-send-{}.part", uuid::Uuid::new_v4().simple()));
+    let staging = folder.join(format!(
+        ".fetchpath-send-{}.part",
+        uuid::Uuid::new_v4().simple()
+    ));
     let result = (|| {
         let mut output = std::fs::OpenOptions::new()
             .write(true)
@@ -622,7 +632,9 @@ fn copy_checked(source: &Path, manifest: &Manifest, target: &Path) -> Result<(),
                 .write_all(&buffer[..read])
                 .map_err(|_| "send.destination_unsupported")?;
         }
-        output.sync_all().map_err(|_| "send.destination_unsupported")?;
+        output
+            .sync_all()
+            .map_err(|_| "send.destination_unsupported")?;
         if size != manifest.size || format!("{:x}", digest.finalize()) != manifest.sha256 {
             return Err("send.changed");
         }

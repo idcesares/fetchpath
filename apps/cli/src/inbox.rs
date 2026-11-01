@@ -4,10 +4,10 @@
 
 use crate::client::{self, Engine};
 use crate::download::EXIT_USAGE;
+use fetchpath_protocol::ProtocolError;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::send::{HASH_NOTICE, OfferState, OfferView, SENDER_NOTICE};
-use fetchpath_protocol::ProtocolError;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage: fetchpath inbox [list]
@@ -139,8 +139,10 @@ fn accept(
         return Ok(());
     }
     print_offer(&current);
-    println!("{HASH_NOTICE}
-{SENDER_NOTICE}");
+    println!(
+        "{HASH_NOTICE}
+{SENDER_NOTICE}"
+    );
     if current.state == OfferState::Copying {
         println!("Still copying; check `fetchpath inbox`.");
     }
@@ -157,8 +159,10 @@ fn decline(engine: &Engine, reference: &str, json: bool) -> Result<(), ProtocolE
                 println!("{}", serde_json::json!({ "offer": offer }));
             } else {
                 print_offer(&offer);
-                println!("{HASH_NOTICE}
-{SENDER_NOTICE}");
+                println!(
+                    "{HASH_NOTICE}
+{SENDER_NOTICE}"
+                );
             }
             Ok(())
         }
