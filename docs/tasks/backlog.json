@@ -4030,7 +4030,7 @@
       "dependsOn": [
         "FP-115"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -4045,7 +4045,11 @@
       ],
       "acceptance": "Drift found in the FP-115 review: JOB-CONTRACT D8 says accept re-verifies the file against the manifest and applies the size limit, but the code does not re-hash at accept and does not enforce the cap there. Either implement it or amend D8 with the reason; no silent difference between contract and code.",
       "verification": "Tests: a file changed after the offer is refused at accept with nothing published; an offer above the cap is refused at accept. D8 and the code say the same thing.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests/inbox.rs",
+        "docs/architecture/JOB-CONTRACT.md"
+      ]
     },
     {
       "owner": null,
