@@ -445,8 +445,10 @@ fn inside_staging(path: &Path) -> bool {
 
 /// Hashes the file, reading at most `limit` bytes: a file that grows past it
 /// is refused instead of holding the engine's command lock.
-fn hash_file(path: &Path, limit: Option<u64>) -> std::io::Result<Option<(u64, String)>> {
-    let mut file = std::fs::File::open(path)?;
+fn hash_file(
+    file: &mut std::fs::File,
+    limit: Option<u64>,
+) -> std::io::Result<Option<(u64, String)>> {
     let mut digest = Sha256::new();
     let mut buffer = vec![0u8; 256 * 1024];
     let mut size = 0u64;
@@ -462,6 +464,102 @@ fn hash_file(path: &Path, limit: Option<u64>) -> std::io::Result<Option<(u64, St
         digest.update(&buffer[..read]);
     }
     Ok(Some((size, format!("{:x}", digest.finalize()))))
+}
+
+/// Where a source file may be read from. The path is only a request: what is
+/// read is the file the opened handle names, checked after it is open.
+struct Boundary {
+    /// The engine's own data folder, canonical. Never readable.
+    data: Option<PathBuf>,
+    /// The folders an agent may read from; `None` for the person.
+    grants: Option<Vec<String>>,
+}
+
+impl Boundary {
+    fn admits(&self, canonical: &Path) -> bool {
+        !(staged(canonical)
+            || inside_staging(canonical)
+            || self
+                .data
+                .as_ref()
+                .is_some_and(|data| canonical.starts_with(data))
+            || self
+                .grants
+                .as_ref()
+                .is_some_and(|folders| !policy::inside_grants(canonical, folders)))
+    }
+}
+
+#[derive(Debug)]
+enum Unreadable {
+    Missing,
+    Outside,
+}
+
+/// The canonical path of what an open handle names, with links and junctions
+/// resolved. `None` when the system cannot say, which refuses the file.
+#[cfg(windows)]
+fn handle_path(file: &std::fs::File) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW, VOLUME_NAME_DOS,
+    };
+
+    let handle = file.as_raw_handle();
+    let mut buffer = vec![0u16; 1024];
+    loop {
+        // SAFETY: `handle` stays open for the call and `buffer` is writable
+        // for its stated length.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+            )
+        } as usize;
+        match length {
+            0 => return None,
+            n if n < buffer.len() => {
+                return Some(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..n])));
+            }
+            n => buffer.resize(n + 1, 0),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn handle_path(file: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()
+}
+
+/// True while the handle still names `canonical`. A handle follows a rename,
+/// so a file moved away and replaced at its path by a decoy is caught here.
+fn still_at(file: &std::fs::File, canonical: &Path) -> bool {
+    handle_path(file).is_some_and(|now| now == canonical)
+}
+
+/// Opens `path` once and checks the handle it got: a regular file whose
+/// canonical path is inside the boundary. Everything after reads this handle,
+/// so a path swapped for a link or another file after this point changes
+/// nothing, and one swapped before it is seen here.
+fn open_source(path: &Path, boundary: &Boundary) -> Result<(std::fs::File, PathBuf), Unreadable> {
+    let unreadable = |failure: std::io::Error| match failure.kind() {
+        std::io::ErrorKind::NotFound => Unreadable::Missing,
+        _ => Unreadable::Outside,
+    };
+    // Before opening, so a pipe or device cannot block the open itself.
+    if !std::fs::metadata(path).map_err(unreadable)?.is_file() {
+        return Err(Unreadable::Outside);
+    }
+    let file = std::fs::File::open(path).map_err(unreadable)?;
+    let canonical = handle_path(&file).ok_or(Unreadable::Outside)?;
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) || !boundary.admits(&canonical) {
+        return Err(Unreadable::Outside);
+    }
+    Ok((file, canonical))
 }
 
 impl Engine {
@@ -562,37 +660,24 @@ impl Engine {
                 (path, None, false)
             }
         };
-        let canonical = std::fs::canonicalize(&path).map_err(|_| {
-            if from_job {
-                refusal(
-                    "send.source_missing",
-                    "The downloaded file is no longer there.",
-                    Action::RefreshClient,
-                )
-            } else {
-                not_offerable()
-            }
+        if inside_staging(&path) {
+            return Err(not_offerable());
+        }
+        let boundary = Boundary {
+            data: self
+                .session
+                .data_dir()
+                .and_then(|dir| std::fs::canonicalize(dir).ok()),
+            grants: access.as_ref().map(|access| access.folders.clone()),
+        };
+        let (mut file, canonical) = open_source(&path, &boundary).map_err(|why| match why {
+            Unreadable::Missing if from_job => refusal(
+                "send.source_missing",
+                "The downloaded file is no longer there.",
+                Action::RefreshClient,
+            ),
+            _ => not_offerable(),
         })?;
-        if !std::fs::metadata(&canonical).is_ok_and(|meta| meta.is_file())
-            || staged(&canonical)
-            || inside_staging(&path)
-            || inside_staging(&canonical)
-        {
-            return Err(not_offerable());
-        }
-        if let Some(data) = self
-            .session
-            .data_dir()
-            .and_then(|dir| std::fs::canonicalize(dir).ok())
-            && canonical.starts_with(&data)
-        {
-            return Err(not_offerable());
-        }
-        if let Some(access) = &access
-            && !policy::inside_grants(&canonical, &access.folders)
-        {
-            return Err(not_offerable());
-        }
         // A file picked by path may be the output of a credentialed download:
         // by its row or remembered path, by the stream it carries, or (below,
         // once the bytes are hashed) by its content.
@@ -639,18 +724,23 @@ impl Engine {
             if open >= policy::MAX_PENDING_APPROVALS || rate_exceeded {
                 return Err(policy::too_many_pending());
             }
-            let size = std::fs::metadata(&canonical).map(|m| m.len()).unwrap_or(0);
+            let size = file.metadata().map(|m| m.len()).unwrap_or(0);
             if size > access.max_bytes {
                 return Err(policy::size_limit());
             }
         }
 
         let limit = access.as_ref().map(|access| access.max_bytes);
-        let (size, sha256) = match hash_file(&canonical, limit) {
+        let (size, sha256) = match hash_file(&mut file, limit) {
             Ok(Some(hashed)) => hashed,
             Ok(None) => return Err(policy::size_limit()),
             Err(_) => return Err(not_offerable()),
         };
+        // The marker above was read by path: it counts only if the opened
+        // file was still there while it was read and hashed.
+        if !still_at(&file, &canonical) {
+            return Err(not_offerable());
+        }
         if !from_job {
             if self.session.is_credentialed_content(&sha256) {
                 return Err(credentialed());
@@ -793,11 +883,22 @@ impl Engine {
             offer.source.clone(),
             offer.manifest.clone(),
         );
+        // The sender's reach as it is when the copy starts, not when offered.
+        let boundary = Boundary {
+            data: self
+                .session
+                .data_dir()
+                .and_then(|dir| std::fs::canonicalize(dir).ok()),
+            grants: offer
+                .sender
+                .agent()
+                .map(|agent| self.session.agent_policy(agent).folders),
+        };
         inbox.save_or_restore(before).map_err(persistence)?;
         drop(inbox);
 
         let shared = Arc::clone(&self.inbox);
-        std::thread::spawn(move || copy_offer(&shared, job, &target));
+        std::thread::spawn(move || copy_offer(&shared, job, &boundary, &target));
         Ok(Outcome::Offer(Box::new(view)))
     }
 }
@@ -807,9 +908,10 @@ impl Engine {
 fn copy_offer(
     shared: &Arc<Mutex<Inbox>>,
     (id, source, manifest): (String, PathBuf, Manifest),
+    boundary: &Boundary,
     target: &Path,
 ) {
-    let outcome = copy_checked(&source, &manifest, target);
+    let outcome = copy_checked(&source, &manifest, boundary, target);
     let mut inbox = shared.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(offer) = inbox.offers.iter_mut().find(|offer| offer.id == id) {
         offer.changed_ms = Timestamp::now().unix_ms();
@@ -827,9 +929,21 @@ fn copy_offer(
     let _ = inbox.save();
 }
 
-fn copy_checked(source: &Path, manifest: &Manifest, target: &Path) -> Result<(), &'static str> {
+fn copy_checked(
+    source: &Path,
+    manifest: &Manifest,
+    boundary: &Boundary,
+    target: &Path,
+) -> Result<(), &'static str> {
     let folder = target.parent().ok_or("send.destination_unsupported")?;
-    let mut input = std::fs::File::open(source).map_err(|_| "send.source_missing")?;
+    let (mut input, opened) = open_source(source, boundary).map_err(|why| match why {
+        Unreadable::Missing => "send.source_missing",
+        Unreadable::Outside => "send.changed",
+    })?;
+    // The offer named one file; a path that now leads elsewhere is another.
+    if opened != source {
+        return Err("send.changed");
+    }
     let staging = folder.join(format!(
         ".fetchpath-send-{}.part",
         uuid::Uuid::new_v4().simple()
@@ -1034,5 +1148,46 @@ mod tests {
             .expect("the new copy is kept");
         assert_eq!(std::fs::read_to_string(moved).unwrap(), "bad");
         assert_eq!(quarantined(dir.path()).len(), KEEP_QUARANTINED);
+    }
+
+    #[test]
+    fn the_opened_handle_not_the_path_is_checked_against_the_grant() {
+        let root = tempfile::tempdir().unwrap();
+        let granted = root.path().join("granted");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&granted).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"x").unwrap();
+        std::fs::write(granted.join("a.txt"), b"x").unwrap();
+        let boundary = Boundary {
+            data: None,
+            grants: Some(vec![granted.display().to_string()]),
+        };
+        let inside = open_source(&granted.join("a.txt"), &boundary).unwrap().1;
+        assert!(inside.starts_with(std::fs::canonicalize(&granted).unwrap()));
+
+        // The path was fine a moment ago; now its folder leads outside.
+        let swapped = granted.join("swapped");
+        #[cfg(windows)]
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&swapped)
+                .arg(&outside)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &swapped).unwrap();
+        assert!(matches!(
+            open_source(&swapped.join("secret.txt"), &boundary),
+            Err(Unreadable::Outside)
+        ));
+        assert!(matches!(
+            open_source(&granted.join("gone.txt"), &boundary),
+            Err(Unreadable::Missing)
+        ));
     }
 }
