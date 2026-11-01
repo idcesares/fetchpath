@@ -339,6 +339,32 @@ fn a_changed_source_is_refused_at_accept_and_nothing_is_published() {
 }
 
 #[test]
+fn an_offer_above_the_agents_size_limit_is_refused_at_accept() {
+    let s = setup();
+    let path = s.outside.join("big.bin");
+    std::fs::write(&path, vec![7u8; 64]).unwrap();
+    let offer = offered(offer_path(&s.user, &path, helper()));
+    send(
+        &s.user,
+        Command::SetAgentPolicy {
+            agent: AgentName::try_from("helper").unwrap(),
+            policy: Some(AgentPolicy {
+                folders: vec![s.granted.display().to_string()],
+                max_bytes: 10,
+                ..AgentPolicy::default()
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        code(accept(&s.agent, &offer.job_id, &s.granted)),
+        "policy.size_limit"
+    );
+    assert_eq!(settled(&s.agent, &offer.job_id).state, OfferState::Offered);
+    assert_eq!(std::fs::read_dir(&s.granted).unwrap().count(), 0);
+}
+
+#[test]
 fn a_command_id_reused_by_another_principal_never_returns_the_first_result() {
     let s = setup();
     let path = s.granted.join("a.txt");

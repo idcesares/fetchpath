@@ -839,6 +839,13 @@ impl Engine {
         let access = principal
             .agent()
             .map(|agent| self.session.agent_policy(agent));
+        // The recipient's limit as it is now, not when the offer was made.
+        if let Some(access) = &access
+            && offer.manifest.size > access.max_bytes
+        {
+            return Err(policy::size_limit());
+        }
+        let limit = access.as_ref().map(|access| access.max_bytes);
         let folder = match destination.map(str::trim).filter(|text| !text.is_empty()) {
             Some(text) => PathBuf::from(text),
             None => match &access {
@@ -898,7 +905,7 @@ impl Engine {
         drop(inbox);
 
         let shared = Arc::clone(&self.inbox);
-        std::thread::spawn(move || copy_offer(&shared, job, &boundary, &target));
+        std::thread::spawn(move || copy_offer(&shared, job, &boundary, &target, limit));
         Ok(Outcome::Offer(Box::new(view)))
     }
 }
@@ -910,8 +917,9 @@ fn copy_offer(
     (id, source, manifest): (String, PathBuf, Manifest),
     boundary: &Boundary,
     target: &Path,
+    limit: Option<u64>,
 ) {
-    let outcome = copy_checked(&source, &manifest, boundary, target);
+    let outcome = copy_checked(&source, &manifest, boundary, target, limit);
     let mut inbox = shared.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(offer) = inbox.offers.iter_mut().find(|offer| offer.id == id) {
         offer.changed_ms = Timestamp::now().unix_ms();
@@ -934,6 +942,7 @@ fn copy_checked(
     manifest: &Manifest,
     boundary: &Boundary,
     target: &Path,
+    limit: Option<u64>,
 ) -> Result<(), &'static str> {
     let folder = target.parent().ok_or("send.destination_unsupported")?;
     let (mut input, opened) = open_source(source, boundary).map_err(|why| match why {
@@ -963,6 +972,10 @@ fn copy_checked(
                 break;
             }
             size += read as u64;
+            // A source that grew past the recipient's limit since the offer.
+            if limit.is_some_and(|limit| size > limit) {
+                return Err("policy.size_limit");
+            }
             digest.update(&buffer[..read]);
             output
                 .write_all(&buffer[..read])
