@@ -8,6 +8,7 @@
 
 use super::{Engine, Outcome, error, input, persistence, unknown_job};
 use crate::policy;
+use crate::provenance::Marker;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::error::{Action, ErrorScope, ProtocolError};
 use fetchpath_protocol::principal::Principal;
@@ -396,16 +397,25 @@ impl Engine {
         {
             return Err(not_offerable());
         }
-        // A file picked by path may be the output of a credentialed download.
-        if !from_job
-            && (self.session.is_credentialed_output(&canonical)
-                || self
-                    .inbox
-                    .lock()
-                    .expect("inbox poisoned")
-                    .is_remembered_credentialed(&canonical))
-        {
-            return Err(credentialed());
+        // A file picked by path may be the output of a credentialed download:
+        // by its row or remembered path, by the stream it carries, or (below,
+        // once the bytes are hashed) by its content.
+        if !from_job {
+            let remembered = self
+                .inbox
+                .lock()
+                .expect("inbox poisoned")
+                .is_remembered_credentialed(&canonical);
+            if self.session.is_credentialed_output(&canonical) || remembered {
+                return Err(credentialed());
+            }
+            match self.session.file_marker(&canonical) {
+                Marker::Credentialed => return Err(credentialed()),
+                // Unknown for an agent fails closed; the person picked the
+                // file themselves.
+                Marker::Unknown if agent.is_some() => return Err(not_offerable()),
+                Marker::Unknown | Marker::Absent => {}
+            }
         }
         let file_name = canonical
             .file_name()
@@ -445,6 +455,14 @@ impl Engine {
             Ok(None) => return Err(policy::size_limit()),
             Err(_) => return Err(not_offerable()),
         };
+        if !from_job {
+            if self.session.is_credentialed_content(&sha256) {
+                return Err(credentialed());
+            }
+            if agent.is_some() && !self.session.provenance_readable() {
+                return Err(not_offerable());
+            }
+        }
         let offered_at = Timestamp::now();
         let stored = Stored {
             id: uuid::Uuid::new_v4().to_string(),

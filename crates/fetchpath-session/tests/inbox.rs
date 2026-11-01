@@ -622,3 +622,127 @@ fn a_refreshed_link_with_credentials_is_refused_and_leaks_nothing() {
     let saved = std::fs::read_to_string(s.data.join("inbox-v1.json")).unwrap_or_default();
     assert!(!saved.contains("hunter2"));
 }
+
+/// A finished download whose queue record no longer says "public origin", as
+/// a credentialed download's record would, then a restart that marks it.
+fn credentialed_download(s: &Setup, address: &str, name: &str) -> (PathBuf, JobId) {
+    let secret = s.granted.join(name);
+    let job = download(s, &s.user, &format!("http://{address}/{name}"), &secret);
+    let queue = s.data.join("queue-v1.json");
+    let saved = std::fs::read_to_string(&queue).unwrap();
+    let stripped = saved
+        .replace("\"publicOrigin\": true,", "")
+        .replace("\"publicOrigin\": true", "\"publicOrigin\": false")
+        .replace("\"publicOrigin\":true,", "")
+        .replace("\"publicOrigin\":true", "\"publicOrigin\":false");
+    assert_ne!(saved, stripped, "the flag is persisted");
+    std::fs::write(&queue, stripped).unwrap();
+    (secret, job)
+}
+
+fn restart(s: &Setup) -> (Arc<Engine>, InProcessClient, InProcessClient) {
+    let engine = engine_in(&s.data);
+    engine.tick();
+    let (user, agent) = clients(&engine);
+    (engine, user, agent)
+}
+
+#[test]
+fn a_credentialed_output_copied_as_bytes_is_still_refused_after_its_row_is_gone() {
+    let address = serve(b"private bytes");
+    let s = setup();
+    let (secret, job) = credentialed_download(&s, &address, "secret.bin");
+    let (_, user, agent) = restart(&s);
+
+    // A copy that carries no stream and sits outside the download's own path.
+    std::fs::create_dir_all(s.granted.join("elsewhere")).unwrap();
+    let copy = s.granted.join("elsewhere").join("renamed.dat");
+    std::fs::write(&copy, std::fs::read(&secret).unwrap()).unwrap();
+    // A plain file the engine never produced stays offerable.
+    let plain = s.granted.join("plain.txt");
+    std::fs::write(&plain, b"mine").unwrap();
+
+    send(&user, Command::RemoveJob { job_id: job }).unwrap();
+    std::fs::remove_file(&secret).unwrap();
+    let (_, _, agent2) = restart(&s);
+    for agent in [&agent, &agent2] {
+        assert_eq!(
+            code(offer_path(agent, &copy, Principal::User)),
+            "policy.credentialed_not_allowed"
+        );
+    }
+    offered(offer_path(&agent2, &plain, Principal::User));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_credentialed_output_that_was_moved_or_renamed_is_still_refused() {
+    let address = serve(b"private bytes");
+    let s = setup();
+    let (secret, job) = credentialed_download(&s, &address, "secret.bin");
+    let (_, user, _) = restart(&s);
+    // Only the stream may decide here, not the remembered content.
+    send(&user, Command::RemoveJob { job_id: job }).unwrap();
+    std::fs::remove_file(s.data.join("provenance-v1.json")).unwrap();
+
+    let renamed = s.granted.join("holiday.txt");
+    std::fs::rename(&secret, &renamed).unwrap();
+    let moved = s.granted.join("deep");
+    std::fs::create_dir_all(&moved).unwrap();
+    let moved = moved.join("holiday.txt");
+    std::fs::rename(&renamed, &moved).unwrap();
+    let (_, user, agent) = restart(&s);
+    for client in [&agent, &user] {
+        let to = if std::ptr::eq(client, &agent) {
+            Principal::User
+        } else {
+            helper()
+        };
+        assert_eq!(
+            code(offer_path(client, &moved, to)),
+            "policy.credentialed_not_allowed"
+        );
+    }
+}
+
+#[test]
+fn an_unreadable_provenance_store_fails_closed_for_agents_and_is_not_overwritten() {
+    let address = serve(b"private bytes");
+    let s = setup();
+    let (_, _job) = credentialed_download(&s, &address, "secret.bin");
+    let store = s.data.join("provenance-v1.json");
+    std::fs::write(&store, b"{ not json").unwrap();
+    let (_, user, agent) = restart(&s);
+
+    let plain = s.granted.join("plain.txt");
+    std::fs::write(&plain, b"mine").unwrap();
+    assert_eq!(
+        code(offer_path(&agent, &plain, Principal::User)),
+        "send.not_offerable"
+    );
+    // The person's own pick is not an agent boundary.
+    offered(offer_path(&user, &plain, helper()));
+    assert_eq!(std::fs::read(&store).unwrap(), b"{ not json");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_row_removed_while_the_hash_store_is_unreadable_still_leaves_a_marked_file() {
+    let address = serve(b"private bytes");
+    let s = setup();
+    let (secret, job) = credentialed_download(&s, &address, "secret.bin");
+    let store = s.data.join("provenance-v1.json");
+    std::fs::write(&store, b"{ not json").unwrap();
+    let (_, user, _) = restart(&s);
+    send(&user, Command::RemoveJob { job_id: job }).unwrap();
+
+    // Later the store is repaired by hand; the file's own stream must decide.
+    std::fs::remove_file(&store).unwrap();
+    let moved = s.granted.join("moved.txt");
+    std::fs::rename(&secret, &moved).unwrap();
+    let (_, _, agent) = restart(&s);
+    assert_eq!(
+        code(offer_path(&agent, &moved, Principal::User)),
+        "policy.credentialed_not_allowed"
+    );
+}
