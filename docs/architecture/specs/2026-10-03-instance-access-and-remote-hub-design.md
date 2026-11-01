@@ -94,7 +94,7 @@ restart a remote engine the way a local client does.
 | Option | Exposure | Verdict |
 |---|---|---|
 | A. Private-network gateway: the engine listens on loopback only; a gateway on the host (Tailscale `serve` is the candidate) proxies authenticated tailnet traffic to it with HTTPS | Only devices in the person's private network reach the gateway | **First slice** |
-| B. Bind the engine to the private-network interface address directly | Same network reach; the engine then handles TLS and interface changes itself | Fallback if A's proxy behavior fails a gate |
+| B. Bind the engine to the private-network interface address directly | Same network reach; the engine then handles TLS and interface changes itself | Fallback if A's proxy behavior fails a gate, and only with a PAKE (CPace) or an out-of-band host-fingerprint check at enrollment: under A the pairing code travels inside the gateway's encrypted channel, under B nothing protects the 40-bit code from offline guessing |
 | C. Direct public exposure (port forward, own TLS, public DNS) | Internet-wide scanning, credential stuffing, DoS, certificate operations | Rejected for now; revisit only with its own design and review |
 | D. A Fetchpath relay service | A hosted service and accounts | Out of scope |
 
@@ -103,15 +103,24 @@ gateway and depends on none: any private-network tool that proxies HTTPS to a
 loopback port works, and the documentation names Tailscale as the tested one.
 Gateway identity headers (such as Tailscale's user login header) are advisory
 display data only, because any local process can call the loopback port
-directly and forge them. Authentication is always Fetchpath's own (§6). The
-exact `tailscale serve` behavior (TLS termination, header forwarding,
+directly and forge them. The same holds for `Tailscale-App-Capabilities`
+(Tailscale 1.92 and later): it is never a source of grants. Authentication is
+always Fetchpath's own (§6). The exact `tailscale serve` behavior (TLS termination, header forwarding,
 WebSocket support, what happens when the tailnet drops) is checked against
-current Tailscale documentation and a real tailnet in S2's first gate.
+current Tailscale documentation and a real tailnet in S2's first gate. As of
+31 October 2026 Tailscale's Serve documentation states none of what the
+backend receives as `Host` or `Origin`, nor WebSocket support, so G4 measures
+them.
 
 ### Listener
 
 A remote module in the engine (`apps/cli/src/remote`; the loopback web UI shipped in FP-104, the remote part is planned) serves, on one
-loopback port chosen at hub-mode setup:
+loopback port chosen at hub-mode setup. **That port is never the S1b web-UI
+port.** The gateway forwards tailnet traffic to a loopback port, and the engine
+cannot tell those requests from local ones, so pointing the gateway at the web
+UI would give every tailnet device the "this PC only" listener. `hub on` aims
+the gateway only at the remote port, and the remote listener has its own host
+allowlist (§7):
 
 - `GET /` and static assets: the browser client, embedded in `fetchpath.exe`.
 - `POST /enroll`: exchanges a pairing code for a device credential (§6).
@@ -191,8 +200,15 @@ entry, and a reused id from another principal is an idempotency conflict.
 
 - The browser client and the API share one origin. No CORS headers are sent.
 - Every request and the WebSocket upgrade must carry a `Host` in the
-  configured allowlist (the gateway hostname) and, when present, a matching
-  `Origin`. This defeats DNS rebinding against the loopback port.
+  configured allowlist and a matching `https://` `Origin` on every
+  cookie-authenticated request. This defeats DNS rebinding against the loopback
+  port. The remote listener's allowlist holds only the gateway hostname (the
+  `ts.net` name), never `localhost`, `127.0.0.1` or `[::1]`: a gateway may
+  rewrite `Host` to the backend address, and S1b's local allowlist would then
+  accept tailnet traffic and leave the Origin check as the only defence. Prior
+  art: Transmission's session-ID header alone did not stop DNS rebinding
+  (CVE-2018-5702, fixed with a Host whitelist); qBittorrent's Origin/Referer
+  check breaks behind reverse proxies.
 - State changes travel only over the authenticated WebSocket, whose upgrade
   requires the session cookie and an `Origin` check; there are no
   cookie-authenticated state-changing GET or form routes.
@@ -308,8 +324,8 @@ every surface shows requester, instance, destination label, size and reasons.
 | G1 Identity | `instance_id` stable across engine restart and upgrade; rename changes only `name`; every mutating command without the right `expected_instance_id` is refused in protocol tests |
 | G2 Lifecycle | Hub mode survives desktop exit and sign-out/sign-in reboot on a real Windows 11 machine; persisted jobs resume; ordinary mode still exits after the idle grace |
 | G3 Idle budget | Idle hub over 10 minutes: no busy polling (CPU time added under 1 s), working set recorded and under a stated ceiling (O7) |
-| G4 Gateway | Tailscale `serve` (or option B) checked against current docs and a real tailnet: TLS, WebSocket, Host header, behavior on tailnet loss |
-| G5 Auth | Tests: no credential, wrong credential, revoked credential mid-session, expired code, reused code, five wrong codes, forged gateway headers on loopback, wrong `Host`, cross-origin upgrade |
+| G4 Gateway | Tailscale `serve` (or option B) checked against current docs and a real tailnet: TLS, WebSocket, the `Host`, `Origin` and `X-Forwarded-*` the backend actually receives, behavior on tailnet loss; `hub on` never targets the S1b web-UI port, and a request reaching the web-UI port with the gateway's Host is refused |
+| G5 Auth | Tests: no credential, wrong credential, revoked credential mid-session, expired code, reused code, five wrong codes, forged gateway headers (including `Tailscale-App-Capabilities`) on loopback, wrong `Host`, `localhost` or `127.0.0.1` as `Host` on the remote port, `http://` or missing `Origin`, cross-origin upgrade |
 | G6 Grants | One test per grant proving each command family is allowed only with it; agent cannot hold `approve`; self-approval refused |
 | G7 Replay | Disconnect mid-transfer: download completes; reconnect replays without gaps or duplicates; retried command returns the stored result |
 | G8 Capacity | Fill a test volume to the reserve: jobs wait, nothing fails or publishes partially; two concurrent large jobs respect staged accounting |
@@ -358,6 +374,16 @@ every surface shows requester, instance, destination label, size and reasons.
 | O6 | May a remote person device use cookies, stored credentials or replace existing files | Not in S2 |
 | O7 | Idle hub working-set ceiling | Measure first in G3, then fix the number |
 | O8 | Browser client authentication beyond the device credential (passkey) | Defer; revisit before any option C |
+
+Considered on 31 October 2026 and deferred, so a review need not reopen them:
+
+| Option | Why not now |
+|---|---|
+| iroh 1.0 (dial by key, QUIC) | Browsers cannot speak it, and its default discovery and relay are hosted by n0, against the no-relay scope of §1. A candidate for a future native-only path |
+| Device Bound Session Credentials | Chrome on Windows only (Chrome 146); a candidate when O8 is revisited |
+| Chrome Local Network Access (Chrome 142, 145) | Extra protection for the S1b loopback listener; not something to rely on |
+| MCP OAuth 2.1 (2026-07-28 revision) | Supports keeping the agent adapter as local stdio with no HTTP endpoint on the engine (§5); no change |
+| Embedding Tailscale (tsnet) | Go only; the Rust ports found are unofficial forks |
 
 Accepted by the user on 8 October 2026 for S1b: build a local web UI first,
 on this PC only, at a `*.localhost` name; drop `.local` (mDNS) names, which
