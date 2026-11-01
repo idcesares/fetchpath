@@ -274,6 +274,11 @@ impl Engine {
         })
     }
 
+    /// Why the inbox started empty, when its file could not be used.
+    pub fn inbox_notice(&self) -> Option<String> {
+        self.inbox.lock().ok()?.notice().map(str::to_owned)
+    }
+
     pub fn instance_id(&self) -> Option<&InstanceId> {
         self.instance.as_ref()
     }

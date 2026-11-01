@@ -746,3 +746,14 @@ fn a_row_removed_while_the_hash_store_is_unreadable_still_leaves_a_marked_file()
         "policy.credentialed_not_allowed"
     );
 }
+
+#[test]
+fn a_damaged_inbox_file_starts_empty_with_a_visible_notice() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("inbox-v1.json"), [0xff, 0xfe, 0x00]).unwrap();
+    let engine = engine_in(&data);
+    let notice = engine.inbox_notice().expect("a notice");
+    assert!(notice.contains("inbox-v1.json.corrupt-"), "{notice}");
+}
