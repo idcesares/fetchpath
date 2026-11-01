@@ -9,6 +9,7 @@ mod durable;
 pub mod engine;
 pub mod lan;
 pub mod policy;
+mod provenance;
 pub mod rules;
 pub mod settings;
 pub mod space;
@@ -46,6 +47,9 @@ pub struct Session {
     /// durable locks are taken by a worker's completion callback.
     wake: Arc<ReconcileWake>,
     state_path: Option<PathBuf>,
+    /// Hashes of credentialed outputs (contract D8, FP-121). Locked after
+    /// `inner`, never before it.
+    provenance: Mutex<provenance::Provenance>,
     settings_path: Option<PathBuf>,
     /// Guarded separately from the queue so reading a setting never waits on a
     /// transfer, and so a settings write cannot deadlock against the poll.
@@ -327,6 +331,9 @@ struct QueueRecord {
     /// (contract D8). Fixed when the job is made; a record saved before this
     /// existed, and every job of another kind, reads false.
     public_origin: bool,
+    /// The output of a credentialed job carries its marker (contract D8,
+    /// FP-121). Persisted with the row; marking repeats until it holds.
+    provenance_marked: bool,
     view: JobSnapshot,
 }
 
@@ -613,6 +620,8 @@ struct PersistedRecord {
     folder_approved: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     public_origin: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    provenance_marked: bool,
     view: JobSnapshot,
 }
 
@@ -687,6 +696,7 @@ impl Session {
                 records,
                 ..QueueState::default()
             }),
+            provenance: Mutex::new(provenance::Provenance::load(state_path.parent())),
             state_path: Some(state_path),
             settings_path: Some(settings_path),
             settings: Mutex::new(stored),
@@ -726,6 +736,7 @@ impl Session {
         Self {
             wake: Arc::default(),
             inner: Mutex::new(QueueState::default()),
+            provenance: Mutex::default(),
             state_path: None,
             settings_path: None,
             settings: Mutex::new(stored),
@@ -2295,6 +2306,68 @@ impl Session {
         })
     }
 
+    /// Marks the output of a finished credentialed job, so the marking
+    /// travels with the bytes (contract D8, FP-121). Order: the hash set is
+    /// written first, then the stream (best effort for a file, required for a
+    /// torrent's files, which have no single hash), and only then does the
+    /// record say it is marked. Until then the live row still refuses by path.
+    fn mark_credentialed_output(&self, record: &mut QueueRecord) {
+        let destination = std::fs::canonicalize(&record.destination)
+            .unwrap_or_else(|_| record.destination.clone());
+        let Ok(files) = provenance::files_under(&destination) else {
+            return;
+        };
+        let single = files.len() == 1 && files[0] == destination;
+        if single {
+            let hash = record
+                .view
+                .observed_sha256
+                .as_deref()
+                .and_then(normalize_sha256)
+                .or_else(|| provenance::hash_file(&destination).ok());
+            let Some(hash) = hash else { return };
+            let mut store = self.provenance.lock().expect("provenance poisoned");
+            if store.remember(&hash).is_err() {
+                return;
+            }
+            let _ = provenance::mark_file(&destination);
+        } else {
+            // A torrent's folder: no single hash, so every file carries the
+            // stream, and the path stays refused through the row.
+            if files
+                .iter()
+                .any(|file| provenance::mark_file(file).is_err())
+            {
+                return;
+            }
+        }
+        record.provenance_marked = true;
+    }
+
+    /// True when these bytes are those of a credentialed output (contract D8,
+    /// FP-121), whatever the file is now called or where it sits.
+    pub(crate) fn is_credentialed_content(&self, sha256: &str) -> bool {
+        self.provenance
+            .lock()
+            .expect("provenance poisoned")
+            .contains(sha256)
+    }
+
+    /// False when the record of credentialed content could not be read, so
+    /// the absence of a match proves nothing.
+    pub(crate) fn provenance_readable(&self) -> bool {
+        !self
+            .provenance
+            .lock()
+            .expect("provenance poisoned")
+            .unreadable()
+    }
+
+    /// The stream on the file, checked before the file is read.
+    pub(crate) fn file_marker(&self, path: &Path) -> provenance::Marker {
+        provenance::read_marker(path)
+    }
+
     /// True when a download whose output is `path`, or the folder holding it
     /// (a torrent), was not credential-free, or is of a kind whose origin was
     /// never recorded as public. A file no download of this engine made is not
@@ -2631,6 +2704,16 @@ impl Session {
         let max_active = settings.max_active_downloads;
         for record in &mut state.records {
             refresh_record(record);
+            if record.view.state == "completed"
+                && !record.provenance_marked
+                && !(record.public_origin
+                    && !record
+                        .restart_url
+                        .as_deref()
+                        .is_some_and(policy::has_userinfo))
+            {
+                self.mark_credentialed_output(record);
+            }
             if record.view.state == "completed"
                 && let Some(credential_ref) = record.credential_ref.take()
                 && let Some(store) = self.browser_store.as_ref()
@@ -3352,6 +3435,7 @@ impl QueueRecord {
             size_approved: false,
             folder_approved: false,
             public_origin,
+            provenance_marked: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3437,6 +3521,7 @@ impl QueueRecord {
             size_approved: false,
             folder_approved: false,
             public_origin: false,
+            provenance_marked: false,
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -3724,6 +3809,7 @@ impl QueueRecord {
             size_approved: saved.size_approved,
             folder_approved: saved.folder_approved,
             public_origin: saved.public_origin,
+            provenance_marked: saved.provenance_marked,
             view,
         }
     }
@@ -3771,6 +3857,7 @@ impl QueueRecord {
             size_approved: saved.size_approved,
             folder_approved: saved.folder_approved,
             public_origin: saved.public_origin,
+            provenance_marked: saved.provenance_marked,
             view,
         }
     }
@@ -4537,6 +4624,7 @@ fn write_queue(
                 size_approved: record.size_approved,
                 folder_approved: record.folder_approved,
                 public_origin: record.public_origin,
+                provenance_marked: record.provenance_marked,
                 view: record.view.clone(),
             })
             .collect(),
@@ -5027,6 +5115,7 @@ mod tests {
             size_approved: false,
             folder_approved: false,
             public_origin: false,
+            provenance_marked: false,
             view,
         };
         let restored =
