@@ -4003,7 +4003,7 @@
       "dependsOn": [
         "FP-115"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -4017,7 +4017,10 @@
       ],
       "acceptance": "Finding from the FP-115 review (Low): the grant check and the read are separate steps, so a path swapped for a link or a file outside the grant between them could be read. Open once, check the opened handle (canonical path of the handle) against grants and staging rules, then hash and copy from that handle.",
       "verification": "Test with a swap between check and read (link or file replaced): refused, nothing outside the grant is hashed or copied. Strong review of the agent boundary.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/tests/inbox.rs"
+      ]
     },
     {
       "owner": null,

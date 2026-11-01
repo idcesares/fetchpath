@@ -879,3 +879,45 @@ fn a_resent_offer_after_a_crash_and_an_answer_still_finds_its_offer() {
     assert_eq!(offer.job_id, id);
     assert_eq!(inbox(&user).len(), 1, "no second offer");
 }
+
+/// Makes `link` lead to `target`: a junction on Windows, a symlink elsewhere.
+fn link_dir(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+}
+
+#[test]
+fn a_folder_swapped_for_a_link_out_of_the_grant_is_not_copied_at_accept() {
+    let s = setup();
+    let folder = s.granted.join("work");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("a.txt"), b"same bytes").unwrap();
+    let offer = offered(offer_path(&s.agent, &folder.join("a.txt"), Principal::User));
+
+    // Between the offer and the copy the folder becomes a link to a place
+    // outside the grant that holds a file of the same name and bytes, so the
+    // hash alone cannot tell.
+    let elsewhere = s.outside.join("work");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(elsewhere.join("a.txt"), b"same bytes").unwrap();
+    std::fs::rename(&folder, s.granted.join("work-moved")).unwrap();
+    link_dir(&folder, &elsewhere);
+
+    let saved_in = s.root.join("saved");
+    std::fs::create_dir_all(&saved_in).unwrap();
+    accept(&s.user, &offer.job_id, &saved_in).unwrap();
+    let done = settled(&s.user, &offer.job_id);
+    assert_eq!(done.state, OfferState::Failed);
+    assert_eq!(done.reason.as_deref(), Some("send.changed"));
+    assert_eq!(std::fs::read_dir(&saved_in).unwrap().count(), 0);
+}
