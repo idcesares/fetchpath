@@ -242,6 +242,36 @@ commands, not external host writers; an external compare-to-replace race remains
 unsupported. Installer
 lifecycle evidence belongs in [WINDOWS-PACKAGING](WINDOWS-PACKAGING.md).
 
+## Sending files (FP-115)
+
+Same machine only. An agent can offer the person a file, and accept files the
+person offers it. Nothing is copied until the receiver accepts.
+
+- `offer_file(path | download_id)`: offers the person a regular file inside
+  the agent's granted folders, or the saved file of a download the agent made.
+  Staged or partial files, anything outside the grants, directories, and
+  downloads that used credentials, cookies, a referer or a link with user info
+  are refused with `send.not_offerable`; the refusal does not say whether the
+  path exists. The recipient is always the person; agent to agent is refused.
+- `list_inbox`: offers the agent made and offers addressed to it. The saved
+  path shows only inside the agent's grants.
+- `accept(id, folder?)`: copies an offer addressed to the agent into a granted
+  folder, checks the SHA-256, and never replaces a file. A folder outside the
+  grants is refused.
+- `decline(id)`: declines an offer addressed to the agent, or withdraws one it
+  made while it waits.
+
+The person answers in the desktop app (an inbox card with Accept and Decline;
+the browser build has no accept) or with `fetchpath inbox [list]`,
+`fetchpath inbox accept OFFER [--to FOLDER]` and `fetchpath inbox decline OFFER`.
+
+Wording that does not change: the SHA-256 is "computed by the sending
+Fetchpath engine ... it does not show who published the original file", and
+`agent:<name>` is a label the connecting program declared, not proof of who it
+is. An agent can open several offers at once only up to the approval cap, and
+offers count against its hourly rate and size limit. Media and torrent outputs
+are not offerable in this slice.
+
 ## Limitations
 
 - The harness grants a folder from the command line rather than through

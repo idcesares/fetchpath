@@ -71,6 +71,22 @@ pub(crate) fn too_many_pending() -> ProtocolError {
     )
 }
 
+/// An offer over the agent's size limit (contract D8).
+pub(crate) fn size_limit() -> ProtocolError {
+    policy_error(
+        "policy.size_limit",
+        "This file is larger than the size this agent may send without asking the person.",
+    )
+}
+
+/// An accepted offer's folder lies outside the agent's granted folders.
+pub(crate) fn outside_grants() -> ProtocolError {
+    policy_error(
+        "policy.not_permitted",
+        "Save an accepted file only inside the folders the person gave this agent.",
+    )
+}
+
 /// What a signed-in device may not send: links with credentials, stored
 /// captures or local torrent files (contract D6, decision O6).
 pub(crate) fn check_device_input(input: &JobInput) -> Result<(), ProtocolError> {
@@ -136,7 +152,12 @@ pub(crate) fn authorize(principal: &Principal, command: &Command) -> Result<(), 
                 | Command::EngineStatus
         ),
         Principal::Agent(_) => match command {
-            Command::CreateJob { .. }
+            Command::OfferFile { .. }
+            | Command::ListInbox
+            | Command::AcceptOffer { .. }
+            | Command::DeclineOffer { .. }
+            | Command::WithdrawOffer { .. }
+            | Command::CreateJob { .. }
             | Command::Start { .. }
             | Command::Pause { .. }
             | Command::Resume { .. }

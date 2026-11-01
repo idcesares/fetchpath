@@ -7,6 +7,7 @@ use fetchpath_protocol::model::{
     self, Density, EngineSettings, MediaInspection, MediaVariantKind, Theme,
 };
 use fetchpath_protocol::principal::AgentAccess;
+use fetchpath_protocol::send::{HASH_NOTICE, OfferState, OfferView, SENDER_NOTICE};
 pub use fetchpath_protocol::view::{
     JobDetails, JobDraft, JobView, QueueStats, Segment, at, destination, job, jobs, link,
 };
@@ -83,6 +84,51 @@ pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
             automatic: access.policy.automatic,
         })
         .collect()
+}
+
+/// One offer in the inbox. The sender is a declared label, and the hash
+/// notice says whose computation it is (contract D8).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferRow {
+    pub id: String,
+    pub state: &'static str,
+    pub open: bool,
+    pub file_name: String,
+    pub size: u64,
+    pub sha256: String,
+    pub origin: Option<String>,
+    pub from: String,
+    pub saved_to: Option<String>,
+    pub reason: Option<String>,
+    pub hash_notice: &'static str,
+    pub sender_notice: &'static str,
+}
+
+pub fn offer(view: &OfferView) -> OfferRow {
+    OfferRow {
+        id: view.job_id.to_string(),
+        state: match view.state {
+            OfferState::Offered => "offered",
+            OfferState::Copying => "copying",
+            OfferState::Completed => "completed",
+            OfferState::Declined => "declined",
+            OfferState::Withdrawn => "withdrawn",
+            OfferState::Expired => "expired",
+            OfferState::Failed => "failed",
+            OfferState::Unknown => "unknown",
+        },
+        open: view.state.is_open(),
+        file_name: view.manifest.file_name.clone(),
+        size: view.manifest.size,
+        sha256: view.manifest.sha256.clone(),
+        origin: view.manifest.origin.clone(),
+        from: view.manifest.sender_label.clone(),
+        saved_to: view.saved_to.clone(),
+        reason: view.reason.clone(),
+        hash_notice: HASH_NOTICE,
+        sender_notice: SENDER_NOTICE,
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

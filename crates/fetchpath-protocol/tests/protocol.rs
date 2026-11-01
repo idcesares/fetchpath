@@ -319,6 +319,19 @@ fn every_command() -> Vec<Command> {
         },
         Command::SubscribeQueue { after_cursor: 120 },
         Command::EngineStatus,
+        Command::OfferFile {
+            source: send::OfferSource::Path {
+                path: r"D:\Downloads.bin".into(),
+            },
+            recipient: Principal::User,
+        },
+        Command::ListInbox,
+        Command::AcceptOffer {
+            offer_id: job_id(),
+            destination: Some(r"D:\Downloads.bin".into()),
+        },
+        Command::DeclineOffer { offer_id: job_id() },
+        Command::WithdrawOffer { offer_id: job_id() },
         Command::EngineShutdown,
     ];
     for command in &commands {
@@ -346,6 +359,11 @@ fn every_command() -> Vec<Command> {
             | Command::OpenWebUi
             | Command::SignOutBrowsers
             | Command::History { .. }
+            | Command::OfferFile { .. }
+            | Command::ListInbox
+            | Command::AcceptOffer { .. }
+            | Command::DeclineOffer { .. }
+            | Command::WithdrawOffer { .. }
             | Command::GetSettings
             | Command::TakeLinkReviews
             | Command::TakeBrowserCaptures
@@ -408,6 +426,26 @@ fn a_repository_becomes_one_checked_download_per_file_inside_its_own_folder() {
     };
     assert_eq!(destination.path, "D:\\Models\\tiny\\onnx\\model.onnx");
     assert_eq!(expected_sha256.as_deref(), Some("cd".repeat(32).as_str()));
+}
+
+fn offer() -> send::OfferView {
+    send::OfferView {
+        job_id: job_id(),
+        state: send::OfferState::Offered,
+        manifest: send::Manifest {
+            file_name: "a.bin".into(),
+            size: 3,
+            sha256: "0".repeat(64),
+            hash_source: send::HashSource::SenderEngine,
+            origin: Some("https://example.com/a.bin".into()),
+            sender_label: "agent:helper".into(),
+            offered_at: Timestamp::parse("2026-10-31T12:00:00Z").unwrap(),
+        },
+        sender: Principal::Agent(AgentName::try_from("helper").unwrap()),
+        recipient: Principal::User,
+        saved_to: None,
+        reason: None,
+    }
 }
 
 fn device() -> PairedDevice {
@@ -596,6 +634,10 @@ fn every_result() -> Vec<CommandResult> {
         CommandResult::Repository {
             repository: repository(),
         },
+        CommandResult::Offer { offer: offer() },
+        CommandResult::Inbox {
+            offers: vec![offer()],
+        },
         CommandResult::ShuttingDown,
         CommandResult::CapturesTaken,
         CommandResult::WebUiLink { url: secret_url() },
@@ -624,6 +666,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Lan { .. }
             | CommandResult::Joined { .. }
             | CommandResult::Repository { .. }
+            | CommandResult::Offer { .. }
+            | CommandResult::Inbox { .. }
             | CommandResult::ShuttingDown
             | CommandResult::CapturesTaken
             | CommandResult::BrowsersSignedOut => {}
@@ -1145,6 +1189,7 @@ fn only_queries_skip_the_command_ledger() {
         "SubscribeJob",
         "SubscribeQueue",
         "EngineStatus",
+        "ListInbox",
     ]
     .into_iter()
     .collect();

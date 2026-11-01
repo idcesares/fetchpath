@@ -86,6 +86,14 @@ pub enum CommandResult {
     Jobs {
         jobs: Vec<JobSnapshot>,
     },
+    /// `OfferFile`, `AcceptOffer`, `DeclineOffer`, `WithdrawOffer` (D8).
+    Offer {
+        offer: crate::send::OfferView,
+    },
+    /// `ListInbox`.
+    Inbox {
+        offers: Vec<crate::send::OfferView>,
+    },
     Details {
         details: JobDetails,
     },

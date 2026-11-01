@@ -12,6 +12,7 @@ fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
 fetchpath ls [--all | --active | --failed] | show | pause | resume | cancel | retry | rm | watch | history | folder
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
 fetchpath approvals | approve JOB... | deny JOB... | agents ...
+fetchpath inbox [list] | accept OFFER [--to FOLDER] | decline OFFER
 fetchpath hub [on | off]
 fetchpath web on | off | open | sign-out
 fetchpath agent-setup status | add | check | remove | cleanup | reconcile
@@ -548,6 +549,24 @@ at the point it reached.
 These rules defend against an agent that a web page misleads. They do not
 defend against a malicious program already running as you, which could read
 Fetchpath's data folder like any other of your files.
+
+## Files an agent offers you
+
+An agent can offer you a file that is in its folders or that it downloaded.
+Nothing is copied until you accept.
+
+```powershell
+fetchpath inbox                          # what has been offered, with size and SHA-256
+fetchpath inbox accept 3f9a --to D:\Keep   # copy it there (default: your download folder)
+fetchpath inbox decline 3f9a
+```
+
+Fetchpath checks the copy against the offered SHA-256 and never replaces a
+file. That hash was computed by the sending Fetchpath engine: it shows that
+what you receive matches what was offered, not who published the original.
+The sender (`agent:NAME`) is a label the connecting program declared, not
+proof of who it is. Files from downloads that used sign-ins, cookies or a
+link with a password are never offered.
 
 ## Video and audio tools
 

@@ -51,7 +51,8 @@ impl ErrorCode {
             Some("resource") => ErrorFamily::Resource,
             Some("media") => ErrorFamily::Media,
             Some("contract") => ErrorFamily::Contract,
-            Some("policy") => ErrorFamily::Policy,
+            // Send refusals (contract D8) read as policy to every client.
+            Some("policy") | Some("send") => ErrorFamily::Policy,
             _ => ErrorFamily::Internal,
         }
     }

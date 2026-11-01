@@ -3737,21 +3737,29 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "claude-code (Sonnet 5.5 lead)",
       "id": "FP-115",
       "title": "Build same-machine send: manifest, inbox and agent offer tools",
       "milestone": "M18",
       "dependsOn": [],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
       "files": [
-        "crates/fetchpath-protocol",
-        "crates/fetchpath-session",
-        "apps/cli",
+        "crates/fetchpath-protocol/src",
+        "crates/fetchpath-session/src/policy.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/engine",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/tests",
+        "crates/fetchpath-protocol/schema",
+        "apps/cli/src/mcp",
+        "apps/cli/src/inbox.rs",
+        "apps/cli/tests/mcp.rs",
         "apps/desktop",
         "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/MCP.md",
         "docs/user",
         "docs/tasks/backlog.json"
       ],
@@ -3763,7 +3771,11 @@
       ],
       "acceptance": "Slice T1 of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md. Record a job-contract decision (D8) first: a send job kind, a manifest (file name, size, sender-engine SHA-256 labelled as not publisher authenticity, origin, declared sender label, time) and the principal permissions. Then build the inbox and the MCP tools offer_file, list_inbox and accept, with accept or decline in the desktop and terminal. Only published outputs, person-picked files, and files inside an agent's granted folders are offerable; credentialed provenance is refused for agents; automatic mode never accepts or offers off-machine; no link or send is created by a download.",
       "verification": "Gates X1 to X3 as tests: no implicit share, credentialed origin refused, agent cannot offer outside its grants, staged or unrelated files. Walk through agent offer then person accept and decline, a reused command id across principals, and an injected file name that changes nothing. Independent strong review of the agent boundary and manifest wording.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/tests/inbox.rs",
+        "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/MCP.md"
+      ]
     },
     {
       "owner": "claude-code",

@@ -576,3 +576,10 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
   #media-tools-state[data-ready="true"]::before,
   #media-tools-state[data-ready="false"]::before { color: CanvasText; }
 }
+
+/* Files an agent offered: violet is the approval role. */
+.inbox-list { display: grid; gap: var(--fp-space-2); }
+.inbox-offer { padding: var(--fp-space-3) 14px; border: 1px solid var(--fp-line); border-left: var(--fp-rail) solid var(--fp-approval-fg); border-radius: var(--fp-radius-md); background: var(--fp-field); }
+.inbox-offer h3 { margin: 0 0 var(--fp-space-1); font-size: var(--fp-text-md); overflow-wrap: anywhere; }
+.inbox-offer p { margin: 2px 0; font-size: var(--fp-text-sm); overflow-wrap: anywhere; }
+.inbox-offer code { font: var(--fp-text-sm)/1.4 var(--fp-font-mono); overflow-wrap: anywhere; }

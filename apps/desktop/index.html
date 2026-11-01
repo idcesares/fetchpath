@@ -103,6 +103,15 @@
         <dl id="stats-grid" class="stats-grid" aria-describedby="stats-note"></dl>
       </section>
 
+      <section id="inbox-panel" class="card inbox" aria-labelledby="inbox-title" hidden>
+        <div class="section-heading">
+          <h2 id="inbox-title">Files offered to you</h2>
+          <p class="hint" id="inbox-note">Nothing is copied until you accept. The sender is a name the program gave, not proof of who it is.</p>
+        </div>
+        <div id="inbox-list" class="inbox-list"></div>
+        <p id="inbox-status" class="hint field-note" role="status" aria-live="polite"></p>
+      </section>
+
       <div id="engine-status" class="engine-status" hidden>
         <p id="engine-status-text" class="error"></p>
         <button id="engine-start" class="secondary" type="button" hidden>Start Fetchpath</button>
