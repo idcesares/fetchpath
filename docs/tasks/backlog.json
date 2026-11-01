@@ -3975,7 +3975,7 @@
       "dependsOn": [
         "FP-115"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -3989,7 +3989,11 @@
       ],
       "acceptance": "Finding from the FP-115 review (Low): the inbox is saved before the command ledger commit, so a crash between them can leave an offer the client never learned of, or replay a command id. Fix the ordering so the result a client sees is always backed by persisted state, and a retry with the same command id returns the same offer.",
       "verification": "Test with an injected failure between the two writes: no duplicate offer, no offer without a recorded result, same command id returns the original result after restart. Strong review: persistence ordering.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/tests/inbox.rs"
+      ]
     },
     {
       "owner": null,

@@ -55,6 +55,25 @@ struct Stored {
     /// When the offer last changed, for dropping old finished ones.
     #[serde(default)]
     changed_ms: i64,
+    /// The commands (client, id and request) that changed this offer, oldest
+    /// first. Saved with the offer, so a resend after a crash between this
+    /// file and the engine ledger finds its own effect instead of applying it
+    /// twice, even when another party has acted on the offer since.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    commands: Vec<String>,
+}
+
+/// Keys kept per offer: its creation and the few answers an offer can take.
+const KEEP_COMMANDS: usize = 8;
+
+impl Stored {
+    fn remember(&mut self, key: &str) {
+        self.commands.push(key.to_owned());
+        if self.commands.len() > KEEP_COMMANDS {
+            // The creating command stays: it is the one a crash can orphan.
+            self.commands.remove(1);
+        }
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -195,6 +214,8 @@ impl Inbox {
         for offer in &mut offers {
             if offer.state == OfferState::Copying {
                 offer.state = OfferState::Offered;
+                // Its accept did not happen either: a resend applies it.
+                offer.commands.pop();
             }
         }
         Self {
@@ -316,6 +337,23 @@ impl Inbox {
             saved_to,
             reason: offer.reason.clone(),
         }
+    }
+
+    /// Saves the offers; if that fails the memory returns to `before`, so it
+    /// never holds a change the disk lacks.
+    fn save_or_restore(&mut self, before: Vec<Stored>) -> Result<(), String> {
+        let saved = self.save();
+        if saved.is_err() {
+            self.offers = before;
+        }
+        saved
+    }
+
+    /// The offer this exact command already produced or changed, if any.
+    fn done_by(&self, key: &str) -> Option<&Stored> {
+        self.offers
+            .iter()
+            .find(|offer| offer.commands.iter().any(|done| done == key))
     }
 
     fn find_mut(&mut self, id: &str, viewer: &Principal) -> Option<&mut Stored> {
@@ -440,11 +478,20 @@ impl Engine {
         &self,
         principal: &Principal,
         command: &Command,
+        key: &str,
     ) -> Result<Outcome, ProtocolError> {
         self.expire_offers();
+        if !matches!(command, Command::ListInbox) {
+            // Saved before the ledger entry: a resend after a crash between
+            // the two answers with the offer already on disk.
+            let inbox = self.inbox.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(offer) = inbox.done_by(key) {
+                return Ok(Outcome::Offer(Box::new(Inbox::view(offer, principal))));
+            }
+        }
         match command {
             Command::OfferFile { source, recipient } => {
-                self.offer_file(principal, source, recipient)
+                self.offer_file(principal, source, recipient, key)
             }
             Command::ListInbox => {
                 let inbox = self.inbox.lock().unwrap_or_else(|p| p.into_inner());
@@ -460,12 +507,12 @@ impl Engine {
             Command::AcceptOffer {
                 offer_id,
                 destination,
-            } => self.accept_offer(principal, offer_id.as_str(), destination.as_deref()),
+            } => self.accept_offer(principal, offer_id.as_str(), destination.as_deref(), key),
             Command::DeclineOffer { offer_id } => {
-                self.answer_offer(principal, offer_id.as_str(), true)
+                self.answer_offer(principal, offer_id.as_str(), true, key)
             }
             Command::WithdrawOffer { offer_id } => {
-                self.answer_offer(principal, offer_id.as_str(), false)
+                self.answer_offer(principal, offer_id.as_str(), false, key)
             }
             _ => unreachable!("only inbox commands reach the inbox"),
         }
@@ -476,6 +523,7 @@ impl Engine {
         principal: &Principal,
         source: &OfferSource,
         recipient: &Principal,
+        key: &str,
     ) -> Result<Outcome, ProtocolError> {
         let allowed = match principal {
             Principal::User => matches!(recipient, Principal::Agent(_)),
@@ -630,11 +678,13 @@ impl Engine {
             saved_to: None,
             reason: None,
             changed_ms: offered_at.unix_ms(),
+            commands: vec![key.to_owned()],
         };
         let view = Inbox::view(&stored, principal);
         let mut inbox = self.inbox.lock().unwrap_or_else(|p| p.into_inner());
+        let before = inbox.offers.clone();
         inbox.offers.push(stored);
-        inbox.save().map_err(persistence)?;
+        inbox.save_or_restore(before).map_err(persistence)?;
         drop(inbox);
         self.created(principal);
         Ok(Outcome::Offer(Box::new(view)))
@@ -646,8 +696,10 @@ impl Engine {
         principal: &Principal,
         id: &str,
         decline: bool,
+        key: &str,
     ) -> Result<Outcome, ProtocolError> {
         let mut inbox = self.inbox.lock().unwrap_or_else(|p| p.into_inner());
+        let before = inbox.offers.clone();
         let offer = inbox.find_mut(id, principal).ok_or_else(unknown_offer)?;
         let party = if decline {
             &offer.recipient
@@ -667,8 +719,9 @@ impl Engine {
             offer.state = OfferState::Withdrawn;
         }
         offer.changed_ms = Timestamp::now().unix_ms();
+        offer.remember(key);
         let view = Inbox::view(offer, principal);
-        inbox.save().map_err(persistence)?;
+        inbox.save_or_restore(before).map_err(persistence)?;
         Ok(Outcome::Offer(Box::new(view)))
     }
 
@@ -677,8 +730,10 @@ impl Engine {
         principal: &Principal,
         id: &str,
         destination: Option<&str>,
+        key: &str,
     ) -> Result<Outcome, ProtocolError> {
         let mut inbox = self.inbox.lock().unwrap_or_else(|p| p.into_inner());
+        let before = inbox.offers.clone();
         let offer = inbox.find_mut(id, principal).ok_or_else(unknown_offer)?;
         if &offer.recipient != principal {
             return Err(unknown_offer());
@@ -731,13 +786,14 @@ impl Engine {
 
         offer.state = OfferState::Copying;
         offer.changed_ms = Timestamp::now().unix_ms();
+        offer.remember(key);
         let view = Inbox::view(offer, principal);
         let job = (
             offer.id.clone(),
             offer.source.clone(),
             offer.manifest.clone(),
         );
-        inbox.save().map_err(persistence)?;
+        inbox.save_or_restore(before).map_err(persistence)?;
         drop(inbox);
 
         let shared = Arc::clone(&self.inbox);

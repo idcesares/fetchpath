@@ -14,6 +14,10 @@
 //!
 //! A crash before step 3's write leaves no trace of the command, so a resend
 //! applies it once; a crash after it returns the stored result on resend.
+//!
+//! The inbox has its own file, saved before the ledger write. Each offer
+//! carries the key of the command that last changed it, so a crash between
+//! the two writes is answered from the inbox on resend, not applied again.
 
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
 mod inbox;
@@ -375,6 +379,10 @@ impl Engine {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let fingerprint = fingerprint(envelope, principal);
+        let command_key = format!(
+            "{}:{}:{fingerprint}",
+            envelope.client_id, envelope.command_id
+        );
 
         // Step 1: identity, time, target and revision, then defer saves.
         {
@@ -444,7 +452,7 @@ impl Engine {
         let deferring = DeferGuard(&self.session);
 
         // Step 2: the change.
-        let applied = self.apply(principal, &envelope.payload);
+        let applied = self.apply(principal, &envelope.payload, &command_key);
 
         // Step 3: one commit for the change, its events and its ledger entry.
         let mut state = self.session.inner.lock().expect("desktop jobs poisoned");
@@ -683,7 +691,12 @@ impl Engine {
         }
     }
 
-    fn apply(&self, principal: &Principal, command: &Command) -> Result<Outcome, ProtocolError> {
+    fn apply(
+        &self,
+        principal: &Principal,
+        command: &Command,
+        key: &str,
+    ) -> Result<Outcome, ProtocolError> {
         let session = &self.session;
         match command {
             Command::CreateJob { request } => match request {
@@ -1090,7 +1103,7 @@ impl Engine {
             Command::OfferFile { .. }
             | Command::AcceptOffer { .. }
             | Command::DeclineOffer { .. }
-            | Command::WithdrawOffer { .. } => self.apply_inbox(principal, command),
+            | Command::WithdrawOffer { .. } => self.apply_inbox(principal, command, key),
             _ => Err(ProtocolError::malformed("not a change")),
         }
     }
@@ -1129,7 +1142,7 @@ impl Engine {
         let visible =
             |job: &model::JobSnapshot| principal.is_person() || job.principal == *principal;
         match command {
-            Command::ListInbox => match self.apply_inbox(principal, command)? {
+            Command::ListInbox => match self.apply_inbox(principal, command, "")? {
                 Outcome::Inbox(offers) => Ok(CommandResult::Inbox { offers }),
                 _ => unreachable!("listing the inbox answers with the inbox"),
             },
