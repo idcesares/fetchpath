@@ -757,3 +757,125 @@ fn a_damaged_inbox_file_starts_empty_with_a_visible_notice() {
     let notice = engine.inbox_notice().expect("a notice");
     assert!(notice.contains("inbox-v1.json.corrupt-"), "{notice}");
 }
+
+/// A crash between the inbox save and the ledger commit: the engine journal
+/// cannot be written, so the offer is on disk but the command is not ledgered.
+fn without_ledger(s: &Setup, command: Command) -> (CommandEnvelope, ProtocolError) {
+    let blocker = s.data.join("engine-v1.json.new");
+    std::fs::create_dir(&blocker).unwrap();
+    let envelope = CommandEnvelope::new(ClientId::random(), command);
+    let failure = s.agent.execute(&envelope).unwrap_err();
+    std::fs::remove_dir(&blocker).unwrap();
+    (envelope, failure)
+}
+
+#[test]
+fn a_crash_before_the_ledger_commit_neither_loses_nor_repeats_the_offer() {
+    let s = setup();
+    let path = s.granted.join("a.txt");
+    std::fs::write(&path, b"a").unwrap();
+    let offer = Command::OfferFile {
+        source: OfferSource::Path {
+            path: path.display().to_string(),
+        },
+        recipient: Principal::User,
+    };
+    let (envelope, failure) = without_ledger(&s, offer);
+    assert_eq!(failure.code.as_str(), "internal.persistence_failed");
+
+    // The process dies here: only what reached the disk remains.
+    let (_, user, agent) = restart(&s);
+    assert_eq!(inbox(&user).len(), 1, "the offer was saved");
+    let resent = agent.execute(&envelope).unwrap();
+    let CommandResult::Offer { offer: first } = resent.clone() else {
+        panic!("not an offer: {resent:?}");
+    };
+    assert_eq!(inbox(&user).len(), 1, "no second offer");
+    assert_eq!(first.job_id, inbox(&user)[0].job_id);
+
+    // Now ledgered: a further restart answers from the ledger, unchanged.
+    let (_, _, agent) = restart(&s);
+    assert_eq!(agent.execute(&envelope).unwrap(), resent);
+    assert_eq!(inbox(&agent).len(), 1);
+}
+
+#[test]
+fn a_failed_inbox_save_leaves_no_offer_in_memory_and_the_resend_applies_once() {
+    let s = setup();
+    let path = s.granted.join("a.txt");
+    std::fs::write(&path, b"a").unwrap();
+    let blocker = s.data.join("inbox-v1.tmp");
+    std::fs::create_dir(&blocker).unwrap();
+    let envelope = CommandEnvelope::new(
+        ClientId::random(),
+        Command::OfferFile {
+            source: OfferSource::Path {
+                path: path.display().to_string(),
+            },
+            recipient: Principal::User,
+        },
+    );
+    assert_eq!(
+        s.agent.execute(&envelope).unwrap_err().code.as_str(),
+        "internal.persistence_failed"
+    );
+    assert!(
+        inbox(&s.user).is_empty(),
+        "memory never holds what disk lacks"
+    );
+    std::fs::remove_dir(&blocker).unwrap();
+    offered(s.agent.execute(&envelope));
+    assert_eq!(inbox(&s.user).len(), 1);
+}
+
+#[test]
+fn a_crash_before_the_ledger_commit_does_not_replay_an_answer() {
+    let s = setup();
+    let path = s.granted.join("a.txt");
+    std::fs::write(&path, b"a").unwrap();
+    let offer = offered(offer_path(&s.agent, &path, Principal::User));
+    let blocker = s.data.join("engine-v1.json.new");
+    std::fs::create_dir(&blocker).unwrap();
+    let envelope = CommandEnvelope::new(
+        ClientId::random(),
+        Command::DeclineOffer {
+            offer_id: offer.job_id.clone(),
+        },
+    );
+    assert!(s.user.execute(&envelope).is_err());
+    std::fs::remove_dir(&blocker).unwrap();
+
+    let (_, user, _) = restart(&s);
+    let again = offered(user.execute(&envelope));
+    assert_eq!(again.state, OfferState::Declined);
+    assert_eq!(again.job_id, offer.job_id);
+}
+
+#[test]
+fn a_resent_offer_after_a_crash_and_an_answer_still_finds_its_offer() {
+    let s = setup();
+    let path = s.granted.join("a.txt");
+    std::fs::write(&path, b"a").unwrap();
+    let (envelope, _) = without_ledger(
+        &s,
+        Command::OfferFile {
+            source: OfferSource::Path {
+                path: path.display().to_string(),
+            },
+            recipient: Principal::User,
+        },
+    );
+    let (_, user, agent) = restart(&s);
+    let id = inbox(&user)[0].job_id.clone();
+    offered(user.execute(&CommandEnvelope::new(
+        ClientId::random(),
+        Command::DeclineOffer {
+            offer_id: id.clone(),
+        },
+    )));
+    let CommandResult::Offer { offer } = agent.execute(&envelope).unwrap() else {
+        panic!("not an offer");
+    };
+    assert_eq!(offer.job_id, id);
+    assert_eq!(inbox(&user).len(), 1, "no second offer");
+}
