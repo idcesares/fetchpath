@@ -103,11 +103,17 @@ impl Inbox {
     }
 
     /// Keeps refusing a removed download's output (and a torrent's folder).
-    pub(crate) fn remember_credentialed(&mut self, output: PathBuf) {
+    pub(crate) fn remember_credentialed(&mut self, output: PathBuf) -> Result<(), String> {
         if !self.credentialed.contains(&output) {
             self.credentialed.push(output);
-            let _ = self.save();
+            // Memory never holds what the disk does not, or a retry would
+            // find it already there and skip the save.
+            if let Err(failure) = self.save() {
+                self.credentialed.pop();
+                return Err(failure);
+            }
         }
+        Ok(())
     }
 
     fn is_remembered_credentialed(&self, canonical: &Path) -> bool {

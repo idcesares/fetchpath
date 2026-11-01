@@ -3932,8 +3932,8 @@
         "A10",
         "A13"
       ],
-      "acceptance": "Risk left by FP-115: a path offer is judged credentialed only if a live queue row still has the same destination. A removed history row, a moved or renamed file, or a torrent output folder is treated as public, so an agent could offer content that came from cookies, a stored credential or a referer. Make provenance travel with the bytes: mark the output at download time (an alternate data stream or sidecar on the file, and/or a persisted set of content hashes of credentialed outputs) and check it on every path offer, failing closed on unknown provenance for agents while keeping the spec section 3 grant rule for files the engine never produced. Needs a persisted-format decision, so it gets the strong review.",
-      "verification": "Tests: a credentialed download whose row was removed, moved, renamed, copied and (torrent) placed in a folder is still refused for an agent offer; a plain file inside a grant is still offerable; the marker survives a restart. Independent strong review of the persisted format and ordering.",
+      "acceptance": "Risk left by FP-115: a path offer is judged credentialed by output path only (a live queue row, a path kept when the row is removed, or the folder of a torrent). A moved, renamed or copied file is treated as public, so an agent could offer content that came from cookies, a stored credential or a referer. Make provenance travel with the bytes: mark the output at download time (an alternate data stream or sidecar on the file, and/or a persisted set of content hashes of credentialed outputs) and check it on every path offer, failing closed on unknown provenance for agents while keeping the spec section 3 grant rule for files the engine never produced. Needs a persisted-format decision, so it gets the strong review.",
+      "verification": "Tests: a credentialed download that was moved, renamed or copied is still refused for an agent offer; a plain file inside a grant is still offerable; the marker survives a restart. Independent strong review of the persisted format and ordering.",
       "evidence": []
     },
     {

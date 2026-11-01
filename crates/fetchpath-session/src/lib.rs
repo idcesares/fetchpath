@@ -2311,12 +2311,13 @@ impl Session {
         })
     }
 
-    /// Where a job that was not public wrote, so the engine can keep refusing
-    /// that output after the job's row is removed.
+    /// Where a finished job that was not public wrote, so the engine can keep
+    /// refusing that output after the job's row is removed. A job that did not
+    /// finish wrote nothing there.
     pub(crate) fn credentialed_destination(&self, job_id: &str) -> Option<PathBuf> {
         let state = self.inner.lock().expect("desktop jobs poisoned");
         let record = find_record(&state, job_id).ok()?;
-        (!record.public_origin).then(|| {
+        (!record.public_origin && record.view.state == "completed").then(|| {
             std::fs::canonicalize(&record.destination).unwrap_or_else(|_| record.destination.clone())
         })
     }

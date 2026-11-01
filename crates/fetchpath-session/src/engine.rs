@@ -1024,10 +1024,21 @@ impl Engine {
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(input)
             }
-            Command::RemoveJob { job_id } => session
-                .remove(job_id.as_str())
-                .map(|()| Outcome::Removed(job_id.as_str().to_owned()))
-                .map_err(transition),
+            Command::RemoveJob { job_id } => {
+                // Removing the row must not make a credentialed output look
+                // like a file nobody downloaded.
+                if let Some(output) = session.credentialed_destination(job_id.as_str()) {
+                    self.inbox
+                        .lock()
+                        .expect("inbox poisoned")
+                        .remember_credentialed(output)
+                        .map_err(input)?;
+                }
+                session
+                    .remove(job_id.as_str())
+                    .map(|()| Outcome::Removed(job_id.as_str().to_owned()))
+                    .map_err(transition)
+            }
             Command::UpdateSettings { settings } => {
                 let next = wire::session_settings(settings, &session.settings());
                 session.update_settings(next).map_err(input)?;
