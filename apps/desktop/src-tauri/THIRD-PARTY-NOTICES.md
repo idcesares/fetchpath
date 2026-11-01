@@ -162,7 +162,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | ctrlc | 3.5.2 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | ctutils | 0.4.2 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | curl | 0.4.50 | MIT | Read from the crate manifest in the local registry |
-| curl-sys | 0.4.90+curl-8.21.0 | MIT | Read from the crate manifest in the local registry |
+| curl-sys | 0.4.91+curl-8.22.0 | MIT | Read from the crate manifest in the local registry |
 | curve25519-dalek | 5.0.0 | BSD-3-Clause | Read from the crate manifest in the local registry |
 | curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | darling | 0.24.1 | MIT | Read from the crate manifest in the local registry |
@@ -539,7 +539,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_derive_internals | 0.30.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_html_form | 0.2.8 | MIT | Read from the crate manifest in the local registry |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -635,7 +635,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | toml_datetime | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_edit | 0.19.15 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_edit | 0.20.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| toml_edit | 0.25.16+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| toml_edit | 0.25.17+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_parser | 1.1.5+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | toml_writer | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tower | 0.5.3 | MIT | Read from the crate manifest in the local registry |
@@ -767,7 +767,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | zerocopy-derive | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | zerofrom | 0.1.8 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 | Read from the crate manifest in the local registry |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | zerotrie | 0.2.5 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | zerovec | 0.11.8 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | zerovec-derive | 0.11.6 | Unicode-3.0 | Read from the crate manifest in the local registry |
