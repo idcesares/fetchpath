@@ -192,7 +192,9 @@ impl Drop for DeferGuard<'_> {
 
 /// What a change did, turned into a result once its events are derived.
 enum Outcome {
-    Offer(fetchpath_protocol::send::OfferView),
+    // OfferView is much larger than the other variants. Box it so the enum
+    // stays small (clippy::large_enum_variant).
+    Offer(Box<fetchpath_protocol::send::OfferView>),
     Inbox(Vec<fetchpath_protocol::send::OfferView>),
     Job(String),
     Jobs(Vec<String>),
@@ -468,7 +470,7 @@ impl Engine {
         };
         let result = match &outcome {
             Outcome::Offer(offer) => Ok(CommandResult::Offer {
-                offer: offer.clone(),
+                offer: offer.as_ref().clone(),
             }),
             Outcome::Inbox(offers) => Ok(CommandResult::Inbox {
                 offers: offers.clone(),

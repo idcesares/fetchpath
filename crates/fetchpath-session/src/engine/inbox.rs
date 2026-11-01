@@ -471,7 +471,7 @@ impl Engine {
         inbox.save().map_err(persistence)?;
         drop(inbox);
         self.created(principal);
-        Ok(Outcome::Offer(view))
+        Ok(Outcome::Offer(Box::new(view)))
     }
 
     /// Decline (the recipient) or withdraw (the sender) an open offer.
@@ -503,7 +503,7 @@ impl Engine {
         offer.changed_ms = Timestamp::now().unix_ms();
         let view = Inbox::view(offer, principal);
         inbox.save().map_err(persistence)?;
-        Ok(Outcome::Offer(view))
+        Ok(Outcome::Offer(Box::new(view)))
     }
 
     fn accept_offer(
@@ -576,7 +576,7 @@ impl Engine {
 
         let shared = Arc::clone(&self.inbox);
         std::thread::spawn(move || copy_offer(&shared, job, &target));
-        Ok(Outcome::Offer(view))
+        Ok(Outcome::Offer(Box::new(view)))
     }
 }
 
