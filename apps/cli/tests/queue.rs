@@ -352,6 +352,35 @@ fn a_command_that_starts_the_engine_returns_at_once_to_a_script_reading_its_outp
 }
 
 #[test]
+fn a_damaged_inbox_file_is_reported_by_inbox_and_engine_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("inbox-v1.json"), [0xff, 0xfe, 0x00]).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(EXE)
+            .args(args)
+            .env("FETCHPATH_APP_DATA_DIR", &data)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let inbox = run(&["inbox"]);
+    let status = run(&["engine", "status"]);
+    let json = run(&["engine", "status", "--json"]);
+    let stopped = run(&["engine", "stop"]);
+    assert_eq!(code(&inbox), 0, "{}", text(&inbox.stderr));
+    assert!(text(&inbox.stderr).contains("inbox-v1.json.corrupt-"));
+    assert_eq!(
+        text(&inbox.stdout).trim(),
+        "Nothing has been offered to you."
+    );
+    assert!(text(&status.stdout).contains("inbox-v1.json.corrupt-"));
+    assert!(text(&json.stdout).contains("\"inbox_notice\""));
+    assert_eq!(code(&stopped), 0);
+}
+
+#[test]
 fn without_a_terminal_the_interactive_mode_prints_help_and_exits_2() {
     let data = tempfile::tempdir().unwrap();
     for args in [&[][..], &["--plain"][..], &["--json"][..]] {

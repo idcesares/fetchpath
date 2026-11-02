@@ -2285,6 +2285,11 @@ const engineStatus = required<HTMLElement>("engine-status");
 const engineStatusText = required<HTMLElement>("engine-status-text");
 const engineStart = required<HTMLButtonElement>("engine-start");
 let engineNoticeTimer = 0;
+const inboxNotice = required<HTMLElement>("inbox-notice");
+const inboxNoticeText = required<HTMLElement>("inbox-notice-text");
+const inboxNoticeDismiss = required<HTMLButtonElement>("inbox-notice-dismiss");
+/** The notice the person dismissed; a different one shows again. */
+let dismissedInboxNotice = "";
 
 const ENGINE_LOST =
   "Fetchpath's engine stopped. Reconnecting… Downloads continue from their saved progress once it is back.";
@@ -2415,9 +2420,26 @@ function revealEngineNotice(text: string, canStart: boolean): void {
   announceProblem(text);
 }
 
+function showInboxNotice(text: string | undefined): void {
+  if (!text || text === dismissedInboxNotice) {
+    inboxNotice.hidden = true;
+    return;
+  }
+  if (!inboxNotice.hidden && inboxNoticeText.textContent === text) return;
+  inboxNoticeText.textContent = text;
+  inboxNotice.hidden = false;
+  announceProblem(text);
+}
+
+inboxNoticeDismiss.addEventListener("click", () => {
+  dismissedInboxNotice = inboxNoticeText.textContent ?? "";
+  inboxNotice.hidden = true;
+});
+
 function showEngineState(state: EngineConnection): void {
   engineState = state.connected ? "running" : state.stopped ? "stopped" : "reconnecting";
   renderEngineSummary();
+  showInboxNotice(state.connected ? state.inboxNotice : undefined);
   if (state.connected && state.readOnly) {
     window.clearTimeout(engineNoticeTimer);
     engineNoticeTimer = 0;

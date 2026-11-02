@@ -1394,6 +1394,8 @@ impl Engine {
                 // let it watch the person's and other agents' activity (FP-067).
                 let jobs: Vec<_> = self.snapshots()?.into_iter().filter(visible).collect();
                 let person = principal.is_person();
+                // Read before the engine state is locked; an agent is not told: the notice names a local file.
+                let inbox_notice = if person { self.inbox_notice() } else { None };
                 let durable = self.session.durable.lock().expect("engine state poisoned");
                 Ok(CommandResult::EngineStatus {
                     status: EngineStatus {
@@ -1419,6 +1421,7 @@ impl Engine {
                         },
                         queue_cursor: if person { durable.engine.cursor } else { 0 },
                         queue_read_only: self.read_only_error(),
+                        inbox_notice,
                         instance: self.instance(),
                     },
                 })

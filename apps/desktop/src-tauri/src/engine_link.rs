@@ -209,6 +209,9 @@ pub enum Signal {
     /// Connected, but the queue was saved by a newer Fetchpath: it is shown
     /// and nothing can change (FP-070). Holds the engine's explanation.
     ReadOnly(String),
+    /// Why the offers inbox started empty (its file was damaged), or none.
+    /// Told on every connection and whenever it changes.
+    InboxNotice(Option<String>),
 }
 
 /// How often at most the window is told the queue changed.
@@ -235,6 +238,7 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
     std::thread::spawn(move || {
         // What the window was last told, so a state is reported once.
         let mut told: Option<(bool, bool)> = None;
+        let mut inbox_told: Option<Option<String>> = None;
         let mut failed_starts = 0;
         let mut tell = |connected: bool, stopped: bool, message: String| {
             if told != Some((connected, stopped)) {
@@ -248,11 +252,13 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
         };
         while !stopped.load(Ordering::SeqCst) {
             let mut read_only = None;
+            let mut inbox_notice = None;
             let opened = link
                 .send(Command::EngineStatus)
                 .and_then(|result| match result {
                     CommandResult::EngineStatus { status } => {
                         read_only = status.queue_read_only.map(|reason| reason.message);
+                        inbox_notice = status.inbox_notice;
                         Ok(status.queue_cursor)
                     }
                     _ => Err(ProtocolError::malformed(
@@ -268,6 +274,7 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
                 Ok(subscription) => subscription.events,
                 Err(error) => {
                     link.forget();
+                    inbox_told = None;
                     if link.may_start() {
                         failed_starts += 1;
                         if failed_starts >= MAX_FAILED_STARTS {
@@ -286,6 +293,11 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
             tell(true, false, String::new());
             if let Some(reason) = read_only {
                 notify(Signal::ReadOnly(reason));
+            }
+            // A restarted engine may have a different notice, or none.
+            if inbox_told.as_ref() != Some(&inbox_notice) {
+                inbox_told = Some(inbox_notice.clone());
+                notify(Signal::InboxNotice(inbox_notice));
             }
             // Whatever happened while it was away is on screen at once.
             notify(Signal::Queue);
@@ -308,6 +320,9 @@ pub fn watch(link: Arc<EngineLink>, notify: impl Fn(Signal) + Send + 'static) ->
                         if link.stopped_on_purpose() {
                             link.may_start.store(false, Ordering::SeqCst);
                         }
+                        // The window forgets its notice on a disconnect, so the
+                        // next connection tells it again, even if unchanged.
+                        inbox_told = None;
                         tell(false, !link.may_start(), error.message);
                         break;
                     }

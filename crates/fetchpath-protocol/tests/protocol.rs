@@ -573,6 +573,7 @@ fn every_result() -> Vec<CommandResult> {
                 active_jobs: 1,
                 queue_cursor: 120,
                 queue_read_only: None,
+                inbox_notice: None,
                 instance: Some(InstanceInfo {
                     id: id("018f9c2a-6b1e-7d40-9a51-2e8f3c7d1b04"),
                     name: "Studio PC".into(),
@@ -588,6 +589,7 @@ fn every_result() -> Vec<CommandResult> {
                 active_jobs: 0,
                 queue_cursor: 0,
                 instance: None,
+                inbox_notice: Some("The inbox started empty.".into()),
                 queue_read_only: Some(
                     ProtocolError::new(
                         ErrorCode::try_from("storage.queue_from_newer_version".to_owned()).unwrap(),

@@ -700,6 +700,10 @@ pub struct EngineStatus {
     /// unchanged and every change is refused with this error (FP-070).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_read_only: Option<crate::error::ProtocolError>,
+    /// Present when the same-machine inbox file was damaged or unreadable and
+    /// the inbox started empty. Only the person is told: it names a file path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbox_notice: Option<String>,
     /// Which engine this is (contract D6). Absent from an engine without an
     /// identity, such as an in-process test engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]

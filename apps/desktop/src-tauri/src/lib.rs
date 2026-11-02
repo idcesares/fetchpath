@@ -1319,6 +1319,9 @@ pub fn run() {
                     let _ = tray.set_tooltip(Some(text));
                 }
             };
+            // What the engine last said about its damaged inbox file; kept
+            // so a later report of another state still carries it.
+            let inbox_notice = std::sync::Mutex::new(None::<String>);
             // Runs for the life of the window.
             let _watcher = engine_link::watch(engine, move |signal| {
                 if matches!(signal, Signal::Queue | Signal::Connected)
@@ -1326,7 +1329,7 @@ pub fn run() {
                 {
                     show_summary(&handle, text);
                 }
-                let state = match signal {
+                let mut state = match signal {
                     Signal::Queue => {
                         let _ = handle.emit("fetchpath://queue", ());
                         return;
@@ -1336,9 +1339,36 @@ pub fn run() {
                         serde_json::json!({ "connected": true, "readOnly": reason })
                     }
                     Signal::Disconnected { message, stopped } => {
+                        *inbox_notice
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
                         serde_json::json!({ "connected": false, "stopped": stopped, "message": message })
                     }
+                    Signal::InboxNotice(notice) => {
+                        *inbox_notice
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = notice;
+                        connection
+                            .0
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .clone()
+                    }
                 };
+                if state["connected"] == true {
+                    let notice = inbox_notice
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
+                    match notice {
+                        Some(notice) => state["inboxNotice"] = serde_json::json!(notice),
+                        None => {
+                            if let Some(fields) = state.as_object_mut() {
+                                fields.remove("inboxNotice");
+                            }
+                        }
+                    }
+                }
                 if state["connected"] != true {
                     show_summary(
                         &handle,

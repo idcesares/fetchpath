@@ -9,7 +9,8 @@
 #      the file on disk;
 #   3. progress on a throttled download, then cancellation publishing nothing;
 #   4. a wrong pasted checksum saving nothing and offering Edit checksum, and a
-#      matching one (pasted as `SHA256:` in capitals) completing.
+#      matching one (pasted as `SHA256:` in capitals) completing;
+#   5. a damaged inbox file (FP-126), seeded before launch, shown as a notice.
 #
 # Input goes to the renderer window by window messages (uia-common.ps1), not
 # global keystrokes, so it does not type into whatever else has focus.
@@ -44,6 +45,9 @@ if (-not $outputDirectory.StartsWith($repositoryRoot, [System.StringComparison]:
 $dataDirectory = Join-Path $outputDirectory 'data'
 if (Test-Path -LiteralPath $outputDirectory) { Remove-Item -LiteralPath $outputDirectory -Recurse -Force }
 [System.IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
+# An unreadable inbox file, for the notice the engine reports about it.
+[System.IO.Directory]::CreateDirectory($dataDirectory) | Out-Null
+[System.IO.File]::WriteAllBytes((Join-Path $dataDirectory 'inbox-v1.json'), [byte[]] (0xff, 0xfe, 0x00))
 $env:FETCHPATH_APP_DATA_DIR = $dataDirectory
 
 function Find-VisibleText($Root, [string] $Pattern) {
@@ -96,6 +100,9 @@ try {
     $process = Start-Process -FilePath $ApplicationPath -PassThru
     $renderer = Get-RendererRoot $process
     $renderWidget = Get-RenderWidgetHandle $process
+
+    # 5. The recovery notice reaches the window without anyone asking for it.
+    $inboxNotice = Wait-ForCondition { Find-VisibleText $renderer 'inbox-v1\.json\.corrupt-' } 15 'the damaged inbox notice'
 
     # 1. The preview reacts to typing, so a character is typed and removed.
     Set-Field $renderer 'url' "https://example.test/one.bin`nhttps://example.test/two.bin"
@@ -175,6 +182,7 @@ try {
 
     [pscustomobject]@{
         application = $ApplicationPath
+        inboxNotice = $inboxNotice
         batchPreviewLabel = $batchButtonLabel
         completedStatus = $completeStatus
         completedBytes = $completedBytes

@@ -1973,6 +1973,13 @@
           "description": "The Fetchpath build, such as `0.2.0`.",
           "type": "string"
         },
+        "inbox_notice": {
+          "description": "Present when the same-machine inbox file was damaged or unreadable and\nthe inbox started empty. Only the person is told: it names a file path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "instance": {
           "anyOf": [
             {

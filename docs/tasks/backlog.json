@@ -4052,27 +4052,39 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "lead",
       "id": "FP-126",
       "title": "Show the inbox recovery notice in the desktop app and CLI",
       "milestone": "M18",
       "dependsOn": [
         "FP-122"
       ],
-      "status": "todo",
+      "status": "done",
       "priority": "P3",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
+        "crates/fetchpath-protocol/src/model.rs",
+        "crates/fetchpath-protocol/schema/protocol-v1.schema.json",
         "crates/fetchpath-session/src/engine.rs",
-        "apps"
+        "crates/fetchpath-session/tests/inbox.rs",
+        "apps/cli/src",
+        "apps/desktop/src",
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/index.html"
       ],
       "acceptanceIds": [
         "A13"
       ],
       "acceptance": "Left open by FP-122: Engine::inbox_notice() is only printed to stderr at engine start, which release builds without a console never show. Surface it where the person sees it.",
       "verification": "A damaged inbox file produces a visible notice in the desktop app and the CLI.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/tests/inbox.rs",
+        "apps/cli/tests/queue.rs",
+        "crates/fetchpath-protocol/tests/protocol.rs",
+        "apps/desktop/tools/ui-smoke.ps1",
+        "docs/development/MCP.md"
+      ]
     }
   ]
 }

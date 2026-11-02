@@ -561,6 +561,9 @@ fetchpath inbox accept 3f9a --to D:\Keep   # copy it there (default: your downlo
 fetchpath inbox decline 3f9a
 ```
 
+If the inbox file was damaged, Fetchpath sets it aside, starts with an empty
+inbox and says so in `fetchpath inbox` and `fetchpath engine status`.
+
 Fetchpath checks the copy against the offered SHA-256 and never replaces a
 file. That hash was computed by the sending Fetchpath engine: it shows that
 what you receive matches what was offered, not who published the original.
