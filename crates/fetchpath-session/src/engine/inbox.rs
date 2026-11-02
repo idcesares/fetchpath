@@ -286,7 +286,7 @@ impl Inbox {
         Ok(())
     }
 
-    fn is_remembered_credentialed(&self, canonical: &Path) -> bool {
+    pub(super) fn is_remembered_credentialed(&self, canonical: &Path) -> bool {
         self.credentialed
             .iter()
             .any(|made| canonical.starts_with(made))
@@ -429,14 +429,14 @@ fn staged(path: &Path) -> bool {
 
 /// A network share path. Resolving one makes Windows connect to, and sign in
 /// at, another computer, so it is refused before the filesystem is touched.
-fn is_share(path: &Path) -> bool {
+pub(super) fn is_share(path: &Path) -> bool {
     // Windows reads `/` as `\`, so `/\host\share` is a share too.
     let text = path.to_string_lossy().replace('/', "\\");
     text.starts_with("\\\\")
 }
 
 /// A name or folder of an unfinished download (contract D8: never offered).
-fn inside_staging(path: &Path) -> bool {
+pub(super) fn inside_staging(path: &Path) -> bool {
     path.components().any(|part| {
         let name = part.as_os_str().to_string_lossy().to_ascii_lowercase();
         name.starts_with(".fetchpath-") || name.ends_with(".part")
@@ -445,7 +445,7 @@ fn inside_staging(path: &Path) -> bool {
 
 /// Hashes the file, reading at most `limit` bytes: a file that grows past it
 /// is refused instead of holding the engine's command lock.
-fn hash_file(
+pub(super) fn hash_file(
     file: &mut std::fs::File,
     limit: Option<u64>,
 ) -> std::io::Result<Option<(u64, String)>> {
@@ -468,11 +468,11 @@ fn hash_file(
 
 /// Where a source file may be read from. The path is only a request: what is
 /// read is the file the opened handle names, checked after it is open.
-struct Boundary {
+pub(super) struct Boundary {
     /// The engine's own data folder, canonical. Never readable.
-    data: Option<PathBuf>,
+    pub(super) data: Option<PathBuf>,
     /// The folders an agent may read from; `None` for the person.
-    grants: Option<Vec<String>>,
+    pub(super) grants: Option<Vec<String>>,
 }
 
 impl Boundary {
@@ -491,7 +491,7 @@ impl Boundary {
 }
 
 #[derive(Debug)]
-enum Unreadable {
+pub(super) enum Unreadable {
     Missing,
     Outside,
 }
@@ -537,7 +537,7 @@ fn handle_path(file: &std::fs::File) -> Option<PathBuf> {
 
 /// True while the handle still names `canonical`. A handle follows a rename,
 /// so a file moved away and replaced at its path by a decoy is caught here.
-fn still_at(file: &std::fs::File, canonical: &Path) -> bool {
+pub(super) fn still_at(file: &std::fs::File, canonical: &Path) -> bool {
     handle_path(file).is_some_and(|now| now == canonical)
 }
 
@@ -545,7 +545,16 @@ fn still_at(file: &std::fs::File, canonical: &Path) -> bool {
 /// canonical path is inside the boundary. Everything after reads this handle,
 /// so a path swapped for a link or another file after this point changes
 /// nothing, and one swapped before it is seen here.
-fn open_source(path: &Path, boundary: &Boundary) -> Result<(std::fs::File, PathBuf), Unreadable> {
+///
+/// With `frozen` the handle is opened so that the system refuses every other
+/// writer, renamer and deleter for as long as it is held (Windows share mode
+/// read only); a file already open for writing is then refused here. Without
+/// a lock to ask for, nothing can be frozen, so it is refused on other systems.
+pub(super) fn open_source(
+    path: &Path,
+    boundary: &Boundary,
+    frozen: bool,
+) -> Result<(std::fs::File, PathBuf), Unreadable> {
     let unreadable = |failure: std::io::Error| match failure.kind() {
         std::io::ErrorKind::NotFound => Unreadable::Missing,
         _ => Unreadable::Outside,
@@ -554,12 +563,46 @@ fn open_source(path: &Path, boundary: &Boundary) -> Result<(std::fs::File, PathB
     if !std::fs::metadata(path).map_err(unreadable)?.is_file() {
         return Err(Unreadable::Outside);
     }
-    let file = std::fs::File::open(path).map_err(unreadable)?;
+    let file = if frozen {
+        open_frozen(path).map_err(unreadable)?
+    } else {
+        std::fs::File::open(path).map_err(unreadable)?
+    };
     let canonical = handle_path(&file).ok_or(Unreadable::Outside)?;
     if !file.metadata().is_ok_and(|meta| meta.is_file()) || !boundary.admits(&canonical) {
         return Err(Unreadable::Outside);
     }
     Ok((file, canonical))
+}
+
+#[cfg(windows)]
+fn open_frozen(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_SHARE_READ alone: no other handle may write, rename or delete.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(path)
+}
+
+#[cfg(not(windows))]
+fn open_frozen(_: &Path) -> std::io::Result<std::fs::File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "a file cannot be frozen on this system",
+    ))
+}
+
+/// The name a file travels under: canonical, printable and one a download
+/// could be saved as. An 8.3 short name expands to the canonical one, so the
+/// caller's spelling proves nothing.
+pub(super) fn canonical_name(canonical: &Path) -> Option<String> {
+    canonical
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .filter(|name| !name.chars().any(|c| c.is_control() || spoofs_direction(c)))
+        .filter(|name| crate::plain_path(&Path::new("C:\\").join(name)).is_ok())
 }
 
 impl Engine {
@@ -670,14 +713,15 @@ impl Engine {
                 .and_then(|dir| std::fs::canonicalize(dir).ok()),
             grants: access.as_ref().map(|access| access.folders.clone()),
         };
-        let (mut file, canonical) = open_source(&path, &boundary).map_err(|why| match why {
-            Unreadable::Missing if from_job => refusal(
-                "send.source_missing",
-                "The downloaded file is no longer there.",
-                Action::RefreshClient,
-            ),
-            _ => not_offerable(),
-        })?;
+        let (mut file, canonical) =
+            open_source(&path, &boundary, false).map_err(|why| match why {
+                Unreadable::Missing if from_job => refusal(
+                    "send.source_missing",
+                    "The downloaded file is no longer there.",
+                    Action::RefreshClient,
+                ),
+                _ => not_offerable(),
+            })?;
         // A file picked by path may be the output of a credentialed download:
         // by its row or remembered path, by the stream it carries, or (below,
         // once the bytes are hashed) by its content.
@@ -698,16 +742,7 @@ impl Engine {
                 Marker::Unknown | Marker::Absent => {}
             }
         }
-        let file_name = canonical
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(str::to_owned)
-            .filter(|name| !name.chars().any(|c| c.is_control() || spoofs_direction(c)))
-            // The name that goes in the manifest is the canonical one: an
-            // 8.3 short name expands to it, so the caller's spelling proves
-            // nothing.
-            .filter(|name| crate::plain_path(&Path::new("C:\\").join(name)).is_ok())
-            .ok_or_else(not_offerable)?;
+        let file_name = canonical_name(&canonical).ok_or_else(not_offerable)?;
 
         // The agent's limits (contract D1).
         if let (Some(agent), Some(access)) = (agent, &access) {
@@ -945,7 +980,7 @@ fn copy_checked(
     limit: Option<u64>,
 ) -> Result<(), &'static str> {
     let folder = target.parent().ok_or("send.destination_unsupported")?;
-    let (mut input, opened) = open_source(source, boundary).map_err(|why| match why {
+    let (mut input, opened) = open_source(source, boundary, false).map_err(|why| match why {
         Unreadable::Missing => "send.source_missing",
         Unreadable::Outside => "send.changed",
     })?;
@@ -996,7 +1031,7 @@ fn copy_checked(
 
 /// Bidirectional controls and invisible marks that make a file name read as
 /// something else (`invoice\u{202E}fdp.exe`).
-fn spoofs_direction(c: char) -> bool {
+pub(super) fn spoofs_direction(c: char) -> bool {
     matches!(
         c,
         '\u{061C}' | '\u{200B}' | '\u{200E}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
@@ -1176,7 +1211,9 @@ mod tests {
             data: None,
             grants: Some(vec![granted.display().to_string()]),
         };
-        let inside = open_source(&granted.join("a.txt"), &boundary).unwrap().1;
+        let inside = open_source(&granted.join("a.txt"), &boundary, false)
+            .unwrap()
+            .1;
         assert!(inside.starts_with(std::fs::canonicalize(&granted).unwrap()));
 
         // The path was fine a moment ago; now its folder leads outside.
@@ -1195,11 +1232,11 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &swapped).unwrap();
         assert!(matches!(
-            open_source(&swapped.join("secret.txt"), &boundary),
+            open_source(&swapped.join("secret.txt"), &boundary, false),
             Err(Unreadable::Outside)
         ));
         assert!(matches!(
-            open_source(&granted.join("gone.txt"), &boundary),
+            open_source(&granted.join("gone.txt"), &boundary, false),
             Err(Unreadable::Missing)
         ));
     }

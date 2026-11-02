@@ -3801,7 +3801,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "lead",
       "id": "FP-117",
       "title": "Build the share server, Tunnel mode, public link tickets and guided setup",
       "milestone": "M18",
@@ -3809,16 +3809,18 @@
         "FP-115",
         "FP-116"
       ],
-      "status": "todo",
+      "status": "in_progress",
       "priority": "P3",
       "modelTier": "astra-high",
       "review": "strong",
       "files": [
         "crates/fetchpath-session",
+        "crates/fetchpath-protocol",
         "apps/cli",
         "apps/desktop",
         "docs/user",
         "docs/architecture/JOB-CONTRACT.md",
+        "docs/development/SHARE-RELAY.md",
         "SECURITY.md",
         "docs/tasks/backlog.json"
       ],
@@ -3830,7 +3832,17 @@
       ],
       "acceptance": "Slice T3 first step of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md: a share listener on its own loopback port serving only GET /s/<id>, single-use expiring revocable tickets, Range resume, a changed-file re-check, the fragment-key browser decryption, Tunnel mode with a stored base URL, and the Sharing setup flow ending in a test link and QR code. Public links and off-machine sends always wait for the person; sharing stays off until the test passes. SECURITY.md scope is updated in the same change that adds the listener.",
       "verification": "Gates X1 to X6 and X8: ticket, port and fragment-key tests, and a phone on mobile data downloading the test file through at least one real tunnel. Independent strong review of file authorization, ticket handling, encryption framing and secret handling before it ships.",
-      "evidence": []
+      "evidence": [
+        "crates/fetchpath-session/src/share/store.rs",
+        "crates/fetchpath-session/src/share/frame.rs",
+        "crates/fetchpath-session/tests/share.rs",
+        "crates/fetchpath-session/tests/fixtures/share-vectors.json",
+        "apps/cli/src/share/tests.rs",
+        "apps/cli/src/share/page.test.mjs",
+        "crates/fetchpath-protocol/tests/protocol.rs",
+        "docs/development/SHARE-RELAY.md",
+        "docs/architecture/JOB-CONTRACT.md"
+      ]
     },
     {
       "owner": null,

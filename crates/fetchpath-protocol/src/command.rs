@@ -264,6 +264,40 @@ pub enum Command {
         key: String,
     },
 
+    // Public share links (FP-117). The person only: an agent or a remote
+    // client is refused outright. None of them reaches the command ledger,
+    // because the answer to a create carries the link's key, which is shown
+    // once and never stored.
+    ShareStatus,
+    /// Sets where the tunnel's public address is and which loopback port the
+    /// share listener uses. Either change ends the passed test and turns
+    /// sharing off.
+    ConfigureSharing {
+        /// The tunnel's public `https` address; an empty text clears it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        port: Option<u16>,
+    },
+    /// Turns file links on or off. On only after the test link was delivered
+    /// through the stored address.
+    SetSharingEnabled {
+        enabled: bool,
+    },
+    /// Creates the setup test link: a small file made for it.
+    StartShareTest,
+    /// Freezes a file and makes a single-use link to it.
+    CreateShare {
+        source: OfferSource,
+        /// Defaults to a day; at most thirty.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_in_seconds: Option<u64>,
+    },
+    RevokeShare {
+        handle: String,
+    },
+    RevokeAllShares,
+
     // Event streams (contract §8).
     /// Replays durable events after `after_seq`, or answers with a snapshot
     /// boundary when they were compacted, then streams new ones.
@@ -333,6 +367,13 @@ impl Command {
             Self::CancelPairing => "CancelPairing",
             Self::JoinPairing { .. } => "JoinPairing",
             Self::Unpair { .. } => "Unpair",
+            Self::ShareStatus => "ShareStatus",
+            Self::ConfigureSharing { .. } => "ConfigureSharing",
+            Self::SetSharingEnabled { .. } => "SetSharingEnabled",
+            Self::StartShareTest => "StartShareTest",
+            Self::CreateShare { .. } => "CreateShare",
+            Self::RevokeShare { .. } => "RevokeShare",
+            Self::RevokeAllShares => "RevokeAllShares",
             Self::SubscribeJob { .. } => "SubscribeJob",
             Self::SubscribeQueue { .. } => "SubscribeQueue",
             Self::EngineStatus => "EngineStatus",
@@ -373,6 +414,13 @@ impl Command {
                 | Self::CancelPairing
                 | Self::JoinPairing { .. }
                 | Self::Unpair { .. }
+                | Self::ShareStatus
+                | Self::ConfigureSharing { .. }
+                | Self::SetSharingEnabled { .. }
+                | Self::StartShareTest
+                | Self::CreateShare { .. }
+                | Self::RevokeShare { .. }
+                | Self::RevokeAllShares
                 | Self::SubscribeJob { .. }
                 | Self::SubscribeQueue { .. }
                 | Self::EngineStatus
@@ -391,6 +439,12 @@ impl Command {
                     | Self::CancelPairing
                     | Self::JoinPairing { .. }
                     | Self::Unpair { .. }
+                    | Self::ConfigureSharing { .. }
+                    | Self::SetSharingEnabled { .. }
+                    | Self::StartShareTest
+                    | Self::CreateShare { .. }
+                    | Self::RevokeShare { .. }
+                    | Self::RevokeAllShares
             )
     }
 }

@@ -1089,6 +1089,131 @@
           "type": "object"
         },
         {
+          "properties": {
+            "type": {
+              "const": "ShareStatus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Sets where the tunnel's public address is and which loopback port the\nshare listener uses. Either change ends the passed test and turns\nsharing off.",
+          "properties": {
+            "base_url": {
+              "description": "The tunnel's public `https` address; an empty text clears it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "port": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": {
+              "const": "ConfigureSharing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Turns file links on or off. On only after the test link was delivered\nthrough the stored address.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "SetSharingEnabled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Creates the setup test link: a small file made for it.",
+          "properties": {
+            "type": {
+              "const": "StartShareTest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Freezes a file and makes a single-use link to it.",
+          "properties": {
+            "expires_in_seconds": {
+              "description": "Defaults to a day; at most thirty.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/OfferSource"
+            },
+            "type": {
+              "const": "CreateShare",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "handle": {
+              "type": "string"
+            },
+            "type": {
+              "const": "RevokeShare",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "handle"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "RevokeAllShares",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Replays durable events after `after_seq`, or answers with a snapshot\nboundary when they were compacted, then streams new ones.",
           "properties": {
             "after_seq": {
@@ -1589,6 +1714,44 @@
           "required": [
             "type",
             "lan"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Share links and their setup (FP-117). Never carries a link's key.",
+          "properties": {
+            "sharing": {
+              "$ref": "#/$defs/ShareView"
+            },
+            "type": {
+              "const": "Sharing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sharing"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A link was made. This answer is the only place its key ever appears:\nit is not stored, listed or logged, and cannot be asked for again.",
+          "properties": {
+            "link": {
+              "$ref": "#/$defs/SensitiveUrl"
+            },
+            "share": {
+              "$ref": "#/$defs/ShareItem"
+            },
+            "type": {
+              "const": "ShareLink",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "link",
+            "share"
           ],
           "type": "object"
         },
@@ -4122,6 +4285,143 @@
         "repaired",
         "max_active_limit",
         "max_retry_attempts"
+      ],
+      "type": "object"
+    },
+    "ShareItem": {
+      "description": "One share link. `handle` names it for `RevokeShare`; it is not part of the\nlink.",
+      "properties": {
+        "delivered": {
+          "description": "Encrypted bytes written to the connection in order from the start.\nWritten is not received.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expires_in_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "name": {
+          "description": "The file's name. Shown to the person only, never in the link.",
+          "type": "string"
+        },
+        "opened": {
+          "description": "Times the link was opened.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/ShareState"
+        },
+        "test": {
+          "description": "True for the setup test link.",
+          "type": "boolean"
+        },
+        "total": {
+          "description": "Encrypted bytes in a whole download.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "handle",
+        "test",
+        "name",
+        "size",
+        "state",
+        "expires_in_seconds",
+        "opened",
+        "delivered",
+        "total"
+      ],
+      "type": "object"
+    },
+    "ShareState": {
+      "oneOf": [
+        {
+          "enum": [
+            "live",
+            "completed",
+            "revoked",
+            "expired",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "changed",
+          "description": "The file changed, or could not be read, while the link was live.",
+          "type": "string"
+        },
+        {
+          "const": "over_budget",
+          "description": "More was requested than a normal download needs.",
+          "type": "string"
+        }
+      ]
+    },
+    "ShareView": {
+      "description": "Public share links and their setup (FP-117). Holds no link, id or key.",
+      "properties": {
+        "base_url": {
+          "description": "The tunnel's public address, as stored.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "File links work only while this is on, and it turns on only after the\ntest link was delivered. Off after every engine start.",
+          "type": "boolean"
+        },
+        "port": {
+          "description": "The loopback port the tunnel forwards to.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "problem": {
+          "description": "Why the listener is not running although an address is stored.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "serving": {
+          "description": "Where the listener is bound, when it is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shares": {
+          "items": {
+            "$ref": "#/$defs/ShareItem"
+          },
+          "type": "array"
+        },
+        "tested": {
+          "description": "True when the test link was delivered through the stored address.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "port",
+        "tested",
+        "shares"
       ],
       "type": "object"
     },

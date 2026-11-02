@@ -13,6 +13,7 @@ fetchpath ls [--all | --active | --failed] | show | pause | resume | cancel | re
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
 fetchpath approvals | approve JOB... | deny JOB... | agents ...
 fetchpath inbox [list] | accept OFFER [--to FOLDER] | decline OFFER
+fetchpath share [setup URL | test | on | off | create FILE | revoke HANDLE|all]
 fetchpath hub [on | off]
 fetchpath web on | off | open | sign-out
 fetchpath agent-setup status | add | check | remove | cleanup | reconcile
@@ -570,6 +571,28 @@ what you receive matches what was offered, not who published the original.
 The sender (`agent:NAME`) is a label the connecting program declared, not
 proof of who it is. Files from downloads that used sign-ins, cookies or a
 link with a password are never offered.
+
+## Public links to your files (advanced)
+
+A link lets someone with no Fetchpath download one of your files once, through a tunnel you run. Fetchpath has no server of its own for this: you run Cloudflare Tunnel or Tailscale Funnel (or similar) so that a public https address forwards to `127.0.0.1:47650` on this computer. The tunnel provider sees the traffic and serves the download page, so share only with people who trust it. The file is encrypted in the link: the key is in the part after `#`, which is never sent to the server, and the file name is inside the encrypted data.
+
+```powershell
+fetchpath share setup https://share.example.com   # store the address, then make a test link and QR code
+fetchpath share on                                # allow file links, after the test link was downloaded
+fetchpath share create D:\Docs\report.pdf --hours 6   # one link, shown once (default 1 day, at most 30)
+fetchpath share                                   # state and links (never the link itself)
+fetchpath share revoke 3f9a                       # or: revoke all
+fetchpath share off
+```
+
+- **Off until the test passes.** Open the test link on a phone using mobile data (Wi-Fi off) and press **Download**. Only then does `share on` work, and it is off again after every engine restart.
+- **Each link works once** and ends when its file has been sent in full (resuming a broken download counts), when it expires or when you revoke it. Fetchpath says "sent" when the bytes were handed to the connection, not that the other person has them.
+- **The link is shown once**, when you make it. It is not stored: a restart of the engine revokes every link.
+- **The file is locked** (it cannot be changed, renamed or deleted) while its link is live. Revoke the link to unlock it.
+- **Only you make links.** An AI agent cannot; it offers files through the inbox above. Files from downloads that used sign-ins, cookies or a link with a password are never shared.
+- Large files are saved through the phone browser's memory, so a very large file may fail there.
+
+The same controls are in the desktop app under **Settings → Storage and sharing → Public links**.
 
 ## Video and audio tools
 

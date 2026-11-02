@@ -552,6 +552,58 @@
           </details>
         </fieldset>
 
+        <fieldset class="settings-group" id="share-group" data-settings-panel="storage" hidden>
+          <legend>Public links</legend>
+          <p class="hint field-note">
+            Give someone outside your network a link that works once. It needs a tunnel you run yourself (Cloudflare
+            Tunnel or Tailscale Funnel) that forwards a public https address to this computer. The file is encrypted
+            and the key stays after the # in the link, so the tunnel never sees the file or its name. Links turn on
+            only after a test link has been downloaded through your address, and every link is made by you here.
+          </p>
+          <label for="share-url">Tunnel address</label>
+          <div class="destination-row">
+            <input id="share-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://share.example.com" />
+            <button id="share-save" class="secondary" type="button">Save address</button>
+          </div>
+          <details class="advanced">
+            <summary>Port on this computer</summary>
+            <div class="rule-form">
+              <label for="share-port">The tunnel forwards to 127.0.0.1 on this port</label>
+              <input id="share-port" type="number" min="1" max="65535" inputmode="numeric" />
+            </div>
+          </details>
+          <p id="share-state" class="field-note" aria-live="polite">Checking…</p>
+          <div class="media-tools-actions">
+            <button id="share-test" class="secondary" type="button" disabled>Make a test link</button>
+          </div>
+          <div id="share-new" class="lan-pairing" hidden>
+            <p id="share-new-text" class="field-note" role="status"></p>
+            <label for="share-new-link">Link (shown only now)</label>
+            <input id="share-new-link" readonly spellcheck="false" autocomplete="off" />
+            <div class="media-tools-actions">
+              <button id="share-copy" class="secondary" type="button">Copy link</button>
+              <button id="share-hide" class="quiet" type="button">Hide link</button>
+            </div>
+            <svg id="share-qr" class="share-qr" role="img" aria-label="QR code for the link" hidden></svg>
+          </div>
+          <label class="check">
+            <input id="share-enabled" type="checkbox" disabled aria-describedby="share-enabled-state" />
+            <span>Allow public file links</span>
+          </label>
+          <p id="share-enabled-state" class="hint field-note" aria-live="polite"></p>
+          <div class="media-tools-actions">
+            <label for="share-expiry" class="sr-only">Link lifetime</label>
+            <select id="share-expiry">
+              <option value="3600">Lasts 1 hour</option>
+              <option value="86400" selected>Lasts 1 day</option>
+              <option value="604800">Lasts 7 days</option>
+            </select>
+            <button id="share-file" class="secondary" type="button" disabled>Share a file…</button>
+            <button id="share-revoke-all" class="quiet" type="button" disabled>Revoke all links</button>
+          </div>
+          <ul id="share-list" class="lan-devices"></ul>
+        </fieldset>
+
         <fieldset class="settings-group" data-settings-panel="integrations" hidden>
           <legend>Command line</legend>
           <p id="cli-state"></p>

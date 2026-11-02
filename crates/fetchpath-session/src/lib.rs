@@ -12,6 +12,7 @@ pub mod policy;
 mod provenance;
 pub mod rules;
 pub mod settings;
+pub mod share;
 pub mod space;
 mod wire;
 

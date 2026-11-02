@@ -75,7 +75,16 @@ impl From<SensitiveUrl> for String {
 
 impl fmt::Debug for SensitiveUrl {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "SensitiveUrl({:?})", self.display())
+        // Origin only: a path can carry a secret too (a share link's ticket id).
+        let shown = self.display();
+        let origin = match shown.split_once("://") {
+            Some((scheme, rest)) => match rest.find('/') {
+                Some(slash) => format!("{scheme}://{}/…", &rest[..slash]),
+                None => shown.clone(),
+            },
+            None => shown.clone(),
+        };
+        write!(formatter, "SensitiveUrl({origin:?})")
     }
 }
 
@@ -634,6 +643,64 @@ pub struct PairedDevice {
     /// sharing. A hint only: the device is still authenticated by its key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+}
+
+/// Public share links and their setup (FP-117). Holds no link, id or key.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShareView {
+    /// File links work only while this is on, and it turns on only after the
+    /// test link was delivered. Off after every engine start.
+    pub enabled: bool,
+    /// The tunnel's public address, as stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// The loopback port the tunnel forwards to.
+    pub port: u16,
+    /// True when the test link was delivered through the stored address.
+    pub tested: bool,
+    /// Where the listener is bound, when it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<String>,
+    /// Why the listener is not running although an address is stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+    pub shares: Vec<ShareItem>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShareState {
+    Live,
+    Completed,
+    Revoked,
+    Expired,
+    /// The file changed, or could not be read, while the link was live.
+    Changed,
+    /// More was requested than a normal download needs.
+    OverBudget,
+    #[serde(other)]
+    Unknown,
+}
+
+/// One share link. `handle` names it for `RevokeShare`; it is not part of the
+/// link.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShareItem {
+    pub handle: String,
+    /// True for the setup test link.
+    pub test: bool,
+    /// The file's name. Shown to the person only, never in the link.
+    pub name: String,
+    pub size: u64,
+    pub state: ShareState,
+    pub expires_in_seconds: u64,
+    /// Times the link was opened.
+    pub opened: u32,
+    /// Encrypted bytes written to the connection in order from the start.
+    /// Written is not received.
+    pub delivered: u64,
+    /// Encrypted bytes in a whole download.
+    pub total: u64,
 }
 
 /// A pairing code this device shows, and what became of it.

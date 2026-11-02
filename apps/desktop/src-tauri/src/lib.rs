@@ -10,6 +10,7 @@ use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
 use fetchpath_protocol::model::{self, RuleSpec};
 use fetchpath_protocol::principal::{AgentName, AgentPolicy};
+use fetchpath_protocol::send::OfferSource;
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1090,6 +1091,140 @@ async fn unpair_device(key: String, engine: Engine<'_>) -> Result<model::LanView
     off_thread(move || lan_view(engine.send(Command::Unpair { key }).map_err(text)?)).await
 }
 
+fn sharing_view(result: CommandResult) -> Result<model::ShareView, String> {
+    match result {
+        CommandResult::Sharing { sharing } => Ok(sharing),
+        other => Err(unexpected(&other)),
+    }
+}
+
+/// A link just made, with its QR code. The only time the link exists outside
+/// the engine's memory: the engine cannot show it again.
+#[derive(serde::Serialize)]
+struct NewShare {
+    link: String,
+    share: model::ShareItem,
+    /// The QR code's modules, row by row: `1` dark, `0` light.
+    qr_rows: Vec<String>,
+}
+
+fn new_share(result: CommandResult) -> Result<NewShare, String> {
+    let CommandResult::ShareLink { link, share } = result else {
+        return Err(unexpected(&result));
+    };
+    let link = link.expose().to_owned();
+    let qr_rows = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L)
+        .map(|code| {
+            let width = code.width();
+            code.to_colors()
+                .chunks(width)
+                .map(|row| {
+                    row.iter()
+                        .map(|color| {
+                            if *color == qrcode::Color::Dark {
+                                '1'
+                            } else {
+                                '0'
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(NewShare {
+        link,
+        share,
+        qr_rows,
+    })
+}
+
+/// Public share links and their setup (FP-117).
+#[tauri::command]
+async fn share_status(engine: Engine<'_>) -> Result<model::ShareView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || sharing_view(engine.send(Command::ShareStatus).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn configure_sharing(
+    base_url: String,
+    port: Option<u16>,
+    engine: Engine<'_>,
+) -> Result<model::ShareView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        sharing_view(
+            engine
+                .send(Command::ConfigureSharing {
+                    base_url: Some(base_url),
+                    port,
+                })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_sharing_enabled(
+    enabled: bool,
+    engine: Engine<'_>,
+) -> Result<model::ShareView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        sharing_view(
+            engine
+                .send(Command::SetSharingEnabled { enabled })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_share_test(engine: Engine<'_>) -> Result<NewShare, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || new_share(engine.send(Command::StartShareTest).map_err(text)?)).await
+}
+
+#[tauri::command]
+async fn create_share(
+    path: String,
+    expires_in_seconds: Option<u64>,
+    engine: Engine<'_>,
+) -> Result<NewShare, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        new_share(
+            engine
+                .send(Command::CreateShare {
+                    source: OfferSource::Path { path },
+                    expires_in_seconds,
+                })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
+/// One link by its handle, or every link when `handle` is empty.
+#[tauri::command]
+async fn revoke_share(
+    handle: Option<String>,
+    engine: Engine<'_>,
+) -> Result<model::ShareView, String> {
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        let command = match handle {
+            Some(handle) => Command::RevokeShare { handle },
+            None => Command::RevokeAllShares,
+        };
+        sharing_view(engine.send(command).map_err(text)?)
+    })
+    .await
+}
+
 fn cache_view(result: CommandResult) -> Result<model::CacheView, String> {
     match result {
         CommandResult::Cache { cache } => Ok(cache),
@@ -1289,7 +1424,13 @@ pub fn run() {
             start_pairing,
             cancel_pairing,
             join_pairing,
-            unpair_device
+            unpair_device,
+            share_status,
+            configure_sharing,
+            set_sharing_enabled,
+            start_share_test,
+            create_share,
+            revoke_share
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is

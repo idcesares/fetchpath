@@ -21,6 +21,7 @@
 
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
 mod inbox;
+mod share;
 
 use crate::policy::{self, RateWindow};
 use crate::{
@@ -240,6 +241,8 @@ pub struct Engine {
     instance: Option<InstanceId>,
     /// Same-machine offers (contract D8).
     inbox: Arc<Mutex<inbox::Inbox>>,
+    /// Public share links and their setup (FP-117).
+    sharing: share::Sharing,
 }
 
 impl Engine {
@@ -267,6 +270,7 @@ impl Engine {
 
     fn build(session: Arc<Session>, instance: Option<InstanceId>) -> Arc<Self> {
         let data_dir = session.data_dir();
+        let sharing = share::Sharing::load(data_dir.clone());
         let inbox = inbox::Inbox::load(data_dir);
         if let Some(notice) = inbox.notice() {
             eprintln!("fetchpath: {notice}");
@@ -279,6 +283,7 @@ impl Engine {
             rates: Mutex::new(RateWindow::default()),
             instance,
             inbox: Arc::new(Mutex::new(inbox)),
+            sharing,
         })
     }
 
@@ -1359,6 +1364,13 @@ impl Engine {
                 .inspect_repository(url.expose())
                 .map(|repository| CommandResult::Repository { repository })
                 .map_err(input),
+            Command::ShareStatus
+            | Command::ConfigureSharing { .. }
+            | Command::SetSharingEnabled { .. }
+            | Command::StartShareTest
+            | Command::CreateShare { .. }
+            | Command::RevokeShare { .. }
+            | Command::RevokeAllShares => self.query_share(principal, command),
             Command::LanStatus => self.lan(|lan| lan.status()),
             Command::SetLanSharing { enabled } => self.lan(|lan| lan.set_sharing(*enabled)),
             Command::StartPairing => self.lan(|lan| lan.start_pairing()),
@@ -1582,6 +1594,7 @@ impl Engine {
     pub fn tick(&self) {
         self.reconcile();
         self.expire_offers();
+        self.sweep_shares();
         let state = self.session.inner.lock().expect("desktop jobs poisoned");
         let mut durable = self.session.durable.lock().expect("engine state poisoned");
         durable

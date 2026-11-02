@@ -31,6 +31,14 @@ Only the latest release receives security fixes.
   sign-in link used twice or after a minute, a browser session doing more than
   viewing and submitting downloads, or a session or link written to disk or
   logs in readable form.
+- The public share listener (`fetchpath share`, the desktop's Public links): it
+  answering on a port the person did not store, from another computer, or for
+  anything but `GET /s/<id>`; a link used more than once, after it expired or
+  was revoked, for a file that changed, or without the setup test having
+  passed; a file name, hash, link key or link in a response, log or file on
+  disk; an agent or remote session creating a link; or a shared file replaced
+  while its link lives. Out of scope: a tunnel or proxy vendor that
+  terminates TLS and serves a modified page (see `docs/development/SHARE-RELAY.md`).
 - Media helpers run without the pinned digest matching.
 - Torrent metadata that escapes the chosen folder, peer discovery (for an agent, browser capture or speed profile) or uploading
   without the person's consent, or a torrent marked complete before its files

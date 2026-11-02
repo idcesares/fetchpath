@@ -1,4 +1,4 @@
-# Share relay and encryption framing (FP-116)
+# Share relay and encryption framing (FP-116, built in FP-117)
 
 Resolves T-O1 and T-O2 of the [file transfer and sharing design](../architecture/specs/2026-10-31-file-transfer-and-sharing-design.md). Throwaway probes lived in the ignored `work/` and were deleted; nothing here is product code.
 
@@ -13,14 +13,23 @@ Why: Tunnel and Direct modes serve a plain HTTPS GET with Range to the recipient
 
 Header, 22 bytes, sent in the clear and bound as AAD of every chunk: `"FPS1"`, version `1`, chunk size log2 (1 byte), 16-byte random salt. Keys: HKDF-SHA256 over the fragment key, salt from the header, info `fetchpath-share-v1`, 39 bytes = 32-byte AES key + 7-byte nonce prefix. Chunk nonce (12 bytes): prefix(7) + chunk index u32 big-endian + last-chunk flag (1 byte). A chunk is `ciphertext || 16-byte tag`. The final chunk sets the last flag, so truncation, reordering, replay of a chunk elsewhere and a swapped header all fail authentication. Chunk-aligned Range reads give resume: the recipient restarts at `22 + i * (chunkSize + 16)`.
 
-Rules the format must state (found in review, not yet tested):
+Rules the format states (built and tested in FP-117; `crates/fetchpath-session/src/share/frame.rs`, vectors in `tests/fixtures/share-vectors.json`):
 
 - **End of stream:** the stream ends right after the one chunk that authenticates with last=1. A last=0 chunk must be followed by another chunk; bytes after the last chunk are rejected; the page never tries both flag values or treats EOF or a short chunk as the signal. An empty file is one empty chunk with last=1, never a header alone. The probe's 1 GiB file was exactly 16384 full chunks, so these edges were not exercised.
 - **Chunk size:** read from the unauthenticated header, so the page accepts only a fixed range (for example 2^16 to 2^22) and rejects the rest before buffering.
 - **Frozen content:** salt, key and nonce prefix are fixed for a share, and Range resume reuses them. The engine must encrypt from a frozen copy, or bind the salt to the content hash and refuse to serve on mismatch; otherwise a file changed mid-share reuses a GCM nonce under one key, which leaks plaintext XOR and the authentication key. A check before serving does not cover a change during a response.
 - **Page integrity:** the fragment keeps the key out of logs and headers and protects against passive reading. A relay or tunnel vendor that terminates TLS also serves the decrypting page and could serve a modified one that reads `location.hash`. The threat model must say so or name a page source the path cannot change.
 
-The sketch is what was measured, not a frozen format. T3 fixes the chunk size and the rules above, and the X8 review covers them.
+## What FP-117 built
+
+- **Format fixed:** 64 KiB chunks (`FPS1`, version 1); readers accept 2^16 to 2^22. The plain stream is `u16 name length || UTF-8 name || file bytes`, so the file name travels only inside the ciphertext and a response never carries it. Range is over ciphertext; resume offsets are chunk aligned.
+- **Frozen content:** the engine opens the file once, denying write, rename and delete sharing while the link lives, hashes it, and encrypts only from that handle. A file therefore cannot change under a live link; one that cannot be read ends the link as `changed`.
+- **Where it runs:** the ticket store and framing in `fetchpath-session`, the HTTP listener (hyper) and the page in `apps/cli/src/share`. No relay: Tunnel mode is a tunnel the person runs (Cloudflare Tunnel, Tailscale Funnel) to `127.0.0.1:<share port>`; the stored address must match the `Host` the tunnel sends. The thin custom relay stays a later step.
+- **Tickets and keys are memory only.** A restart revokes every link.
+- **Delivered means handed to the connection,** in order, not received. The setup test passes on that.
+- **Decrypt in the page:** WebCrypto AES-GCM, buffered into a Blob and saved with a download link. There is no service worker and no streaming save, so a very large file is limited by the phone browser memory (not measured). The page hash is in a `script-src` CSP; there is no inline style or other script.
+- **Page integrity (the threat note):** the fragment keeps the key out of logs and request headers. A tunnel vendor or proxy that terminates TLS also serves the page and could serve a modified one that reads `location.hash`. Tunnel mode does not defend against that; it is out of scope in SECURITY.md. A link to a file is for people who trust the tunnel they chose.
+- **Not verified:** a phone on mobile data through a real tunnel (X7), any phone browser, large files on a phone, and the page on browsers other than the desktop one used for testing.
 
 ## What was measured
 

@@ -27,9 +27,9 @@ const WSAEACCES: i32 = 10013;
 const WSAEAFNOSUPPORT: i32 = 10047;
 const WSAEADDRNOTAVAIL: i32 = 10049;
 
-pub(super) struct Bound {
-    pub(super) port: u16,
-    pub(super) listeners: Vec<TcpListener>,
+pub(crate) struct Bound {
+    pub(crate) port: u16,
+    pub(crate) listeners: Vec<TcpListener>,
 }
 
 enum Tried {
@@ -92,6 +92,19 @@ fn pair(port: u16) -> Result<Bound, Tried> {
         Err(error) => return Err(Tried::Failed(error)),
     }
     Ok(Bound { port, listeners })
+}
+
+/// Exactly `port` on both loopback addresses, exclusively, or the reason it
+/// cannot be had. Never another port: the share listener's port is part of
+/// the tunnel the person set up (FP-117).
+pub(crate) fn bind_exact(port: u16) -> Result<Bound, String> {
+    match pair(port) {
+        Ok(bound) => Ok(bound),
+        Err(Tried::Busy) => Err(format!(
+            "Port {port} is in use by another program. Close it or choose another port."
+        )),
+        Err(Tried::Failed(error)) => Err(format!("Port {port} could not be opened: {error}")),
+    }
 }
 
 fn remembered(dir: &Path) -> Option<u16> {
