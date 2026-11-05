@@ -16,7 +16,8 @@ use fetchpath_protocol::model::{
     IntegrityOutcome, JobDetails, JobKind, LanView, LinkInspection, LinkKind, MediaInspection,
     MediaVariant, MediaVariantKind, PairedDevice, PairingState, PairingView, Phase, Progress,
     QueueStats, RepositoryFile, RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions,
-    RuleSpec, RulesVerdict, Segment, SettingsView, Theme, WaitingReason,
+    RuleSpec, RulesVerdict, Segment, SettingsView, ShareItem, ShareState, ShareView, Theme,
+    WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -303,6 +304,23 @@ fn every_command() -> Vec<Command> {
         },
         Command::LanStatus,
         Command::SetLanSharing { enabled: true },
+        Command::ShareStatus,
+        Command::ConfigureSharing {
+            base_url: Some("https://share.example.com".into()),
+            port: Some(47633),
+        },
+        Command::SetSharingEnabled { enabled: true },
+        Command::StartShareTest,
+        Command::CreateShare {
+            source: send::OfferSource::Path {
+                path: r"C:\Users\Ana\report.pdf".into(),
+            },
+            expires_in_seconds: Some(3_600),
+        },
+        Command::RevokeShare {
+            handle: "q83ZtA1p".into(),
+        },
+        Command::RevokeAllShares,
         Command::StartPairing,
         Command::CancelPairing,
         Command::JoinPairing {
@@ -380,6 +398,13 @@ fn every_command() -> Vec<Command> {
             | Command::InspectRepository { .. }
             | Command::LanStatus
             | Command::SetLanSharing { .. }
+            | Command::ShareStatus
+            | Command::ConfigureSharing { .. }
+            | Command::SetSharingEnabled { .. }
+            | Command::StartShareTest
+            | Command::CreateShare { .. }
+            | Command::RevokeShare { .. }
+            | Command::RevokeAllShares
             | Command::StartPairing
             | Command::CancelPairing
             | Command::JoinPairing { .. }
@@ -454,6 +479,20 @@ fn device() -> PairedDevice {
         fingerprint: "771f-1df9-c299-5152-7cc9".into(),
         label: "Laptop".into(),
         address: Some("192.168.1.21:47631".into()),
+    }
+}
+
+fn share_item() -> ShareItem {
+    ShareItem {
+        handle: "q83ZtA1p".into(),
+        test: false,
+        name: "report.pdf".into(),
+        size: 1_048_576,
+        state: ShareState::Live,
+        expires_in_seconds: 86_400,
+        opened: 1,
+        delivered: 65_536,
+        total: 1_048_576 + 22 + 16 * 17,
     }
 }
 
@@ -573,6 +612,7 @@ fn every_result() -> Vec<CommandResult> {
                 active_jobs: 1,
                 queue_cursor: 120,
                 queue_read_only: None,
+                inbox_notice: None,
                 instance: Some(InstanceInfo {
                     id: id("018f9c2a-6b1e-7d40-9a51-2e8f3c7d1b04"),
                     name: "Studio PC".into(),
@@ -588,6 +628,7 @@ fn every_result() -> Vec<CommandResult> {
                 active_jobs: 0,
                 queue_cursor: 0,
                 instance: None,
+                inbox_notice: Some("The inbox started empty.".into()),
                 queue_read_only: Some(
                     ProtocolError::new(
                         ErrorCode::try_from("storage.queue_from_newer_version".to_owned()).unwrap(),
@@ -630,6 +671,24 @@ fn every_result() -> Vec<CommandResult> {
                 }),
             },
         },
+        CommandResult::Sharing {
+            sharing: ShareView {
+                enabled: true,
+                base_url: Some("https://share.example.com".into()),
+                port: 47633,
+                tested: true,
+                serving: Some("127.0.0.1:47633".into()),
+                problem: None,
+                shares: vec![share_item()],
+            },
+        },
+        CommandResult::ShareLink {
+            link: SensitiveUrl::try_from(
+                "https://share.example.com/s/KEYLESS-PLACEHOLDER#KEYLESS-PLACEHOLDER".to_owned(),
+            )
+            .unwrap(),
+            share: share_item(),
+        },
         CommandResult::Joined { device: device() },
         CommandResult::Repository {
             repository: repository(),
@@ -664,6 +723,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::AgentPolicies { .. }
             | CommandResult::Cache { .. }
             | CommandResult::Lan { .. }
+            | CommandResult::Sharing { .. }
+            | CommandResult::ShareLink { .. }
             | CommandResult::Joined { .. }
             | CommandResult::Repository { .. }
             | CommandResult::Offer { .. }
@@ -1182,6 +1243,13 @@ fn only_queries_skip_the_command_ledger() {
         "InspectRepository",
         "LanStatus",
         "SetLanSharing",
+        "ShareStatus",
+        "ConfigureSharing",
+        "SetSharingEnabled",
+        "StartShareTest",
+        "CreateShare",
+        "RevokeShare",
+        "RevokeAllShares",
         "StartPairing",
         "CancelPairing",
         "JoinPairing",

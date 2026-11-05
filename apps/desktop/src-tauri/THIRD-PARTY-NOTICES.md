@@ -7,7 +7,7 @@ This file ships beside `Fetchpath.exe` so the notices travel with the binary.
 Fetchpath's own source is licensed **MIT OR Apache-2.0** (`[workspace.package] license`
 in the repository root `Cargo.toml`).
 
-The table below is generated from `Cargo.lock`, so it lists the 690 third-party
+The table below is generated from `Cargo.lock`, so it lists the 691 third-party
 packages that are actually part of a build rather than a hand-maintained list.
 The **Source of the license value** column says, for every row, whether the
 value was read from the crate's own manifest or recorded by a maintainer.
@@ -459,6 +459,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | proc-macro-error | 1.0.4 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | proc-macro-error-attr | 1.0.4 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| qrcode | 0.14.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | quanta | 0.12.6 | MIT | Read from the crate manifest in the local registry |
 | quick-xml | 0.41.0 | MIT | Read from the crate manifest in the local registry |
 | quick-xml | 0.42.0 | MIT | Read from the crate manifest in the local registry |

@@ -60,6 +60,36 @@ interface LanView {
   };
 }
 
+/** Public share links and their setup, as the engine reports them (never a link). */
+interface ShareItem {
+  handle: string;
+  test: boolean;
+  name: string;
+  size: number;
+  state: "live" | "completed" | "revoked" | "expired" | "changed" | "over_budget" | "unknown";
+  expires_in_seconds: number;
+  opened: number;
+  delivered: number;
+  total: number;
+}
+
+interface ShareView {
+  enabled: boolean;
+  base_url?: string;
+  port: number;
+  tested: boolean;
+  serving?: string;
+  problem?: string;
+  shares: ShareItem[];
+}
+
+/** A link just made: the only time it is available outside the engine. */
+interface NewShare {
+  link: string;
+  share: ShareItem;
+  qr_rows: string[];
+}
+
 /** The content cache, as the engine reports it. */
 interface CacheView {
   bytes: number;
@@ -407,7 +437,7 @@ async function showSettings(category?: string): Promise<void> {
   if (category) settingsCategories.find((button) => button.dataset.settingsCategory === category)?.click();
   clearError(settingsError);
   openDialog(settingsDialog, settingsCategories.find((button) => button.getAttribute("aria-pressed") === "true") ?? settingsCloseButton);
-  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshAgentHosts(), refreshRules(), refreshCache(), refreshLan()]);
+  await Promise.all([loadSettings(), refreshToolsStatus(), refreshBrowserSetup(), refreshInstalledComponents(), refreshCliStatus(), refreshAgents(), refreshAgentHosts(), refreshRules(), refreshCache(), refreshLan(), refreshShare()]);
 }
 
 /* Rules (FP-075) -------------------------------------------------------------
@@ -602,6 +632,241 @@ lanJoin.addEventListener("click", async () => {
     lanJoinResult.textContent = errorMessage(error);
   } finally {
     lanJoin.disabled = false;
+  }
+});
+
+const shareUrl = required<HTMLInputElement>("share-url");
+const sharePort = required<HTMLInputElement>("share-port");
+const shareSave = required<HTMLButtonElement>("share-save");
+const shareState = required<HTMLParagraphElement>("share-state");
+const shareTest = required<HTMLButtonElement>("share-test");
+const shareNew = required<HTMLDivElement>("share-new");
+const shareNewText = required<HTMLParagraphElement>("share-new-text");
+const shareNewLink = required<HTMLInputElement>("share-new-link");
+const shareCopy = required<HTMLButtonElement>("share-copy");
+const shareHide = required<HTMLButtonElement>("share-hide");
+const shareQr = document.getElementById("share-qr") as unknown as SVGSVGElement;
+const shareEnabled = required<HTMLInputElement>("share-enabled");
+const shareEnabledState = required<HTMLParagraphElement>("share-enabled-state");
+const shareExpiry = required<HTMLSelectElement>("share-expiry");
+const shareFile = required<HTMLButtonElement>("share-file");
+const shareRevokeAll = required<HTMLButtonElement>("share-revoke-all");
+const shareList = required<HTMLUListElement>("share-list");
+let sharePoll: number | undefined;
+let shareWasTested = false;
+/** True while the link on show is the setup test link. */
+let shareShowingTest = false;
+
+const SHARE_STATE_LABEL: Record<ShareItem["state"], string> = {
+  live: "waiting to be used",
+  completed: "used up",
+  revoked: "revoked",
+  expired: "expired",
+  changed: "stopped, the file changed",
+  over_budget: "stopped, too many requests",
+  unknown: "unknown",
+};
+
+function shareDuration(seconds: number): string {
+  if (seconds >= 86400) return `${Math.round(seconds / 86400)} d`;
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)} h`;
+  return `${Math.max(1, Math.round(seconds / 60))} min`;
+}
+
+/** Forgets the link and its code. They exist only in this page until hidden. */
+function hideNewShare(): void {
+  shareNew.hidden = true;
+  shareNewLink.value = "";
+  shareQr.replaceChildren();
+  shareQr.toggleAttribute("hidden", true);
+}
+
+function showNewShare(made: NewShare, text: string): void {
+  shareNewText.textContent = text;
+  shareNewLink.value = made.link;
+  shareNew.hidden = false;
+  const size = made.qr_rows.length;
+  shareQr.replaceChildren();
+  shareQr.toggleAttribute("hidden", size === 0);
+  if (!size) return;
+  // Dark modules on a white square with a 4-module margin, whatever the theme:
+  // scanners need that contrast.
+  const ns = "http://www.w3.org/2000/svg";
+  shareQr.setAttribute("viewBox", `-4 -4 ${size + 8} ${size + 8}`);
+  shareQr.setAttribute("shape-rendering", "crispEdges");
+  const ground = document.createElementNS(ns, "rect");
+  ground.setAttribute("x", "-4");
+  ground.setAttribute("y", "-4");
+  ground.setAttribute("width", String(size + 8));
+  ground.setAttribute("height", String(size + 8));
+  ground.setAttribute("fill", "#fff");
+  const modules = document.createElementNS(ns, "path");
+  let path = "";
+  made.qr_rows.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) if (row[x] === "1") path += `M${x} ${y}h1v1h-1z`;
+  });
+  modules.setAttribute("d", path);
+  modules.setAttribute("fill", "#000");
+  shareQr.append(ground, modules);
+}
+
+function renderShare(view: ShareView): void {
+  if (document.activeElement !== shareUrl) shareUrl.value = view.base_url ?? "";
+  if (document.activeElement !== sharePort) sharePort.value = String(view.port);
+  const listening = Boolean(view.serving);
+  shareState.textContent = !view.base_url
+    ? "No tunnel address is saved yet."
+    : listening
+      ? `Listening on ${view.serving}. Your tunnel must forward ${view.base_url} to this address.`
+      : `Not listening: ${view.problem ?? "the engine has not started it yet."}`;
+  shareTest.disabled = !listening;
+  shareEnabled.checked = view.enabled;
+  shareEnabled.disabled = !view.tested || !listening;
+  shareEnabledState.textContent = view.enabled
+    ? "On. Each link you make works once and for a limited time. Turn this off to stop all of them."
+    : view.tested
+      ? "Off. Turn it on to allow links to files."
+      : "Off until a test link has been downloaded through your address.";
+  shareFile.disabled = !view.enabled;
+  shareRevokeAll.disabled = !view.shares.some((item) => item.state === "live");
+  shareList.replaceChildren();
+  for (const item of view.shares.filter((candidate) => !candidate.test)) {
+    const row = document.createElement("li");
+    const label = document.createElement("span");
+    const expiry = item.state === "live" ? `, expires in ${shareDuration(item.expires_in_seconds)}` : "";
+    label.textContent = `${item.name}, ${formatBytes(item.size)}: ${SHARE_STATE_LABEL[item.state]}${expiry}`;
+    row.append(label);
+    if (item.state === "live") {
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "quiet";
+      revoke.textContent = "Revoke";
+      revoke.setAttribute("aria-label", `Revoke the link to ${item.name}`);
+      revoke.addEventListener("click", async () => {
+        clearError(settingsError);
+        try {
+          renderShare(await invoke<ShareView>("revoke_share", { handle: item.handle }));
+          announce(`Revoked the link to ${item.name}.`);
+        } catch (error) {
+          showError(settingsError, error);
+        }
+      });
+      row.append(revoke);
+    }
+    shareList.append(row);
+  }
+  // The setup test counts when the engine saw it delivered in order.
+  if (view.tested && !shareWasTested && shareShowingTest && !shareNew.hidden) {
+    shareNewText.textContent = "The test link was downloaded through your address. You can now allow public file links.";
+    announce(shareNewText.textContent);
+  }
+  shareWasTested = view.tested;
+  const waiting = !view.tested && view.shares.some((item) => item.test && item.state === "live");
+  if (waiting && sharePoll === undefined) {
+    sharePoll = window.setInterval(() => void refreshShare(), 1000);
+  } else if (!waiting && sharePoll !== undefined) {
+    window.clearInterval(sharePoll);
+    sharePoll = undefined;
+  }
+}
+
+async function refreshShare(): Promise<void> {
+  try {
+    renderShare(await invoke<ShareView>("share_status"));
+  } catch (error) {
+    shareState.textContent = "Public links can't be shown right now.";
+    if (sharePoll !== undefined) {
+      window.clearInterval(sharePoll);
+      sharePoll = undefined;
+    }
+    showError(settingsError, error);
+  }
+}
+
+shareSave.addEventListener("click", async () => {
+  clearError(settingsError);
+  const port = sharePort.value.trim() ? Number(sharePort.value) : null;
+  if (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+    showError(settingsError, "Enter a port between 1 and 65535.");
+    return;
+  }
+  try {
+    hideNewShare();
+    shareWasTested = false;
+    renderShare(await invoke<ShareView>("configure_sharing", { baseUrl: shareUrl.value.trim(), port }));
+    // The listener starts a moment after the address is stored.
+    window.setTimeout(() => void refreshShare(), 1000);
+    announce("Address saved. Make a test link to check that it works.");
+  } catch (error) {
+    showError(settingsError, error);
+    await refreshShare();
+  }
+});
+
+shareTest.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    const made = await invoke<NewShare>("start_share_test");
+    shareShowingTest = true;
+    showNewShare(made, "Open this link on a phone with Wi-Fi off, or scan the code, and press Download. This page shows when it has worked.");
+    announce("Test link ready.");
+    await refreshShare();
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+shareCopy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(shareNewLink.value);
+    announce("Link copied.");
+  } catch {
+    shareNewLink.select();
+    announce("Select the link and copy it.");
+  }
+});
+
+shareHide.addEventListener("click", () => {
+  hideNewShare();
+  shareFile.focus();
+});
+
+shareEnabled.addEventListener("change", async () => {
+  clearError(settingsError);
+  try {
+    renderShare(await invoke<ShareView>("set_sharing_enabled", { enabled: shareEnabled.checked }));
+    announce(shareEnabledState.textContent ?? "");
+  } catch (error) {
+    showError(settingsError, error);
+    await refreshShare();
+  }
+});
+
+shareFile.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    const selected = await open({ directory: false, multiple: false, title: "Choose a file to share with a link" });
+    if (typeof selected !== "string") return;
+    const made = await invoke<NewShare>("create_share", {
+      path: selected,
+      expiresInSeconds: Number(shareExpiry.value),
+    });
+    shareShowingTest = false;
+    showNewShare(made, `Link to ${made.share.name}. It works once and cannot be shown again, so copy it now. The file stays locked while the link lives.`);
+    announce("Link made. Copy it now: it is shown only once.");
+    await refreshShare();
+  } catch (error) {
+    showError(settingsError, error);
+  }
+});
+
+shareRevokeAll.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    renderShare(await invoke<ShareView>("revoke_share", { handle: null }));
+    announce("Every link is revoked.");
+  } catch (error) {
+    showError(settingsError, error);
   }
 });
 
@@ -2285,6 +2550,11 @@ const engineStatus = required<HTMLElement>("engine-status");
 const engineStatusText = required<HTMLElement>("engine-status-text");
 const engineStart = required<HTMLButtonElement>("engine-start");
 let engineNoticeTimer = 0;
+const inboxNotice = required<HTMLElement>("inbox-notice");
+const inboxNoticeText = required<HTMLElement>("inbox-notice-text");
+const inboxNoticeDismiss = required<HTMLButtonElement>("inbox-notice-dismiss");
+/** The notice the person dismissed; a different one shows again. */
+let dismissedInboxNotice = "";
 
 const ENGINE_LOST =
   "Fetchpath's engine stopped. Reconnecting… Downloads continue from their saved progress once it is back.";
@@ -2415,9 +2685,26 @@ function revealEngineNotice(text: string, canStart: boolean): void {
   announceProblem(text);
 }
 
+function showInboxNotice(text: string | undefined): void {
+  if (!text || text === dismissedInboxNotice) {
+    inboxNotice.hidden = true;
+    return;
+  }
+  if (!inboxNotice.hidden && inboxNoticeText.textContent === text) return;
+  inboxNoticeText.textContent = text;
+  inboxNotice.hidden = false;
+  announceProblem(text);
+}
+
+inboxNoticeDismiss.addEventListener("click", () => {
+  dismissedInboxNotice = inboxNoticeText.textContent ?? "";
+  inboxNotice.hidden = true;
+});
+
 function showEngineState(state: EngineConnection): void {
   engineState = state.connected ? "running" : state.stopped ? "stopped" : "reconnecting";
   renderEngineSummary();
+  showInboxNotice(state.connected ? state.inboxNotice : undefined);
   if (state.connected && state.readOnly) {
     window.clearTimeout(engineNoticeTimer);
     engineNoticeTimer = 0;

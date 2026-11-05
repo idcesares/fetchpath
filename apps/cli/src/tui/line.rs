@@ -736,6 +736,9 @@ fn execute(
             if let Some(reason) = status.queue_read_only {
                 reply.say(Tone::Bad, reason.message);
             }
+            if let Some(notice) = status.inbox_notice {
+                reply.say(Tone::Bad, notice);
+            }
             Ok(())
         }
         "help" => {

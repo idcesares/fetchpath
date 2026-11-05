@@ -11,6 +11,7 @@ mod awake;
 mod signin;
 
 use crate::remote::Web;
+use crate::share::Share;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::error::{ErrorCode, ErrorScope};
 use fetchpath_protocol::launch::{self, EngineHome};
@@ -190,6 +191,8 @@ struct Host {
     connections: Arc<AtomicUsize>,
     /// The loopback web UI, when the person turned it on (FP-104).
     web: Web,
+    /// The public link listener, when a tunnel address is set (FP-117).
+    share: Share,
     /// Serializes a settings change with the sign-in start it implies.
     settings: Mutex<()>,
     /// Whether this engine uses the default data folder. Only then does it
@@ -204,7 +207,7 @@ impl Host {
     /// an automatic retry) or running. Paused jobs and failures waiting for a
     /// person change only when a person acts, which starts a client.
     fn has_own_work(&self) -> bool {
-        self.engine.session().has_own_work()
+        self.engine.session().has_own_work() || self.engine.has_live_shares()
     }
 
     /// Decides to stop, and says so to clients by removing the endpoint
@@ -307,6 +310,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
             home.dir().to_path_buf(),
             Arc::clone(&connections),
         ),
+        share: Share::new(Arc::clone(&engine)),
         engine,
         stop: AtomicBool::new(false),
         connections,
@@ -320,6 +324,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
     }
     // Off also removes sessions left by a run that was killed while on.
     host.web.apply(settings.web_ui);
+    host.share.reconcile();
     let ticker = {
         let host = Arc::clone(&host);
         std::thread::spawn(move || {
@@ -346,6 +351,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
                 } else {
                     host.engine.reconcile();
                 }
+                host.share.reconcile();
                 let session = host.engine.session();
                 awake.set(session.hub_mode() && session.running_count() > 0);
             }
@@ -387,6 +393,7 @@ fn serve(grace: Duration) -> Result<i32, String> {
     // UI port closes with it; its sessions stay for the next run.
     drop(listener);
     host.web.shutdown();
+    host.share.shutdown();
     let _ = ticker.join();
     wind_down(&host.engine);
     Ok(0)
@@ -516,10 +523,20 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                 let before = host.engine.session().settings();
                 // The web UI's own commands are answered here, not by the
                 // engine, which has no listener.
-                let outcome = host
+                let mut outcome = host
                     .web
                     .answer(&principal, payload)
                     .unwrap_or_else(|| host.engine.execute_as(&principal, &envelope));
+                // The listener follows the stored address. Answer with the
+                // state after it moved, not the one before it did.
+                if matches!(payload, Command::ConfigureSharing { .. }) && outcome.is_ok() {
+                    host.share.reconcile();
+                    let mut status = envelope.clone();
+                    status.payload = Command::ShareStatus;
+                    if let Ok(fresh) = host.engine.execute_as(&principal, &status) {
+                        outcome = Ok(fresh);
+                    }
+                }
                 let reply = match outcome {
                     Ok(result) => Reply::ok(envelope.command_id.clone(), result),
                     Err(error) => Reply::error(Some(envelope.command_id.clone()), error),

@@ -7,7 +7,7 @@ use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
     CacheView, EngineStatus, FolderChoice, IntegrityOutcome, JobDetails, JobSnapshot, JobState,
     LanView, LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, RepositoryView,
-    Rule, SensitiveUrl, SettingsView, WaitingReason,
+    Rule, SensitiveUrl, SettingsView, ShareItem, ShareView, WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -153,6 +153,16 @@ pub enum CommandResult {
     /// Paired devices and sharing.
     Lan {
         lan: LanView,
+    },
+    /// Share links and their setup (FP-117). Never carries a link's key.
+    Sharing {
+        sharing: ShareView,
+    },
+    /// A link was made. This answer is the only place its key ever appears:
+    /// it is not stored, listed or logged, and cannot be asked for again.
+    ShareLink {
+        link: SensitiveUrl,
+        share: ShareItem,
     },
     /// This device paired with the one showing the code.
     Joined {

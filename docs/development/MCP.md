@@ -265,6 +265,16 @@ The person answers in the desktop app (an inbox card with Accept and Decline;
 the browser build has no accept) or with `fetchpath inbox [list]`,
 `fetchpath inbox accept OFFER [--to FOLDER]` and `fetchpath inbox decline OFFER`.
 
+If the inbox file is damaged or unreadable (FP-122), the engine starts with an
+empty inbox and reports why in `EngineStatus.inbox_notice` (FP-126), to the
+person only: it names a local file. The desktop shows it as a dismissible
+banner, `fetchpath inbox` prints it on standard error, and `fetchpath engine
+status` and the terminal's `engine` line print it. It lasts until the engine
+restarts; the damaged file is set aside, so the next start has no notice. The
+local web page does not show it. Checked by
+`crates/fetchpath-session/tests/inbox.rs`, `apps/cli/tests/queue.rs` and the
+desktop UI smoke.
+
 Wording that does not change: the SHA-256 is "computed by the sending
 Fetchpath engine ... it does not show who published the original file", and
 `agent:<name>` is a label the connecting program declared, not proof of who it

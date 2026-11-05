@@ -77,6 +77,12 @@ fn list(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
         println!("{}", serde_json::json!({ "offers": offers }));
         return Ok(());
     }
+    // A recovered inbox is empty, so say why before saying it is empty.
+    if let Ok(CommandResult::EngineStatus { status }) = engine.send(Command::EngineStatus)
+        && let Some(notice) = status.inbox_notice
+    {
+        eprintln!("{notice}");
+    }
     if offers.is_empty() {
         println!("Nothing has been offered to you.");
         return Ok(());

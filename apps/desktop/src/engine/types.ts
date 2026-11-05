@@ -95,4 +95,6 @@ export interface EngineConnection {
   message?: string;
   /** Connected to a queue saved by a newer Fetchpath: shown, never changed. */
   readOnly?: string;
+  /** The offers inbox file was damaged and set aside: it started empty. */
+  inboxNotice?: string;
 }

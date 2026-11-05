@@ -8,7 +8,7 @@
 //! alive; a signed-in socket counts as a client like an open desktop window.
 
 mod assets;
-mod bind;
+pub(crate) mod bind;
 mod http;
 mod listener;
 mod sessions;

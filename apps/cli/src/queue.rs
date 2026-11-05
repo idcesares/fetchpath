@@ -1462,6 +1462,9 @@ pub fn engine_status(json: bool) -> i32 {
             if let Some(reason) = &status.queue_read_only {
                 println!("{}", reason.message);
             }
+            if let Some(notice) = &status.inbox_notice {
+                println!("{notice}");
+            }
             if let Ok(engine) = &engine
                 && let Ok(CommandResult::Settings { view }) = engine.send(Command::GetSettings)
                 && view.settings.hub_mode == Some(true)

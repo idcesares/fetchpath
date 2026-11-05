@@ -1,0 +1,31 @@
+{
+  "note": "Key 07*32, salt 09*16, chunk 2^16. Plain stream byte i is (i*7+3) mod 256. cipherSha256 is the SHA-256 of the whole encrypted stream the engine writes.",
+  "keyHex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "saltHex": "09090909090909090909090909090909",
+  "cases": [
+    {
+      "plainLen": 0,
+      "cipherSha256": "da5282626ad8642c21dccbdc78b65c3795de378e348354b6daa5ef30d54bd0a9"
+    },
+    {
+      "plainLen": 1,
+      "cipherSha256": "4f65f6f11a7058e78f1afc91385962c68939e8fdc5f5a98ab6f3251d98aa5acc"
+    },
+    {
+      "plainLen": 65535,
+      "cipherSha256": "68ec58dc32670e3dbf8b5d093a1cdaadf5d5f9cdb69279c97890de5b68788abb"
+    },
+    {
+      "plainLen": 65536,
+      "cipherSha256": "879b854e0e902e4d6a75326fa73dddb66c341eff65b269f531936f82e5abac93"
+    },
+    {
+      "plainLen": 65537,
+      "cipherSha256": "afae1dbb1f4b93a9f8fc9e169ef5cf32b430d576a7894dbd1cb0661efdac14aa"
+    },
+    {
+      "plainLen": 196608,
+      "cipherSha256": "f3143c149b9118336b4d4fe5580112bb55652778cb096a2d6c8ee88421d98455"
+    }
+  ]
+}

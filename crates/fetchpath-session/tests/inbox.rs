@@ -782,6 +782,18 @@ fn a_damaged_inbox_file_starts_empty_with_a_visible_notice() {
     let engine = engine_in(&data);
     let notice = engine.inbox_notice().expect("a notice");
     assert!(notice.contains("inbox-v1.json.corrupt-"), "{notice}");
+
+    // Clients learn it from the engine's status: the person sees it, an agent
+    // does not (it names a local file), and a healthy inbox has none.
+    let (user, agent) = clients(&engine);
+    let status = |client: &InProcessClient| match send(client, Command::EngineStatus).unwrap() {
+        CommandResult::EngineStatus { status } => status.inbox_notice,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(status(&user), Some(notice));
+    assert_eq!(status(&agent), None);
+    let (restarted, _) = clients(&engine_in(&data));
+    assert_eq!(status(&restarted), None, "the damaged file was set aside");
 }
 
 /// A crash between the inbox save and the ledger commit: the engine journal
