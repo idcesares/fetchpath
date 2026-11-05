@@ -58,12 +58,13 @@ fn refuse(status: StatusCode) -> Reply {
 }
 
 fn ended() -> Reply {
-    let html = Bytes::from_static(page::ended().as_bytes());
+    let ended = page::ended();
+    let html = Bytes::from_static(ended.html.as_bytes());
     let length = html.len();
     let mut response = reply(
         StatusCode::GONE,
         Some("text/html; charset=utf-8"),
-        page::PLAIN_POLICY,
+        &ended.policy,
         Body::page(html),
     );
     response

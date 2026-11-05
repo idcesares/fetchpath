@@ -35,8 +35,9 @@ Only the latest release receives security fixes.
   answering on a port the person did not store, from another computer, or for
   anything but `GET /s/<id>`; a link used more than once, after it expired or
   was revoked, for a file that changed, or without the setup test having
-  passed; a file name, hash, link key or link in a response, log or file on
-  disk; an agent or remote session creating a link; or a shared file replaced
+  passed; a file name, hash, link key or link in a response or log, or in a
+  file on disk other than the QR image the person chose to save (the desktop's
+  save dialog, or `--qr` on the command line); an agent or remote session creating a link; or a shared file replaced
   while its link lives. Out of scope: a tunnel or proxy vendor that
   terminates TLS and serves a modified page (see `docs/development/SHARE-RELAY.md`).
 - Media helpers run without the pinned digest matching.

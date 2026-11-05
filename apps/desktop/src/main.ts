@@ -646,6 +646,8 @@ const shareNewLink = required<HTMLInputElement>("share-new-link");
 const shareCopy = required<HTMLButtonElement>("share-copy");
 const shareHide = required<HTMLButtonElement>("share-hide");
 const shareQr = document.getElementById("share-qr") as unknown as SVGSVGElement;
+const shareQrNote = required<HTMLParagraphElement>("share-qr-note");
+const shareSaveQr = required<HTMLButtonElement>("share-save-qr");
 const shareEnabled = required<HTMLInputElement>("share-enabled");
 const shareEnabledState = required<HTMLParagraphElement>("share-enabled-state");
 const shareExpiry = required<HTMLSelectElement>("share-expiry");
@@ -679,6 +681,8 @@ function hideNewShare(): void {
   shareNewLink.value = "";
   shareQr.replaceChildren();
   shareQr.toggleAttribute("hidden", true);
+  shareQrNote.hidden = true;
+  shareSaveQr.hidden = true;
 }
 
 function showNewShare(made: NewShare, text: string): void {
@@ -688,6 +692,8 @@ function showNewShare(made: NewShare, text: string): void {
   const size = made.qr_rows.length;
   shareQr.replaceChildren();
   shareQr.toggleAttribute("hidden", size === 0);
+  shareQrNote.hidden = size === 0;
+  shareSaveQr.hidden = size === 0;
   if (!size) return;
   // Dark modules on a white square with a 4-module margin, whatever the theme:
   // scanners need that contrast.
@@ -823,6 +829,26 @@ shareCopy.addEventListener("click", async () => {
   } catch {
     shareNewLink.select();
     announce("Select the link and copy it.");
+  }
+});
+
+/** Saves the code as an image to a place the person picks. The image is the link. */
+shareSaveQr.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    const chosen = await save({
+      title: "Save the QR code as an image",
+      defaultPath: "fetchpath-link.png",
+      filters: [
+        { name: "PNG image", extensions: ["png"] },
+        { name: "SVG image", extensions: ["svg"] },
+      ],
+    });
+    if (typeof chosen !== "string") return;
+    await invoke("save_share_qr", { path: chosen, link: shareNewLink.value });
+    announce("QR image saved. It holds the whole link: delete it after sending.");
+  } catch (error) {
+    showError(settingsError, error);
   }
 });
 

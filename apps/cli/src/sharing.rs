@@ -10,17 +10,20 @@ use fetchpath_protocol::ProtocolError;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::{ShareItem, ShareState, ShareView};
+use fetchpath_protocol::qr_image;
 use fetchpath_protocol::send::OfferSource;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage: fetchpath share [status]
        fetchpath share setup URL [--port N]   store the tunnel's https address and prove it with a test link
-       fetchpath share test                   make a new test link
+       fetchpath share test [--qr IMAGE]      make a new test link
        fetchpath share on | off               turn file links on (after a passed test) or off
-       fetchpath share create FILE [--hours N]   a single-use link to a file (shown once)
+       fetchpath share create FILE [--hours N] [--qr IMAGE]   a single-use link to a file (shown once)
        fetchpath share revoke HANDLE|all
 URL is the public address your tunnel (Cloudflare Tunnel, Tailscale Funnel) gives,
-forwarding to this computer's share port. Links last a day by default (at most 30 days).";
+forwarding to this computer's share port. Links last a day by default (at most 30 days).
+--qr IMAGE (setup, test, create) also saves the link's QR code as IMAGE, a new .svg or .png
+file. The image IS the link: anyone who has it can download the file once.";
 
 /// How long `setup` waits for the listener to start.
 const START_WAIT: Duration = Duration::from_secs(10);
@@ -29,30 +32,45 @@ const TEST_WAIT: Duration = Duration::from_secs(15 * 60);
 
 pub fn run(args: &[String]) -> i32 {
     let json = args.iter().any(|arg| arg == "--json");
-    let words: Vec<&str> = args
+    let mut words: Vec<&str> = args
         .iter()
         .map(String::as_str)
         .filter(|arg| *arg != "--json")
         .collect();
+    let Ok(image) = take_image_path(&mut words) else {
+        eprintln!("{USAGE}");
+        return EXIT_USAGE;
+    };
+    let image = image.as_deref();
+    // `--qr` belongs to the commands that make a link.
+    let makes_link = matches!(words.first(), Some(&("setup" | "test" | "create")));
+    if image.is_some() && !makes_link {
+        eprintln!("{USAGE}");
+        return EXIT_USAGE;
+    }
     let result = match words.as_slice() {
         [] | ["status"] => Engine::connect().and_then(|engine| status(&engine, json)),
-        ["setup", url] => Engine::connect().and_then(|engine| setup(&engine, url, None, json)),
+        ["setup", url] => {
+            Engine::connect().and_then(|engine| setup(&engine, url, None, image, json))
+        }
         ["setup", url, "--port", port] => match port.parse::<u16>() {
             Ok(port) if port > 0 => {
-                Engine::connect().and_then(|engine| setup(&engine, url, Some(port), json))
+                Engine::connect().and_then(|engine| setup(&engine, url, Some(port), image, json))
             }
             _ => {
                 eprintln!("{USAGE}");
                 return EXIT_USAGE;
             }
         },
-        ["test"] => Engine::connect().and_then(|engine| test(&engine, json)),
+        ["test"] => Engine::connect().and_then(|engine| test(&engine, image, json)),
         ["on"] => Engine::connect().and_then(|engine| enable(&engine, true, json)),
         ["off"] => Engine::connect().and_then(|engine| enable(&engine, false, json)),
-        ["create", file] => Engine::connect().and_then(|engine| create(&engine, file, None, json)),
+        ["create", file] => {
+            Engine::connect().and_then(|engine| create(&engine, file, None, image, json))
+        }
         ["create", file, "--hours", hours] => match hours.parse::<u64>() {
             Ok(hours) if (1..=24 * 30).contains(&hours) => {
-                Engine::connect().and_then(|engine| create(&engine, file, Some(hours), json))
+                Engine::connect().and_then(|engine| create(&engine, file, Some(hours), image, json))
             }
             _ => {
                 eprintln!("{USAGE}");
@@ -158,6 +176,79 @@ fn state_label(state: ShareState) -> &'static str {
     }
 }
 
+/// Removes `--qr IMAGE` from `words`. `Err` when it has no usable file name:
+/// the name must end in `.svg` or `.png`.
+fn take_image_path(words: &mut Vec<&str>) -> Result<Option<String>, ()> {
+    let Some(at) = words.iter().position(|word| *word == "--qr") else {
+        return Ok(None);
+    };
+    let path = words.get(at + 1).map(|path| (*path).to_owned()).ok_or(())?;
+    words.drain(at..at + 2);
+    if words.contains(&"--qr") || qr_image::Format::from_path(&path).is_none() {
+        return Err(());
+    }
+    Ok(Some(path))
+}
+
+/// The modules of a QR code for `text`, row by row: `1` dark, `0` light. The
+/// same shape the desktop draws and saves from.
+fn qr_rows(text: &str) -> Option<Vec<String>> {
+    let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::L).ok()?;
+    let width = code.width();
+    Some(
+        code.to_colors()
+            .chunks(width)
+            .map(|row| {
+                row.iter()
+                    .map(|color| {
+                        if *color == qrcode::Color::Dark {
+                            '1'
+                        } else {
+                            '0'
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// Saves the link's QR code to `path` when the person asked for an image. The
+/// file IS the link, so it is written only here, only to the path they gave,
+/// and never over a file that exists.
+fn save_image(link: &str, path: Option<&str>) -> Option<Result<(), String>> {
+    let path = path?;
+    let write = || -> Result<(), String> {
+        let format = qr_image::Format::from_path(path).ok_or("Use a .svg or .png file name.")?;
+        let rows = qr_rows(link).ok_or("The link does not fit in a QR code.")?;
+        let bytes = qr_image::render(&rows, format).ok_or("The QR code could not be drawn.")?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| format!("Could not save the QR image: {error}"))?;
+        std::io::Write::write_all(&mut file, &bytes).map_err(|error| {
+            // Nothing half-written is left behind: the file was ours (new).
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            format!("Could not save the QR image: {error}")
+        })
+    };
+    Some(write())
+}
+
+/// Tells the person what happened to the image they asked for. A failure is
+/// reported but does not hide the link: it was made and is shown once.
+fn report_image(saved: &Option<Result<(), String>>, path: Option<&str>) {
+    match (saved, path) {
+        (Some(Ok(())), Some(path)) => println!(
+            "Saved the QR image to {path}. It is the link itself: anyone who has the file can download once. Delete it when you are done."
+        ),
+        (Some(Err(problem)), _) => eprintln!("{problem}"),
+        _ => {}
+    }
+}
+
 /// The text of a QR code for `text`, drawn with block characters for a dark
 /// terminal. `None` when it does not fit in a code.
 pub(crate) fn qr(text: &str) -> Option<String> {
@@ -174,7 +265,13 @@ pub(crate) fn qr(text: &str) -> Option<String> {
 
 /// Stores the address, waits for the listener, then walks the person through
 /// the test link. Turning sharing on stays a separate step.
-fn setup(engine: &Engine, url: &str, port: Option<u16>, json: bool) -> Result<(), ProtocolError> {
+fn setup(
+    engine: &Engine,
+    url: &str,
+    port: Option<u16>,
+    image: Option<&str>,
+    json: bool,
+) -> Result<(), ProtocolError> {
     let configured = sharing(engine.send(Command::ConfigureSharing {
         base_url: Some(url.trim().to_owned()),
         port,
@@ -198,24 +295,26 @@ fn setup(engine: &Engine, url: &str, port: Option<u16>, json: bool) -> Result<()
             current.port
         );
     }
-    test_and_wait(engine, json)
+    test_and_wait(engine, image, json)
 }
 
-fn test(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
-    test_and_wait(engine, json)
+fn test(engine: &Engine, image: Option<&str>, json: bool) -> Result<(), ProtocolError> {
+    test_and_wait(engine, image, json)
 }
 
-fn test_and_wait(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
+fn test_and_wait(engine: &Engine, image: Option<&str>, json: bool) -> Result<(), ProtocolError> {
     let link = match engine.send(Command::StartShareTest)? {
         CommandResult::ShareLink { link, .. } => link,
         other => return Err(client::unexpected(&other)),
     };
+    let saved = save_image(link.expose(), image);
     if !json {
         println!("\nOpen this test link on a phone with Wi-Fi off (mobile data):\n");
         println!("  {}\n", link.expose());
         if let Some(code) = qr(link.expose()) {
             println!("{code}");
         }
+        report_image(&saved, image);
         println!(
             "Press Download on the page. Waiting up to 15 minutes (Ctrl+C to stop waiting)..."
         );
@@ -231,8 +330,10 @@ fn test_and_wait(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
         client::print_json(&serde_json::json!({
             "tested": current.tested,
             "link": link.expose(),
+            "qr_image": image.filter(|_| matches!(saved, Some(Ok(())))),
             "sharing": current,
         }));
+        report_image(&saved, None);
         return Ok(());
     }
     if current.tested {
@@ -265,6 +366,7 @@ fn create(
     engine: &Engine,
     file: &str,
     hours: Option<u64>,
+    image: Option<&str>,
     json: bool,
 ) -> Result<(), ProtocolError> {
     let path = std::path::absolute(file)
@@ -278,14 +380,21 @@ fn create(
         CommandResult::ShareLink { link, share } => (link, share),
         other => return Err(client::unexpected(&other)),
     };
+    let saved = save_image(link.expose(), image);
     if json {
-        client::print_json(&serde_json::json!({ "link": link.expose(), "share": item }));
+        client::print_json(&serde_json::json!({
+            "link": link.expose(),
+            "share": item,
+            "qr_image": image.filter(|_| matches!(saved, Some(Ok(())))),
+        }));
+        report_image(&saved, None);
         return Ok(());
     }
     println!("{}\n", link.expose());
     if let Some(code) = qr(link.expose()) {
         println!("{code}");
     }
+    report_image(&saved, image);
     println!(
         "{} bytes. Works once, for {}. Shown only now: it cannot be listed again.",
         item.size,
@@ -334,7 +443,48 @@ fn revoke(engine: &Engine, reference: &str, json: bool) -> Result<(), ProtocolEr
 
 #[cfg(test)]
 mod tests {
-    use super::qr;
+    use super::{qr, save_image, take_image_path};
+
+    fn link() -> String {
+        format!(
+            "https://share.example.com/s/{}#{}",
+            "A".repeat(43),
+            "B".repeat(43)
+        )
+    }
+
+    #[test]
+    fn the_image_option_needs_a_svg_or_png_name_and_leaves_the_rest() {
+        let mut words = vec!["create", "a.bin", "--qr", "code.PNG", "--hours", "2"];
+        assert_eq!(take_image_path(&mut words), Ok(Some("code.PNG".to_owned())));
+        assert_eq!(words, ["create", "a.bin", "--hours", "2"]);
+        let mut none = vec!["test"];
+        assert_eq!(take_image_path(&mut none), Ok(None));
+        for bad in [
+            vec!["test", "--qr"],
+            vec!["test", "--qr", "code.jpg"],
+            vec!["test", "--qr", "a.png", "--qr", "b.png"],
+        ] {
+            assert!(take_image_path(&mut bad.clone()).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_image_is_written_only_to_the_named_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let svg = dir.path().join("code.svg");
+        let png = dir.path().join("code.png");
+        for path in [&svg, &png] {
+            let name = path.to_str().unwrap();
+            assert_eq!(save_image(&link(), Some(name)), Some(Ok(())));
+            // A second save never replaces what is there.
+            assert!(matches!(save_image(&link(), Some(name)), Some(Err(_))));
+        }
+        assert!(std::fs::read_to_string(&svg).unwrap().starts_with("<svg "));
+        assert_eq!(&std::fs::read(&png).unwrap()[1..4], b"PNG");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+        assert_eq!(save_image(&link(), None), None);
+    }
 
     #[test]
     fn a_link_fits_in_a_qr_code_drawn_in_block_characters() {

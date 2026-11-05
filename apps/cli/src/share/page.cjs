@@ -155,9 +155,18 @@
   const message = document.getElementById('message');
   const button = document.getElementById('start');
   const progress = document.getElementById('progress');
+  const bar = document.getElementById('bar');
+  const card = document.getElementById('card');
+  const chip = document.getElementById('chip-text');
+  const STATES = { ready: 'Ready', working: 'Working', done: 'Saved', problem: 'Not saved' };
 
-  function say(text) {
+  // The text under the heading, and the state the card is drawn in.
+  function say(text, state) {
     message.textContent = text;
+    if (state) {
+      card.dataset.state = state;
+      chip.textContent = STATES[state];
+    }
   }
 
   async function fetchFrom(offset, signal) {
@@ -180,6 +189,8 @@
     const splitter = createSplitter();
     const parts = [];
     let saved = 0;
+    let received = 0;
+    let total = 0;
     const keep = (plain) => {
       for (const piece of plain) {
         const file = splitter.feed(piece);
@@ -189,15 +200,25 @@
         }
       }
       progress.textContent = saved ? Math.round(saved / 1024 / 1024 * 10) / 10 + ' MB received' : '';
+      if (total > 0) bar.value = Math.min(received, total);
     };
     let offset = 0;
     for (let attempt = 0; ; attempt += 1) {
       try {
         const response = await fetchFrom(offset);
+        if (offset === 0) {
+          // The size of the encrypted stream: all the page learns about the file.
+          total = Number(response.headers.get('Content-Length')) || 0;
+          bar.hidden = false;
+          if (total > 0) bar.max = total;
+          else bar.removeAttribute('value');
+        }
+        received = offset;
         const reader = response.body.getReader();
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          received += value.length;
           keep(await decryptor.push(value));
         }
         keep(await decryptor.finish());
@@ -206,7 +227,7 @@
         if (error instanceof ShareError || attempt >= 4) throw error;
         // The connection dropped: continue from the last whole chunk.
         offset = decryptor.resumeAt();
-        say('The connection dropped. Trying again...');
+        say('The connection dropped. Trying again...', 'working');
         await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
       }
     }
@@ -224,22 +245,24 @@
   try {
     key = keyFromFragment(location.hash.slice(1));
   } catch (error) {
-    say(SEALED_PROBLEMS.key);
+    say(SEALED_PROBLEMS.key, 'problem');
     button.hidden = true;
   }
   if (key !== null) {
     button.addEventListener('click', async () => {
       button.disabled = true;
-      say('Downloading and decrypting in this browser...');
+      say('Downloading and decrypting in this browser...', 'working');
       try {
         await download(key);
-        say('Done. The file was saved to your downloads. This link works once and is now used up.');
+        say('Done. The file was saved to your downloads. This link works once and is now used up.', 'done');
+        bar.hidden = true;
         button.hidden = true;
       } catch (error) {
         const known = error instanceof ShareError && SEALED_PROBLEMS[error.message];
         say(known || (error instanceof ShareError && error.message === 'gone'
           ? 'This link has already been used, expired or was withdrawn.'
-          : 'The download could not finish. Check the connection and open the link again.'));
+          : 'The download could not finish. Check the connection and open the link again.'), 'problem');
+        bar.hidden = true;
         button.hidden = true;
       }
     });

@@ -5,13 +5,15 @@
 use sha2::{Digest, Sha256};
 
 const TEMPLATE: &str = include_str!("page.html");
-const STYLE: &str = include_str!("page.css");
+/// The design tokens (`design/tokens.css`, the one source of the desktop's
+/// colors, type and spacing) and then the page's own rules. The policy allows
+/// this whole text by its hash.
+const STYLE: &str = concat!(
+    include_str!("../../../../design/tokens.css"),
+    include_str!("page.css")
+);
 const SCRIPT: &str = include_str!("page.cjs");
-const ENDED: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<meta name=\"robots\" content=\"noindex\"><title>Fetchpath</title></head><body>\
-<h1>Fetchpath</h1><p>This link has already been used, has expired or was withdrawn. \
-Ask the sender for a new one.</p></body></html>";
+const ENDED: &str = include_str!("ended.html");
 
 pub(super) struct Page {
     pub(super) html: String,
@@ -34,10 +36,22 @@ impl Page {
     }
 }
 
-/// The page of a link that cannot be used any more: no script, no policy
-/// exceptions.
-pub(super) const fn ended() -> &'static str {
-    ENDED
+/// The page of a link that cannot be used any more: the same style, no
+/// script, and a policy that allows that style by hash and nothing else.
+pub(super) struct Ended {
+    pub(super) html: String,
+    pub(super) policy: String,
+}
+
+pub(super) fn ended() -> &'static Ended {
+    static PAGE: std::sync::OnceLock<Ended> = std::sync::OnceLock::new();
+    PAGE.get_or_init(|| Ended {
+        html: ENDED.replace("<!--STYLE-->", STYLE),
+        policy: format!(
+            "default-src 'none'; style-src 'sha256-{}'; base-uri 'none'; form-action 'none';              frame-ancestors 'none'",
+            base64(&Sha256::digest(STYLE.as_bytes())),
+        ),
+    })
 }
 
 /// The policy for pages without any script or style of their own.
@@ -74,6 +88,19 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn the_ended_page_has_its_style_by_hash_and_no_script() {
+        let ended = ended();
+        assert!(!ended.html.contains("<!--"));
+        assert!(!ended.html.contains("<script"));
+        let hash = base64(&Sha256::digest(STYLE.as_bytes()));
+        assert!(ended.policy.contains(&format!("style-src 'sha256-{hash}'")));
+        assert!(!ended.policy.contains("script-src") && !ended.policy.contains("unsafe-"));
+        let from = ended.html.find("<style>").unwrap() + "<style>".len();
+        let to = ended.html[from..].find("</style>").unwrap() + from;
+        assert_eq!(&ended.html[from..to], STYLE);
     }
 
     #[test]
