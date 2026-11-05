@@ -580,6 +580,7 @@ A link lets someone with no Fetchpath download one of your files once, through a
 fetchpath share setup https://share.example.com   # store the address, then make a test link and QR code
 fetchpath share on                                # allow file links, after the test link was downloaded
 fetchpath share create D:\Docs\report.pdf --hours 6   # one link, shown once (default 1 day, at most 30)
+fetchpath share create D:\Docs\report.pdf --qr link.png   # also save the QR code as an image (.png or .svg)
 fetchpath share                                   # state and links (never the link itself)
 fetchpath share revoke 3f9a                       # or: revoke all
 fetchpath share off
@@ -587,7 +588,7 @@ fetchpath share off
 
 - **Off until the test passes.** Open the test link on a phone using mobile data (Wi-Fi off) and press **Download**. Only then does `share on` work, and it is off again after every engine restart.
 - **Each link works once** and ends when its file has been sent in full (resuming a broken download counts), when it expires or when you revoke it. Fetchpath says "sent" when the bytes were handed to the connection, not that the other person has them.
-- **The link is shown once**, when you make it. It is not stored: a restart of the engine revokes every link.
+- **The link is shown once**, when you make it. It is not stored: a restart of the engine revokes every link. `--qr FILE` (on `setup`, `test` and `create`) saves the QR code as an image to a new file you name. The image is the link itself: anyone who has the file can download once, so delete it when you are done. The desktop has the same under **Save QR image…**.
 - **The file is locked** (it cannot be changed, renamed or deleted) while its link is live. Revoke the link to unlock it.
 - **Only you make links.** An AI agent cannot; it offers files through the inbox above. Files from downloads that used sign-ins, cookies or a link with a password are never shared.
 - Large files are saved through the phone browser's memory, so a very large file may fail there.

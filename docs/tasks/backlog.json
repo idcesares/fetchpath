@@ -4097,6 +4097,45 @@
         "apps/desktop/tools/ui-smoke.ps1",
         "docs/development/MCP.md"
       ]
+    },
+    {
+      "owner": "lead",
+      "id": "FP-127",
+      "title": "Restyle the share download page and make the link and QR easy to save",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-117"
+      ],
+      "status": "done",
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/src/share",
+        "apps/cli/src/sharing.rs",
+        "crates/fetchpath-protocol/src",
+        "apps/desktop/src",
+        "apps/desktop/src-tauri/src",
+        "apps/desktop/index.html",
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/SHARE-RELAY.md",
+        "docs/user/CLI.md",
+        "SECURITY.md",
+        "docs/tasks/backlog.json"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A13"
+      ],
+      "acceptance": "Follow-up to FP-117: the recipient page uses the design system tokens and components of the desktop app without loosening the CSP (hash computed at runtime), external requests, file name or hash exposure, or the decryption and resume behavior. The desktop Public links panel and `fetchpath share create|test` give the link as text, a copy-link button (desktop), a QR drawn on screen (desktop) or in the terminal (CLI), and a QR image saved as SVG or PNG only to a path the person chooses. Links and keys stay out of logs, Git and fixtures; sharing stays off until the test passes.",
+      "verification": "page.test.mjs and the share listener tests pass with the new page; unit tests of the SVG and PNG writer (valid PNG chunks, module-exact SVG); CLI unit tests that the image option writes only the named new file; desktop frontend build, clippy and ui-smoke still pass (ui-smoke does not open the share panel); SECURITY.md names the saved image as the one way a link reaches disk.",
+      "evidence": [
+        "crates/fetchpath-protocol/src/qr_image.rs",
+        "apps/cli/src/sharing.rs",
+        "apps/cli/src/share/page.rs",
+        "apps/cli/src/share/page.test.mjs",
+        "apps/cli/src/share/tests.rs"
+      ]
     }
   ]
 }

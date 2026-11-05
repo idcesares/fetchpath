@@ -5,15 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
 <title>Fetchpath</title>
 <style><!--STYLE--></style>
 </head>
 <body>
+<header class="bar">
+<span class="mark" aria-hidden="true"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M5 18c5 0 3-12 8-12h6"/><circle cx="5" cy="18" r="1.6"/><path d="m16 3 3 3-3 3"/></svg></span>
+<span class="brand">Fetchpath</span>
+</header>
 <main>
-<h1>Fetchpath</h1>
+<section class="card" id="card" data-state="ready">
+<p class="eyebrow">Encrypted file</p>
+<h1>Someone sent you a file</h1>
 <p id="message">Someone sent you a file with Fetchpath. It is encrypted, and this page decrypts it in your browser.</p>
-<p id="progress" aria-live="polite"></p>
+<p class="chip" id="chip"><span id="chip-text">Ready</span></p>
+<progress id="bar" max="1" hidden aria-label="Download progress"></progress>
+<p id="progress" class="hint" aria-live="polite"></p>
 <button id="start" type="button" disabled>Download</button>
+<ul class="facts">
+<li>The key is in this link and never leaves your browser.</li>
+<li>The link works once.</li>
+<li>Nothing is saved unless the whole file arrives intact.</li>
+</ul>
+</section>
 </main>
 <script><!--SCRIPT--></script>
 </body>

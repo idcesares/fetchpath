@@ -24,6 +24,7 @@ pub mod model;
 #[cfg(windows)]
 pub mod pipe;
 pub mod principal;
+pub mod qr_image;
 pub mod schema;
 pub mod send;
 pub mod view;

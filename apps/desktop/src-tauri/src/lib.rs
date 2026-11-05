@@ -10,6 +10,7 @@ use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
 use fetchpath_protocol::model::{self, RuleSpec};
 use fetchpath_protocol::principal::{AgentName, AgentPolicy};
+use fetchpath_protocol::qr_image;
 use fetchpath_protocol::send::OfferSource;
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
 use std::path::PathBuf;
@@ -1108,30 +1109,65 @@ struct NewShare {
     qr_rows: Vec<String>,
 }
 
+/// The modules of the link's QR code, row by row: `1` dark, `0` light.
+fn qr_rows(link: &str) -> Option<Vec<String>> {
+    let code =
+        qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L).ok()?;
+    let width = code.width();
+    Some(
+        code.to_colors()
+            .chunks(width)
+            .map(|row| {
+                row.iter()
+                    .map(|color| {
+                        if *color == qrcode::Color::Dark {
+                            '1'
+                        } else {
+                            '0'
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// Saves the QR code of a link just made as an image, to the file the person
+/// chose in the save dialog. The image IS the link: this is the one way a link
+/// reaches disk, and only on their explicit choice (SECURITY.md). Nothing is
+/// logged, and the file type comes from the name (`.svg` or `.png`).
+#[tauri::command]
+async fn save_share_qr(path: String, link: String) -> Result<(), String> {
+    off_thread(move || {
+        let format = qr_image::Format::from_path(&path)
+            .ok_or_else(|| "Save the image as a .svg or .png file.".to_owned())?;
+        let rows =
+            qr_rows(&link).ok_or_else(|| "The link does not fit in a QR code.".to_owned())?;
+        let bytes = qr_image::render(&rows, format)
+            .ok_or_else(|| "The QR code could not be drawn.".to_owned())?;
+        // Written beside the target and renamed over it, so a write that fails
+        // leaves an existing file as it was and no cut-off image behind.
+        let temporary = format!("{path}.fetchpath-part");
+        let saved = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, &bytes))
+            .and_then(|()| std::fs::rename(&temporary, &path));
+        saved.map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("Could not save the image: {error}")
+        })
+    })
+    .await
+}
+
 fn new_share(result: CommandResult) -> Result<NewShare, String> {
     let CommandResult::ShareLink { link, share } = result else {
         return Err(unexpected(&result));
     };
     let link = link.expose().to_owned();
-    let qr_rows = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L)
-        .map(|code| {
-            let width = code.width();
-            code.to_colors()
-                .chunks(width)
-                .map(|row| {
-                    row.iter()
-                        .map(|color| {
-                            if *color == qrcode::Color::Dark {
-                                '1'
-                            } else {
-                                '0'
-                            }
-                        })
-                        .collect()
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let qr_rows = qr_rows(&link).unwrap_or_default();
     Ok(NewShare {
         link,
         share,
@@ -1430,6 +1466,7 @@ pub fn run() {
             set_sharing_enabled,
             start_share_test,
             create_share,
+            save_share_qr,
             revoke_share
         ])
         .setup(|app| {

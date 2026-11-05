@@ -531,7 +531,7 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 .lan-devices span { overflow-wrap: anywhere; }
 .lan-pairing { margin: var(--fp-space-2) 0; padding: 10px 12px; border-left: var(--fp-rail) solid var(--fp-accent); background: var(--fp-surface-inset); }
 .share-qr[hidden] { display: none; }
-.share-qr { display: block; width: 14rem; max-width: 100%; height: auto; margin-top: var(--fp-space-3); }
+.share-qr { display: block; width: 15rem; max-width: 100%; height: auto; margin-top: var(--fp-space-3); border: 1px solid var(--fp-line-strong); border-radius: var(--fp-radius-md); }
 .lan-code { margin: 6px 0 0; font: 600 var(--fp-text-2xl)/1.2 var(--fp-font-mono); letter-spacing: 0.08em; }
 
 /* Narrow windows and large text: rows wrap, nothing hides behind an icon. */

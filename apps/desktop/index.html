@@ -582,9 +582,11 @@
             <input id="share-new-link" readonly spellcheck="false" autocomplete="off" />
             <div class="media-tools-actions">
               <button id="share-copy" class="secondary" type="button">Copy link</button>
+              <button id="share-save-qr" class="secondary" type="button">Save QR image…</button>
               <button id="share-hide" class="quiet" type="button">Hide link</button>
             </div>
             <svg id="share-qr" class="share-qr" role="img" aria-label="QR code for the link" hidden></svg>
+            <p id="share-qr-note" class="hint field-note" hidden>Scan the code with a phone camera, or save it as an image (SVG or PNG). The image holds the whole link, so it works once and anyone who has the file can use it: delete it after sending.</p>
           </div>
           <label class="check">
             <input id="share-enabled" type="checkbox" disabled aria-describedby="share-enabled-state" />
