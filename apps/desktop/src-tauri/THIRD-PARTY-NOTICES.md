@@ -7,7 +7,7 @@ This file ships beside `Fetchpath.exe` so the notices travel with the binary.
 Fetchpath's own source is licensed **MIT OR Apache-2.0** (`[workspace.package] license`
 in the repository root `Cargo.toml`).
 
-The table below is generated from `Cargo.lock`, so it lists the 691 third-party
+The table below is generated from `Cargo.lock`, so it lists the 709 third-party
 packages that are actually part of a build rather than a hand-maintained list.
 The **Source of the license value** column says, for every row, whether the
 value was read from the crate's own manifest or recorded by a maintainer.
@@ -67,6 +67,9 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | arc-swap | 1.9.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | argon2 | 0.6.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| asn1-rs | 0.7.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| asn1-rs-derive | 0.6.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| asn1-rs-impl | 0.2.0 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | assert_cfg | 0.1.0 | Zlib | Read from the crate manifest in the local registry |
 | async-compression | 0.4.48 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | async-stream | 0.3.6 | MIT | Read from the crate manifest in the local registry |
@@ -85,11 +88,13 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | backon | 1.6.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | base16ct | 1.0.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | base64 | 0.21.7 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| base64 | 0.22.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | bcrypt-pbkdf | 0.11.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| bit-vec | 0.9.1 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | bitflags | 1.3.2 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | bitvec | 1.1.1 | MIT | Read from the crate manifest in the local registry |
@@ -174,6 +179,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | defmt-parser | 1.0.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | delegate | 0.13.5 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | der | 0.8.2 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| der-parser | 10.0.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | deranged | 0.5.8 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | derive_more | 2.1.1 | MIT | Read from the crate manifest in the local registry |
 | derive_more-impl | 2.1.1 | MIT | Read from the crate manifest in the local registry |
@@ -260,6 +266,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | gtk | 0.18.2 | MIT | Read from the crate manifest in the local registry |
 | gtk-sys | 0.18.2 | MIT | Read from the crate manifest in the local registry |
 | gtk3-macros | 0.18.2 | MIT | Read from the crate manifest in the local registry |
+| h2 | 0.4.20 | MIT | Read from the crate manifest in the local registry |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -299,6 +306,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | infer | 0.22.0 | MIT | Read from the crate manifest in the local registry |
 | inout | 0.2.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | instability | 0.3.14 | MIT | Read from the crate manifest in the local registry |
+| instant-acme | 0.8.5 | Apache-2.0 | Read from the crate manifest in the local registry |
 | intervaltree | 0.2.7 | MIT | Read from the crate manifest in the local registry |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | itertools | 0.14.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -366,6 +374,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | metrics | 0.24.6 | MIT | Read from the crate manifest in the local registry |
 | mime | 0.3.17 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | mime_guess | 2.0.5 | MIT | Read from the crate manifest in the local registry |
+| minimal-lexical | 0.2.1 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | Read from the crate manifest in the local registry |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | Read from the crate manifest in the local registry |
 | mio | 1.2.3 | MIT | Read from the crate manifest in the local registry |
@@ -380,11 +389,13 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | new_debug_unreachable | 1.0.6 | MIT | Read from the crate manifest in the local registry |
 | nix | 0.30.1 | MIT | Read from the crate manifest in the local registry |
 | nix | 0.31.3 | MIT | Read from the crate manifest in the local registry |
+| nom | 7.1.3 | MIT | Read from the crate manifest in the local registry |
 | nonzero_ext | 0.3.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | num | 0.2.1 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | num_enum | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | num_enum_derive | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | num_threads | 0.1.7 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| num-bigint | 0.4.8 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | num-bigint | 0.5.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | num-complex | 0.2.4 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -409,6 +420,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | objc2-ui-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | objc2-user-notifications | 0.3.2 | Zlib OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | objc2-web-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| oid-registry | 0.8.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | openssl-probe | 0.1.6 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -428,6 +440,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | password-hash | 0.6.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | pastey | 0.2.3 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| pem | 4.0.0 | MIT | Read from the crate manifest in the local registry |
 | pem-rfc7468 | 1.0.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | phc | 0.6.1 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
@@ -483,6 +496,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | ratatui-widgets | 0.3.2 | MIT | Read from the crate manifest in the local registry |
 | raw-cpuid | 11.6.0 | MIT | Read from the crate manifest in the local registry |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | Read from the crate manifest in the local registry |
+| rcgen | 0.14.10 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | redox_syscall | 0.5.18 | MIT | Read from the crate manifest in the local registry |
 | redox_users | 0.5.3 | MIT | Read from the crate manifest in the local registry |
 | ref-cast | 1.0.27 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -505,6 +519,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | russh-util | 0.52.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
+| rusticata-macros | 4.1.0 | MIT/Apache-2.0 | Read from the crate manifest in the local registry |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
@@ -590,6 +605,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | syn | 2.0.119 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | syn | 3.0.6 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | sync_wrapper | 1.0.2 | Apache-2.0 | Read from the crate manifest in the local registry |
+| synstructure | 0.13.2 | MIT | Read from the crate manifest in the local registry |
 | synstructure | 0.14.0 | MIT | Read from the crate manifest in the local registry |
 | system-deps | 6.2.2 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | tao | 0.37.2 | Apache-2.0 | Read from the crate manifest in the local registry |
@@ -732,6 +748,8 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | wyz | 0.5.1 | MIT | Read from the crate manifest in the local registry |
 | x11 | 2.21.0 | MIT | Read from the crate manifest in the local registry |
 | x11-dl | 2.21.0 | MIT | Read from the crate manifest in the local registry |
+| x509-parser | 0.18.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
+| yasna | 0.6.0 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | yoke | 0.8.3 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | yoke-derive | 0.8.4 | Unicode-3.0 | Read from the crate manifest in the local registry |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
