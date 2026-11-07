@@ -7,6 +7,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
+use zeroize::Zeroizing;
 
 /// Longest link accepted, matching the queue's own limit.
 pub const MAX_URL_LENGTH: usize = 8_192;
@@ -108,7 +109,7 @@ impl JsonSchema for SensitiveUrl {
 /// `Debug` hides it and no view carries it.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct RelayKey(String);
+pub struct RelayKey(Zeroizing<String>);
 
 impl RelayKey {
     /// The key as hex, for the engine to seal. Never log it.
@@ -121,17 +122,19 @@ impl TryFrom<String> for RelayKey {
     type Error = String;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
+        // The caller's copy is wiped when this returns.
+        let value = Zeroizing::new(value);
         let text = value.trim();
         if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err("an enrollment key is 64 hexadecimal characters".into());
         }
-        Ok(Self(text.to_ascii_lowercase()))
+        Ok(Self(Zeroizing::new(text.to_ascii_lowercase())))
     }
 }
 
 impl From<RelayKey> for String {
     fn from(value: RelayKey) -> Self {
-        value.0
+        value.0.as_str().to_owned()
     }
 }
 

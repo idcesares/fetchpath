@@ -49,4 +49,4 @@ If the status says the relay refused the key, the key is wrong or was rotated. A
 
 ## Status
 
-Built and tested on loopback, including the engine. Not yet tried on a real server: the Let's Encrypt certificate, a Linux build and a phone on mobile data are the owner's last check. The desktop app has no relay screen yet; use the command line.
+Built and tested on loopback, including the engine. Not yet tried on a real server: the Let's Encrypt certificate, a Linux build and a phone on mobile data are the owner's last check. In the desktop app, Settings, Public links, "Use my own relay instead of a tunnel" does the same: save the relay's address in the address field, then enter the key. The key field is cleared as soon as you press the button.

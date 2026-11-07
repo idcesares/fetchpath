@@ -328,6 +328,32 @@ fn only_the_person_makes_links() {
 }
 
 #[test]
+fn no_other_principal_can_change_the_relay_or_its_key() {
+    let s = setup();
+    let keys = with_keys(&s);
+    configure(&s.user, BASE);
+    for principal in [
+        Principal::Device(
+            fetchpath_protocol::principal::DeviceId::try_from("abc123".to_owned()).unwrap(),
+        ),
+        Principal::Browser,
+        Principal::Agent(AgentName::try_from("helper").unwrap()),
+    ] {
+        let client = InProcessClient::manual(Arc::clone(&s.engine)).with_principal(principal);
+        let refused = send(
+            &client,
+            Command::ConfigureRelay {
+                relay: true,
+                key: Some(relay_key()),
+            },
+        );
+        assert!(refused.is_err());
+    }
+    assert!(keys.0.lock().unwrap().is_none(), "a key was stored");
+    assert!(!status(&s.user).relay);
+}
+
+#[test]
 fn a_file_is_frozen_while_its_link_lives_and_unsafe_sources_are_refused() {
     let s = setup();
     enabled(&s);

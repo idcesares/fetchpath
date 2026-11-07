@@ -3858,6 +3858,7 @@
       "modelTier": "astra-high",
       "files": [
         "apps/cli",
+        "apps/desktop",
         "crates",
         "docs/user",
         "docs/architecture/REPOSITORY.md",
@@ -3875,7 +3876,7 @@
         "docs/development/SHARE-RELAY.md",
         "docs/user/RELAY.md"
       ],
-      "note": "Code complete on feat/fp-118-relay: relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Not done: gate X7 (real Linux VPS build, Let's Encrypt, phone on mobile data), owned by Isaac; the desktop has no relay screen."
+      "note": "Code complete on feat/fp-118-relay: relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Not done: gate X7 (real Linux VPS build, Let's Encrypt, phone on mobile data), owned by Isaac; the desktop relay section is type-checked but not clicked through."
     },
     {
       "owner": null,

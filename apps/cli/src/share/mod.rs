@@ -22,6 +22,7 @@ pub(crate) use relay_key::KeyFile;
 use crate::remote::bind;
 use fetchpath_session::engine::{Engine, RelayPlan};
 use fetchpath_session::share::ShareStore;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -63,6 +64,8 @@ pub struct Share {
     running: Mutex<Option<Running>>,
     failed: Mutex<Option<(Kind, Instant)>>,
     relay: Option<(Arc<relay_key::KeyFile>, relay::Dial)>,
+    /// Set by `shutdown`: a pass that was already on its way starts nothing.
+    closed: AtomicBool,
 }
 
 impl Share {
@@ -72,6 +75,7 @@ impl Share {
             running: Mutex::new(None),
             failed: Mutex::new(None),
             relay: None,
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -96,6 +100,9 @@ impl Share {
         // Read the setup under the lock, so two passes cannot act on a setup
         // that changed between them.
         let mut running = lock(&self.running);
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
         let relay_plan = self.engine.share_relay();
         if let (Some(plan), None) = (&relay_plan, &self.relay) {
             self.engine.set_share_relay(
@@ -157,6 +164,7 @@ impl Share {
 
     /// Closes the port and every connection.
     pub fn shutdown(&self) {
+        self.closed.store(true, Ordering::SeqCst);
         if let Some(started) = lock(&self.running).take() {
             stop(started);
         }

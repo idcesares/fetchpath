@@ -390,7 +390,7 @@ fn read_key() -> Result<RelayKey, ProtocolError> {
     std::io::stdin()
         .read_line(&mut line)
         .map_err(|_| client::input_error("The key could not be read."))?;
-    RelayKey::try_from(line.trim().to_owned())
+    RelayKey::try_from(std::mem::take(&mut *line))
         .map_err(|_| client::input_error("That is not a relay key (64 hex characters)."))
 }
 
