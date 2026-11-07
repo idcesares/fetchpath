@@ -3852,14 +3852,18 @@
       "dependsOn": [
         "FP-117"
       ],
-      "status": "todo",
+      "status": "in_progress",
+      "owner": "lead",
       "priority": "P3",
       "modelTier": "astra-high",
       "files": [
         "apps/cli",
         "crates",
         "docs/user",
-        "docs/architecture/REPOSITORY.md"
+        "docs/architecture/REPOSITORY.md",
+        "docs/development/SHARE-RELAY.md",
+        "SECURITY.md",
+        "PROJECT.md"
       ],
       "acceptanceIds": [
         "A07",

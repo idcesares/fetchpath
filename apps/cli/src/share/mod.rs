@@ -13,6 +13,9 @@ mod body;
 mod http;
 mod listener;
 mod page;
+// Not used until the engine connects to a relay (FP-118); remove then.
+#[allow(dead_code)]
+mod relay_key;
 
 use crate::remote::bind;
 use fetchpath_session::engine::Engine;
