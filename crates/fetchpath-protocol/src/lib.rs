@@ -38,5 +38,5 @@ pub use error::{Action, ErrorCode, ErrorFamily, ErrorScope, ProtocolError};
 pub use frame::{MAX_FRAME_BYTES, decode_command, decode_server_message, encode_frame};
 pub use ids::{AttemptId, ClientId, CommandId, CredentialRef, InstanceId, JobId, Timestamp};
 pub use message::{CommandResult, EventPayload, JobEvent, ProgressSample, Reply, ServerMessage};
-pub use model::{JobSnapshot, JobState, SensitiveUrl};
+pub use model::{JobSnapshot, JobState, RelayKey, SensitiveUrl};
 pub use principal::{AgentName, AgentPolicy, Principal};

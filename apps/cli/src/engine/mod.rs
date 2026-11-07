@@ -304,13 +304,25 @@ fn serve(grace: Duration) -> Result<i32, String> {
     };
 
     let connections = Arc::new(AtomicUsize::new(0));
+    let share = match crate::lan::lan_dir() {
+        Ok(lan) => {
+            // The relay key is sealed with the same helper as the LAN identity.
+            let keys = Arc::new(crate::share::KeyFile::new(
+                lan.join("relay-key"),
+                Box::new(fetchpath_lan::Dpapi),
+            ));
+            engine.set_relay_keys(keys.clone());
+            Share::with_relay(Arc::clone(&engine), keys, crate::share::tls_dial())
+        }
+        Err(_) => Share::new(Arc::clone(&engine)),
+    };
     let host = Arc::new(Host {
         web: Web::new(
             Arc::clone(&engine),
             home.dir().to_path_buf(),
             Arc::clone(&connections),
         ),
-        share: Share::new(Arc::clone(&engine)),
+        share,
         engine,
         stop: AtomicBool::new(false),
         connections,
@@ -529,7 +541,11 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                     .unwrap_or_else(|| host.engine.execute_as(&principal, &envelope));
                 // The listener follows the stored address. Answer with the
                 // state after it moved, not the one before it did.
-                if matches!(payload, Command::ConfigureSharing { .. }) && outcome.is_ok() {
+                if matches!(
+                    payload,
+                    Command::ConfigureSharing { .. } | Command::ConfigureRelay { .. }
+                ) && outcome.is_ok()
+                {
                     host.share.reconcile();
                     let mut status = envelope.clone();
                     status.payload = Command::ShareStatus;

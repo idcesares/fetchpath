@@ -59,6 +59,7 @@ The Rust workspace needs Rust 1.98+; CI validates with Rust 1.98.1:
 ```powershell
 $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
 & $cargo test --workspace --locked
+& $cargo test -p fetchpath-relay --features serve --locked
 & $cargo clippy --workspace --all-targets -- -D warnings
 & $cargo fmt --check
 & $cargo build --workspace --locked

@@ -77,3 +77,10 @@ Dated per-task sections were merged into one current-state record each; the old 
 `evidence/windows/fp105-agent-installer.json`, `fp105-clean-install.json` and `fp105-upgrade.json` were removed
 because nothing in the repository cites them. They remain at `4442a48`
 (`git show 4442a48:<path>`).
+
+## Superseded relay proposal (FP-118)
+
+The section "Relay mode design (FP-118, proposed, not built)" of `docs/development/SHARE-RELAY.md` was removed
+once the reviewed design ("Relay design (FP-118)") was built: it described a WebSocket transport, an `init`
+command and a different HMAC label. It remains at `3e6b2a1`
+(`git show 3e6b2a1:docs/development/SHARE-RELAY.md`).

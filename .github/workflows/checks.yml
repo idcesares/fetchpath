@@ -31,6 +31,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # Also builds target/debug/fetchpath-browser-host.exe for the Node tests.
       - run: cargo test --workspace --locked --no-fail-fast
+      # The relay's TLS front sits behind a feature the workspace run leaves off.
+      - run: cargo test -p fetchpath-relay --features serve --locked
       - name: Helper policy and durable publication recovery
         run: cargo test -p fetchpath-session --locked automatic_policy_restarts_running_helpers_and_applies_at_start -- --ignored
         env:

@@ -1,0 +1,49 @@
+[package]
+name = "fetchpath-relay"
+version = "0.1.0"
+description = "Share relay: a stateless byte pipe between visitors and enrolled Fetchpath engines"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+getrandom = "0.3.4"
+hmac = "0.13.0"
+httparse = "1.10.1"
+sha2 = "0.11.0"
+tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+
+# The server binary and its TLS/ACME stack; the engine side depends on the
+# crate without this feature.
+[features]
+tls-client = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-platform-verifier"]
+serve = ["tls-client", "tokio/signal", "dep:instant-acme", "dep:serde_json"]
+
+[[bin]]
+name = "fetchpath-relay"
+path = "src/main.rs"
+required-features = ["serve"]
+
+[dependencies.rustls]
+version = "0.23.45"
+optional = true
+
+[dependencies.rustls-platform-verifier]
+version = "0.7.1"
+optional = true
+
+[dependencies.tokio-rustls]
+version = "0.26.6"
+optional = true
+
+[dependencies.instant-acme]
+version = "0.8.5"
+features = ["rcgen"]
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.145"
+optional = true
+
+[dev-dependencies]
+rcgen = "0.14"

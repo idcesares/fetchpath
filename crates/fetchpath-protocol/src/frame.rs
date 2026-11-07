@@ -75,6 +75,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "Unpair",
     "ShareStatus",
     "ConfigureSharing",
+    "ConfigureRelay",
     "SetSharingEnabled",
     "StartShareTest",
     "CreateShare",

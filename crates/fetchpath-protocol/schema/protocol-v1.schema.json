@@ -1130,6 +1130,33 @@
           "type": "object"
         },
         {
+          "description": "Chooses Relay mode (FP-118): links go through the relay at the stored\naddress, which the person runs and enrolled this engine with. `key`\nis the relay's enrollment key; the engine seals it at rest and never\nreturns it. Changing the mode or the key ends the passed test, turns\nsharing off and revokes every link.",
+          "properties": {
+            "key": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RelayKey"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "relay": {
+              "type": "boolean"
+            },
+            "type": {
+              "const": "ConfigureRelay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "relay"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Turns file links on or off. On only after the test link was delivered\nthrough the stored address.",
           "properties": {
             "enabled": {
@@ -3832,6 +3859,11 @@
       ],
       "type": "object"
     },
+    "RelayKey": {
+      "description": "A share relay's enrollment key. Sent once, sealed by the engine, never returned or logged.",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "type": "string"
+    },
     "Reply": {
       "description": "The answer to one command. `command_id` is absent only when the command\ncould not be read far enough to find it.",
       "properties": {
@@ -4398,6 +4430,16 @@
             "string",
             "null"
           ]
+        },
+        "relay": {
+          "default": false,
+          "description": "Relay mode (FP-118): links go through the relay at `base_url`.",
+          "type": "boolean"
+        },
+        "relay_key_stored": {
+          "default": false,
+          "description": "An enrollment key is stored. The key itself is never returned.",
+          "type": "boolean"
         },
         "serving": {
           "description": "Where the listener is bound, when it is.",

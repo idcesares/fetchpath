@@ -7,6 +7,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
+use zeroize::Zeroizing;
 
 /// Longest link accepted, matching the queue's own limit.
 pub const MAX_URL_LENGTH: usize = 8_192;
@@ -99,6 +100,60 @@ impl JsonSchema for SensitiveUrl {
             "minLength": 1,
             "maxLength": MAX_URL_LENGTH,
             "description": "A link as given, possibly with secrets in it. Never displayed or logged as is."
+        })
+    }
+}
+
+/// A share relay's enrollment key: 64 hex characters (FP-118). It crosses the
+/// protocol once, from the person to the engine, and is never returned:
+/// `Debug` hides it and no view carries it.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RelayKey(Zeroizing<String>);
+
+impl RelayKey {
+    /// The key as hex, for the engine to seal. Never log it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for RelayKey {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        // The caller's copy is wiped when this returns.
+        let value = Zeroizing::new(value);
+        let text = value.trim();
+        if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("an enrollment key is 64 hexadecimal characters".into());
+        }
+        Ok(Self(Zeroizing::new(text.to_ascii_lowercase())))
+    }
+}
+
+impl From<RelayKey> for String {
+    fn from(value: RelayKey) -> Self {
+        value.0.as_str().to_owned()
+    }
+}
+
+impl fmt::Debug for RelayKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RelayKey(..)")
+    }
+}
+
+impl JsonSchema for RelayKey {
+    fn schema_name() -> Cow<'static, str> {
+        "RelayKey".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "description": "A share relay's enrollment key. Sent once, sealed by the engine, never returned or logged."
         })
     }
 }
@@ -664,6 +719,12 @@ pub struct ShareView {
     /// Why the listener is not running although an address is stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// Relay mode (FP-118): links go through the relay at `base_url`.
+    #[serde(default)]
+    pub relay: bool,
+    /// An enrollment key is stored. The key itself is never returned.
+    #[serde(default)]
+    pub relay_key_stored: bool,
     pub shares: Vec<ShareItem>,
 }
 

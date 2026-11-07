@@ -80,6 +80,8 @@ interface ShareView {
   tested: boolean;
   serving?: string;
   problem?: string;
+  relay: boolean;
+  relay_key_stored: boolean;
   shares: ShareItem[];
 }
 
@@ -638,6 +640,9 @@ lanJoin.addEventListener("click", async () => {
 const shareUrl = required<HTMLInputElement>("share-url");
 const sharePort = required<HTMLInputElement>("share-port");
 const shareSave = required<HTMLButtonElement>("share-save");
+const shareRelayKey = required<HTMLInputElement>("share-relay-key");
+const shareRelayOn = required<HTMLButtonElement>("share-relay-on");
+const shareRelayOff = required<HTMLButtonElement>("share-relay-off");
 const shareState = required<HTMLParagraphElement>("share-state");
 const shareTest = required<HTMLButtonElement>("share-test");
 const shareNew = required<HTMLDivElement>("share-new");
@@ -721,10 +726,17 @@ function renderShare(view: ShareView): void {
   if (document.activeElement !== sharePort) sharePort.value = String(view.port);
   const listening = Boolean(view.serving);
   shareState.textContent = !view.base_url
-    ? "No tunnel address is saved yet."
-    : listening
-      ? `Listening on ${view.serving}. Your tunnel must forward ${view.base_url} to this address.`
-      : `Not listening: ${view.problem ?? "the engine has not started it yet."}`;
+    ? "No address is saved yet."
+    : view.relay
+      ? listening
+        ? `Enrolled with the relay at ${view.base_url}.`
+        : `Not enrolled with the relay: ${view.problem ?? "the engine has not connected yet."}`
+      : listening
+        ? `Listening on ${view.serving}. Your tunnel must forward ${view.base_url} to this address.`
+        : `Not listening: ${view.problem ?? "the engine has not started it yet."}`;
+  shareRelayOn.disabled = !view.base_url;
+  shareRelayOff.disabled = !view.relay;
+  shareRelayKey.placeholder = view.relay_key_stored ? "A key is stored; leave empty to reuse it" : "";
   shareTest.disabled = !listening;
   shareEnabled.checked = view.enabled;
   shareEnabled.disabled = !view.tested || !listening;
@@ -803,6 +815,37 @@ shareSave.addEventListener("click", async () => {
     // The listener starts a moment after the address is stored.
     window.setTimeout(() => void refreshShare(), 1000);
     announce("Address saved. Make a test link to check that it works.");
+  } catch (error) {
+    showError(settingsError, error);
+    await refreshShare();
+  }
+});
+
+shareRelayOn.addEventListener("click", async () => {
+  clearError(settingsError);
+  // The key leaves the field at once and is held nowhere else.
+  const key = shareRelayKey.value.trim();
+  shareRelayKey.value = "";
+  try {
+    hideNewShare();
+    shareWasTested = false;
+    renderShare(await invoke<ShareView>("configure_relay", { relay: true, key: key || null }));
+    window.setTimeout(() => void refreshShare(), 1000);
+    announce("Relay saved. Make a test link to check that it works.");
+  } catch (error) {
+    showError(settingsError, error);
+    await refreshShare();
+  }
+});
+
+shareRelayOff.addEventListener("click", async () => {
+  clearError(settingsError);
+  try {
+    hideNewShare();
+    shareWasTested = false;
+    renderShare(await invoke<ShareView>("configure_relay", { relay: false, key: null }));
+    window.setTimeout(() => void refreshShare(), 1000);
+    announce("Back to a tunnel. Make a test link to check that it works.");
   } catch (error) {
     showError(settingsError, error);
     await refreshShare();

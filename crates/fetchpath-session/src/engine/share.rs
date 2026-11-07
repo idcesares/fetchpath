@@ -9,12 +9,13 @@ use super::inbox::{
 use super::{Engine, error, input, persistence};
 use crate::provenance::Marker;
 use crate::share::{
-    DEFAULT_EXPIRY, NewShare, Phase, ShareError, ShareInfo, ShareKind, ShareStore, Source,
+    DEFAULT_EXPIRY, NewShare, Phase, RelayKeyStore, ShareError, ShareInfo, ShareKind, ShareStore,
+    Source,
 };
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::error::{Action, ErrorScope, ProtocolError};
 use fetchpath_protocol::message::CommandResult;
-use fetchpath_protocol::model::{SensitiveUrl, ShareItem, ShareState, ShareView};
+use fetchpath_protocol::model::{RelayKey, SensitiveUrl, ShareItem, ShareState, ShareView};
 use fetchpath_protocol::principal::Principal;
 use fetchpath_protocol::send::OfferSource;
 use std::io::Write;
@@ -29,6 +30,14 @@ const TEST_NAME: &str = "fetchpath-test.txt";
 const TEST_SIZE: usize = 100_000;
 const TEST_EXPIRY: Duration = Duration::from_secs(15 * 60);
 
+/// Where to dial in relay mode, and which setup the dial is for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayPlan {
+    pub host: String,
+    pub port: u16,
+    pub generation: u64,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Persisted {
@@ -37,6 +46,9 @@ struct Persisted {
     base_url: Option<String>,
     #[serde(default = "default_port")]
     port: u16,
+    /// Relay mode (FP-118). Old files have none and mean a tunnel.
+    #[serde(default)]
+    relay: bool,
 }
 
 fn default_port() -> u16 {
@@ -49,6 +61,11 @@ struct State {
     /// The Host a request through the tunnel carries: `host[:port]`.
     authority: Option<String>,
     port: u16,
+    /// Links go through the relay at `base_url` instead of a local listener.
+    relay: bool,
+    /// Counts every change of address, port, mode or key, so that a report
+    /// from a connection made for an earlier setup is recognised as stale.
+    generation: u64,
     /// Memory only: sharing is off after every engine start.
     enabled: bool,
     /// What the listener reported for `port`: where it is bound, or why not.
@@ -59,6 +76,7 @@ pub(super) struct Sharing {
     store: Arc<ShareStore>,
     state: Mutex<State>,
     path: Option<PathBuf>,
+    keys: Mutex<Option<Arc<dyn RelayKeyStore>>>,
 }
 
 impl Sharing {
@@ -69,11 +87,12 @@ impl Sharing {
             .and_then(|path| std::fs::read(path).ok())
             .filter(|bytes| bytes.len() <= 4096)
             .and_then(|bytes| serde_json::from_slice::<Persisted>(&bytes).ok());
-        let (base_url, port) = saved
-            .map(|saved| (saved.base_url, saved.port))
-            .unwrap_or((None, DEFAULT_PORT));
+        let (base_url, port, relay) = saved
+            .map(|saved| (saved.base_url, saved.port, saved.relay))
+            .unwrap_or((None, DEFAULT_PORT, false));
         // A stored address that no longer validates is dropped, not served.
         let parsed = base_url.as_deref().and_then(|url| parse_base(url).ok());
+        let has_address = parsed.is_some();
         let store = ShareStore::new();
         store.configure(
             false,
@@ -85,10 +104,13 @@ impl Sharing {
                 base_url: parsed.as_ref().map(|(url, _)| url.clone()),
                 authority: parsed.map(|(_, authority)| authority),
                 port: if valid_port(port) { port } else { DEFAULT_PORT },
+                relay: relay && has_address,
+                generation: 0,
                 enabled: false,
                 listener: None,
             }),
             path,
+            keys: Mutex::new(None),
         }
     }
 
@@ -96,7 +118,7 @@ impl Sharing {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn save(&self, base_url: Option<&str>, port: u16) -> Result<(), String> {
+    fn save(&self, base_url: Option<&str>, port: u16, relay: bool) -> Result<(), String> {
         let Some(path) = &self.path else {
             return Ok(());
         };
@@ -104,6 +126,7 @@ impl Sharing {
             version: 1,
             base_url: base_url.map(str::to_owned),
             port,
+            relay,
         })
         .map_err(|failure| failure.to_string())?;
         let temporary = path.with_extension("tmp");
@@ -253,17 +276,53 @@ impl Engine {
     }
 
     /// The loopback port to listen on, once an address is stored. Nothing
-    /// listens before that, so a fresh install opens no port.
+    /// listens before that, so a fresh install opens no port. In relay mode
+    /// nothing listens either: the engine dials the relay instead.
     pub fn share_port(&self) -> Option<u16> {
         let state = self.sharing.state();
-        state.base_url.as_ref().map(|_| state.port)
+        state
+            .base_url
+            .as_ref()
+            .filter(|_| !state.relay)
+            .map(|_| state.port)
+    }
+
+    /// Where to enroll, in relay mode with an address stored.
+    pub fn share_relay(&self) -> Option<RelayPlan> {
+        let state = self.sharing.state();
+        let url = state.base_url.as_deref().filter(|_| state.relay)?;
+        let authority = url.strip_prefix("https://")?;
+        let (host, port) = match authority.split_once(':') {
+            Some((host, port)) => (host, port.parse().ok()?),
+            None => (authority, 443),
+        };
+        Some(RelayPlan {
+            host: host.to_owned(),
+            port,
+            generation: state.generation,
+        })
+    }
+
+    /// Gives the engine the host's sealed key file. Without one, relay keys
+    /// are refused.
+    pub fn set_relay_keys(&self, keys: Arc<dyn RelayKeyStore>) {
+        *self.sharing.keys.lock().unwrap_or_else(|p| p.into_inner()) = Some(keys);
+    }
+
+    /// The relay connection's report for the setup it was made for. A report
+    /// for an earlier setup (`generation` no longer current) is ignored.
+    pub fn set_share_relay(&self, generation: u64, result: Result<String, String>) {
+        let mut state = self.sharing.state();
+        if state.relay && state.base_url.is_some() && state.generation == generation {
+            state.listener = Some(result);
+        }
     }
 
     /// The listener's report for `port`: where it is bound, or why it is not.
     /// A report for a port that is no longer the stored one is ignored.
     pub fn set_share_listener(&self, port: u16, result: Result<String, String>) {
         let mut state = self.sharing.state();
-        if state.base_url.is_some() && state.port == port {
+        if state.base_url.is_some() && !state.relay && state.port == port {
             state.listener = Some(result);
         }
     }
@@ -281,7 +340,7 @@ impl Engine {
     }
 
     fn share_view(&self) -> ShareView {
-        let (enabled, base_url, port, authority, listener) = {
+        let (enabled, base_url, port, authority, listener, relay) = {
             let state = self.sharing.state();
             (
                 state.enabled,
@@ -289,8 +348,10 @@ impl Engine {
                 state.port,
                 state.authority.clone(),
                 state.listener.clone(),
+                state.relay,
             )
         };
+        let relay_key_stored = self.relay_keys().is_some_and(|keys| keys.present());
         let tested = authority.is_some() && self.sharing.store.test_passed() == authority;
         let (serving, problem) = match (&base_url, listener) {
             (Some(_), Some(Ok(address))) => (Some(address), None),
@@ -304,6 +365,8 @@ impl Engine {
             tested,
             serving,
             problem,
+            relay,
+            relay_key_stored,
             shares: self.sharing.store.list().iter().map(item).collect(),
         }
     }
@@ -333,20 +396,79 @@ impl Engine {
         if state.base_url == new_url && state.port == new_port {
             return Ok(());
         }
+        // Without an address there is nothing to relay through.
+        let relay = state.relay && new_url.is_some();
         // On disk first: a failed save leaves the old setup running.
         self.sharing
-            .save(new_url.as_deref(), new_port)
+            .save(new_url.as_deref(), new_port, relay)
             .map_err(persistence)?;
         // A different address or port is a different tunnel: whatever was
         // tested, enabled or issued for the old one no longer holds.
         state.base_url = new_url;
         state.authority = new_authority.clone();
         state.port = new_port;
+        state.relay = relay;
+        self.reset_setup(&mut state);
+        Ok(())
+    }
+
+    /// Whatever was tested, enabled or issued for the old setup no longer
+    /// holds. One path for every change of address, port, mode or key.
+    fn reset_setup(&self, state: &mut State) {
+        state.generation += 1;
         state.enabled = false;
         state.listener = None;
-        self.sharing.store.configure(false, new_authority);
+        self.sharing.store.configure(false, state.authority.clone());
         self.sharing.store.clear_test();
         self.sharing.store.revoke_all();
+    }
+
+    fn relay_keys(&self) -> Option<Arc<dyn RelayKeyStore>> {
+        self.sharing
+            .keys
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    fn configure_relay(&self, relay: bool, key: Option<&RelayKey>) -> Result<(), ProtocolError> {
+        let mut state = self.sharing.state();
+        if relay && state.base_url.is_none() {
+            return Err(not_ready("Set the relay's address first."));
+        }
+        let keys = self.relay_keys();
+        if key.is_some() && keys.is_none() {
+            return Err(refuse(
+                "share.unsupported",
+                "This engine cannot keep a relay key.",
+                Action::CorrectInput,
+            ));
+        }
+        if relay && key.is_none() && !keys.as_ref().is_some_and(|keys| keys.present()) {
+            return Err(not_ready("Enroll with the relay's key first."));
+        }
+        if key.is_none() && state.relay == relay {
+            return Ok(());
+        }
+        // The key on disk first, the setup file after it. A key that was
+        // replaced ends the old setup even if the file then fails to save.
+        if let (Some(key), Some(keys)) = (key, &keys) {
+            keys.store(key.expose())
+                .map_err(|why| persistence(format!("The relay key could not be saved: {why}")))?;
+        }
+        if state.relay != relay {
+            if let Err(why) = self
+                .sharing
+                .save(state.base_url.as_deref(), state.port, relay)
+            {
+                if key.is_some() {
+                    self.reset_setup(&mut state);
+                }
+                return Err(persistence(why));
+            }
+            state.relay = relay;
+        }
+        self.reset_setup(&mut state);
         Ok(())
     }
 
@@ -564,6 +686,9 @@ impl Engine {
             Command::ShareStatus => {}
             Command::ConfigureSharing { base_url, port } => {
                 self.configure_sharing(base_url.as_deref(), *port)?;
+            }
+            Command::ConfigureRelay { relay, key } => {
+                self.configure_relay(*relay, key.as_ref())?;
             }
             Command::SetSharingEnabled { enabled } => self.set_sharing_enabled(*enabled)?,
             Command::StartShareTest => return self.start_share_test(),

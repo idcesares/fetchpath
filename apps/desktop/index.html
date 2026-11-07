@@ -560,7 +560,7 @@
             and the key stays after the # in the link, so the tunnel never sees the file or its name. Links turn on
             only after a test link has been downloaded through your address, and every link is made by you here.
           </p>
-          <label for="share-url">Tunnel address</label>
+          <label for="share-url">Tunnel or relay address</label>
           <div class="destination-row">
             <input id="share-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://share.example.com" />
             <button id="share-save" class="secondary" type="button">Save address</button>
@@ -570,6 +570,21 @@
             <div class="rule-form">
               <label for="share-port">The tunnel forwards to 127.0.0.1 on this port</label>
               <input id="share-port" type="number" min="1" max="65535" inputmode="numeric" />
+            </div>
+          </details>
+          <details class="advanced">
+            <summary>Use my own relay instead of a tunnel</summary>
+            <div class="rule-form">
+              <p class="hint field-note">
+                A relay is a Fetchpath relay you run on a server (see the relay guide). Save its https address above,
+                then enter its enrollment key. Fetchpath keeps the key sealed on this computer and never shows it again.
+              </p>
+              <label for="share-relay-key">Relay key (64 characters)</label>
+              <input id="share-relay-key" type="password" autocomplete="off" spellcheck="false" />
+              <div class="media-tools-actions">
+                <button id="share-relay-on" class="secondary" type="button">Use the relay</button>
+                <button id="share-relay-off" class="quiet" type="button">Go back to a tunnel</button>
+              </div>
             </div>
           </details>
           <p id="share-state" class="field-note" aria-live="polite">Checking…</p>

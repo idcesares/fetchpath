@@ -2,7 +2,7 @@
 
 use crate::SCHEMA_VERSION;
 use crate::ids::{ClientId, CommandId, CredentialRef, InstanceId, JobId, Timestamp};
-use crate::model::{EngineSettings, RuleSpec, SensitiveUrl};
+use crate::model::{EngineSettings, RelayKey, RuleSpec, SensitiveUrl};
 use crate::principal::{AgentName, AgentPolicy, Principal};
 use crate::send::OfferSource;
 use schemars::JsonSchema;
@@ -279,6 +279,16 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         port: Option<u16>,
     },
+    /// Chooses Relay mode (FP-118): links go through the relay at the stored
+    /// address, which the person runs and enrolled this engine with. `key`
+    /// is the relay's enrollment key; the engine seals it at rest and never
+    /// returns it. Changing the mode or the key ends the passed test, turns
+    /// sharing off and revokes every link.
+    ConfigureRelay {
+        relay: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<RelayKey>,
+    },
     /// Turns file links on or off. On only after the test link was delivered
     /// through the stored address.
     SetSharingEnabled {
@@ -369,6 +379,7 @@ impl Command {
             Self::Unpair { .. } => "Unpair",
             Self::ShareStatus => "ShareStatus",
             Self::ConfigureSharing { .. } => "ConfigureSharing",
+            Self::ConfigureRelay { .. } => "ConfigureRelay",
             Self::SetSharingEnabled { .. } => "SetSharingEnabled",
             Self::StartShareTest => "StartShareTest",
             Self::CreateShare { .. } => "CreateShare",
@@ -416,6 +427,7 @@ impl Command {
                 | Self::Unpair { .. }
                 | Self::ShareStatus
                 | Self::ConfigureSharing { .. }
+                | Self::ConfigureRelay { .. }
                 | Self::SetSharingEnabled { .. }
                 | Self::StartShareTest
                 | Self::CreateShare { .. }
@@ -440,6 +452,7 @@ impl Command {
                     | Self::JoinPairing { .. }
                     | Self::Unpair { .. }
                     | Self::ConfigureSharing { .. }
+                    | Self::ConfigureRelay { .. }
                     | Self::SetSharingEnabled { .. }
                     | Self::StartShareTest
                     | Self::CreateShare { .. }

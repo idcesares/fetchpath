@@ -1202,6 +1202,30 @@ async fn configure_sharing(
     .await
 }
 
+/// The relay's enrollment key goes from the field to the engine and no
+/// further: it is not kept here, not logged and not echoed in an error.
+#[tauri::command]
+async fn configure_relay(
+    relay: bool,
+    key: Option<String>,
+    engine: Engine<'_>,
+) -> Result<model::ShareView, String> {
+    let key = key
+        .filter(|key| !key.trim().is_empty())
+        .map(fetchpath_protocol::RelayKey::try_from)
+        .transpose()
+        .map_err(|_| "That is not a relay key (64 hexadecimal characters).".to_owned())?;
+    let engine = Arc::clone(&engine);
+    off_thread(move || {
+        sharing_view(
+            engine
+                .send(Command::ConfigureRelay { relay, key })
+                .map_err(text)?,
+        )
+    })
+    .await
+}
+
 #[tauri::command]
 async fn set_sharing_enabled(
     enabled: bool,
@@ -1463,6 +1487,7 @@ pub fn run() {
             unpair_device,
             share_status,
             configure_sharing,
+            configure_relay,
             set_sharing_enabled,
             start_share_test,
             create_share,

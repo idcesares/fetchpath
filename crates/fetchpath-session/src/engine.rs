@@ -22,6 +22,7 @@
 use crate::durable::{Correlating, LedgerEntry, MAX_COMMAND_AGE_MS, MAX_FUTURE_SKEW_MS};
 mod inbox;
 mod share;
+pub use share::RelayPlan;
 
 use crate::policy::{self, RateWindow};
 use crate::{
@@ -1366,6 +1367,7 @@ impl Engine {
                 .map_err(input),
             Command::ShareStatus
             | Command::ConfigureSharing { .. }
+            | Command::ConfigureRelay { .. }
             | Command::SetSharingEnabled { .. }
             | Command::StartShareTest
             | Command::CreateShare { .. }
