@@ -417,7 +417,7 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | p256 | 0.14.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | p384 | 0.14.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | p521 | 0.14.0 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
-| pageant | 0.2.3 | Apache-2.0 | Read from the crate manifest in the local registry |
+| pageant | 0.2.5 | Apache-2.0 | Read from the crate manifest in the local registry |
 | palette | 0.7.7 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | palette_derive | 0.7.7 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | palette_math | 0.7.7 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
@@ -499,14 +499,14 @@ compile OpenSSL, does not appear in `Cargo.lock` at all; `openssl-sys` and
 | rmcp | 3.4.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rmcp-macros | 3.4.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rsa | 0.10.0-rc.18 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
-| russh | 0.64.1 | Apache-2.0 | Read from the crate manifest in the local registry |
+| russh | 0.65.1 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-cryptovec | 0.62.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-sftp | 3.0.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | russh-util | 0.52.0 | Apache-2.0 | Read from the crate manifest in the local registry |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Read from the crate manifest in the local registry |
-| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | Read from the crate manifest in the local registry |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | Read from the crate manifest in the local registry |
