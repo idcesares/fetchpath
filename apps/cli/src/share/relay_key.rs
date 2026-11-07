@@ -6,9 +6,10 @@
 
 use fetchpath_lan::SecretProtector;
 use fetchpath_relay::wire::EnrollmentKey;
+use fetchpath_session::share::RelayKeyStore;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 /// Marks the plaintext so a blob sealed for another purpose with the same
@@ -54,21 +55,54 @@ pub(crate) fn store(
     fs::rename(&temporary, path)
 }
 
+/// The engine host's key file: what the session may ask is only whether a
+/// key is stored; the relay connection loads it itself.
+pub(crate) struct KeyFile {
+    path: PathBuf,
+    protector: Box<dyn SecretProtector + Send + Sync>,
+}
+
+impl KeyFile {
+    pub(crate) fn new(path: PathBuf, protector: Box<dyn SecretProtector + Send + Sync>) -> Self {
+        Self { path, protector }
+    }
+
+    pub(crate) fn load(&self) -> io::Result<Option<EnrollmentKey>> {
+        load(&self.path, self.protector.as_ref())
+    }
+}
+
+impl RelayKeyStore for KeyFile {
+    fn present(&self) -> bool {
+        self.path.is_file()
+    }
+
+    fn store(&self, key: &str) -> Result<(), String> {
+        let key = EnrollmentKey::from_hex(key).ok_or("the key is not 64 hex characters")?;
+        store(&self.path, &key, self.protector.as_ref()).map_err(|error| error.to_string())
+    }
+}
+
+/// Reversible stand-in for DPAPI in tests: the point is that the file is not
+/// the plaintext and that damage is an error.
+#[cfg(test)]
+pub(crate) struct TestProtector;
+
+#[cfg(test)]
+impl SecretProtector for TestProtector {
+    fn protect(&self, plaintext: &[u8]) -> io::Result<Vec<u8>> {
+        Ok(plaintext.iter().map(|byte| byte ^ 0x5a).collect())
+    }
+    fn unprotect(&self, protected: &[u8]) -> io::Result<Vec<u8>> {
+        self.protect(protected)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Reversible stand-in for DPAPI; the point is that the file is not the
-    /// plaintext and that damage is an error.
-    struct Xor;
-    impl SecretProtector for Xor {
-        fn protect(&self, plaintext: &[u8]) -> io::Result<Vec<u8>> {
-            Ok(plaintext.iter().map(|byte| byte ^ 0x5a).collect())
-        }
-        fn unprotect(&self, protected: &[u8]) -> io::Result<Vec<u8>> {
-            self.protect(protected)
-        }
-    }
+    use TestProtector as Xor;
 
     #[test]
     fn a_stored_key_survives_a_restart_and_is_not_written_in_the_clear() {

@@ -9,19 +9,23 @@ use crate::download::EXIT_USAGE;
 use fetchpath_protocol::ProtocolError;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::message::CommandResult;
-use fetchpath_protocol::model::{ShareItem, ShareState, ShareView};
+use fetchpath_protocol::model::{RelayKey, ShareItem, ShareState, ShareView};
 use fetchpath_protocol::qr_image;
 use fetchpath_protocol::send::OfferSource;
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage: fetchpath share [status]
        fetchpath share setup URL [--port N]   store the tunnel's https address and prove it with a test link
+       fetchpath share relay URL [--stored-key] [--qr IMAGE]   use your relay at URL; its key is read from stdin
+       fetchpath share relay off              go back to a tunnel (the relay key stays stored)
        fetchpath share test [--qr IMAGE]      make a new test link
        fetchpath share on | off               turn file links on (after a passed test) or off
        fetchpath share create FILE [--hours N] [--qr IMAGE]   a single-use link to a file (shown once)
        fetchpath share revoke HANDLE|all
 URL is the public address your tunnel (Cloudflare Tunnel, Tailscale Funnel) gives,
-forwarding to this computer's share port. Links last a day by default (at most 30 days).
+forwarding to this computer's share port. A relay is a fetchpath-relay you run on a
+server (docs/user/RELAY.md): pipe its 64-character key in, never pass it as an argument.
+Links last a day by default (at most 30 days).
 --qr IMAGE (setup, test, create) also saves the link's QR code as IMAGE, a new .svg or .png
 file. The image IS the link: anyone who has it can download the file once.";
 
@@ -43,7 +47,10 @@ pub fn run(args: &[String]) -> i32 {
     };
     let image = image.as_deref();
     // `--qr` belongs to the commands that make a link.
-    let makes_link = matches!(words.first(), Some(&("setup" | "test" | "create")));
+    let makes_link = matches!(
+        words.first(),
+        Some(&("setup" | "test" | "create" | "relay"))
+    );
     if image.is_some() && !makes_link {
         eprintln!("{USAGE}");
         return EXIT_USAGE;
@@ -62,6 +69,13 @@ pub fn run(args: &[String]) -> i32 {
                 return EXIT_USAGE;
             }
         },
+        ["relay", "off"] => Engine::connect().and_then(|engine| relay_off(&engine, json)),
+        ["relay", url] => {
+            Engine::connect().and_then(|engine| relay(&engine, url, false, image, json))
+        }
+        ["relay", url, "--stored-key"] => {
+            Engine::connect().and_then(|engine| relay(&engine, url, true, image, json))
+        }
         ["test"] => Engine::connect().and_then(|engine| test(&engine, image, json)),
         ["on"] => Engine::connect().and_then(|engine| enable(&engine, true, json)),
         ["off"] => Engine::connect().and_then(|engine| enable(&engine, false, json)),
@@ -112,7 +126,17 @@ fn status(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
 
 fn print_view(sharing: &ShareView) {
     match &sharing.base_url {
-        None => println!("No tunnel address is stored. Run `fetchpath share setup URL`."),
+        None => println!(
+            "No address is stored. Run `fetchpath share setup URL` (tunnel) or `fetchpath share relay URL`."
+        ),
+        Some(url) if sharing.relay => {
+            println!("Relay address: {url}");
+            match (&sharing.serving, &sharing.problem) {
+                (Some(_), _) => println!("Enrolled with the relay."),
+                (None, Some(problem)) => println!("Not enrolled: {problem}"),
+                (None, None) => println!("Not enrolled yet."),
+            }
+        }
         Some(url) => {
             println!("Tunnel address: {url}");
             match (&sharing.serving, &sharing.problem) {
@@ -122,7 +146,12 @@ fn print_view(sharing: &ShareView) {
             }
         }
     }
-    println!("Share port: {}", sharing.port);
+    if sharing.relay_key_stored {
+        println!("A relay key is stored (it cannot be shown again).");
+    }
+    if !sharing.relay {
+        println!("Share port: {}", sharing.port);
+    }
     println!(
         "Test link: {}",
         if sharing.tested {
@@ -272,6 +301,11 @@ fn setup(
     image: Option<&str>,
     json: bool,
 ) -> Result<(), ProtocolError> {
+    // A tunnel address is not a relay's: leave relay mode first.
+    engine.send(Command::ConfigureRelay {
+        relay: false,
+        key: None,
+    })?;
     let configured = sharing(engine.send(Command::ConfigureSharing {
         base_url: Some(url.trim().to_owned()),
         port,
@@ -344,6 +378,63 @@ fn test_and_wait(engine: &Engine, image: Option<&str>, json: bool) -> Result<(),
         println!(
             "The test link was not downloaded yet. It stays valid for a while; run `fetchpath share test` for a new one."
         );
+    }
+    Ok(())
+}
+
+/// One line of the relay key from stdin. It is never an argument (shell
+/// history, process lists) and never echoed back.
+fn read_key() -> Result<RelayKey, ProtocolError> {
+    eprintln!("Paste the relay's key (64 hex characters) and press Enter:");
+    let mut line = zeroize::Zeroizing::new(String::new());
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|_| client::input_error("The key could not be read."))?;
+    RelayKey::try_from(line.trim().to_owned())
+        .map_err(|_| client::input_error("That is not a relay key (64 hex characters)."))
+}
+
+/// Points the engine at a relay, enrolls it and walks the person through the
+/// test link, as `setup` does for a tunnel.
+fn relay(
+    engine: &Engine,
+    url: &str,
+    stored_key: bool,
+    image: Option<&str>,
+    json: bool,
+) -> Result<(), ProtocolError> {
+    let key = if stored_key { None } else { Some(read_key()?) };
+    engine.send(Command::ConfigureSharing {
+        base_url: Some(url.trim().to_owned()),
+        port: None,
+    })?;
+    let mut current = sharing(engine.send(Command::ConfigureRelay { relay: true, key })?)?;
+    let deadline = Instant::now() + START_WAIT;
+    while current.serving.is_none() && current.problem.is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(200));
+        current = view(engine)?;
+    }
+    if current.serving.is_none() {
+        let problem = current
+            .problem
+            .unwrap_or_else(|| "The relay did not answer.".to_owned());
+        return Err(client::input_error(&problem));
+    }
+    if !json {
+        println!("Enrolled with the relay at {url}.");
+    }
+    test_and_wait(engine, image, json)
+}
+
+fn relay_off(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
+    let sharing = sharing(engine.send(Command::ConfigureRelay {
+        relay: false,
+        key: None,
+    })?)?;
+    if json {
+        client::print_json(&sharing);
+    } else {
+        println!("Relay mode is off. Run `fetchpath share setup URL` to use a tunnel.");
     }
     Ok(())
 }

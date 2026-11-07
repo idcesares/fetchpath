@@ -389,6 +389,18 @@ impl ShareStore {
         entries.iter().any(|entry| entry.phase() == Phase::Live)
     }
 
+    /// The ids of the links that can still be fetched, for a relay to route.
+    /// An id is a bearer capability for a single-use ticket: never log it.
+    pub fn live_ids(&self) -> Vec<String> {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        self.sweep_locked(&mut entries);
+        entries
+            .iter()
+            .filter(|entry| entry.phase() == Phase::Live)
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
     pub fn drain_events(&self) -> Vec<ShareEvent> {
         std::mem::take(&mut *self.shared.events.lock().unwrap_or_else(|p| p.into_inner()))
     }

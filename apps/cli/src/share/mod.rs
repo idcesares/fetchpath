@@ -13,12 +13,14 @@ mod body;
 mod http;
 mod listener;
 mod page;
-// Not used until the engine connects to a relay (FP-118); remove then.
-#[allow(dead_code)]
+mod relay;
 mod relay_key;
 
+pub(crate) use relay::tls_dial;
+pub(crate) use relay_key::KeyFile;
+
 use crate::remote::bind;
-use fetchpath_session::engine::Engine;
+use fetchpath_session::engine::{Engine, RelayPlan};
 use fetchpath_session::share::ShareStore;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -41,8 +43,16 @@ struct Shared {
     cancel: CancellationToken,
 }
 
+/// What a running listener or relay connection was started for. A relay
+/// connection is bound to a generation of the setup (address, mode, key).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Kind {
+    Port(u16),
+    Relay(u64),
+}
+
 struct Running {
-    port: u16,
+    kind: Kind,
     cancel: CancellationToken,
     thread: JoinHandle<()>,
 }
@@ -51,7 +61,8 @@ struct Running {
 pub struct Share {
     engine: Arc<Engine>,
     running: Mutex<Option<Running>>,
-    failed: Mutex<Option<(u16, Instant)>>,
+    failed: Mutex<Option<(Kind, Instant)>>,
+    relay: Option<(Arc<relay_key::KeyFile>, relay::Dial)>,
 }
 
 impl Share {
@@ -60,6 +71,20 @@ impl Share {
             engine,
             running: Mutex::new(None),
             failed: Mutex::new(None),
+            relay: None,
+        }
+    }
+
+    /// A host that can also enroll with a relay (FP-118): `keys` holds the
+    /// sealed enrollment key and `dial` makes the connection.
+    pub(crate) fn with_relay(
+        engine: Arc<Engine>,
+        keys: Arc<relay_key::KeyFile>,
+        dial: relay::Dial,
+    ) -> Self {
+        Self {
+            relay: Some((keys, dial)),
+            ..Self::new(engine)
         }
     }
 
@@ -68,36 +93,64 @@ impl Share {
     /// enough to run on every pass; it also restates the report the engine
     /// forgets when the address changes.
     pub fn reconcile(&self) {
-        let wanted = self.engine.share_port();
+        // Read the setup under the lock, so two passes cannot act on a setup
+        // that changed between them.
         let mut running = lock(&self.running);
-        if let (Some(started), Some(port)) = (running.as_ref(), wanted)
-            && started.port == port
+        let relay_plan = self.engine.share_relay();
+        if let (Some(plan), None) = (&relay_plan, &self.relay) {
+            self.engine.set_share_relay(
+                plan.generation,
+                Err("This engine cannot reach a relay.".into()),
+            );
+        }
+        let plan = relay_plan.filter(|_| self.relay.is_some());
+        let wanted = match &plan {
+            Some(plan) => Some(Kind::Relay(plan.generation)),
+            None => self.engine.share_port().map(Kind::Port),
+        };
+        if let (Some(started), Some(kind)) = (running.as_ref(), wanted)
+            && started.kind == kind
         {
-            self.engine
-                .set_share_listener(port, Ok(format!("127.0.0.1:{port}")));
+            // A relay connection reports for itself.
+            if let Kind::Port(port) = kind {
+                self.engine
+                    .set_share_listener(port, Ok(format!("127.0.0.1:{port}")));
+            }
             return;
         }
         if let Some(started) = running.take() {
             stop(started);
         }
-        let Some(port) = wanted else {
+        let Some(kind) = wanted else {
             *lock(&self.failed) = None;
             return;
         };
-        if matches!(*lock(&self.failed), Some((tried, at)) if tried == port && at.elapsed() < RETRY)
+        if matches!(*lock(&self.failed), Some((tried, at)) if tried == kind && at.elapsed() < RETRY)
         {
             return;
         }
-        match self.start(port) {
+        let started = match (kind, plan) {
+            (Kind::Port(port), _) => self.start(port),
+            (Kind::Relay(_), Some(plan)) => self.start_relay(&plan),
+            (Kind::Relay(_), None) => return,
+        };
+        match started {
             Ok(started) => {
                 *lock(&self.failed) = None;
-                self.engine
-                    .set_share_listener(port, Ok(format!("127.0.0.1:{port}")));
+                if let Kind::Port(port) = kind {
+                    self.engine
+                        .set_share_listener(port, Ok(format!("127.0.0.1:{port}")));
+                }
                 *running = Some(started);
             }
             Err(message) => {
-                *lock(&self.failed) = Some((port, Instant::now()));
-                self.engine.set_share_listener(port, Err(message));
+                *lock(&self.failed) = Some((kind, Instant::now()));
+                match kind {
+                    Kind::Port(port) => self.engine.set_share_listener(port, Err(message)),
+                    Kind::Relay(generation) => {
+                        self.engine.set_share_relay(generation, Err(message));
+                    }
+                }
             }
         }
     }
@@ -132,7 +185,32 @@ impl Share {
             })
             .map_err(|error| format!("The share listener could not start: {error}"))?;
         Ok(Running {
-            port,
+            kind: Kind::Port(port),
+            cancel,
+            thread,
+        })
+    }
+
+    fn start_relay(&self, plan: &RelayPlan) -> Result<Running, String> {
+        let (keys, dial) = self
+            .relay
+            .as_ref()
+            .ok_or("This engine cannot reach a relay.")?;
+        let cancel = CancellationToken::new();
+        let shared = Arc::new(Shared {
+            store: self.engine.share_store(),
+            page: page::Page::build(),
+            cancel: cancel.clone(),
+        });
+        let thread = relay::start(
+            Arc::clone(&self.engine),
+            shared,
+            Arc::clone(keys),
+            Arc::clone(dial),
+            plan.clone(),
+        )?;
+        Ok(Running {
+            kind: Kind::Relay(plan.generation),
             cancel,
             thread,
         })
@@ -140,7 +218,12 @@ impl Share {
 
     #[cfg(test)]
     pub(crate) fn port(&self) -> Option<u16> {
-        lock(&self.running).as_ref().map(|started| started.port)
+        lock(&self.running)
+            .as_ref()
+            .and_then(|started| match started.kind {
+                Kind::Port(port) => Some(port),
+                Kind::Relay(_) => None,
+            })
     }
 }
 

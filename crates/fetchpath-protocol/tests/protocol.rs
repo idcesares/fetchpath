@@ -309,6 +309,10 @@ fn every_command() -> Vec<Command> {
             base_url: Some("https://share.example.com".into()),
             port: Some(47633),
         },
+        Command::ConfigureRelay {
+            relay: true,
+            key: Some(RelayKey::try_from("ab".repeat(32)).unwrap()),
+        },
         Command::SetSharingEnabled { enabled: true },
         Command::StartShareTest,
         Command::CreateShare {
@@ -400,6 +404,7 @@ fn every_command() -> Vec<Command> {
             | Command::SetLanSharing { .. }
             | Command::ShareStatus
             | Command::ConfigureSharing { .. }
+            | Command::ConfigureRelay { .. }
             | Command::SetSharingEnabled { .. }
             | Command::StartShareTest
             | Command::CreateShare { .. }
@@ -679,6 +684,8 @@ fn every_result() -> Vec<CommandResult> {
                 tested: true,
                 serving: Some("127.0.0.1:47633".into()),
                 problem: None,
+                relay: true,
+                relay_key_stored: true,
                 shares: vec![share_item()],
             },
         },
@@ -1245,6 +1252,7 @@ fn only_queries_skip_the_command_ledger() {
         "SetLanSharing",
         "ShareStatus",
         "ConfigureSharing",
+        "ConfigureRelay",
         "SetSharingEnabled",
         "StartShareTest",
         "CreateShare",
@@ -1494,4 +1502,32 @@ fn a_torrent_request_reads_an_explicit_or_absent_discovery_choice() {
         choice(request(json!({ "discover_peers": false }))),
         (Some(false), false)
     );
+}
+
+#[test]
+fn a_relay_key_is_checked_and_never_printed() {
+    let hex = "AB".repeat(32);
+    let key = RelayKey::try_from(hex.clone()).unwrap();
+    assert_eq!(key.expose(), hex.to_ascii_lowercase());
+    let command = Command::ConfigureRelay {
+        relay: true,
+        key: Some(key),
+    };
+    assert!(
+        !format!("{command:?}")
+            .to_ascii_lowercase()
+            .contains(&"ab".repeat(8))
+    );
+    for bad in ["", "ab", &"zz".repeat(32), &"ab".repeat(33)] {
+        assert!(RelayKey::try_from(bad.to_owned()).is_err(), "{bad}");
+    }
+    let wire: Command =
+        serde_json::from_value(json!({"type": "ConfigureRelay", "relay": false})).unwrap();
+    assert!(matches!(
+        wire,
+        Command::ConfigureRelay {
+            relay: false,
+            key: None
+        }
+    ));
 }

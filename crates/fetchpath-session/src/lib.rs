@@ -5870,7 +5870,9 @@ mod tests {
         thread::sleep(Duration::from_millis(60));
         let after_due = jobs.list().unwrap();
         assert!(after_due.iter().any(|job| {
-            job.job_id == created[1].job_id && matches!(job.state.as_str(), "queued" | "running")
+            // A late wake-up may find it already finished: only "still
+            // scheduled" would mean the schedule was not caught up.
+            job.job_id == created[1].job_id && job.state != "scheduled"
         }));
         wait_for_terminal(&jobs, &created[0].job_id);
         wait_for_terminal(&jobs, &created[1].job_id);

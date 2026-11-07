@@ -9,19 +9,20 @@ use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::{ShareItem, ShareState, ShareView};
 use fetchpath_protocol::principal::{AgentName, Principal};
 use fetchpath_protocol::send::OfferSource;
-use fetchpath_protocol::{ClientId, EngineClient, ProtocolError, SensitiveUrl};
+use fetchpath_protocol::{ClientId, EngineClient, ProtocolError, RelayKey, SensitiveUrl};
 use fetchpath_session::Session;
 use fetchpath_session::engine::{Engine, InProcessClient};
-use fetchpath_session::share::MAX_READ;
+use fetchpath_session::share::{MAX_READ, RelayKeyStore};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const BASE: &str = "https://share.example.com";
 const HOST: &str = "share.example.com";
+const KEY_HEX: &str = "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f";
 
 struct Setup {
     _dir: tempfile::TempDir,
@@ -61,7 +62,7 @@ fn send(client: &InProcessClient, command: Command) -> Result<CommandResult, Pro
     client.send(&ClientId::random(), command)
 }
 
-fn code(result: Result<CommandResult, ProtocolError>) -> String {
+fn code<T: std::fmt::Debug>(result: Result<T, ProtocolError>) -> String {
     result
         .expect_err("expected a refusal")
         .code
@@ -303,6 +304,10 @@ fn only_the_person_makes_links() {
             base_url: Some("https://evil.example.com".into()),
             port: None,
         },
+        Command::ConfigureRelay {
+            relay: true,
+            key: Some(relay_key()),
+        },
         Command::SetSharingEnabled { enabled: false },
         Command::StartShareTest,
         Command::CreateShare {
@@ -444,4 +449,201 @@ fn a_credentialed_download_is_never_linked() {
         code(create(&restarted, &copy)),
         "policy.credentialed_not_allowed"
     );
+}
+
+/// The host's sealed key file, reduced to what the engine sees of it.
+#[derive(Default)]
+struct Keys(Mutex<Option<String>>);
+
+impl RelayKeyStore for Keys {
+    fn present(&self) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+
+    fn store(&self, key: &str) -> Result<(), String> {
+        *self.0.lock().unwrap() = Some(key.to_owned());
+        Ok(())
+    }
+}
+
+fn relay_key() -> RelayKey {
+    RelayKey::try_from("9f".repeat(32)).unwrap()
+}
+
+fn with_keys(s: &Setup) -> Arc<Keys> {
+    let keys = Arc::new(Keys::default());
+    s.engine.set_relay_keys(keys.clone());
+    keys
+}
+
+fn relay(s: &Setup, on: bool, key: Option<RelayKey>) -> Result<ShareView, ProtocolError> {
+    match send(&s.user, Command::ConfigureRelay { relay: on, key })? {
+        CommandResult::Sharing { sharing } => Ok(sharing),
+        other => panic!("not a status: {other:?}"),
+    }
+}
+
+#[test]
+fn relay_mode_needs_an_address_and_a_key_and_binds_no_local_port() {
+    let s = setup();
+    with_keys(&s);
+    // Nothing stored yet.
+    assert_eq!(code(relay(&s, true, Some(relay_key()))), "share.not_ready");
+    configure(&s.user, BASE);
+    assert_eq!(code(relay(&s, true, None)), "share.not_ready");
+    let view = relay(&s, true, Some(relay_key())).unwrap();
+    assert!(view.relay && view.relay_key_stored);
+    assert_eq!(s.engine.share_port(), None);
+    let plan = s.engine.share_relay().unwrap();
+    assert_eq!((plan.host.as_str(), plan.port), ("share.example.com", 443));
+    let view = relay(&s, false, None).unwrap();
+    assert!(!view.relay && view.relay_key_stored);
+    assert!(s.engine.share_port().is_some());
+    assert!(s.engine.share_relay().is_none());
+}
+
+#[test]
+fn without_a_key_store_no_key_is_accepted() {
+    let s = setup();
+    configure(&s.user, BASE);
+    assert_eq!(
+        code(relay(&s, true, Some(relay_key()))),
+        "share.unsupported"
+    );
+}
+
+#[test]
+fn the_key_is_write_only() {
+    let s = setup();
+    let keys = with_keys(&s);
+    configure(&s.user, BASE);
+    let view = relay(&s, true, Some(relay_key())).unwrap();
+    assert_eq!(keys.0.lock().unwrap().as_deref(), Some(KEY_HEX));
+    let shown = serde_json::to_string(&view).unwrap();
+    let debug = format!("{view:?}");
+    let again = serde_json::to_string(&status(&s.user)).unwrap();
+    for text in [shown, debug, again] {
+        assert!(!text.contains(&KEY_HEX[..16]), "{text}");
+    }
+    for entry in std::fs::read_dir(&s.data).unwrap() {
+        let bytes = std::fs::read(entry.unwrap().path()).unwrap_or_default();
+        assert!(!String::from_utf8_lossy(&bytes).contains(&KEY_HEX[..16]));
+    }
+}
+
+#[test]
+fn a_failed_seal_leaves_the_setup_running() {
+    struct Broken;
+    impl RelayKeyStore for Broken {
+        fn present(&self) -> bool {
+            false
+        }
+        fn store(&self, _: &str) -> Result<(), String> {
+            Err("sealing failed".into())
+        }
+    }
+    let s = setup();
+    s.engine.set_relay_keys(Arc::new(Broken));
+    configure(&s.user, BASE);
+    assert!(relay(&s, true, Some(relay_key())).is_err());
+    assert!(!status(&s.user).relay);
+}
+
+#[test]
+fn changing_the_mode_or_the_key_ends_the_test_and_every_link() {
+    let s = setup();
+    with_keys(&s);
+    enabled(&s);
+    assert!(status(&s.user).enabled && status(&s.user).tested);
+    let first = relay(&s, true, Some(relay_key())).unwrap();
+    assert!(
+        !first.enabled
+            && !first.tested
+            && first
+                .shares
+                .iter()
+                .all(|item| item.state != ShareState::Live)
+    );
+    // Report relay as up, deliver a test, enable.
+    let plan = s.engine.share_relay().unwrap();
+    s.engine
+        .set_share_relay(plan.generation, Ok("relay connected".into()));
+    let test = start_test(&s);
+    deliver(&s.engine, &test, HOST);
+    send(&s.user, Command::SetSharingEnabled { enabled: true }).unwrap();
+    assert!(status(&s.user).enabled);
+    // A new key is a new setup.
+    let other = RelayKey::try_from("11".repeat(32)).unwrap();
+    let view = relay(&s, true, Some(other)).unwrap();
+    assert!(
+        !view.enabled
+            && !view.tested
+            && view
+                .shares
+                .iter()
+                .all(|item| item.state != ShareState::Live)
+    );
+    assert_ne!(s.engine.share_relay().unwrap().generation, plan.generation);
+    // The same request again changes nothing.
+    let generation = s.engine.share_relay().unwrap().generation;
+    relay(&s, true, None).unwrap();
+    assert_eq!(s.engine.share_relay().unwrap().generation, generation);
+}
+
+#[test]
+fn a_late_report_from_an_old_relay_task_unlocks_nothing() {
+    let s = setup();
+    with_keys(&s);
+    configure(&s.user, BASE);
+    relay(&s, true, Some(relay_key())).unwrap();
+    let old = s.engine.share_relay().unwrap().generation;
+    relay(&s, true, Some(RelayKey::try_from("22".repeat(32)).unwrap())).unwrap();
+    s.engine.set_share_relay(old, Ok("relay connected".into()));
+    assert_eq!(
+        code(send(&s.user, Command::StartShareTest)),
+        "share.not_ready"
+    );
+    // Nor does a local listener report on the old port.
+    s.engine
+        .set_share_listener(47650, Ok("127.0.0.1:47650".into()));
+    assert_eq!(
+        code(send(&s.user, Command::StartShareTest)),
+        "share.not_ready"
+    );
+    let now = s.engine.share_relay().unwrap().generation;
+    s.engine.set_share_relay(now, Err("refused".into()));
+    assert_eq!(status(&s.user).problem.as_deref(), Some("refused"));
+    s.engine.set_share_relay(now, Ok("relay connected".into()));
+    assert!(status(&s.user).serving.is_some());
+    assert!(send(&s.user, Command::StartShareTest).is_ok());
+}
+
+#[test]
+fn live_link_ids_are_listed_for_the_relay() {
+    let s = setup();
+    with_keys(&s);
+    configure(&s.user, BASE);
+    relay(&s, true, Some(relay_key())).unwrap();
+    s.engine.set_share_relay(
+        s.engine.share_relay().unwrap().generation,
+        Ok("relay connected".into()),
+    );
+    assert!(s.engine.share_store().live_ids().is_empty());
+    let test = start_test(&s);
+    assert_eq!(s.engine.share_store().live_ids(), vec![id_and_key(&test).0]);
+    send(&s.user, Command::RevokeAllShares).unwrap();
+    assert!(s.engine.share_store().live_ids().is_empty());
+}
+
+#[test]
+fn relay_mode_survives_a_restart_with_sharing_off() {
+    let s = setup();
+    with_keys(&s);
+    configure(&s.user, BASE);
+    relay(&s, true, Some(relay_key())).unwrap();
+    let again = setup_again(&s);
+    let view = status(&again.user);
+    assert!(view.relay && !view.enabled);
+    assert_eq!(again.engine.share_port(), None);
+    assert!(again.engine.share_relay().is_some());
 }

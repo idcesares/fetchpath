@@ -103,6 +103,58 @@ impl JsonSchema for SensitiveUrl {
     }
 }
 
+/// A share relay's enrollment key: 64 hex characters (FP-118). It crosses the
+/// protocol once, from the person to the engine, and is never returned:
+/// `Debug` hides it and no view carries it.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct RelayKey(String);
+
+impl RelayKey {
+    /// The key as hex, for the engine to seal. Never log it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for RelayKey {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let text = value.trim();
+        if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("an enrollment key is 64 hexadecimal characters".into());
+        }
+        Ok(Self(text.to_ascii_lowercase()))
+    }
+}
+
+impl From<RelayKey> for String {
+    fn from(value: RelayKey) -> Self {
+        value.0
+    }
+}
+
+impl fmt::Debug for RelayKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RelayKey(..)")
+    }
+}
+
+impl JsonSchema for RelayKey {
+    fn schema_name() -> Cow<'static, str> {
+        "RelayKey".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "description": "A share relay's enrollment key. Sent once, sealed by the engine, never returned or logged."
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JobKind {
@@ -664,6 +716,12 @@ pub struct ShareView {
     /// Why the listener is not running although an address is stored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// Relay mode (FP-118): links go through the relay at `base_url`.
+    #[serde(default)]
+    pub relay: bool,
+    /// An enrollment key is stored. The key itself is never returned.
+    #[serde(default)]
+    pub relay_key_stored: bool,
     pub shares: Vec<ShareItem>,
 }
 

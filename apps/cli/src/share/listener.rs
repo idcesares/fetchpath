@@ -14,8 +14,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 /// Connections served at once.
@@ -53,7 +54,12 @@ pub(super) async fn run(shared: Arc<Shared>, listeners: Vec<TcpListener>) {
                         continue;
                     };
                     if peer.ip().is_loopback() {
-                        tasks.spawn(connection(Arc::clone(&shared), stream, permit));
+                        let _ = stream.set_nodelay(true);
+                        let shared = Arc::clone(&shared);
+                        tasks.spawn(async move {
+                            let _permit = permit;
+                            serve(shared, stream, true).await;
+                        });
                     }
                 }
                 // Transient, such as a client that reset while waiting.
@@ -67,14 +73,19 @@ pub(super) async fn run(shared: Arc<Shared>, listeners: Vec<TcpListener>) {
     tasks.abort_all();
 }
 
-async fn connection(shared: Arc<Shared>, stream: TcpStream, _permit: OwnedSemaphorePermit) {
-    let _ = stream.set_nodelay(true);
+/// Serves HTTP/1 on one connection. `keep_alive` is off for relayed
+/// connections: the relay hands each one a single request.
+pub(super) async fn serve<I>(shared: Arc<Shared>, stream: I, keep_alive: bool)
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let cancel = shared.cancel.clone();
     let service = service_fn(move |request| {
         let shared = Arc::clone(&shared);
         async move { Ok::<_, Infallible>(http::respond(&shared, request)) }
     });
     let served = http1::Builder::new()
+        .keep_alive(keep_alive)
         .timer(TokioTimer::new())
         .header_read_timeout(HEAD_TIMEOUT)
         .serve_connection(TokioIo::new(stream), service);

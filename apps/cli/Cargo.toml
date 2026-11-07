@@ -10,7 +10,7 @@ rust-version.workspace = true
 fetchpath-core = { path = "../../crates/fetchpath-core" }
 fetchpath-lan = { path = "../../adapters/lan" }
 fetchpath-protocol = { path = "../../crates/fetchpath-protocol" }
-fetchpath-relay = { path = "../../crates/fetchpath-relay" }
+fetchpath-relay = { path = "../../crates/fetchpath-relay", features = ["tls-client"] }
 fetchpath-session = { path = "../../crates/fetchpath-session" }
 ctrlc = "3.5.1"
 zeroize = "1.9.0"

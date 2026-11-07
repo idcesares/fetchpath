@@ -12,6 +12,8 @@
 #[cfg(feature = "serve")]
 pub mod acme;
 pub mod client;
+#[cfg(feature = "tls-client")]
+pub mod connect;
 pub mod server;
 #[cfg(feature = "serve")]
 pub mod tls;

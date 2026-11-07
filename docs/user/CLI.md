@@ -13,7 +13,7 @@ fetchpath ls [--all | --active | --failed] | show | pause | resume | cancel | re
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
 fetchpath approvals | approve JOB... | deny JOB... | agents ...
 fetchpath inbox [list] | accept OFFER [--to FOLDER] | decline OFFER
-fetchpath share [setup URL | test | on | off | create FILE | revoke HANDLE|all]
+fetchpath share [setup URL | relay URL | relay off | test | on | off | create FILE | revoke HANDLE|all]
 fetchpath hub [on | off]
 fetchpath web on | off | open | sign-out
 fetchpath agent-setup status | add | check | remove | cleanup | reconcile
@@ -581,6 +581,7 @@ fetchpath share setup https://share.example.com   # store the address, then make
 fetchpath share on                                # allow file links, after the test link was downloaded
 fetchpath share create D:\Docs\report.pdf --hours 6   # one link, shown once (default 1 day, at most 30)
 fetchpath share create D:\Docs\report.pdf --qr link.png   # also save the QR code as an image (.png or .svg)
+fetchpath share relay https://relay.example.org   # use your own relay instead of a tunnel (key read from stdin; see RELAY.md)
 fetchpath share                                   # state and links (never the link itself)
 fetchpath share revoke 3f9a                       # or: revoke all
 fetchpath share off

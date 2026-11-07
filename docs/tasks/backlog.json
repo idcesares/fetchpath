@@ -3871,7 +3871,11 @@
       ],
       "acceptance": "Relay mode of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md using the choice recorded by FP-116: a stateless relay with no accounts that stores no files, accepts links only from engines holding its owner's enrollment key, obtains its own certificate, and is documented for a VPS. The new component enters the repository map in the same change.",
       "verification": "Gate X7 for this mode on a real VPS with a phone on mobile data; an unenrolled engine is refused; the relay holds no plaintext or key in logs, checked by test.",
-      "evidence": []
+      "evidence": [
+        "docs/development/SHARE-RELAY.md",
+        "docs/user/RELAY.md"
+      ],
+      "note": "Code complete on feat/fp-118-relay: relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Not done: gate X7 (real Linux VPS build, Let's Encrypt, phone on mobile data), owned by Isaac; the desktop has no relay screen."
     },
     {
       "owner": null,

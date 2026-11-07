@@ -63,7 +63,7 @@ One share server serves `GET /s/<id>`, Range, and the page that decrypts in the 
 | Mode | The person provides | Fetchpath does |
 |---|---|---|
 | Tunnel (Cloudflare Tunnel on the person's domain, Tailscale Funnel, any HTTPS tunnel) | A tunnel to the share server's loopback port and the resulting URL | Serve loopback only; nothing network-related |
-| Relay | A VPS running `fetchpath relay` with a domain | Engine dials out; relay obtains its own certificate and holds no files |
+| Relay | A VPS running `fetchpath-relay` with a domain | Engine dials out; relay obtains its own certificate and holds no files |
 | Direct | Port forward and a domain (DDNS or the person's own) | Obtain a certificate (ACME); expose only the share port |
 
 - **Relay** is stateless, has no accounts, and accepts links only from engines enrolled by its owner (an enrollment key), so it is not an open file host. Whoever runs a relay owns its cost and abuse duty; the project operates none. The default is no relay, which means T3 works only after setup.

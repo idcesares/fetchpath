@@ -18,7 +18,7 @@ sudo install target/release/fetchpath-relay /usr/local/bin/
 fetchpath-relay enroll --state /var/lib/fetchpath-relay
 ```
 
-This prints the enrollment key (64 hex characters) once per call and keeps it in `enrollment.key` in the state directory (mode 0600). Keep it: it is what each engine will need once Fetchpath can connect to a relay. `--rotate` makes a new key; engines holding the old one are refused from then on.
+This prints the enrollment key (64 hex characters) once per call and keeps it in `enrollment.key` in the state directory (mode 0600). Keep it: each Fetchpath engine needs it to enroll (see below). `--rotate` makes a new key; engines holding the old one are refused from then on.
 
 ## Run
 
@@ -35,6 +35,18 @@ A systemd unit that runs it as an unprivileged user needs `AmbientCapabilities=C
 
 It terminates TLS, so it sees the request line and headers of each visit and the bytes of the encrypted file, and it logs none of them: log lines are fixed event names (`served`, `engine enrolled`, `no engine`, ...). It never sees the key in the link. Because it terminates TLS it could serve a modified download page, so run it yourself and keep the server patched. It cannot read the file, and engines that do not hold the enrollment key are refused without a reason.
 
+## Connect Fetchpath to it
+
+On the computer that runs Fetchpath, pipe the key in (never put it on the command line):
+
+```powershell
+Get-Content key.txt | fetchpath share relay https://share.example.org
+```
+
+or run `fetchpath share relay https://share.example.org` and paste the key when asked. Fetchpath keeps the key sealed with your Windows account and never shows it again; run the command again with a new key after `--rotate`. It then enrolls, makes a test link and waits for you to open it. Open it on a phone using mobile data (Wi-Fi off); `fetchpath share on` is allowed only after that download worked. File links work as in the tunnel guide (`fetchpath share create FILE`), and Fetchpath listens on no local port while relay mode is on. `fetchpath share relay off` goes back to a tunnel and keeps the key; `fetchpath share relay URL --stored-key` uses it again. Changing the address, the mode or the key turns links off and ends the live ones.
+
+If the status says the relay refused the key, the key is wrong or was rotated. Anything else (`not reachable`) is the network, the domain or the relay being down.
+
 ## Status
 
-The relay side is built. Fetchpath itself cannot connect to a relay yet (the engine side of FP-118 is still to come), so there is no test link to open. Once it lands, the check is a phone on mobile data (Wi-Fi off) opening a link from Fetchpath, the same gate as for tunnels.
+Built and tested on loopback, including the engine. Not yet tried on a real server: the Let's Encrypt certificate, a Linux build and a phone on mobile data are the owner's last check. The desktop app has no relay screen yet; use the command line.

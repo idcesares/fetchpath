@@ -10,7 +10,7 @@ use fetchpath_relay::wire::{ALPN, EnrollmentKey};
 use rustls::ClientConfig;
 use rustls::RootCertStore;
 use rustls::crypto::aws_lc_rs;
-use rustls::pki_types::ServerName;
+use rustls::pki_types::{CertificateDer, ServerName};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,6 +33,7 @@ fn connector_for(alpn: &[u8], roots: RootCertStore) -> TlsConnector {
 struct Front {
     address: std::net::SocketAddr,
     roots: RootCertStore,
+    der: CertificateDer<'static>,
     key: EnrollmentKey,
 }
 
@@ -59,6 +60,7 @@ async fn front() -> Front {
     Front {
         address,
         roots,
+        der: generated.cert.der().clone(),
         key,
     }
 }
@@ -158,4 +160,36 @@ async fn an_engine_with_the_wrong_key_is_refused_over_tls() {
     .expect("refused over TLS")
     .unwrap();
     task.abort();
+}
+
+async fn status_with(front: &Front, name: &str, want: Status) {
+    let connector = fetchpath_relay::connect::tls_connector(
+        name,
+        front.address.to_string(),
+        vec![front.der.clone()],
+    )
+    .unwrap();
+    let (_ids, ids_rx) = watch::channel(Vec::new());
+    let (status_tx, mut status) = watch::channel(Status::Connecting);
+    let task = tokio::spawn(client::run(
+        Settings::new(front.key.clone(), "laptop"),
+        connector,
+        ids_rx,
+        hello(),
+        status_tx,
+    ));
+    let reached =
+        tokio::time::timeout(Duration::from_secs(5), status.wait_for(|s| *s == want)).await;
+    task.abort();
+    reached
+        .unwrap_or_else(|_| panic!("never {want:?} for {name}"))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_engine_connector_trusts_the_name_it_was_given_and_no_other() {
+    let front = front().await;
+    status_with(&front, "localhost", Status::Enrolled).await;
+    // A relay answering for another name is not the relay that was asked for.
+    status_with(&front, "other.example.com", Status::Unreachable).await;
 }
