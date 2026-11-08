@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-10-31",
+  "updated": "2026-11-08",
   "tasks": [
     {
       "id": "FP-001",
@@ -3852,7 +3852,7 @@
       "dependsOn": [
         "FP-117"
       ],
-      "status": "in_progress",
+      "status": "done",
       "owner": "lead",
       "priority": "P3",
       "modelTier": "astra-high",
@@ -3871,12 +3871,35 @@
         "A10"
       ],
       "acceptance": "Relay mode of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md using the choice recorded by FP-116: a stateless relay with no accounts that stores no files, accepts links only from engines holding its owner's enrollment key, obtains its own certificate, and is documented for a VPS. The new component enters the repository map in the same change.",
-      "verification": "Gate X7 for this mode on a real VPS with a phone on mobile data; an unenrolled engine is refused; the relay holds no plaintext or key in logs, checked by test.",
+      "verification": "Loopback and TLS tests pass: an unenrolled engine is refused and the relay holds no plaintext or key in logs, checked by test (merged in #65). Gate X7 on a real VPS with a phone on mobile data is deferred to FP-128, not weakened.",
       "evidence": [
         "docs/development/SHARE-RELAY.md",
         "docs/user/RELAY.md"
       ],
-      "note": "Code complete on feat/fp-118-relay: relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Not done: gate X7 (real Linux VPS build, Let's Encrypt, phone on mobile data), owned by Isaac; the desktop relay section is type-checked but not clicked through."
+      "note": "Code complete and merged to main (#65): relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Gate X7 moved to FP-128; the desktop relay section is type-checked but not clicked through."
+    },
+    {
+      "owner": null,
+      "id": "FP-128",
+      "title": "Run gate X7 for Relay mode on a real VPS",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-118"
+      ],
+      "status": "todo",
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "files": [
+        "docs/development/SHARE-RELAY.md",
+        "docs/user/RELAY.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10"
+      ],
+      "acceptance": "Relay mode built from source on a real Linux VPS, a real Let's Encrypt certificate issued, an enrolled engine linked, and a share downloaded from a phone on mobile data; the desktop relay section clicked through by hand.",
+      "verification": "Gate X7 recorded in docs/development/SHARE-RELAY.md with what was run and what failed; an unenrolled engine refused on the real relay. Owned by Isaac (needs the VPS and a phone).",
+      "evidence": []
     },
     {
       "owner": null,
