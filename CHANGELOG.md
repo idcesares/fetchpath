@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Share a file by link: a share server with single-use link tickets, Tunnel
+  mode and a guided setup in Settings. The download page is restyled and the
+  link QR code can be saved as an image.
+- Relay mode: share through your own `fetchpath-relay` on a VPS (CLI
+  `fetchpath share relay URL`, key on stdin; also in desktop Settings). The
+  relay stores no files and accepts links only from engines holding your
+  enrollment key. Not yet tested on a real VPS with a phone on mobile data.
+
+### Changed
+
+- Desktop queue: rows sit on a 4px grid, labels are sentence case, the active
+  filter has an underline, and the browser and media tool setup states have an
+  icon as well as text.
+- Updated Tauri to 2.12, rustls 0.23.46, russh 0.65.1 and pageant 0.2.5.
+
+### Upgrade notes
+
+- Changing the relay address, port, mode or key turns sharing off and revokes
+  existing links.
+
 ## 0.4.1 (25 October 2026)
 
 ### Security
