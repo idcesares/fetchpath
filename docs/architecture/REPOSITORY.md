@@ -39,6 +39,7 @@ Planned by [the engine platform design](specs/2026-09-24-engine-platform-design.
 | `docs/tasks` | `backlog.json` (task state, dependencies, acceptance, evidence) and the handoff template | Lead while agents run |
 | `docs/assets` | Static images used by the README; `banner.svg` is both the editable source (plain SVG, system fonts, colors from `design/tokens.css`, mark from the app icon source) and the render | Lead |
 | `docs/development` | Workflow, per-task verification records, all raw evidence in `docs/development/evidence` (none beside source); retired records listed in its archive; indexed by [its README](../development/README.md) | Lead/integrator |
+| `docs/plan` | Proposed plans the owner asked to keep in git. Task state stays in `docs/tasks`. A plan is not evidence that a check was run | Lead |
 
 ## Tooling and tests
 

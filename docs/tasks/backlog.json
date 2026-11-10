@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-11-08",
+  "updated": "2026-11-10",
   "tasks": [
     {
       "id": "FP-001",
@@ -4168,6 +4168,185 @@
         "apps/cli/src/share/page.test.mjs",
         "apps/cli/src/share/tests.rs"
       ]
+    },
+    {
+      "id": "FP-129",
+      "title": "Run the relay crate tests on Linux CI",
+      "milestone": "M19",
+      "dependsOn": [],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        ".github/workflows/checks.yml",
+        "crates/fetchpath-relay"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "A GitHub Actions job on ubuntu-24.04, Rust 1.98.1, runs cargo test -p fetchpath-relay --features serve --locked and cargo build --release -p fetchpath-relay --features serve --locked. The job has no secrets. The existing Windows job stays. A green Linux job is a compile and unit-test result only: it is not a VPS run, a Let's Encrypt issuance, or gate X7.",
+      "verification": "The Linux job is green on the PR that adds it. Record the run URL in the task evidence when it is done. Do not claim a Linux VPS or a real certificate from this job.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo. Plan: docs/plan/linux-vps-validation.md."
+    },
+    {
+      "id": "FP-130",
+      "title": "Add a hardened systemd unit and VPS setup notes for the relay",
+      "milestone": "M19",
+      "dependsOn": [
+        "FP-129"
+      ],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-relay",
+        "docs/user/RELAY.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10"
+      ],
+      "acceptance": "Ship a systemd unit that runs fetchpath-relay as a dedicated user, state directory mode 0700, AmbientCapabilities and CapabilityBoundingSet limited to CAP_NET_BIND_SERVICE, NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp. Do not set MemoryDenyWriteExecute until a real serve proves aws-lc still works. ExecStart uses only flags the binary already accepts. Domain and email come from a root-only EnvironmentFile that is not in git. docs/user/RELAY.md gains the firewall, SSH-lockout warning, and the rule that journal lines must not contain the enrollment key or a share URL. systemd-analyze verify passes on the Linux CI runner.",
+      "verification": "systemd-analyze verify on ubuntu-24.04 exits 0. A check fails if the unit names a flag that fetchpath-relay usage does not list. Independent strong review of the unit and the doc before done. Applying the unit on the owner's VPS is FP-128, not this ticket.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo."
+    },
+    {
+      "id": "FP-131",
+      "title": "Package the relay as a linux-x64 tarball and a .deb",
+      "milestone": "M19",
+      "dependsOn": [
+        "FP-130"
+      ],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        ".github/workflows",
+        "crates/fetchpath-relay",
+        "docs/user/RELAY.md"
+      ],
+      "acceptanceIds": [
+        "A09"
+      ],
+      "acceptance": "CI builds a linux-x64 tarball of fetchpath-relay plus SHA256SUMS, and a .deb that installs the binary, the FP-130 unit, and the system user. Removing the package stops the service and leaves /var/lib/fetchpath-relay in place. No apt repository and no new host. AppImage is out of this ticket. Publishing the files is a later owner release, not part of the build.",
+      "verification": "The CI artifacts exist for the commit. A clean Ubuntu 24.04 container installs the .deb, shows the unit with systemctl cat, and purge leaves the state directory. Record the container result. Do not publish a release from this ticket.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo."
+    },
+    {
+      "id": "FP-132",
+      "title": "Seal the relay enrollment key on Linux with the Secret Service",
+      "milestone": "M19",
+      "dependsOn": [],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "adapters/lan/src/protect.rs",
+        "apps/cli/src/share/relay_key.rs",
+        "docs/product/PLATFORMS.md",
+        "SECURITY.md"
+      ],
+      "acceptanceIds": [
+        "A10",
+        "A13"
+      ],
+      "acceptance": "The relay enrollment key and the LAN identity seed use a Linux SecretProtector. With a Secret Service collection, protect then unprotect returns the same bytes and the file on disk is not the plaintext. With no keyring running, protect returns an error and writes nothing. There is no cleartext fallback. Windows DPAPI behavior is unchanged. The browser-inbox sealer stays Windows-only and still returns its unsupported error on Linux.",
+      "verification": "Tests: round-trip with a stand-in protector, refuse-and-write-nothing when no keyring is present, and a file that is not the hex key. Independent strong review of the sealing boundary before done.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Adopts the Linux row already in docs/product/PLATFORMS.md. Not ready until the owner sets status to todo."
+    },
+    {
+      "id": "FP-133",
+      "title": "Run the engine and share CLI on Linux over a per-user Unix socket",
+      "milestone": "M19",
+      "dependsOn": [
+        "FP-132"
+      ],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-protocol/src/pipe",
+        "apps/cli",
+        "docs/architecture/REPOSITORY.md",
+        "docs/product/PLATFORMS.md",
+        "SECURITY.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A10"
+      ],
+      "acceptance": "fetchpath engine and fetchpath share build on linux x64. The local transport is a Unix socket in a 0700 directory under the XDG state home, the peer uid is checked with SO_PEERCRED, and the existing secret handshake is unchanged. A second engine does not own the queue. cargo test -p fetchpath-relay --features serve --locked and the engine share-relay loopback test pass on Linux CI. Out of scope: the desktop, the browser host, media and torrent helpers, and Windows autostart.",
+      "verification": "Linux CI is green for those tests. A second process cannot attach as another user. Independent strong review of the socket permissions and peer check before done. If file publication cannot yet fence a Linux path, stop and record that gap; do not mark the ticket done on a partial port.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo."
+    },
+    {
+      "id": "FP-134",
+      "title": "Enroll a Linux engine with the relay and repeat gate X7 from it",
+      "milestone": "M19",
+      "dependsOn": [
+        "FP-128",
+        "FP-133"
+      ],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "apps/cli/src/share",
+        "crates/fetchpath-relay/src/connect.rs",
+        "docs/user/RELAY.md",
+        "docs/development/SHARE-RELAY.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A10"
+      ],
+      "acceptance": "On Linux, fetchpath share relay URL reads the key from stdin, stores it with the FP-132 sealer, and enrolls. The relay certificate is checked with rustls-platform-verifier against the OS store. A wrong key prints the existing refusal sentence and the relay logs relay: engine refused. The owner then repeats checklist B in docs/plan/linux-vps-validation.md: a phone on mobile data downloads the test link served by the Linux engine. CI without that phone run does not close the ticket.",
+      "verification": "Linux CI covers the wrong-key refusal and a loopback enroll. The owner records the phone result in SHARE-RELAY.md with no key, link, or fragment. Strong review of key handling before done.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo. Depends on FP-128 so the real relay is proven before this client is debugged against it."
+    },
+    {
+      "id": "FP-135",
+      "title": "Package a Linux desktop that can enroll with the relay",
+      "milestone": "M19",
+      "dependsOn": [
+        "FP-134"
+      ],
+      "status": "proposed",
+      "owner": null,
+      "priority": "P3",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop",
+        "docs/user/GUIDE.md",
+        "docs/product/PLATFORMS.md"
+      ],
+      "acceptanceIds": [
+        "A09",
+        "A13"
+      ],
+      "acceptance": "A Tauri 2 linux-x64 build shows Settings, Storage and sharing, Public links, and Use my own relay instead of a tunnel. The key field clears on use. One of AppImage or .deb installs on Ubuntu 24.04 x64 and can enroll with an already stored key. Browser extension, code signing, and ARM are out of this ticket. The relay scenario does not need this ticket.",
+      "verification": "One clean Ubuntu 24.04 run: install, open Public links, enroll, and fetchpath share reports Enrolled with the relay. Record what was not tried. Do not start this ticket unless the owner accepts it after FP-134.",
+      "evidence": [],
+      "note": "Proposed 10 November 2026. Optional. Not ready until the owner sets status to todo."
     }
   ]
 }
