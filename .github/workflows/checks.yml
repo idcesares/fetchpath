@@ -41,3 +41,22 @@ jobs:
       # The notices cover every platform's crates; the build fetched only Windows'.
       - run: cargo fetch --locked
       - run: node tools/licenses/generate.mjs --check
+  # Compile and unit-test the relay on Linux. No secrets. This is not a VPS
+  # run, a Let's Encrypt issuance, or gate X7.
+  relay-linux:
+    name: Relay on Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install the C toolchain the relay's crypto crate builds with
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential cmake pkg-config
+      - name: Install Rust 1.98.1
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+      - name: Test the relay
+        run: cargo test -p fetchpath-relay --features serve --locked
+      - name: Build the relay
+        run: cargo build --release -p fetchpath-relay --features serve --locked
