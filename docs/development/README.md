@@ -35,7 +35,7 @@ one your task names.
 - [Torrents and magnets](TORRENTS.md) — FP-021: isolated helper, consent boundaries, publication and current limits.
 - [Efficiency research: chunking, deltas, paths, coding](EFFICIENCY-RESEARCH.md) — FP-023, FP-024.
 
-- [Share relay and encryption framing](SHARE-RELAY.md) — FP-116, FP-117, FP-118: thin relay vs iroh, the chunked AES-GCM framing, what the share listener and Tunnel mode built, and the relay design and limits.
+- [Share relay and encryption framing](SHARE-RELAY.md) — FP-116, FP-117, FP-118: thin relay vs iroh, the chunked AES-GCM framing, what the share listener and Tunnel mode built, and the relay design and limits. The owner's unrun VPS checklist is [the Linux plan](../plan/linux-vps-validation.md).
 
 ## Release
 

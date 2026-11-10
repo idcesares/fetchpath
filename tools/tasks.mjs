@@ -17,7 +17,9 @@ export function validateGraph(backlog) {
     if (!/^FP-\d{3}$/.test(task.id)) errors.push(`Invalid id: ${task.id}`);
     if (ids.has(task.id)) errors.push(`Duplicate id: ${task.id}`);
     ids.set(task.id, task);
-    if (!['todo', 'in_progress', 'blocked', 'done'].includes(task.status)) errors.push(`${task.id}: invalid status`);
+    // 'proposed' is written and not accepted. `next` lists only in_progress and
+    // todo whose dependencies are done, so a proposal is never ready work.
+    if (!['todo', 'in_progress', 'blocked', 'done', 'proposed'].includes(task.status)) errors.push(`${task.id}: invalid status`);
     if (!task.title || !task.acceptance || !task.verification) errors.push(`${task.id}: missing contract`);
     if (!Array.isArray(task.dependsOn) || !Array.isArray(task.files) || !Array.isArray(task.evidence)) errors.push(`${task.id}: invalid arrays`);
     if (!Array.isArray(task.acceptanceIds) || !task.acceptanceIds.length || task.acceptanceIds.some(id => !/^A(0[1-9]|1[0-3])$/.test(id))) errors.push(`${task.id}: invalid acceptance IDs`);

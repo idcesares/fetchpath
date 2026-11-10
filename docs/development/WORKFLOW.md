@@ -7,7 +7,9 @@ Both tools read `AGENTS.md`.
 
 1. `node tools/tasks.mjs next` lists active work, then ready tasks by priority
    (P0 blocks the phase, P1 is a headline outcome, P2 next, P3 later or
-   research). Take the highest unless the user says otherwise.
+   research). Take the highest unless the user says otherwise. Status
+   `proposed` is a ticket the owner has not accepted: `next` skips it, and
+   it stays proposed until the owner sets it to `todo`.
 2. `node tools/tasks.mjs show FP-XXX`; read only the contracts and source it
    names. Record status `in_progress`, owner and file area in the backlog.
 3. Build the smallest working behavior with the tests that guard its contract.
