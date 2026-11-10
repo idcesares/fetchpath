@@ -4174,22 +4174,26 @@
       "title": "Run the relay crate tests on Linux CI",
       "milestone": "M19",
       "dependsOn": [],
-      "status": "proposed",
-      "owner": null,
+      "status": "done",
+      "owner": "agent",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "standard",
       "files": [
         ".github/workflows/checks.yml",
+        "tests/repo/relay-linux-ci.test.mjs",
         "crates/fetchpath-relay"
       ],
       "acceptanceIds": [
         "A09"
       ],
       "acceptance": "A GitHub Actions job on ubuntu-24.04, Rust 1.98.1, runs cargo test -p fetchpath-relay --features serve --locked and cargo build --release -p fetchpath-relay --features serve --locked. The job has no secrets. The existing Windows job stays. A green Linux job is a compile and unit-test result only: it is not a VPS run, a Let's Encrypt issuance, or gate X7.",
-      "verification": "The Linux job is green on the PR that adds it. Record the run URL in the task evidence when it is done. Do not claim a Linux VPS or a real certificate from this job.",
-      "evidence": [],
-      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo. Plan: docs/plan/linux-vps-validation.md."
+      "verification": "Relay on Linux passed on ubuntu-24.04 in https://github.com/idcesares/fetchpath/actions/runs/42864471018 (job 129999066500): cargo test -p fetchpath-relay --features serve --locked and the release build, Rust 1.98.1. The Windows checks job passed on the same run. This is not a VPS, a Let's Encrypt certificate, or gate X7. Checklist A stays deferred because Isaac has no VPS.",
+      "evidence": [
+        ".github/workflows/checks.yml",
+        "tests/repo/relay-linux-ci.test.mjs"
+      ],
+      "note": "Linux CI only. Real-VPS validation (checklist A, FP-128) is still pending Isaac."
     },
     {
       "id": "FP-130",
