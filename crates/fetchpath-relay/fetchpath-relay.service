@@ -1,0 +1,38 @@
+[Unit]
+Description=Fetchpath share relay
+After=network-online.target
+Wants=network-online.target
+# A failed first certificate attempt exits. Stop retrying instead of hammering the CA.
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=fetchpath-relay
+Group=fetchpath-relay
+# Root creates this file, mode 0600. It is not in git. SHARE_HOST and ACME_EMAIL.
+EnvironmentFile=/etc/fetchpath-relay.env
+StateDirectory=fetchpath-relay
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/fetchpath-relay serve --state /var/lib/fetchpath-relay --domain ${SHARE_HOST} --email ${ACME_EMAIL} --accept-acme-terms
+Restart=on-failure
+RestartSec=10
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# AF_UNIX stays so glibc can ask systemd-resolved for Let's Encrypt's name.
+# Not proven by a real issuance.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+RestrictRealtime=yes
+# Executable memory is not denied. aws-lc was not run under that restriction.
+
+[Install]
+WantedBy=multi-user.target

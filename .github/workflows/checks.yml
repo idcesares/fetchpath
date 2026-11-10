@@ -60,3 +60,13 @@ jobs:
         run: cargo test -p fetchpath-relay --features serve --locked
       - name: Build the relay
         run: cargo build --release -p fetchpath-relay --features serve --locked
+      - name: Check the systemd unit
+        run: |
+          sudo install -m 0755 target/release/fetchpath-relay /usr/local/bin/fetchpath-relay
+          systemd-analyze verify crates/fetchpath-relay/fetchpath-relay.service
+          sudo cp crates/fetchpath-relay/fetchpath-relay.service /etc/systemd/system/fetchpath-relay.service
+          if sudo systemctl daemon-reload; then
+            systemd-analyze security fetchpath-relay.service
+          else
+            echo "systemd-analyze security skipped: this runner has no systemd bus"
+          fi

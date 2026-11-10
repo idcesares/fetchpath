@@ -78,7 +78,7 @@ Verified: loopback tests for routing, enrollment refusal, pool top-up, replaceme
 
 Engine side verified: a loopback relay and a real engine in `apps/cli/src/share/tests.rs` (test link delivered through the relay with Range resume, sharing turns on, unknown ids and a foreign Host refused, a wrong key shown as a problem, leaving relay mode), session tests for the generation and key-store ordering, protocol tests for `RelayKey`, and a TLS connector test against the relay's TLS listener.
 
-Not verified: a real Let's Encrypt issuance, a Linux build, a VPS run, a phone on mobile data (gate X7, the owner's); the Windows certificate store against a real certificate (the TLS test trusts its own root); the desktop relay section was not exercised by hand. The owner's checklist, with what would count as a pass, is [the Linux VPS plan](../plan/linux-vps-validation.md). Nothing in that plan has been run.
+Linux CI now builds and tests the relay (FP-129). Not verified: a real Let's Encrypt issuance, a VPS run, a phone on mobile data (gate X7), the Windows certificate store against a real certificate (the TLS test trusts its own root), and the desktop relay section. Isaac has no VPS, so checklist A is deferred. The checklist, with what would count as a pass, is [the Linux VPS plan](../plan/linux-vps-validation.md). Nothing in that checklist has been run.
 
 Limits that hold:
 - The relay routes only the first request of a visitor connection; the engine serves relayed streams with keep-alive off, so each response closes the connection.

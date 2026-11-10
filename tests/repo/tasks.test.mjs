@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateGraph, readyTasks, validateEvidence } from '../../tools/tasks.mjs';
 
-const task = (id, status = 'todo', dependsOn = []) => ({ id, title: 'Outcome', status, dependsOn, files: ['tools'], evidence: status === 'done' ? ['README.md'] : [], acceptanceIds: ['A01'], acceptance: 'Behavior', verification: 'Test', owner: null, priority: 'P1' });
+const task = (id, status = 'todo', dependsOn = []) => ({ id, title: 'Outcome', status, dependsOn, files: ['tools'], evidence: status === 'done' ? ['README.md'] : [], acceptanceIds: ['A01'], acceptance: 'Behavior', verification: 'Test', owner: 'agent', priority: 'P1' });
 const graph = (...tasks) => ({ schemaVersion: 1, tasks });
 
 test('only unblocked todo tasks are ready', () => {
@@ -17,7 +17,7 @@ test('cycles, unknown dependencies and duplicate IDs fail', () => {
 });
 test('completion and active ownership cannot bypass prerequisites', () => {
   assert.match(validateGraph(graph(task('FP-001'), task('FP-002', 'done', ['FP-001']))).join(), /unfinished dependency/);
-  assert.match(validateGraph(graph(task('FP-001', 'in_progress'))).join(), /needs owner/);
+  assert.match(validateGraph(graph({ ...task('FP-001', 'in_progress'), owner: null })).join(), /needs an owner/);
   assert.match(validateGraph(graph({ ...task('FP-001', 'done'), evidence: [] })).join(), /needs evidence/);
 });
 test('missing and escaping evidence are rejected', async () => {
@@ -30,6 +30,11 @@ test('unfinished tasks need a priority and ready tasks are ordered by it', () =>
   assert.deepEqual(validateGraph(graph({ ...task('FP-001', 'done'), priority: undefined })), []);
   const data = graph({ ...task('FP-001'), priority: 'P3' }, { ...task('FP-002'), priority: 'P0' }, task('FP-003'));
   assert.deepEqual(readyTasks(data).map(t => t.id), ['FP-002', 'FP-003', 'FP-001']);
+});
+test('every task needs an owner', () => {
+  assert.match(validateGraph(graph({ ...task('FP-001'), owner: null })).join(), /needs an owner/);
+  assert.match(validateGraph(graph({ ...task('FP-001'), owner: '   ' })).join(), /needs an owner/);
+  assert.deepEqual(validateGraph(graph(task('FP-001', 'done', []))), []);
 });
 test('review marks are limited to strong and standard', () => {
   assert.match(validateGraph(graph({ ...task('FP-001'), review: 'maybe' })).join(), /invalid review/);

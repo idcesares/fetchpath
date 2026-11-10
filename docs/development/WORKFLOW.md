@@ -9,7 +9,9 @@ Both tools read `AGENTS.md`.
    (P0 blocks the phase, P1 is a headline outcome, P2 next, P3 later or
    research). Take the highest unless the user says otherwise. Status
    `proposed` is a ticket the owner has not accepted: `next` skips it, and
-   it stays proposed until the owner sets it to `todo`.
+   it stays proposed until the owner sets it to `todo`. Every task has an
+   owner. Use `Isaac` when only he can run the step, and `agent` when an
+   agent can.
 2. `node tools/tasks.mjs show FP-XXX`; read only the contracts and source it
    names. Record status `in_progress`, owner and file area in the backlog.
 3. Build the smallest working behavior with the tests that guard its contract.
