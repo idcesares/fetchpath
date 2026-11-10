@@ -1,6 +1,6 @@
 # Linux VPS validation and follow-on plan
 
-Proposed 10 November 2026. Nothing in this file has been run. Task state lives in [the backlog](../tasks/backlog.json). A pass is recorded in [SHARE-RELAY.md](../development/SHARE-RELAY.md) only after the commands below were actually run, and that record omits the enrollment key, any share URL, and anything after `#`.
+Proposed 10 November 2026. **Deferred:** Isaac has no VPS, so checklist A is future work (FP-128, blocked, owner Isaac). Nothing in checklist A has been run. Task state lives in [the backlog](../tasks/backlog.json). A pass is recorded in [SHARE-RELAY.md](../development/SHARE-RELAY.md) only after the commands below were actually run, and that record omits the enrollment key, any share URL, and anything after `#`.
 
 **Goal.** Prove the relay that is already on main (FP-118) on a Linux VPS the owner already has, with a real Let's Encrypt certificate and a phone on mobile data. Then, only if he accepts them, add the Linux pieces that make that setup repeatable and let a Linux engine enroll.
 

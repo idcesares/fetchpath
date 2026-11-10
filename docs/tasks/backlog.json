@@ -1813,7 +1813,7 @@
         "FP-051"
       ],
       "status": "done",
-      "owner": null,
+      "owner": "agent",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "standard",
@@ -1865,7 +1865,7 @@
         "FP-058"
       ],
       "status": "done",
-      "owner": null,
+      "owner": "agent",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -1894,7 +1894,7 @@
         "FP-058"
       ],
       "status": "done",
-      "owner": null,
+      "owner": "agent",
       "priority": "P1",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -2923,7 +2923,7 @@
         "FP-067"
       ],
       "status": "blocked",
-      "owner": null,
+      "owner": "Isaac",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
@@ -2959,7 +2959,7 @@
         "FP-094"
       ],
       "status": "blocked",
-      "owner": null,
+      "owner": "agent",
       "priority": "P3",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -2991,7 +2991,7 @@
         "FP-092"
       ],
       "status": "blocked",
-      "owner": null,
+      "owner": "agent",
       "priority": "P3",
       "modelTier": "astra-high",
       "review": "strong",
@@ -3258,7 +3258,7 @@
         "FP-067"
       ],
       "status": "done",
-      "owner": null,
+      "owner": "agent",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -3845,7 +3845,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "lead",
       "id": "FP-118",
       "title": "Add Relay mode: fetchpath relay with enrolled engines",
       "milestone": "M18",
@@ -3853,7 +3853,6 @@
         "FP-117"
       ],
       "status": "done",
-      "owner": "lead",
       "priority": "P3",
       "modelTier": "astra-high",
       "files": [
@@ -3879,14 +3878,14 @@
       "note": "Code complete and merged to main (#65): relay crate and binary, engine side (ConfigureRelay, sealed key, CLI share relay), loopback and TLS tests. Gate X7 moved to FP-128; the desktop relay section is type-checked but not clicked through."
     },
     {
-      "owner": null,
+      "owner": "Isaac",
       "id": "FP-128",
       "title": "Run gate X7 for Relay mode on a real VPS",
       "milestone": "M18",
       "dependsOn": [
         "FP-118"
       ],
-      "status": "todo",
+      "status": "blocked",
       "priority": "P3",
       "modelTier": "terra-medium",
       "files": [
@@ -3899,17 +3898,18 @@
       ],
       "acceptance": "Relay mode built from source on a real Linux VPS, a real Let's Encrypt certificate issued, an enrolled engine linked, and a share downloaded from a phone on mobile data; the desktop relay section clicked through by hand.",
       "verification": "Gate X7 recorded in docs/development/SHARE-RELAY.md with what was run and what failed; an unenrolled engine refused on the real relay. Owned by Isaac (needs the VPS and a phone).",
-      "evidence": []
+      "evidence": [],
+      "blockedReason": "Deferred to the future roadmap. Isaac has no VPS right now, so checklist A (DNS, Let's Encrypt, the phone on mobile data, and the desktop click) is not running. Next action: when he has a VPS and a domain, follow docs/plan/linux-vps-validation.md checklist A and record the result in SHARE-RELAY.md with no key and no link."
     },
     {
-      "owner": null,
+      "owner": "Isaac",
       "id": "FP-119",
       "title": "Add Direct mode: certificate, share-port firewall rule and exposure warning",
       "milestone": "M18",
       "dependsOn": [
         "FP-117"
       ],
-      "status": "todo",
+      "status": "blocked",
       "priority": "P3",
       "modelTier": "astra-high",
       "review": "strong",
@@ -3925,10 +3925,11 @@
       ],
       "acceptance": "Direct mode of docs/architecture/specs/2026-10-31-file-transfer-and-sharing-design.md: ACME certificate for the person's domain, a Windows Firewall rule for the share port only, an explicit exposure warning, no automatic router port opening, and any DNS API token handled as a secret and not the default path.",
       "verification": "Gate X7 for this mode on a real home connection with a phone on mobile data; only the share port answers from outside; secret handling reviewed independently because it opens the home PC to the internet.",
-      "evidence": []
+      "evidence": [],
+      "blockedReason": "Waits on Isaac's decision to expose the home PC. Direct mode is not started. Next action: he accepts that exposure, or the task stays blocked. It does not use the VPS relay."
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-120",
       "title": "Send to paired devices on the LAN",
       "milestone": "M18",
@@ -3956,7 +3957,7 @@
       "evidence": []
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-121",
       "title": "Mark credentialed download output at the file or by hash, not by queue destination",
       "milestone": "M18",
@@ -3985,7 +3986,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-122",
       "title": "Harden the inbox file: bounded size, corrupt-file recovery and atomic replace",
       "milestone": "M18",
@@ -4012,7 +4013,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-123",
       "title": "Commit the offer ledger before reporting success (save-before-commit ordering)",
       "milestone": "M18",
@@ -4040,7 +4041,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-124",
       "title": "Re-check the grant at the moment of reading in offer and accept",
       "milestone": "M18",
@@ -4067,7 +4068,7 @@
       ]
     },
     {
-      "owner": null,
+      "owner": "agent",
       "id": "FP-125",
       "title": "Align accept with D8: re-hash on accept and enforce the size cap",
       "milestone": "M18",
@@ -4202,23 +4203,28 @@
       "dependsOn": [
         "FP-129"
       ],
-      "status": "proposed",
-      "owner": null,
+      "status": "done",
+      "owner": "agent",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
       "files": [
-        "crates/fetchpath-relay",
-        "docs/user/RELAY.md"
+        "crates/fetchpath-relay/fetchpath-relay.service",
+        "docs/user/RELAY.md",
+        ".github/workflows/checks.yml",
+        "tests/repo/relay-systemd.test.mjs"
       ],
       "acceptanceIds": [
         "A07",
         "A10"
       ],
       "acceptance": "Ship a systemd unit that runs fetchpath-relay as a dedicated user, state directory mode 0700, AmbientCapabilities and CapabilityBoundingSet limited to CAP_NET_BIND_SERVICE, NoNewPrivileges, ProtectSystem=strict, ProtectHome, PrivateTmp. Do not set MemoryDenyWriteExecute until a real serve proves aws-lc still works. ExecStart uses only flags the binary already accepts. Domain and email come from a root-only EnvironmentFile that is not in git. docs/user/RELAY.md gains the firewall, SSH-lockout warning, and the rule that journal lines must not contain the enrollment key or a share URL. systemd-analyze verify passes on the Linux CI runner.",
-      "verification": "systemd-analyze verify on ubuntu-24.04 exits 0. A check fails if the unit names a flag that fetchpath-relay usage does not list. Independent strong review of the unit and the doc before done. Applying the unit on the owner's VPS is FP-128, not this ticket.",
-      "evidence": [],
-      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo."
+      "verification": "The unit file is crates/fetchpath-relay/fetchpath-relay.service. Local systemd-analyze verify exited 0 on systemd 255 once /usr/local/bin/fetchpath-relay existed. This VM has no systemd bus, so systemd-analyze security could not run here. The Relay on Linux job installs the real release binary and runs verify, then security when daemon-reload works. MemoryDenyWriteExecute is unset because no real serve was run. Applying the unit on a VPS is FP-128, still deferred: Isaac has no VPS.",
+      "evidence": [
+        "crates/fetchpath-relay/fetchpath-relay.service",
+        "docs/user/RELAY.md"
+      ],
+      "note": "Checked as a unit file, not by serving on a VPS. Real-VPS validation (checklist A, FP-128) is still pending Isaac."
     },
     {
       "id": "FP-131",
@@ -4228,7 +4234,7 @@
         "FP-130"
       ],
       "status": "proposed",
-      "owner": null,
+      "owner": "agent",
       "priority": "P3",
       "modelTier": "terra-medium",
       "review": "standard",
@@ -4251,7 +4257,7 @@
       "milestone": "M19",
       "dependsOn": [],
       "status": "proposed",
-      "owner": null,
+      "owner": "agent",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
@@ -4278,7 +4284,7 @@
         "FP-132"
       ],
       "status": "proposed",
-      "owner": null,
+      "owner": "agent",
       "priority": "P2",
       "modelTier": "astra-high",
       "review": "strong",
@@ -4306,8 +4312,8 @@
         "FP-128",
         "FP-133"
       ],
-      "status": "proposed",
-      "owner": null,
+      "status": "blocked",
+      "owner": "Isaac",
       "priority": "P2",
       "modelTier": "terra-medium",
       "review": "strong",
@@ -4324,7 +4330,8 @@
       "acceptance": "On Linux, fetchpath share relay URL reads the key from stdin, stores it with the FP-132 sealer, and enrolls. The relay certificate is checked with rustls-platform-verifier against the OS store. A wrong key prints the existing refusal sentence and the relay logs relay: engine refused. The owner then repeats checklist B in docs/plan/linux-vps-validation.md: a phone on mobile data downloads the test link served by the Linux engine. CI without that phone run does not close the ticket.",
       "verification": "Linux CI covers the wrong-key refusal and a loopback enroll. The owner records the phone result in SHARE-RELAY.md with no key, link, or fragment. Strong review of key handling before done.",
       "evidence": [],
-      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo. Depends on FP-128 so the real relay is proven before this client is debugged against it."
+      "note": "Proposed 10 November 2026. Not ready until the owner sets status to todo. Depends on FP-128 so the real relay is proven before this client is debugged against it.",
+      "blockedReason": "Deferred with FP-128. The phone test needs a relay on a VPS, and Isaac has none. Next action: after FP-133 is done and a VPS exists, Isaac runs checklist B. FP-132 and FP-133 can be built by an agent before that."
     },
     {
       "id": "FP-135",
@@ -4334,7 +4341,7 @@
         "FP-134"
       ],
       "status": "proposed",
-      "owner": null,
+      "owner": "agent",
       "priority": "P3",
       "modelTier": "terra-medium",
       "review": "standard",

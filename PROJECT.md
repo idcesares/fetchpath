@@ -40,7 +40,7 @@ The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the t
 
 ## Next development
 
-`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). Nothing is in progress. FP-119 and FP-128 are ready and wait on the owner. FP-091, FP-092, and FP-093 stay blocked. Proposed Linux tickets (FP-129 through FP-135) are not ready until the owner accepts them. The checklist is [the Linux VPS plan](docs/plan/linux-vps-validation.md). The backlog remains the task list.
+`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). Nothing is in progress and nothing is ready. FP-128 is blocked: Isaac has no VPS, so [checklist A](docs/plan/linux-vps-validation.md) is deferred. FP-119 is blocked on his decision to expose the home PC. FP-091, FP-092, FP-093, and FP-120 stay blocked. FP-129 is done (Linux CI). The systemd unit is FP-130. Proposed agent work that does not need a VPS is FP-131, FP-132, FP-133, and FP-135. The backlog remains the task list.
 
 0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way. On 25 October 2026, [v0.4.1](https://github.com/idcesares/fetchpath/releases/tag/v0.4.1) followed as a dependency security patch.
 
