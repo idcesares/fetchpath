@@ -386,7 +386,7 @@ fn exceeds_cap(received: u64, stated: Option<u64>) -> bool {
     received > MAX_ARTIFACT_BYTES || stated.is_some_and(|total| total > MAX_ARTIFACT_BYTES)
 }
 
-fn sha256_file(path: &Path) -> io::Result<String> {
+pub(crate) fn sha256_file(path: &Path) -> io::Result<String> {
     let mut hasher = Sha256::new();
     io::copy(&mut fs::File::open(path)?, &mut hasher)?;
     Ok(format!("{:x}", hasher.finalize()))

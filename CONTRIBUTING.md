@@ -120,7 +120,6 @@ On-machine compatibility harnesses, which install and drive the real artifacts:
 
 ```powershell
 pwsh -NoProfile -File tests/compatibility/windows/ui-accessibility.ps1
-pwsh -NoProfile -File tests/compatibility/windows/packaging-lifecycle.ps1
 pwsh -NoProfile -File tests/compatibility/metalink/run.ps1
 ```
 

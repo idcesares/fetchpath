@@ -6,16 +6,15 @@
 //! engine's sockets.
 
 use super::{Shared, http};
+use crate::remote::listener::accept_any;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use std::convert::Infallible;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::task::Poll;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -27,18 +26,6 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LIFETIME: Duration = Duration::from_secs(4 * 60 * 60);
 /// How long connections get to finish when the listener stops.
 const DRAIN: Duration = Duration::from_secs(1);
-
-async fn accept_any(listeners: &[TcpListener]) -> std::io::Result<(TcpStream, SocketAddr)> {
-    std::future::poll_fn(|context| {
-        for listener in listeners {
-            if let Poll::Ready(accepted) = listener.poll_accept(context) {
-                return Poll::Ready(accepted);
-            }
-        }
-        Poll::Pending
-    })
-    .await
-}
 
 /// Serves until the listener is cancelled, then closes the ports and gives
 /// connections a moment to end (they watch the same cancellation).

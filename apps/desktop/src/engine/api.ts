@@ -1,6 +1,6 @@
 import type { EngineConnection, JobDetails, JobDraft, JobSnapshot, QueueStats } from "./types";
 
-/** The engine as the queue views use it: a Tauri implementation exists, and a socket one is planned. */
+/** The engine as the queue views use it: implemented for Tauri and the local web UI socket. */
 export interface EngineApi {
   listDownloads(): Promise<JobSnapshot[]>;
   queueStats(): Promise<QueueStats>;

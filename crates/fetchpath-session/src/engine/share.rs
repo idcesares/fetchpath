@@ -482,18 +482,27 @@ impl Engine {
             return Ok(());
         }
         let Some(authority) = state.authority.clone() else {
-            return Err(not_ready("Set the tunnel address first."));
+            return Err(not_ready(if state.relay {
+                "Set the relay's address first."
+            } else {
+                "Set the tunnel address first."
+            }));
         };
         if !matches!(state.listener, Some(Ok(_))) {
-            return Err(not_ready(
-                "The share listener is not running. Check the port, then try again.",
-            ));
+            return Err(not_ready(if state.relay {
+                "Not enrolled with the relay yet. Check the relay address and key, then try again."
+            } else {
+                "The share listener is not running. Check the port, then try again."
+            }));
         }
         if self.sharing.store.test_passed().as_deref() != Some(authority.as_str()) {
-            return Err(not_ready(
+            return Err(not_ready(if state.relay {
                 "Open the test link from a phone on mobile data first. Sharing turns on only \
-                 after the whole test file was delivered through your tunnel.",
-            ));
+                 after the whole test file was delivered through your relay."
+            } else {
+                "Open the test link from a phone on mobile data first. Sharing turns on only \
+                 after the whole test file was delivered through your tunnel."
+            }));
         }
         state.enabled = true;
         self.sharing.store.configure(true, Some(authority));
@@ -501,17 +510,27 @@ impl Engine {
     }
 
     fn start_share_test(&self) -> Result<CommandResult, ProtocolError> {
-        let (base_url, listener) = {
+        let (base_url, listener, relay) = {
             let state = self.sharing.state();
-            (state.base_url.clone(), state.listener.clone())
+            (state.base_url.clone(), state.listener.clone(), state.relay)
         };
         let Some(base_url) = base_url else {
-            return Err(not_ready("Set the tunnel address first."));
+            return Err(not_ready(if relay {
+                "Set the relay's address first."
+            } else {
+                "Set the tunnel address first."
+            }));
         };
         match listener {
             Some(Ok(_)) => {}
             Some(Err(why)) => return Err(not_ready(&why)),
-            None => return Err(not_ready("The share listener is not running yet.")),
+            None => {
+                return Err(not_ready(if relay {
+                    "Not enrolled with the relay yet."
+                } else {
+                    "The share listener is not running yet."
+                }));
+            }
         }
         self.sharing.store.clear_test();
         let line = b"Fetchpath share test. If you can read this, your tunnel works.\n";

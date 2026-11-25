@@ -21,7 +21,9 @@ Proposed 10 November 2026. **Deferred:** Isaac has no VPS, so checklist A is fut
 
 ## Open backlog
 
-### FP-119 Direct mode — `todo`, ready, P3, strong review
+Task status lives only in `docs/tasks/backlog.json` (`node tools/tasks.mjs show FP-XXX`).
+
+### FP-119 Direct mode — P3, strong review
 
 Needs a domain on the home connection, ACME on the Windows engine, a Windows Firewall rule for the share port only, and an exposure warning. No UPnP. A DNS API token is a secret and is not the default path. Depends on FP-117 (done).
 
@@ -29,11 +31,11 @@ Risk: the home PC is on the internet. High. Secret handling needs the strong rev
 
 Validate: gate X7 on that home connection with a phone on mobile data. From outside, only the share port answers. Do this after FP-128, and only if he still wants it.
 
-### FP-126 Inbox recovery notice — `done`
+### FP-126 Inbox recovery notice
 
 Shipped. Desktop and CLI show the notice from FP-122. Nothing left to validate.
 
-### FP-128 Gate X7 on a real VPS — `todo`, ready, P3
+### FP-128 Gate X7 on a real VPS — P3
 
 Needs the VPS, the DNS name, Let's Encrypt, the Windows engine, a phone on mobile data, and a click through Settings → Storage and sharing → Public links. Depends on FP-118 (done). Owned by Isaac.
 
@@ -257,7 +259,7 @@ Replace `SHARE_HOST`, `VPS`, and `EMAIL`. Rust on the VPS is 1.98.1, the version
 
    Pass, on the PC: `Enrolled with the relay at https://SHARE_HOST.` then `The test link was delivered. File links are still off: run fetchpath share on to turn them on.`
 
-   Pass, on the VPS: `sudo journalctl -u fetchpath-relay -n 20 --no-pager` contains `relay: engine enrolled name=fetchpath` and `relay: served`, and contains neither the key nor the link.
+   Pass, on the VPS: `sudo journalctl -u fetchpath-relay -n 20 --no-pager` contains `relay: engine enrolled name=fetchpath-` and `relay: served`, and contains neither the key nor the link.
 
    Then:
 

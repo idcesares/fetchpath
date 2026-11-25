@@ -1019,14 +1019,77 @@ fn copy_checked(
         output
             .sync_all()
             .map_err(|_| "send.destination_unsupported")?;
+        drop(output);
         if size != manifest.size || format!("{:x}", digest.finalize()) != manifest.sha256 {
             return Err("send.changed");
         }
         // Publication cannot replace a file that appeared meanwhile.
-        std::fs::hard_link(&staging, target).map_err(|_| "send.destination_exists")
+        publish_no_overwrite(&staging, target)
     })();
     let _ = std::fs::remove_file(&staging);
     result
+}
+
+/// Publishes `staging` at `target` without ever replacing an existing file.
+/// Uses `hard_link` first, and on Windows filesystems that do not support hard
+/// links (FAT32/exFAT) falls back to `MoveFileExW` without
+/// `MOVEFILE_REPLACE_EXISTING`.
+fn publish_no_overwrite(staging: &Path, target: &Path) -> Result<(), &'static str> {
+    match std::fs::hard_link(staging, target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err("send.destination_exists")
+        }
+        Err(error) if is_hard_link_unsupported(&error) => move_no_overwrite(staging, target),
+        Err(_) => Err("send.destination_unsupported"),
+    }
+}
+
+fn is_hard_link_unsupported(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::Unsupported {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        // ERROR_INVALID_FUNCTION (1) and ERROR_NOT_SUPPORTED (50) are returned
+        // by FAT32/exFAT volumes when CreateHardLinkW is called.
+        matches!(error.raw_os_error(), Some(1 | 50))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[cfg(windows)]
+fn move_no_overwrite(staging: &Path, target: &Path) -> Result<(), &'static str> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let src: Vec<u16> = staging.as_os_str().encode_wide().chain(Some(0)).collect();
+    let dst: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Flags = 0 (no MOVEFILE_REPLACE_EXISTING) refuses to overwrite an existing target.
+    let ok = unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), 0) };
+    if ok != 0 {
+        return Ok(());
+    }
+    let err = std::io::Error::last_os_error();
+    if err.kind() == std::io::ErrorKind::AlreadyExists
+        || matches!(
+            err.raw_os_error().map(|code| code as u32),
+            Some(ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS)
+        )
+    {
+        Err("send.destination_exists")
+    } else {
+        Err("send.destination_unsupported")
+    }
+}
+
+#[cfg(not(windows))]
+fn move_no_overwrite(_staging: &Path, _target: &Path) -> Result<(), &'static str> {
+    Err("send.destination_unsupported")
 }
 
 /// Bidirectional controls and invisible marks that make a file name read as
@@ -1239,5 +1302,30 @@ mod tests {
             open_source(&granted.join("gone.txt"), &boundary, false),
             Err(Unreadable::Missing)
         ));
+    }
+
+    #[test]
+    fn publish_no_overwrite_refuses_existing_target_and_moves_when_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join(".staging.part");
+        let target = dir.path().join("out.bin");
+        std::fs::write(&staging, b"new").unwrap();
+        std::fs::write(&target, b"existing").unwrap();
+        assert_eq!(
+            publish_no_overwrite(&staging, &target),
+            Err("send.destination_exists")
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"existing");
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                move_no_overwrite(&staging, &target),
+                Err("send.destination_exists")
+            );
+            assert_eq!(std::fs::read(&target).unwrap(), b"existing");
+            std::fs::remove_file(&target).unwrap();
+            assert_eq!(move_no_overwrite(&staging, &target), Ok(()));
+            assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        }
     }
 }

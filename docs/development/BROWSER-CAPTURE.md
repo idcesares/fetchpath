@@ -6,13 +6,13 @@ Verified 21 September 2026 for FP-013 and acceptance criteria A07/A08.
 
 Fetchpath exposes an explicit **Send link to Fetchpath** browser context-menu action. Automatic capture is separate and off by default; when enabled it observes browser downloads, hands supported ones to Fetchpath and tries to restart a browser download if the host refuses it. An unsupported URL, denied site permission, excluded origin, POST, or `blob:` workflow remains on the browser path.
 
-The first send for a site requests that exact HTTP/HTTPS origin. After the user gesture, the extension reads only cookies applicable to the selected URL and sends a versioned GET capture over native messaging. It stores only bounded redacted events: capture ID, query-free URL, result, and cookie count. Site exclusions are exact-origin entries in extension-local storage and are checked before permission or native-host work.
+Manual sends (**Send link**, **Send page**, **Send video**, and the popup button) send immediately without requesting site permission (`cookies: []`, FP-143). When the person has opted in to share sign-in cookies for a site via the popup toggle (or enabled automatic capture), the extension reads only cookies applicable to the selected URL (filtered to RFC 6265 scope and capped at 256) and sends a versioned GET capture over native messaging. It stores only bounded redacted events: capture ID, query-free/credential-free URL, result, and cookie count. Site exclusions are exact-origin entries in extension-local storage and are checked before cookie or native-host work.
 
 The Windows native host independently enforces its fixed Chrome/Edge extension origin or Firefox add-on ID, a 1 MiB frame limit, schema version, UUID capture identity, explicit-action flag, HTTP(S) GET, no URL-embedded credentials, a safe leaf filename, same-origin redacted referrer, and cookie domain/path/secure scope. Cookie values become libcurl cookie-engine records, so they follow cookie scope rather than a redirect-forwarded raw `Cookie` header.
 
 Signed query values, the origin-only referrer, and cookies are serialized into a current-user DPAPI envelope with application entropy. The public durable inbox contains only an opaque `credential_ref`, request fingerprint, safe filename, and query-free URL. Acknowledgement occurs only after the protected envelope and create-only inbox command have been flushed and synced. Reusing the same capture ID and fingerprint returns the existing result; a different fingerprint is an idempotency conflict.
 
-The desktop polls this inbox with its normal queue refresh. It commits the queue record before marking the inbox processed, and detects an already-ingested credential reference after a crash between those steps. Browser jobs choose a non-conflicting filename in the user's Downloads directory. A context-menu page send whose URL has no file extension suggests `<tab title>.html` (sanitised, at most 50 characters, no reserved names), else `<host>-<segment>.html`; link, media and extension-bearing names are unchanged. The protected context is retained for restart/retry, omitted from queue JSON and UI state, and removed after completion or history removal.
+The native host nudges the engine (`TakeBrowserCaptures`, FP-056), which ingests the inbox directly (starting `fetchpath.exe` if needed) and commits each queue record before marking the inbox processed, detecting an already-ingested credential reference after a crash between those steps. Browser jobs choose a non-conflicting filename in the user's Downloads directory. A context-menu page send whose URL has no file extension suggests `<tab title>.html` (sanitised, at most 50 characters, no reserved names), else `<host>-<segment>.html`; link, media and extension-bearing names are unchanged. The protected context is retained for restart/retry, omitted from queue JSON and UI state, and removed after completion or history removal.
 
 ## Verification
 
@@ -52,7 +52,8 @@ Additional automated coverage includes:
 ## Store preparation (FP-078, 28 September 2026)
 
 The local ZIP in ignored `work/fp078-store-prep/` has `manifest.json` at its
-root and only the eight Chromium files shipped in the installer. The public
+root and only the Chromium files shipped in the installer (eight at FP-078;
+nine since FP-095 added `tokens.css`). The public
 [browser privacy page](../user/BROWSER-PRIVACY.md) describes optional automatic
 capture, local storage, cookies, and the native host. Policy and background
 tests passed. No store item was created or uploaded.
@@ -118,3 +119,17 @@ browser principal in `crates/fetchpath-session/tests/policy.rs`.
   takes that as a nudge, and they take the inbox in at their next tick.
 - No real-browser run was repeated for this change; the framed host protocol
   the tests drive is the one Chrome uses.
+
+## FP-142 & FP-143: capture reliability, handle isolation, and prompt-free sends
+
+Recorded 25 November 2026 on Windows 11 x64. Code:
+`extensions/browser/{policy.js,background.js,popup.html,popup.js}`,
+`apps/desktop/src-tauri/src/{browser_bridge.rs,lib.rs}`,
+`crates/fetchpath-session/src/engine.rs`, `apps/desktop/src/main.ts`, and
+`docs/user/BROWSER-PRIVACY.md`.
+
+- **Prompt-free manual sends & optional per-site cookies (FP-143):** Context-menu and popup sends no longer request per-site host permission; they send immediately over native messaging with `cookies: []` unless the site already has host permission. The popup provides an explicit **Share sign-in cookies for `<host>`** toggle for downloads behind a login on a site. Turning automatic capture off revokes the broad `downloads` and `http://*/*` / `https://*/*` permissions so per-site revocation stays accurate. Legacy `pendingSend` entries are swept on worker startup.
+- **MV3 lifecycle & wake reliability (FP-142):** Context menus are created only on `onInstalled`/`onStartup` via a serialized queue instead of wiped on every service-worker wake; `sendLink` retries once idempotently with the same `capture_id` on non-timeout native-host errors (matching `probe()`), never retries timeouts; `runtime.onMessage` supports both callback `sendResponse` (`return true`) and Promise callers; `pendingAutoCapture` uses memory-only `storage.session` when available and fails closed on invalid/expired timestamps.
+- **Cookie, filename, and redaction parity (FP-142):** `policy.filterCookiesForUrl` mirrors `fetchpath-browser-inbox`'s RFC 6265 domain/hostOnly/path/secure/control-char/4096-byte checks and caps at 256 most-specific cookies; `policy.redactUrl` strips username/password/search/hash; automatic capture preserves browser-supplied leaf filenames through `sanitizeFilename`.
+- **Native host handle isolation & desktop wake (FP-142):** `browser_bridge::launch_desktop` spawns `fetchpath-desktop.exe` via `CreateProcessW` with `bInheritHandles = 0` so Chrome's native-messaging pipes are never held open by the desktop app (verified by `detached_desktop_launch_does_not_inherit_pipe_handles`), `Command::TakeBrowserCaptures` calls `self.wake()`, `activate_running_window` checks `IsIconic` so maximized windows stay maximized, and browser-sent review links reset stale composer kind state.
+- **Verification:** `node --test extensions/browser/test/*.test.mjs` (17/17), `cargo test -p fetchpath-desktop --lib --test browser_host --locked` (14/14), `cargo test -p fetchpath-session --locked browser_` (5/5), `cargo clippy --workspace --all-targets --locked -- -D warnings`, `node tools/tests.mjs` (114/114), independent strong boundary reviews + repair rechecks PASS for both FP-142 and FP-143.

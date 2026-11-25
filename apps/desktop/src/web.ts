@@ -300,7 +300,11 @@ function openComposer(): void {
 
 addOpenButton.addEventListener("click", openComposer);
 emptyAddButton.addEventListener("click", openComposer);
-addCancelButton.addEventListener("click", () => addDialog.close());
+addCancelButton.addEventListener("click", () => {
+  form.reset();
+  renderPreview();
+  addDialog.close();
+});
 addDialog.addEventListener("close", () => {
   clearFormError();
   restoreDialogFocus(addOpenButton);

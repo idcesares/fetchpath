@@ -508,8 +508,9 @@ Settings > Agents and rules.
 
 The agent gets these tools: `download` (a file, or a video at a quality;
 optionally waiting, with progress), `inspect_link`, `list_downloads`,
-`get_download`, `wait_for_download`, `pause`, `resume`, `cancel` and
-`search_history`. What it may do is decided by Fetchpath, not by the agent:
+`get_download`, `wait_for_download`, `pause`, `resume`, `cancel`,
+`search_history`, and the inbox tools `offer_file`, `list_inbox`, `accept`,
+and `decline`. What it may do is decided by Fetchpath, not by the agent:
 
 - Downloads into folders you granted to that agent start at once. Anything
   else (another folder, a file over its size limit, more than its number of
@@ -526,7 +527,7 @@ optionally waiting, with progress), `inspect_link`, `list_downloads`,
   SHA-256 Fetchpath computes is described as what arrived, never as proof of
   who published the file.
 
-Grant access in the desktop (Settings, AI agents) or from the command line:
+Grant access in the desktop (**Settings → Agents and rules**) or from the command line:
 
 ```powershell
 fetchpath agents                                  # who has access, where, and how much
@@ -574,7 +575,7 @@ link with a password are never offered.
 
 ## Public links to your files (advanced)
 
-A link lets someone with no Fetchpath download one of your files once, through a tunnel you run. Fetchpath has no server of its own for this: you run Cloudflare Tunnel or Tailscale Funnel (or similar) so that a public https address forwards to `127.0.0.1:47650` on this computer. The tunnel provider sees the traffic and serves the download page, so share only with people who trust it. The file is encrypted in the link: the key is in the part after `#`, which is never sent to the server, and the file name is inside the encrypted data.
+A link lets someone with no Fetchpath download one of your files once, through a tunnel you run (or your own self-hosted relay; see [RELAY.md](RELAY.md)). Fetchpath has no hosted server of its own for this: in tunnel mode you run Cloudflare Tunnel or Tailscale Funnel (or similar) so that a public https address forwards to `127.0.0.1:47650` on this computer. The tunnel provider sees the traffic and serves the download page, so share only with people who trust it. The file is encrypted in the link: the key is in the part after `#`, which is never sent to the server, and the file name is inside the encrypted data.
 
 ```powershell
 fetchpath share setup https://share.example.com   # store the address, then make a test link and QR code
@@ -621,7 +622,7 @@ you turn it on, only with computers you pair yourself, and only files that
 were downloaded with a checksum and without a sign-in, cookie or private link.
 The receiving computer checks every byte against the SHA-256 you give it
 before saving anything. The same controls are in the desktop app under
-**Settings → Paired computers**.
+**Settings → Storage and sharing → Paired computers**.
 
 ```powershell
 # On the computer that has the files: show a code, valid once for two minutes

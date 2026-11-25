@@ -240,6 +240,30 @@ async fn add_repository(
     .await
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PageImageView {
+    url: String,
+    filename: String,
+    title: Option<String>,
+    content_type: Option<String>,
+}
+
+#[tauri::command]
+async fn inspect_page_image(url: String) -> Result<Option<PageImageView>, String> {
+    off_thread(move || {
+        fetchpath_core::inspect_page_image(&url).map(|found| {
+            found.map(|image| PageImageView {
+                url: image.url,
+                filename: image.filename,
+                title: image.title,
+                content_type: image.content_type,
+            })
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn inspect_media(url: String, engine: Engine<'_>) -> Result<view::Inspection, String> {
     let engine = Arc::clone(&engine);
@@ -1357,6 +1381,7 @@ mod single_instance {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn FindWindowW(class_name: *const u16, window_name: *const u16) -> *mut core::ffi::c_void;
+        fn IsIconic(window: *mut core::ffi::c_void) -> i32;
         fn ShowWindow(window: *mut core::ffi::c_void, command: i32) -> i32;
         fn SetForegroundWindow(window: *mut core::ffi::c_void) -> i32;
     }
@@ -1408,9 +1433,13 @@ mod single_instance {
             if window.is_null() {
                 return;
             }
-            // Hidden-to-tray needs SW_SHOW; minimized needs SW_RESTORE.
+            // Hidden-to-tray needs SW_SHOW; minimized needs SW_RESTORE. Avoid
+            // calling SW_RESTORE unconditionally so a maximized window stays
+            // maximized when a browser capture activates Fetchpath.
             ShowWindow(window, SW_SHOW);
-            ShowWindow(window, SW_RESTORE);
+            if IsIconic(window) != 0 {
+                ShowWindow(window, SW_RESTORE);
+            }
             SetForegroundWindow(window);
         }
     }
@@ -1433,6 +1462,7 @@ pub fn run() {
             stop_engine,
             close_window,
             start_batch,
+            inspect_page_image,
             inspect_media,
             start_media_download,
             start_torrent_download,
@@ -1723,6 +1753,7 @@ pub fn run() {
 
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }

@@ -34,18 +34,26 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn built(name: &str) -> PathBuf {
-    let exe = std::env::current_exe()
-        .unwrap()
+    let host_dir = Path::new(env!("CARGO_BIN_EXE_fetchpath-browser-host"))
         .parent()
-        .and_then(|deps| deps.parent())
-        .unwrap()
-        .join(name);
-    assert!(
-        exe.is_file(),
+        .unwrap();
+    let candidate = host_dir.join(name);
+    if candidate.is_file() {
+        return candidate;
+    }
+    let current = std::env::current_exe().unwrap();
+    if let Some(found) = current
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+    {
+        return found;
+    }
+    panic!(
         "{} is missing; run `cargo build -p fetchpath` first",
-        exe.display()
+        candidate.display()
     );
-    exe
 }
 
 /// The host, and the engine only when asked, as installed: side by side, with

@@ -25,7 +25,7 @@ try {
       const began = performance.now();
       const child = spawn(binary, ['--resume', String(offset), fixture.etags.stable,
         String(size), prefix, `${fixture.baseUrl}/p/per-connection-limit`, file], {
-        windowsHide: true, env: { ...process.env, FETCHPATH_BENCH_MAX_LANES: String(lanes), FETCHPATH_HTTP_SCHEDULER: 'stream-first' },
+        windowsHide: true, env: { ...process.env, FETCHPATH_BENCH_MAX_LANES: String(lanes) },
       });
       let stdout = ''; let stderr = '';
       child.stdout.on('data', data => { stdout += data; });

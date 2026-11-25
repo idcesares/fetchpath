@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-11-10",
+  "updated": "2026-11-24",
   "tasks": [
     {
       "id": "FP-001",
@@ -4358,6 +4358,308 @@
       "verification": "One clean Ubuntu 24.04 run: install, open Public links, enroll, and fetchpath share reports Enrolled with the relay. Record what was not tried. Do not start this ticket unless the owner accepts it after FP-134.",
       "evidence": [],
       "note": "Proposed 10 November 2026. Optional. Not ready until the owner sets status to todo."
+    },
+    {
+      "id": "FP-136",
+      "title": "Fix Rust 1.100 test/clippy compatibility and Windows accessibility harness reliability",
+      "milestone": "M18",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-protocol/src/pipe/server.rs",
+        "apps/desktop/src-tauri/tests/browser_host.rs",
+        "apps/desktop/src-tauri/tests/engine.rs",
+        "tests/compatibility/windows/ui-accessibility.ps1",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A01",
+        "A09"
+      ],
+      "acceptance": "Strict workspace clippy and desktop integration tests (browser_host, engine) pass on both Rust 1.98.1 CI and Rust 1.100+ local toolchains without breaking MSRV. ui-accessibility.ps1 checks a main-page control for modal inertness, uses condition polling instead of flaky fixed sleeps, guards missing elements, and restores FETCHPATH_APP_DATA_DIR.",
+      "verification": "cargo clippy --workspace --all-targets --locked -- -D warnings, cargo test -p fetchpath-desktop --test browser_host --test engine --locked, PowerShell syntax check of ui-accessibility.ps1, and node tools/tasks.mjs check pass.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
+    },
+    {
+      "id": "FP-137",
+      "title": "Fix desktop UI, Tauri window restoration, CSP status icons, and dialog/inbox/queue bugs",
+      "milestone": "M18",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/desktop/index.html",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/styles.css",
+        "apps/desktop/src/ui/queue.ts",
+        "apps/desktop/src/icons/ok.svg",
+        "apps/desktop/src/icons/warn.svg",
+        "apps/desktop/vite.config.ts",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Settings status icons render without CSP violations or unmasked squares; manual Inspect again applies inspection results; Edit checksum submits with an empty URL; queue action/refresh errors appear visibly on the main page without spamming screen-reader alerts while stopped; Inbox preserves focus, reports fast copy completion/failure, and hides when cleared; tray show_main_window unminimizes; horizontal Settings quiet buttons align; Power mode toggles diagnostics on existing rows; clearComposer resets torrent destination state; starting the engine reloads Settings; stacked dialogs and web-ui-problem do not throw or clobber focus return.",
+      "verification": "Desktop tsc, vite build, vite build --mode web, Rust desktop tests, and node tools/tests.mjs pass.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
+    },
+    {
+      "id": "FP-138",
+      "title": "Fix Public links, Share relay/page resume, and Same-machine inbox bugs",
+      "milestone": "M18",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "apps/desktop/src/main.ts",
+        "apps/cli/Cargo.toml",
+        "apps/cli/src/share/page.cjs",
+        "apps/cli/src/share/page.test.mjs",
+        "apps/cli/src/share/relay.rs",
+        "apps/cli/src/sharing.rs",
+        "apps/cli/src/inbox.rs",
+        "crates/fetchpath-session/src/engine/share.rs",
+        "crates/fetchpath-session/src/engine/inbox.rs",
+        "docs/development/SHARE-RELAY.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A07",
+        "A10"
+      ],
+      "acceptance": "Desktop Public links polls relay enrollment until settled, allows turning sharing off while disconnected, preserves live links on failed IPC, clears revoked links/polls/keys on close; share page clears partial header buffer on pre-header retry and reports non-HTTPS crypto.subtle cleanly; relay enrollment uses a per-instance engine name so multiple PCs do not evict each other; share relay CLI validates/applies atomically and disables console echo on interactive key entry; inbox accept resolves relative --to against CLI CWD, exits non-zero on failure, and falls back from hard_link when unsupported without misreporting destination_exists.",
+      "verification": "Unit/integration tests for share page pre-header resume, distinct relay names, atomic relay CLI setup, inbox relative/exFAT/exit-code behavior, workspace tests, and independent strong review pass.",
+      "evidence": [
+        "docs/development/SHARE-RELAY.md"
+      ]
+    },
+    {
+      "id": "FP-139",
+      "title": "Fix browser-inbox session poisoning, capture handoff, and Web UI connection handling",
+      "milestone": "M18",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/src/lib.rs",
+        "extensions/browser/policy.js",
+        "extensions/browser/background.js",
+        "extensions/browser/popup.js",
+        "extensions/browser/test",
+        "apps/desktop/src/engine/socket.ts",
+        "apps/desktop/src/web.ts",
+        "apps/cli/src/remote/http.rs",
+        "apps/cli/src/remote/mod.rs",
+        "apps/cli/src/remote/tests.rs",
+        "apps/cli/src/engine/mod.rs",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A07",
+        "A10"
+      ],
+      "acceptance": "A corrupt or missing browser secret file is quarantined/skipped instead of poisoning Session::list(); policy.js sanitizes filenames to match Rust safe_filename(); session is_media_page() does not misclassify dotted media handles as files; auto-capture avoids infinite hand-back loops/leaks and leaves POST downloads to the browser; pendingSend matches the granted origin; Web UI distinguishes sign-out from transient errors, stops polling when signed out, clears draft on Cancel, and fetchpath web on fails when listener bind fails.",
+      "verification": "Session, CLI remote, extension, and repository tests plus independent strong review pass.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
+    },
+    {
+      "id": "FP-140",
+      "title": "Classify non-video, auth-required, and unavailable yt-dlp failures clearly and hide raw error codes in desktop UI",
+      "milestone": "M18",
+      "dependsOn": [],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "adapters/media/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09"
+      ],
+      "acceptance": "yt-dlp failures for photo/non-video links (e.g. X photo URLs), login-required posts, and 404/unavailable media classify as NoMediaFound, AuthRequired, and SourceUnavailable instead of HelperCrash, with redacted plain-English guidance. Desktop errorMessage strips machine code prefixes so raw codes like helper_crash: never appear in the form error banner, and quiet media inspection surfaces the specific reason.",
+      "verification": "cargo test -p fetchpath-media --locked, strict clippy, desktop build/web build, and node tools/tasks.mjs check pass; rebuilt and installed on this PC.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
+    },
+    {
+      "id": "FP-141",
+      "title": "Auto-detect photo pages (e.g. X photo posts) and resolve to direct image downloads",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-140"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-core/src/page_image.rs",
+        "crates/fetchpath-core/src/lib.rs",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src/main.ts",
+        "docs/development/LOCAL-QUALITY.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09"
+      ],
+      "acceptance": "fetchpath_core::inspect_page_image fetches bounded HTTP(S) page metadata without cookies, extracts valid HTTP(S) og:image/twitter:image or direct image/* URLs, ignores placeholder logos, and sanitizes filenames with proper image extensions. Desktop Add download auto-detects X photo URLs and falls back to page-image resolution when media inspection finds no video, switching cleanly to File mode with the resolved image URL and filename; also fixes startup media-tools race and empty Save-as validation in media mode.",
+      "verification": "cargo test -p fetchpath-core --locked, strict clippy, desktop tsc/build, node tools/tasks.mjs check, and live release build + reinstall on this PC pass.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
+    },
+    {
+      "id": "FP-142",
+      "title": "Stabilize Chrome extension capture, native host handle isolation, and desktop activation",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-139"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "extensions/browser/policy.js",
+        "extensions/browser/background.js",
+        "extensions/browser/popup.js",
+        "extensions/browser/test/policy.test.mjs",
+        "extensions/browser/test/background.test.mjs",
+        "apps/desktop/src-tauri/Cargo.toml",
+        "apps/desktop/src-tauri/src/browser_bridge.rs",
+        "apps/desktop/src-tauri/src/lib.rs",
+        "apps/desktop/src-tauri/tests/browser_host.rs",
+        "apps/desktop/src/main.ts",
+        "crates/fetchpath-session/src/engine.rs",
+        "docs/development/BROWSER-CAPTURE.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A08"
+      ],
+      "acceptance": "Context-menu sends preserve Chrome MV3 user gestures before permissions.request without unhandled rejections; MV3 wake native-host hiccups retry once idempotently with the same capture_id; context menus are created only on install/startup instead of wiped on every service-worker wake; cookies are filtered to RFC 6265 scope matching fetchpath-browser-inbox and capped at 256; popup auto-capture and page sends survive popup dismissal on permission prompts; automatic capture preserves browser filenames; fetchpath-browser-host spawns fetchpath-desktop with bInheritHandles=false so Chrome's native messaging pipe is never held open; TakeBrowserCaptures wakes the engine driver loop; activating a maximized Fetchpath window does not un-maximize it; browser-sent review links reset stale composer kind state.",
+      "verification": "Extension unit/integration tests, browser_host handle-isolation test, strict clippy, desktop build, node tools/tests.mjs, independent strong boundary review, and live release build + reinstall pass.",
+      "evidence": [
+        "docs/development/BROWSER-CAPTURE.md"
+      ]
+    },
+    {
+      "id": "FP-143",
+      "title": "Make manual Chrome extension sends prompt-free with optional per-site cookie sharing",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-142"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "extensions/browser/background.js",
+        "extensions/browser/popup.html",
+        "extensions/browser/popup.js",
+        "extensions/browser/test/background.test.mjs",
+        "docs/user/BROWSER-PRIVACY.md",
+        "docs/development/BROWSER-CAPTURE.md"
+      ],
+      "acceptanceIds": [
+        "A07",
+        "A08"
+      ],
+      "acceptance": "Manual context-menu and popup sends deliver the link/page immediately without requesting per-site host permission; cookies are attached only when the site already has permission, and the popup offers an explicit optional per-site sign-in cookie toggle. Automatic capture still requires existing site permission and never prompts. Exclusions still block before native messaging.",
+      "verification": "Extension tests, repo tests, independent strong boundary review, and live release build + reinstall pass.",
+      "evidence": [
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/user/BROWSER-PRIVACY.md"
+      ]
+    },
+    {
+      "id": "FP-144",
+      "title": "Conservative codebase and documentation cleanup",
+      "milestone": "M18",
+      "dependsOn": [
+        "FP-143"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "apps/cli/Cargo.toml",
+        "apps/cli/src/remote/mod.rs",
+        "apps/cli/src/remote/listener.rs",
+        "apps/cli/src/share/listener.rs",
+        "crates/fetchpath-session/Cargo.toml",
+        "crates/fetchpath-core/src/verified.rs",
+        "adapters/media/src/lib.rs",
+        "adapters/media/src/setup.rs",
+        "apps/desktop/src-tauri/src/browser_bridge.rs",
+        "apps/desktop/src-tauri/src/view.rs",
+        "apps/desktop/src/styles.css",
+        "apps/desktop/src/ui/markup.ts",
+        "apps/desktop/src/ui/queue.ts",
+        "apps/desktop/src/main.ts",
+        "apps/desktop/src/engine/api.ts",
+        "extensions/browser/background.js",
+        "extensions/browser/README.md",
+        "tools/bench/resume.mjs",
+        "PROJECT.md",
+        "CONTRIBUTING.md",
+        "docs/architecture/REPOSITORY.md",
+        "docs/user/GUIDE.md",
+        "docs/user/BROWSER-PRIVACY.md",
+        "docs/user/CLI.md",
+        "docs/development/README.md",
+        "docs/development/BROWSER-CAPTURE.md",
+        "docs/development/LOCAL-QUALITY.md",
+        "docs/development/SHARE-RELAY.md",
+        "docs/development/WORKFLOW.md",
+        "docs/development/MEDIA-INTEGRATION.md",
+        "docs/development/MCP.md",
+        "docs/plan/linux-vps-validation.md"
+      ],
+      "acceptanceIds": [
+        "A12"
+      ],
+      "acceptance": "Redundant Cargo dev-dependency and unused Windows feature removed; duplicate private helpers (media sha256_file, CLI accept_any) consolidated; dead extension cache fields, unused CSS selectors, unused QueueView methods, duplicate refreshShare IPC, and obsolete benchmark env var removed; documentation updated and consolidated in place to match current implementation without breaking public APIs, relative links, or backlog evidence.",
+      "verification": "cargo fmt --check, strict clippy, Rust workspace tests, desktop tsc + builds, node tools/tests.mjs, and node tools/tasks.mjs check pass.",
+      "evidence": [
+        "docs/development/LOCAL-QUALITY.md"
+      ]
     }
   ]
 }

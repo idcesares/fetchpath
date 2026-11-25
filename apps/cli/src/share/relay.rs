@@ -17,11 +17,29 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tokio::sync::watch;
 
-/// The name the engine enrolls under. Fixed on purpose: the computer's name
-/// is personal data and the relay only logs this label.
+/// Base label for relay enrollment. Each engine appends a short opaque suffix
+/// from its random instance ID (never the computer's hostname) so multiple PCs
+/// sharing one relay do not evict each other.
 const NAME: &str = "fetchpath";
 /// How often the live ticket ids are compared with what the relay was told.
 const IDS_POLL: Duration = Duration::from_millis(250);
+
+fn relay_name(engine: &Engine) -> String {
+    let Some(id) = engine.instance_id() else {
+        return NAME.to_owned();
+    };
+    let suffix: String = id
+        .as_str()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .take(16)
+        .collect();
+    if suffix.is_empty() {
+        NAME.to_owned()
+    } else {
+        format!("{NAME}-{suffix}")
+    }
+}
 
 /// Makes the connector for one setup; replaced in tests to reach a relay on
 /// loopback without TLS.
@@ -97,7 +115,7 @@ async fn run(
     let (ids_sender, ids) = watch::channel(sorted(store.live_ids()));
     let (status_sender, mut status) = watch::channel(Status::Connecting);
     let connection = client::run(
-        Settings::new(key, NAME),
+        Settings::new(key, relay_name(&engine)),
         connect,
         ids,
         handler,

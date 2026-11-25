@@ -383,15 +383,67 @@ fn test_and_wait(engine: &Engine, image: Option<&str>, json: bool) -> Result<(),
 }
 
 /// One line of the relay key from stdin. It is never an argument (shell
-/// history, process lists) and never echoed back.
+/// history, process lists) and never echoed back on interactive terminals.
 fn read_key() -> Result<RelayKey, ProtocolError> {
-    eprintln!("Paste the relay's key (64 hex characters) and press Enter:");
+    use std::io::IsTerminal;
+    let interactive = std::io::stdin().is_terminal();
+    if interactive {
+        eprintln!("Paste the relay's key (64 hex characters) and press Enter:");
+    }
+    let _echo = interactive.then(disable_console_echo).flatten();
     let mut line = zeroize::Zeroizing::new(String::new());
-    std::io::stdin()
-        .read_line(&mut line)
-        .map_err(|_| client::input_error("The key could not be read."))?;
+    let read = std::io::stdin().read_line(&mut line);
+    drop(_echo);
+    if interactive {
+        eprintln!();
+    }
+    read.map_err(|_| client::input_error("The key could not be read."))?;
     RelayKey::try_from(std::mem::take(&mut *line))
         .map_err(|_| client::input_error("That is not a relay key (64 hex characters)."))
+}
+
+struct EchoGuard {
+    #[cfg(windows)]
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    #[cfg(windows)]
+    mode: u32,
+}
+
+impl Drop for EchoGuard {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            let _ = windows_sys::Win32::System::Console::SetConsoleMode(self.handle, self.mode);
+        }
+    }
+}
+
+fn disable_console_echo() -> Option<EchoGuard> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Console::{
+            ENABLE_ECHO_INPUT, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE, SetConsoleMode,
+        };
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                return None;
+            }
+            let mut mode = 0u32;
+            if GetConsoleMode(handle, &mut mode) == 0 {
+                return None;
+            }
+            if SetConsoleMode(handle, mode & !ENABLE_ECHO_INPUT) == 0 {
+                return None;
+            }
+            Some(EchoGuard { handle, mode })
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// Points the engine at a relay, enrolls it and walks the person through the
@@ -403,12 +455,36 @@ fn relay(
     image: Option<&str>,
     json: bool,
 ) -> Result<(), ProtocolError> {
+    let before = view(engine)?;
+    if stored_key && !before.relay_key_stored {
+        return Err(client::input_error(
+            "No relay key is stored. Enroll with the relay's key first.",
+        ));
+    }
     let key = if stored_key { None } else { Some(read_key()?) };
     engine.send(Command::ConfigureSharing {
         base_url: Some(url.trim().to_owned()),
         port: None,
     })?;
-    let mut current = sharing(engine.send(Command::ConfigureRelay { relay: true, key })?)?;
+    let reply = match engine.send(Command::ConfigureRelay { relay: true, key }) {
+        Ok(reply) => reply,
+        Err(error) => {
+            // Roll back the address change so a failed relay enrollment does
+            // not leave the relay URL running in tunnel mode.
+            let _ = engine.send(Command::ConfigureSharing {
+                base_url: Some(before.base_url.unwrap_or_default()),
+                port: Some(before.port),
+            });
+            if before.relay {
+                let _ = engine.send(Command::ConfigureRelay {
+                    relay: true,
+                    key: None,
+                });
+            }
+            return Err(error);
+        }
+    };
+    let mut current = sharing(reply)?;
     let deadline = Instant::now() + START_WAIT;
     while current.serving.is_none() && current.problem.is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(200));

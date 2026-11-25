@@ -1,18 +1,18 @@
 # Fetchpath browser extension privacy
 
-Updated 28 September 2026. This page describes the Fetchpath extension for
+Updated 25 November 2026. This page describes the Fetchpath extension for
 Chrome and Microsoft Edge. It works with the Fetchpath app installed on your
 Windows computer.
 
 ## What the extension uses
 
 - When you choose **Send link**, **Send page**, or **Send video**, the extension
-  reads the selected HTTP or HTTPS address, a referring page on the same site
-  when available, and the cookies your browser would use for that site. It
-  sends them to the Fetchpath native host on this
-  computer so the app can try the download. The browser asks for permission
-  for that site first. The app does not promise to use those cookies for video
-  extraction.
+  reads the selected HTTP or HTTPS address and a referring page on the same site
+  when available, and sends them straight to the Fetchpath native host on this
+  computer without asking for site permission. If you have opted in to share
+  sign-in cookies for that site (via the extension popup, or by turning on
+  automatic capture), applicable cookies for that address are included too. The
+  app does not use browser cookies for video extraction.
 - **Send downloads to Fetchpath automatically** is off until you turn it on.
   Turning it on asks for download access and HTTP/HTTPS site access. For a
   browser download it can handle, the extension sends its address and
@@ -31,8 +31,10 @@ the file; that website handles requests under its own privacy terms. See the
 [user guide](GUIDE.md#sending-links-from-your-browser) for the handoff and
 [uninstall](GUIDE.md#uninstalling) options.
 
-You can turn off automatic mode in the extension popup, exclude a site with
-its page menu, remove a site's browser permission, or remove the extension in
-your browser. Removing the extension clears its browser-local settings and
-recent results. Fetchpath's saved jobs and protected request context are part
-of the app's data; uninstall offers to remove that data.
+You can turn off automatic mode in the extension popup (which also revokes the
+broad download and all-sites browser permissions), toggle **Share sign-in
+cookies** off for a site in the popup, exclude a site with its page menu, remove
+a site's browser permission, or remove the extension in your browser. Removing
+the extension clears its browser-local settings and recent results. Fetchpath's
+saved jobs and protected request context are part of the app's data; uninstall
+offers to remove that data.

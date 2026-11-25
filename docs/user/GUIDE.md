@@ -119,7 +119,7 @@ downloads a release, checks it against `SHA256SUMS.txt`, and installs silently w
 desktop window by default (`-Components cli,mcp`), optionally connecting
 `-AgentHosts codex,claude-code` and setting up `-MediaTools`. `tools/install/SKILL.md`
 is the same steps as an agent skill. Connecting a host later needs no reinstall:
-`fetchpath agent-setup add codex`, or Settings > AI agents.
+`fetchpath agent-setup add codex`, or **Settings → Agents and rules**.
 
 **Quiet installation.** These switches go after the setup file name:
 
@@ -359,11 +359,12 @@ extension reads, sends to the local app, and keeps on your computer.
 
 1. Open **Settings → Integrations → Browser extension**. It should say Fetchpath is
    connected to Chrome and Edge.
-2. Choose **Copy Chrome address** or **Copy Edge address**, paste it into
-   your browser's address bar, and press <kbd>Enter</kbd>.
+2. Choose **Connect Chrome** or **Connect Edge** to open your browser's
+   extensions page and copy the extension folder path (or use **Copy Chrome
+   address** / **Copy Edge address** to open the page manually).
 3. Turn on **Developer mode** (a switch on that page).
-4. Choose **Load unpacked**. In the folder picker, paste this into the
-   address bar at the top and press <kbd>Enter</kbd>, then choose
+4. Choose **Load unpacked**. In the folder picker, paste the copied folder path
+   into the address bar at the top and press <kbd>Enter</kbd>, then choose
    **Select Folder**:
 
    ```text
@@ -389,10 +390,11 @@ extension reads, sends to the local app, and keeps on your computer.
 - A file you send starts downloading even if the window can't open. A video
   page waits, however long, until you next open Fetchpath.
 
-The first time you send from a website, the browser asks whether Fetchpath may
-use that site; this lets it pass along your sign-in for that site only, so
-downloads that need you to be signed in keep working. (Video pages are handed
-over without your sign-in.)
+Sending a link, page, or video does not ask for site permission and does not
+share your cookies by default. For a file download that requires you to be
+signed in on that website, open the Fetchpath toolbar popup and turn on
+**Share sign-in cookies** for that site. (Video pages are handed over without
+your sign-in.)
 
 **Automatic mode.** In the toolbar popup, turn on **Send downloads to Fetchpath
 automatically** and allow the permissions the browser asks for. From then on,
@@ -455,6 +457,7 @@ on GitHub.
 | Ask before removing a finished download | A confirmation before **Remove**. |
 | Power mode | Adds a statistics panel and per-download details. Nothing else moves. |
 | Appearance | Match Windows, Light, Dark or High contrast. |
+| Density | Comfortable or Compact row spacing. |
 
 Everything works with the keyboard alone. Press **Keyboard help** for the
 shortcuts.
@@ -555,7 +558,7 @@ See [agent setup and removal](CLI.md#guided-setup-codex-and-claude-code).
 
 A silent uninstall that could not remove the application data (when requested with
 `/DELETEAPPDATA`) exits with code **3**: Fetchpath is removed, the leftover data is
-listed in `%TEMP%etchpath-uninstall.log`, and you delete the folders yourself.
+listed in `%TEMP%\fetchpath-uninstall.log`, and you delete the folders yourself.
 
 ## When something goes wrong
 

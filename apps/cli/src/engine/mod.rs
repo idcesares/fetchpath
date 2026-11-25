@@ -335,7 +335,9 @@ fn serve(grace: Duration) -> Result<i32, String> {
         host.apply_sign_in(true);
     }
     // Off also removes sessions left by a run that was killed while on.
-    host.web.apply(settings.web_ui);
+    if let Err(message) = host.web.apply(settings.web_ui) {
+        eprintln!("fetchpath engine: {message}");
+    }
     host.share.reconcile();
     let ticker = {
         let host = Arc::clone(&host);
@@ -533,6 +535,36 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                 });
                 let before = host.engine.session().settings();
+                // Start the web listener before committing UpdateSettings to
+                // the durable ledger so a bind failure never poisons the ledger
+                // or persists partial settings changes.
+                let prestarted_web = if principal.is_user()
+                    && let Command::UpdateSettings { settings } = payload
+                    && settings.web_ui == Some(true)
+                    && !before.web_ui
+                {
+                    match host.web.apply(true) {
+                        Ok(()) => true,
+                        Err(message) => {
+                            drop(serialized);
+                            let reply = Reply::error(
+                                Some(envelope.command_id.clone()),
+                                ProtocolError::new(
+                                    ErrorCode::try_from("resource.unavailable".to_owned())
+                                        .expect("a valid built-in code"),
+                                    ErrorScope::Command,
+                                    message,
+                                ),
+                            );
+                            if sender.send(&ServerMessage::Reply(reply)).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    false
+                };
                 // The web UI's own commands are answered here, not by the
                 // engine, which has no listener.
                 let mut outcome = host
@@ -558,13 +590,18 @@ fn connection(host: &Arc<Host>, pending: PendingConnection) {
                     Err(error) => Reply::error(Some(envelope.command_id.clone()), error),
                 };
                 let succeeded = matches!(reply.result, ReplyResult::Ok(_));
-                if settings_change && succeeded {
+                if settings_change {
                     let after = host.engine.session().settings();
-                    if after.start_engine_at_sign_in != before.start_engine_at_sign_in {
-                        host.apply_sign_in(after.start_engine_at_sign_in);
+                    if prestarted_web && (!succeeded || !after.web_ui) {
+                        let _ = host.web.apply(false);
                     }
-                    if after.web_ui != before.web_ui {
-                        host.web.apply(after.web_ui);
+                    if succeeded {
+                        if after.start_engine_at_sign_in != before.start_engine_at_sign_in {
+                            host.apply_sign_in(after.start_engine_at_sign_in);
+                        }
+                        if !after.web_ui && before.web_ui {
+                            let _ = host.web.apply(false);
+                        }
                     }
                 }
                 drop(serialized);

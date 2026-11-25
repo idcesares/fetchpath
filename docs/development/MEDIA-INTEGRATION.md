@@ -4,7 +4,7 @@ FP-014 (integration), FP-039 (pinned helpers).
 
 ## User flow
 
-The desktop composer has a **Video or audio** mode. The user enters one HTTP(S) source and chooses **Inspect link**. Fetchpath displays only variants returned by the media engine, including an audio-only choice when the source exposes audio. A queued media item retains the selected variant identity and label. Immediately before downloading, the adapter inspects the source again and rejects a missing or changed selection rather than silently substituting another quality.
+The desktop composer has a **Video or audio** mode. Pasting an HTTP(S) media URL inspects it automatically, and **Inspect again** re-runs inspection on demand. Fetchpath displays only variants returned by the media engine, including an audio-only choice when the source exposes audio (photo pages such as X `/photo/N` auto-detect or fall back to direct image downloads via FP-141, and non-video/auth/unavailable errors classify distinctly via FP-140). A queued media item retains the selected variant identity and label. Immediately before downloading, the adapter inspects the source again and rejects a missing or changed selection rather than silently substituting another quality.
 
 Media and ordinary file downloads share the bounded desktop queue, history, schedule, cancellation, retry, no-overwrite, and restart-recovery paths. An expired session becomes an actionable `refresh_source` failure. Private query values remain redacted and are not persisted.
 

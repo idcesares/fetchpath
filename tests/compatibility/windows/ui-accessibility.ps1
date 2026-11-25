@@ -97,7 +97,18 @@ $webviewProfileDirectory = Join-Path $env:LOCALAPPDATA 'app.fetchpath.desktop'
 $appDataExistedBefore = Test-Path -LiteralPath $appDataDirectory
 $webviewProfileExistedBefore = Test-Path -LiteralPath $webviewProfileDirectory
 [System.IO.Directory]::CreateDirectory($appDataDirectory) | Out-Null
+$previousAppDataEnv = $env:FETCHPATH_APP_DATA_DIR
 $env:FETCHPATH_APP_DATA_DIR = $appDataDirectory
+
+function Wait-Until([scriptblock] $Condition, [int] $TimeoutSeconds = 5) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $result = & $Condition
+        if ($result) { return $result }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return $null
+}
 
 $VK = Get-VirtualKeys
 $failures = [System.Collections.Generic.List[string]]::new()
@@ -175,17 +186,19 @@ try {
     $observation.onboardingShownOnLaunch = [bool] $onboarding
     if ($onboarding) {
         $onboarding.SetFocus()
-        Start-Sleep -Milliseconds 300
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'dismiss-onboarding' } 3
         [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-        Start-Sleep -Milliseconds 1000
-        $observation.onboardingDismissedByKeyboard = -not (Find-ById $renderer 'dismiss-onboarding')
+        $observation.onboardingDismissedByKeyboard = [bool] (Wait-Until { -not (Find-ById $renderer 'dismiss-onboarding') } 5)
         Assert-True $observation.onboardingDismissedByKeyboard `
             'Enter on the welcome card dismiss button did not close it.'
+        # Wait for the engine to persist dismissOnboarding before terminating the window.
+        $settingsFile = Join-Path $appDataDirectory 'settings.json'
+        $null = Wait-Until { (Test-Path -LiteralPath $settingsFile) -and ((Get-Content -LiteralPath $settingsFile -Raw -ErrorAction SilentlyContinue) -match '"dismiss_onboarding"\s*:\s*true|"dismissOnboarding"\s*:\s*true') } 5
 
         # Restart from a cold document.
         Stop-Process -Id $process.Id -Force
         $process.WaitForExit(20000) | Out-Null
-        Start-Sleep -Milliseconds 1200
+        Start-Sleep -Milliseconds 500
         $process = Start-Process -FilePath $ApplicationPath -PassThru
         $renderer = Get-RendererRoot $process
         $renderWidget = Get-RenderWidgetHandle $process
@@ -351,7 +364,8 @@ try {
 
     # Ctrl+L cannot be pressed through posted messages, but it must at least be
     # announced to assistive technology as the shortcut for this field.
-    $observation.addressFieldAcceleratorKey = (Find-ById $renderer 'url').Current.AcceleratorKey
+    $urlControl = Find-ById $renderer 'url'
+    $observation.addressFieldAcceleratorKey = if ($urlControl) { $urlControl.Current.AcceleratorKey } else { '' }
     Assert-True ($observation.addressFieldAcceleratorKey -eq 'Control+L') `
         "The address field advertises accelerator '$($observation.addressFieldAcceleratorKey)', expected 'Control+L'."
 
@@ -392,7 +406,7 @@ try {
 
     # With the dialog closed, the page's own controls are back in the tree.
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
-    Start-Sleep -Milliseconds 700
+    $null = Wait-Until { -not (Find-ById $renderer 'url') -and (Find-ById $renderer 'add-open') } 5
     $pageControls = [System.Collections.Generic.List[object]]::new()
     foreach ($expectation in @(
             @{ id = 'add-open'; type = 'Button'; name = 'Add download' },
@@ -419,20 +433,20 @@ try {
     # Open Add download from the keyboard: Enter on the app bar button lands in
     # the links box, ready to type.
     $null = Set-ControlFocus $renderer 'add-open' $process
-    Start-Sleep -Milliseconds 300
+    $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'add-open' } 3
     [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-    Start-Sleep -Milliseconds 700
-    $focused = Get-RendererFocus $renderer
+    $focused = Wait-Until { $f = Get-RendererFocus $renderer; if ($f -and $f.automationId -eq 'url') { $f } else { $null } } 5
+    if (-not $focused) { $focused = Get-RendererFocus $renderer }
     Assert-True ($focused -and $focused.automationId -eq 'url') "Enter on Add download did not put focus in the links box. Focus: $($focused | ConvertTo-Json -Compress)"
     [FetchpathUia]::PostText($renderWidget, $typedAddress)
-    Start-Sleep -Milliseconds 400
-    $typedUrlReadBack = Get-FieldValue $renderer 'url'
+    $typedUrlReadBack = Wait-Until { $v = Get-FieldValue $renderer 'url'; if ($v -eq $typedAddress) { $v } else { $null } } 5
+    if ($null -eq $typedUrlReadBack) { $typedUrlReadBack = Get-FieldValue $renderer 'url' }
     $focused = Step-Tab
     Assert-True ($focused -and $focused.automationId -eq 'destination') `
         "Tab from the address box did not reach the destination. Focus: $($focused | ConvertTo-Json -Compress)"
     [FetchpathUia]::PostText($renderWidget, $completedPath)
-    Start-Sleep -Milliseconds 400
-    $typedDestinationReadBack = Get-FieldValue $renderer 'destination'
+    $typedDestinationReadBack = Wait-Until { $v = Get-FieldValue $renderer 'destination'; if ($v -eq $completedPath) { $v } else { $null } } 5
+    if ($null -eq $typedDestinationReadBack) { $typedDestinationReadBack = Get-FieldValue $renderer 'destination' }
 
     $tabsToSubmit = 0
     for ($attempt = 0; $attempt -lt 10; $attempt++) {
@@ -495,12 +509,16 @@ try {
 
     # ------------------------------------------------- 6. rejected address ----
     Open-Popup $renderer 'add-open'
-    Start-Sleep -Milliseconds 600
+    $null = Wait-Until { Find-ById $renderer 'url' } 5
     Set-Field $renderer 'url' 'javascript:alert(1)'
     Set-Field $renderer 'destination' (Join-Path $workDirectory 'rejected.bin')
-    Start-Sleep -Milliseconds 300
-    (Find-ById $renderer 'start-download').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-    Start-Sleep -Milliseconds 1500
+    $submitControl = Find-ById $renderer 'start-download'
+    if ($submitControl) {
+        $submitControl.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    } else {
+        $failures.Add('Start download button was not found when testing rejected address.')
+    }
+    $null = Wait-Until { (Get-ControlText $renderer 'live-alert') -match 'not an HTTP or HTTPS address' } 5
     $observation.rejectedAddress = [ordered]@{
         assertiveLiveRegion = Get-ControlText $renderer 'live-alert'
         visibleErrorText = Find-VisibleText $renderer 'not an HTTP or HTTPS address'
@@ -512,10 +530,14 @@ try {
 
     # FP-035: Escape closes Add download and keeps the draft; Cancel clears it.
     $urlField = Find-ById $renderer 'url'
-    $urlField.SetFocus()
-    Start-Sleep -Milliseconds 250
+    if ($urlField) {
+        $urlField.SetFocus()
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'url' } 3
+    } else {
+        $failures.Add('Address field was not found before pressing Escape.')
+    }
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
-    Start-Sleep -Milliseconds 900
+    $null = Wait-Until { -not (Find-ById $renderer 'url') } 5
     $observation.rejectedAddress.dialogClosedByEscape = -not (Find-ById $renderer 'url')
     $observation.rejectedAddress.visibleErrorTextAfterEscape = Find-VisibleText $renderer 'not an HTTP or HTTPS address'
     $observation.rejectedAddress.focusAfterEscape = Get-RendererFocus $renderer
@@ -532,12 +554,12 @@ try {
     Assert-True ($observation.rejectedAddress.draftKeptAfterEscape -eq 'javascript:alert(1)') `
         "Reopening Add download after Escape lost the draft. Read back: '$($observation.rejectedAddress.draftKeptAfterEscape)'"
     Invoke-Control $renderer 'add-cancel' $process
-    Start-Sleep -Milliseconds 600
+    $null = Wait-Until { -not (Find-ById $renderer 'url') } 5
     & $invokeAdd
     $observation.rejectedAddress.addressAfterCancel = Get-FieldValue $renderer 'url'
     Assert-True ([string]::IsNullOrEmpty($observation.rejectedAddress.addressAfterCancel)) 'Cancel did not clear Add download.'
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
-    Start-Sleep -Milliseconds 600
+    $null = Wait-Until { -not (Find-ById $renderer 'url') } 5
 
     # ----------------------------------------------------- 7. queue filters ---
     function Get-FilterStates {
@@ -561,15 +583,23 @@ try {
         "Exactly one filter must report a pressed state. Observed: $($before | ConvertTo-Json -Compress)"
 
     # Change the filter from the keyboard and confirm the pressed state moves.
-    (Find-ById $renderer 'queue-search').SetFocus()
-    Start-Sleep -Milliseconds 250
+    $searchControl = Find-ById $renderer 'queue-search'
+    if ($searchControl) {
+        $searchControl.SetFocus()
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'queue-search' } 3
+    } else {
+        $failures.Add('Search box was not found before testing queue filters.')
+    }
     $focused = Step-Tab
     Assert-True ($focused -and $focused.name -eq 'All') "Tab from the search box did not reach the first filter. Focus: $($focused | ConvertTo-Json -Compress)"
     $focused = Step-Tab
     Assert-True ($focused -and $focused.name -eq 'Active') "Tab did not reach the Active filter. Focus: $($focused | ConvertTo-Json -Compress)"
     [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-    Start-Sleep -Milliseconds 800
-    $after = Get-FilterStates
+    $after = Wait-Until {
+        $s = Get-FilterStates
+        if (@($s | Where-Object { $_.name -eq 'Active' -and $_.toggleState -eq 'On' }).Count -eq 1) { , $s } else { $null }
+    } 5
+    if (-not $after) { $after = Get-FilterStates }
     $observation.queueFilters = [ordered]@{ before = $before; afterKeyboardActivation = $after }
     Assert-True (@($after | Where-Object { $_.name -eq 'Active' -and $_.toggleState -eq 'On' }).Count -eq 1) `
         "Activating the Active filter from the keyboard did not set its pressed state. Observed: $($after | ConvertTo-Json -Compress)"
@@ -577,17 +607,21 @@ try {
         'More than one filter reports a pressed state after a keyboard change.'
 
     # -------------------------------------------------- 8. shortcuts dialog ---
-    (Find-ById $renderer 'keyboard-help').SetFocus()
-    Start-Sleep -Milliseconds 250
+    $helpControl = Find-ById $renderer 'keyboard-help'
+    if ($helpControl) {
+        $helpControl.SetFocus()
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'keyboard-help' } 3
+    } else {
+        $failures.Add('Keyboard help button was not found.')
+    }
     [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-    Start-Sleep -Milliseconds 1000
-    $dialog = Find-ById $renderer 'shortcuts-dialog'
+    $dialog = Wait-Until { Find-ById $renderer 'shortcuts-dialog' } 5
     $observation.shortcutsDialog = [ordered]@{
         present = [bool] $dialog
         controlType = if ($dialog) { $dialog.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '' } else { '' }
         name = if ($dialog) { $dialog.Current.Name } else { '' }
         focusOnOpen = Get-RendererFocus $renderer
-        pageBehindStillReachable = [bool] (Find-ById $renderer 'url')
+        pageBehindStillReachable = [bool] (Find-ById $renderer 'add-open')
     }
     Assert-True ([bool] $dialog) 'Enter on Keyboard help did not open the shortcuts dialog.'
     Assert-True ($observation.shortcutsDialog.controlType -eq 'Window') `
@@ -601,7 +635,7 @@ try {
         'The page behind the modal dialog is still reachable by assistive technology.'
 
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
-    Start-Sleep -Milliseconds 1000
+    $null = Wait-Until { -not (Find-ById $renderer 'shortcuts-dialog') } 5
     $observation.shortcutsDialog.presentAfterEscape = [bool] (Find-ById $renderer 'shortcuts-dialog')
     $observation.shortcutsDialog.focusAfterEscape = Get-RendererFocus $renderer
     Assert-True (-not $observation.shortcutsDialog.presentAfterEscape) 'Escape did not close the shortcuts dialog.'
@@ -613,11 +647,15 @@ try {
     # The settings dialog carries the power-user controls, so it has to meet the
     # same bar as the rest: a named modal window, focus taken and returned, and
     # every control inside it named.
-    (Find-ById $renderer 'open-settings').SetFocus()
-    Start-Sleep -Milliseconds 250
+    $settingsButton = Find-ById $renderer 'open-settings'
+    if ($settingsButton) {
+        $settingsButton.SetFocus()
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.automationId -eq 'open-settings' } 3
+    } else {
+        $failures.Add('Settings button was not found.')
+    }
     [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-    Start-Sleep -Milliseconds 1200
-    $settings = Find-ById $renderer 'settings-dialog'
+    $settings = Wait-Until { Find-ById $renderer 'settings-dialog' } 5
     $settingsUnnamed = [System.Collections.Generic.List[string]]::new()
     $settingsControls = [System.Collections.Generic.List[object]]::new()
     if ($settings) {
@@ -642,7 +680,7 @@ try {
         controlType = if ($settings) { $settings.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '' } else { '' }
         name = if ($settings) { $settings.Current.Name } else { '' }
         focusOnOpen = Get-RendererFocus $renderer
-        pageBehindStillReachable = [bool] (Find-ById $renderer 'url')
+        pageBehindStillReachable = [bool] (Find-ById $renderer 'add-open')
         focusableControls = $settingsControls
         unnamedFocusableControls = $settingsUnnamed
     }
@@ -663,7 +701,7 @@ try {
         "Expected the settings dialog to expose at least 10 focusable controls, found $($settingsControls.Count)."
 
     [FetchpathUia]::PostKey($renderWidget, $VK.Escape)
-    Start-Sleep -Milliseconds 1000
+    $null = Wait-Until { -not (Find-ById $renderer 'settings-dialog') } 5
     $observation.settingsDialog.presentAfterEscape = [bool] (Find-ById $renderer 'settings-dialog')
     $observation.settingsDialog.focusAfterEscape = Get-RendererFocus $renderer
     Assert-True (-not $observation.settingsDialog.presentAfterEscape) 'Escape did not close the settings dialog.'
@@ -681,12 +719,13 @@ try {
     Assert-True ([bool] $skipLink) 'The skip link is missing from the accessibility tree.'
     if ($skipLink) {
         $skipLink.SetFocus()
-        Start-Sleep -Milliseconds 250
+        $null = Wait-Until { $f = Get-RendererFocus $renderer; $f -and $f.name -eq 'Skip to the download queue' } 3
         [FetchpathUia]::PostKey($renderWidget, $VK.Enter)
-        Start-Sleep -Milliseconds 800
+        $skipFocus = Wait-Until { $f = Get-RendererFocus $renderer; if ($f -and $f.automationId -eq 'queue-title') { $f } else { $null } } 5
+        if (-not $skipFocus) { $skipFocus = Get-RendererFocus $renderer }
         $observation.skipLink = [ordered]@{
             controlType = $skipLink.Current.ControlType.ProgrammaticName -replace '^ControlType\.', ''
-            focusAfterActivation = Get-RendererFocus $renderer
+            focusAfterActivation = $skipFocus
         }
         Assert-True ($observation.skipLink.focusAfterActivation -and
             $observation.skipLink.focusAfterActivation.automationId -eq 'queue-title') `
@@ -740,6 +779,11 @@ try {
     # The engine the window started outlives it; stop it so its folder can go.
     $engine = Join-Path (Split-Path $ApplicationPath) 'fetchpath.exe'
     if (Test-Path -LiteralPath $engine) { & $engine engine stop | Out-Null }
+    if ($null -eq $previousAppDataEnv) {
+        Remove-Item Env:\FETCHPATH_APP_DATA_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:FETCHPATH_APP_DATA_DIR = $previousAppDataEnv
+    }
     Stop-FixtureServer $fixture
 
     # WebView2 releases its profile directory a moment after the host process

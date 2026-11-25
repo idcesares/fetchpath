@@ -2,14 +2,10 @@
 //! a capture, stores it in the browser inbox, hands it to the engine and
 //! wakes the app.
 
-use fetchpath_browser_inbox::storage_reason;
-pub use fetchpath_browser_inbox::{
-    BridgeStore, BrowserCookie, CaptureRequest, InboxRecord, SCHEMA_VERSION, SecretEnvelope,
-};
+use fetchpath_browser_inbox::{BridgeStore, CaptureRequest, SCHEMA_VERSION, storage_reason};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const HOST_NAME: &str = "com.fetchpath.browser";
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const CHROMIUM_EXTENSION_ID: &str = "lfikhkjdpjcjaboanknaabncpkbgoele";
 const FIREFOX_EXTENSION_ID: &str = "browser@fetchpath.app";
@@ -94,17 +90,75 @@ fn nudge_engine() {
 /// second instance activates the first and exits), so a capture is seen at
 /// once instead of waiting in the inbox until the next launch.
 ///
+/// Uses `CreateProcessW` with `bInheritHandles = 0` so the desktop app (and
+/// its WebView2 children) never inherit Chrome's native-messaging stdin/stdout
+/// pipes, which would keep the host's output pipe open after this host exits.
 /// The browser runs this host inside a job object that may end the host's
 /// children with it, so the app is started outside the job where the job
 /// allows that, and inside it otherwise.
+#[cfg(windows)]
+fn spawn_detached_no_inherit(app: &std::path::Path, extra_args: &str) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS,
+        PROCESS_INFORMATION, STARTUPINFOW,
+    };
+    let path = app.as_os_str();
+    if path.encode_wide().any(|unit| unit == u16::from(b'"')) {
+        return false;
+    }
+    let application: Vec<u16> = path.encode_wide().chain([0]).collect();
+    let mut command_line: Vec<u16> = "\""
+        .encode_utf16()
+        .chain(path.encode_wide())
+        .chain("\"".encode_utf16())
+        .collect();
+    if !extra_args.is_empty() {
+        command_line.push(u16::from(b' '));
+        command_line.extend(extra_args.encode_utf16());
+    }
+    command_line.push(0);
+    let folder: Option<Vec<u16>> = app
+        .parent()
+        .map(|dir| dir.as_os_str().encode_wide().chain([0]).collect());
+    let spawn = |flags: u32| -> bool {
+        let mut line = command_line.clone();
+        // SAFETY: `application`, `line`, and `folder` are live NUL-terminated
+        // UTF-16 buffers; `line` is a private mutable copy; `startup` and
+        // `info` are zeroed POD structs with `cb` initialized; `bInheritHandles`
+        // is 0; both returned handles are closed once on success.
+        unsafe {
+            let mut startup: STARTUPINFOW = std::mem::zeroed();
+            startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            let mut info: PROCESS_INFORMATION = std::mem::zeroed();
+            let created = CreateProcessW(
+                application.as_ptr(),
+                line.as_mut_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                flags,
+                std::ptr::null(),
+                folder.as_ref().map_or(std::ptr::null(), |dir| dir.as_ptr()),
+                &startup,
+                &mut info,
+            );
+            if created == 0 {
+                return false;
+            }
+            CloseHandle(info.hThread);
+            CloseHandle(info.hProcess);
+            true
+        }
+    };
+    let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    spawn(base | CREATE_BREAKAWAY_FROM_JOB) || spawn(base)
+}
+
 fn launch_desktop() {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
         let Some(app) = std::env::current_exe()
             .ok()
             .and_then(|host| host.parent().map(|dir| dir.join("fetchpath-desktop.exe")))
@@ -112,18 +166,7 @@ fn launch_desktop() {
         else {
             return;
         };
-        let spawn = |flags: u32| {
-            Command::new(&app)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(flags)
-                .spawn()
-        };
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
-        if spawn(base | CREATE_BREAKAWAY_FROM_JOB).is_err() {
-            let _ = spawn(base);
-        }
+        let _ = spawn_detached_no_inherit(&app, "");
     }
 }
 
@@ -197,6 +240,56 @@ mod tests {
         assert_eq!(
             read_message(oversized.as_slice()).unwrap_err().kind(),
             io::ErrorKind::InvalidData
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn detached_desktop_launch_does_not_inherit_pipe_handles() {
+        use std::os::windows::io::FromRawHandle;
+        use std::time::{Duration, Instant};
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
+        };
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        use windows_sys::Win32::System::Pipes::CreatePipe;
+
+        let mut read_handle: HANDLE = std::ptr::null_mut();
+        let mut write_handle: HANDLE = std::ptr::null_mut();
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        // SAFETY: `CreatePipe` writes valid handles when returning non-zero;
+        // `SetHandleInformation` marks the write end inheritable (matching
+        // Chrome's native-messaging stdout pipe). Ownership of `read_handle`
+        // moves into `File::from_raw_handle` and `write_handle` is closed once.
+        let mut reader = unsafe {
+            assert_ne!(CreatePipe(&mut read_handle, &mut write_handle, &sa, 0), 0);
+            assert_ne!(
+                SetHandleInformation(write_handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT),
+                0
+            );
+            std::fs::File::from_raw_handle(read_handle)
+        };
+
+        let windir = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let ping = std::path::PathBuf::from(windir).join(r"System32\PING.EXE");
+        assert!(spawn_detached_no_inherit(&ping, "-n 4 127.0.0.1"));
+
+        // SAFETY: `write_handle` is valid and closed exactly once here.
+        unsafe {
+            CloseHandle(write_handle);
+        }
+
+        let started = Instant::now();
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "detached child held the inheritable pipe handle open for {:?}",
+            started.elapsed()
         );
     }
 }

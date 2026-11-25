@@ -2,8 +2,11 @@
 //! HTTP resume. It makes no H2/H3 or publisher-authenticity claim.
 
 mod checkpoint;
+mod page_image;
 mod transfer;
 mod verified;
+
+pub use page_image::{PageImage, extract_image_from_html, inspect_page_image};
 
 /// The detail of a write that failed because the drive is full. A full drive
 /// is `storage.disk_full`, not `storage.failed`, so clients can say so.

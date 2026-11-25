@@ -20,7 +20,9 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long connections get to finish when the listener stops.
 const DRAIN: Duration = Duration::from_secs(1);
 
-async fn accept_any(listeners: &[TcpListener]) -> std::io::Result<(TcpStream, SocketAddr)> {
+pub(crate) async fn accept_any(
+    listeners: &[TcpListener],
+) -> std::io::Result<(TcpStream, SocketAddr)> {
     std::future::poll_fn(|context| {
         for listener in listeners {
             if let Poll::Ready(accepted) = listener.poll_accept(context) {

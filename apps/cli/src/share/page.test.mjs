@@ -121,6 +121,19 @@ test('resume continues from the first chunk not opened yet', async () => {
   assert.ok(Buffer.concat(got).equals(plain));
 });
 
+test('resume before the header finishes drops partial header bytes cleanly', async () => {
+  const plain = plainOf(128);
+  const cipher = encrypt(plain);
+  const decryptor = await page.createDecryptor(KEY);
+  // Connection drops after only 10 bytes of the 22-byte header.
+  assert.deepEqual(await decryptor.push(cipher.subarray(0, 10)), []);
+  assert.equal(decryptor.resumeAt(), 0);
+  const got = [];
+  got.push(...await decryptor.push(cipher));
+  got.push(...await decryptor.finish());
+  assert.ok(Buffer.concat(got).equals(plain));
+});
+
 test('the file name rides inside the stream and is cleaned for saving', () => {
   const name = Buffer.from('relatório final.pdf');
   const stream = Buffer.concat([Buffer.from([0, name.length]), name, Buffer.from('DATA')]);

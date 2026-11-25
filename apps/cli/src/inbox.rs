@@ -27,19 +27,23 @@ pub fn run(args: &[String]) -> i32 {
         .filter(|arg| *arg != "--json")
         .collect();
     let result = match words.as_slice() {
-        [] | ["list"] => Engine::connect().and_then(|engine| list(&engine, json)),
+        [] | ["list"] => Engine::connect()
+            .and_then(|engine| list(&engine, json))
+            .map(|()| 0),
         ["accept", id] => Engine::connect().and_then(|engine| accept(&engine, id, None, json)),
         ["accept", id, "--to", folder] => {
             Engine::connect().and_then(|engine| accept(&engine, id, Some(folder), json))
         }
-        ["decline", id] => Engine::connect().and_then(|engine| decline(&engine, id, json)),
+        ["decline", id] => Engine::connect()
+            .and_then(|engine| decline(&engine, id, json))
+            .map(|()| 0),
         _ => {
             eprintln!("{USAGE}");
             return EXIT_USAGE;
         }
     };
     match result {
-        Ok(()) => 0,
+        Ok(code) => code,
         Err(error) => client::fail(&error, json),
     }
 }
@@ -121,11 +125,20 @@ fn accept(
     reference: &str,
     folder: Option<&str>,
     json: bool,
-) -> Result<(), ProtocolError> {
+) -> Result<i32, ProtocolError> {
     let found = find(engine, reference)?;
+    let destination = folder
+        .map(|raw| {
+            std::path::absolute(raw)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| {
+                    client::input_error(&format!("That folder cannot be used: {error}"))
+                })
+        })
+        .transpose()?;
     engine.send(Command::AcceptOffer {
         offer_id: found.job_id.clone(),
-        destination: folder.map(str::to_owned),
+        destination,
     })?;
     // The copy runs in the engine; wait briefly so the answer is the result.
     let deadline = Instant::now() + COPY_WAIT;
@@ -140,9 +153,10 @@ fn accept(
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+    let exit_code = i32::from(current.state == OfferState::Failed);
     if json {
         println!("{}", serde_json::json!({ "offer": current }));
-        return Ok(());
+        return Ok(exit_code);
     }
     print_offer(&current);
     println!(
@@ -152,7 +166,7 @@ fn accept(
     if current.state == OfferState::Copying {
         println!("Still copying; check `fetchpath inbox`.");
     }
-    Ok(())
+    Ok(exit_code)
 }
 
 fn decline(engine: &Engine, reference: &str, json: bool) -> Result<(), ProtocolError> {

@@ -1350,6 +1350,7 @@ impl Engine {
             Command::TakeBrowserCaptures => {
                 // Intake runs with every commit of the queue; this one is now.
                 self.session.list().map_err(persistence)?;
+                self.wake();
                 Ok(CommandResult::CapturesTaken)
             }
             Command::ListRules => Ok(CommandResult::Rules {

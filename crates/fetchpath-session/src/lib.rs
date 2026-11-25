@@ -3239,9 +3239,17 @@ impl Session {
                 processed.push((capture.capture_id, existing.id.clone()));
                 continue;
             }
-            let secret = store
-                .load_secret(&capture.credential_ref)
-                .map_err(|error| format!("Protected browser capture is unavailable: {error}"))?;
+            let secret = match store.load_secret(&capture.credential_ref) {
+                Ok(secret) => secret,
+                Err(_) => {
+                    // One missing or unreadable secret must never poison
+                    // Session::list() for the entire queue: quarantine it and
+                    // continue ingesting the remaining captures.
+                    let _ = store.mark_processed(&capture.capture_id, "quarantined");
+                    let _ = store.remove_secret(&capture.credential_ref);
+                    continue;
+                }
+            };
             // The person's rules decide as for any new job (FP-075).
             let verdict = self.decide_rules(&secret.url, Some(&capture.suggested_filename), None);
             let rule = verdict.matched.as_ref();
@@ -3265,8 +3273,11 @@ impl Session {
                 }
                 continue;
             }
-            let context = RequestContext::new(secret.cookie_lines, secret.referer)
-                .map_err(|code| format!("Browser request context was rejected ({code})."))?;
+            let Ok(context) = RequestContext::new(secret.cookie_lines, secret.referer) else {
+                let _ = store.mark_processed(&capture.capture_id, "quarantined");
+                let _ = store.remove_secret(&capture.credential_ref);
+                continue;
+            };
             let folder = rule
                 .and_then(|rule| rule.spec.then.folder.clone())
                 .map(PathBuf::from)
@@ -3324,8 +3335,18 @@ const MEDIA_HOSTS: &[&str] = &[
     "archive.org",
 ];
 
+/// File extensions that always indicate a direct file rather than a media page.
+/// Kept in step with `FILE_EXTENSIONS` in `apps/desktop/src/main.ts`.
+const MEDIA_DIRECT_FILE_EXTENSIONS: &[&str] = &[
+    "7z", "aab", "apk", "appx", "bin", "bz2", "cab", "csv", "deb", "dmg", "doc", "docx", "epub",
+    "exe", "flac", "gz", "img", "iso", "jar", "json", "m4a", "mkv", "mobi", "mov", "mp3", "mp4",
+    "msi", "msix", "ogg", "pdf", "pkg", "ppt", "pptx", "rar", "rpm", "svg", "tar", "tgz", "txt",
+    "wav", "webm", "xls", "xlsx", "xml", "xz", "zip", "zst", "png", "jpg", "jpeg", "gif", "webp",
+];
+
 /// A page on a known media site, not a direct file on it (an `.mp4` on
-/// archive.org is still a file).
+/// archive.org is still a file, while dotted handles like `@john.doe` or
+/// `ubuntu-24.04` remain media pages).
 fn is_media_page(raw: &str) -> bool {
     let Ok(url) = url::Url::parse(raw) else {
         return false;
@@ -3343,10 +3364,13 @@ fn is_media_page(raw: &str) -> bool {
         .path_segments()
         .and_then(|mut s| s.next_back())
         .unwrap_or("");
-    let has_extension = last
-        .rsplit_once('.')
-        .is_some_and(|(stem, ext)| !stem.is_empty() && (2..=5).contains(&ext.len()));
-    on_media_site && !has_extension
+    let has_file_extension = last.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty()
+            && MEDIA_DIRECT_FILE_EXTENSIONS
+                .iter()
+                .any(|known| ext.eq_ignore_ascii_case(known))
+    });
+    on_media_site && !has_file_extension
 }
 
 fn unique_browser_destination(
@@ -6820,6 +6844,64 @@ mod tests {
             started.elapsed() < Duration::from_millis(1_000),
             "queue calls waited {:?} on a drive measurement",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn is_media_page_routes_dotted_handles_to_review_and_keeps_direct_files() {
+        assert!(is_media_page("https://www.tiktok.com/@john.doe"));
+        assert!(is_media_page("https://www.youtube.com/@dr.mike"));
+        assert!(is_media_page("https://archive.org/details/ubuntu-24.04"));
+        assert!(!is_media_page(
+            "https://archive.org/download/item/movie.mp4"
+        ));
+        assert!(!is_media_page("https://example.com/watch?v=1"));
+    }
+
+    #[test]
+    fn missing_browser_secret_is_quarantined_without_poisoning_list() {
+        use fetchpath_browser_inbox::{BridgeStore, CaptureRequest};
+
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let downloads = root.path().join("downloads");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&downloads).unwrap();
+        let inbox = BridgeStore::new(data.clone());
+        let bad_id = uuid::Uuid::new_v4().to_string();
+        let good_id = uuid::Uuid::new_v4().to_string();
+        for (id, name) in [(&bad_id, "bad.bin"), (&good_id, "good.bin")] {
+            let req = CaptureRequest {
+                schema_version: 1,
+                capture_id: id.clone(),
+                method: "GET".into(),
+                url: format!("http://127.0.0.1:9/{name}"),
+                suggested_filename: name.into(),
+                referrer: None,
+                cookies: Vec::new(),
+                user_initiated: true,
+            };
+            assert!(!inbox.accept(&req).unwrap());
+        }
+        let bad_ref = inbox
+            .pending()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.capture_id == bad_id)
+            .unwrap()
+            .credential_ref;
+        inbox.remove_secret(&bad_ref).unwrap();
+
+        let session =
+            Session::load_with_browser(data.join("queue-v1.json"), 1, Some(downloads)).unwrap();
+        let listed = session.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(
+            listed[0]
+                .destination
+                .as_deref()
+                .unwrap_or_default()
+                .ends_with("good.bin")
         );
     }
 }

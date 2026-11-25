@@ -78,17 +78,26 @@ export function createSocketEngine(): SocketEngine {
   }
 
   async function afterClose(): Promise<void> {
+    let response: Response;
     try {
-      await fetch("/", { cache: "no-store" });
+      response = await fetch("/", { cache: "no-store" });
     } catch {
       // The engine cannot be reached: keep trying and say so.
       setState("offline");
       schedule();
       return;
     }
-    // The engine answers but refused the socket: signed out or replaced.
-    if (reloadOnce()) return;
-    setState("refused");
+    const session = response.headers.get("x-fetchpath-session");
+    if (session === "signed-out") {
+      // The session ended: reload once so the signed-out page shows, and stop
+      // polling rather than retrying an unauthenticated socket every 10s.
+      if (reloadOnce()) return;
+      setState("refused");
+      return;
+    }
+    // Still signed in (e.g. transient 503 at socket limit or dropped socket):
+    // stay offline and retry without falsely reporting signed out.
+    setState("offline");
     schedule();
   }
 

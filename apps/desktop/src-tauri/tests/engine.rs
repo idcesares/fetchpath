@@ -16,7 +16,7 @@ use fetchpath_protocol::pipe::Limits;
 use fetchpath_protocol::{JobSnapshot, Timestamp};
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
@@ -99,18 +99,26 @@ fn watcher_reconnection_keeps_the_selected_instance() {
 }
 
 fn engine_exe() -> PathBuf {
-    let exe = std::env::current_exe()
-        .unwrap()
+    let host_dir = Path::new(env!("CARGO_BIN_EXE_fetchpath-browser-host"))
         .parent()
-        .and_then(|deps| deps.parent())
-        .unwrap()
-        .join("fetchpath.exe");
-    assert!(
-        exe.is_file(),
+        .unwrap();
+    let candidate = host_dir.join("fetchpath.exe");
+    if candidate.is_file() {
+        return candidate;
+    }
+    let current = std::env::current_exe().unwrap();
+    if let Some(found) = current
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("fetchpath.exe"))
+        .find(|path| path.is_file())
+    {
+        return found;
+    }
+    panic!(
         "{} is missing; run `cargo build -p fetchpath` first",
-        exe.display()
+        candidate.display()
     );
-    exe
 }
 
 /// Serves `body` slowly with ranges and a strong validator, so a download

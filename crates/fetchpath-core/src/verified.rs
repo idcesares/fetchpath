@@ -1477,7 +1477,6 @@ fn expected_body_len(headers: &ResponseHeaders, range: Option<(u64, u64)>) -> Op
 // Publication and error mapping
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
 fn publish(
     request: &VerifiedDownloadRequest,
     store: &CheckpointStore,

@@ -19,7 +19,7 @@ export const queueTopMarkup = `
   </section>
 
   <div id="queue-filters" class="filters" role="group" aria-label="Filter downloads">
-    <button class="filter is-selected" type="button" data-filter="all" aria-pressed="true">All</button>
+    <button class="filter" type="button" data-filter="all" aria-pressed="true">All</button>
     <button class="filter" type="button" data-filter="active" aria-pressed="false">Active</button>
     <button class="filter" type="button" data-filter="paused" aria-pressed="false">Paused</button>
     <button class="filter" type="button" data-filter="scheduled" aria-pressed="false">Scheduled</button>

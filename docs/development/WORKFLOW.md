@@ -83,7 +83,7 @@ Every file an agent may read costs tokens in every later session, so:
 ## Checks
 
 `node tools/tasks.mjs check` validates the backlog and its evidence paths.
-`node --test` runs the repository, fixture, extension and installer tests.
+`node tools/tests.mjs` runs the repository, fixture, extension and installer tests.
 Rust and desktop checks are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 [CI](../../.github/workflows/checks.yml) also builds both frontends and runs
 Rust tests, strict clippy, formatting, the isolated helper-policy regression,

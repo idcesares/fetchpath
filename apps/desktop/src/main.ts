@@ -101,7 +101,7 @@ interface CacheView {
   max_quota_bytes: number;
 }
 
-/** One agent's access, as the engine keeps it. */
+/** One smart rule, as the engine reports it. */
 interface RuleView {
   id: number;
   label: string;
@@ -116,6 +116,7 @@ interface RuleAdvice {
   lines: string[];
 }
 
+/** One agent's access, as the engine keeps it. */
 interface AgentView {
   name: string;
   folders: string[];
@@ -328,8 +329,14 @@ let mediaInspection: MediaInspection | null = null;
 let inspectedMediaUrl = "";
 let announcedStatus = "";
 let announcedAlert = "";
-let dialogOpener: HTMLElement | null = null;
+const dialogOpeners: Array<{ dialog: HTMLDialogElement; opener: HTMLElement | null }> = [];
 let composerFocus: HTMLElement | null = null;
+let settingsQueue: Promise<void> = Promise.resolve();
+let shareNewHandle: string | null = null;
+const queueErrorBanner = required<HTMLElement>("queue-error-banner");
+const queueError = required<HTMLElement>("queue-error");
+const queueErrorDismiss = required<HTMLButtonElement>("queue-error-dismiss");
+let lastQueueErrorMessage = "";
 /// True while the destination still holds Fetchpath's own suggestion rather
 /// than something the user typed or picked.
 let destinationIsSuggested = true;
@@ -369,13 +376,28 @@ function announceProblem(message: string): void {
    never dropped onto the document body. */
 
 function openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void {
+  if (dialog.open) {
+    placeLiveRegions();
+    focus.focus();
+    return;
+  }
   // Opened from the page itself (a paste, a shortcut), there is no control to
   // return to, and the dialog's fallback is used instead of the body.
   const active = document.activeElement;
-  dialogOpener = active instanceof HTMLElement && active !== document.body ? active : null;
+  const opener = active instanceof HTMLElement && active !== document.body ? active : null;
+  dialogOpeners.push({ dialog, opener });
   dialog.showModal();
   placeLiveRegions();
   focus.focus();
+}
+
+function clearDialogOpener(dialog: HTMLDialogElement): void {
+  for (let index = dialogOpeners.length - 1; index >= 0; index--) {
+    if (dialogOpeners[index].dialog === dialog) {
+      dialogOpeners[index].opener = null;
+      return;
+    }
+  }
 }
 
 /**
@@ -392,21 +414,82 @@ function placeLiveRegions(): void {
 
 for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("close", placeLiveRegions);
 
-function restoreDialogFocus(fallback: HTMLElement): void {
-  // The opener may have gone while the dialog was open: the empty state's Add
-  // button disappears once the first download exists.
-  const opener = dialogOpener?.isConnected && dialogOpener.offsetParent !== null ? dialogOpener : null;
-  (opener ?? fallback).focus();
-  dialogOpener = null;
+function restoreDialogFocus(fallback: HTMLElement, dialog?: HTMLDialogElement): void {
+  let entry: { dialog: HTMLDialogElement; opener: HTMLElement | null } | undefined;
+  if (dialog) {
+    for (let index = dialogOpeners.length - 1; index >= 0; index--) {
+      if (dialogOpeners[index].dialog === dialog) {
+        entry = dialogOpeners.splice(index, 1)[0];
+        break;
+      }
+    }
+  } else {
+    entry = dialogOpeners.pop();
+  }
+  const open = document.querySelectorAll<HTMLDialogElement>("dialog[open]");
+  const top = open.length ? open[open.length - 1] : null;
+  // The opener may have gone while the dialog was open, or sit behind another
+  // still-open modal dialog where it is inert.
+  const candidate = entry?.opener ?? null;
+  const opener =
+    candidate && candidate.isConnected && candidate.offsetParent !== null && (!top || top.contains(candidate))
+      ? candidate
+      : null;
+  if (opener) {
+    opener.focus();
+    return;
+  }
+  if (top) {
+    const inside = top.querySelector<HTMLElement>(
+      "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+    );
+    (inside ?? fallback).focus();
+    return;
+  }
+  fallback.focus();
 }
+
+function showQueueError(error: unknown): void {
+  const message = errorMessage(error);
+  queueError.textContent = message;
+  queueErrorBanner.hidden = false;
+  if (message !== lastQueueErrorMessage) {
+    lastQueueErrorMessage = message;
+    announceProblem(message);
+  }
+}
+
+function clearQueueError(): void {
+  if (queueErrorBanner.hidden && !lastQueueErrorMessage) return;
+  queueError.textContent = "";
+  queueErrorBanner.hidden = true;
+  lastQueueErrorMessage = "";
+}
+
+queueErrorDismiss.addEventListener("click", () => {
+  clearQueueError();
+  queueTitle.focus({ preventScroll: true });
+});
 
 keyboardHelpButton.addEventListener("click", () => openDialog(shortcutsDialog, shortcutsCloseButton));
 shortcutsCloseButton.addEventListener("click", () => shortcutsDialog.close());
-shortcutsDialog.addEventListener("close", () => restoreDialogFocus(keyboardHelpButton));
+shortcutsDialog.addEventListener("close", () => restoreDialogFocus(keyboardHelpButton, shortcutsDialog));
 
 openSettingsButton.addEventListener("click", () => void showSettings());
 settingsCloseButton.addEventListener("click", () => settingsDialog.close());
-settingsDialog.addEventListener("close", () => restoreDialogFocus(openSettingsButton));
+settingsDialog.addEventListener("close", () => {
+  if (sharePoll !== undefined) {
+    window.clearInterval(sharePoll);
+    sharePoll = undefined;
+  }
+  if (lanPoll !== undefined) {
+    window.clearInterval(lanPoll);
+    lanPoll = undefined;
+  }
+  shareRelayKey.value = "";
+  hideNewShare();
+  restoreDialogFocus(openSettingsButton, settingsDialog);
+});
 
 // Every setting saves the moment it changes, so the settings form has nothing
 // to submit. Without this, Enter in the folder field triggers implicit
@@ -682,6 +765,7 @@ function shareDuration(seconds: number): string {
 
 /** Forgets the link and its code. They exist only in this page until hidden. */
 function hideNewShare(): void {
+  shareNewHandle = null;
   shareNew.hidden = true;
   shareNewLink.value = "";
   shareQr.replaceChildren();
@@ -691,6 +775,7 @@ function hideNewShare(): void {
 }
 
 function showNewShare(made: NewShare, text: string): void {
+  shareNewHandle = made.share.handle;
   shareNewText.textContent = text;
   shareNewLink.value = made.link;
   shareNew.hidden = false;
@@ -721,6 +806,12 @@ function showNewShare(made: NewShare, text: string): void {
   shareQr.append(ground, modules);
 }
 
+function focusShareFallback(): void {
+  if (!shareFile.disabled) shareFile.focus({ preventScroll: true });
+  else if (!shareTest.disabled) shareTest.focus({ preventScroll: true });
+  else shareUrl.focus({ preventScroll: true });
+}
+
 function renderShare(view: ShareView): void {
   if (document.activeElement !== shareUrl) shareUrl.value = view.base_url ?? "";
   if (document.activeElement !== sharePort) sharePort.value = String(view.port);
@@ -739,14 +830,21 @@ function renderShare(view: ShareView): void {
   shareRelayKey.placeholder = view.relay_key_stored ? "A key is stored; leave empty to reuse it" : "";
   shareTest.disabled = !listening;
   shareEnabled.checked = view.enabled;
-  shareEnabled.disabled = !view.tested || !listening;
+  // Always allow turning sharing off while enabled, even if the relay/listener
+  // is currently disconnected, so live links and file locks can be revoked.
+  shareEnabled.disabled = !view.enabled && (!view.tested || !listening);
   shareEnabledState.textContent = view.enabled
     ? "On. Each link you make works once and for a limited time. Turn this off to stop all of them."
     : view.tested
       ? "Off. Turn it on to allow links to files."
       : "Off until a test link has been downloaded through your address.";
-  shareFile.disabled = !view.enabled;
+  shareFile.disabled = !view.enabled || !listening;
   shareRevokeAll.disabled = !view.shares.some((item) => item.state === "live");
+  if (shareNewHandle && !shareShowingTest) {
+    const shown = view.shares.find((item) => item.handle === shareNewHandle);
+    if (!shown || shown.state !== "live") hideNewShare();
+  }
+  const focusedInList = shareList.contains(document.activeElement);
   shareList.replaceChildren();
   for (const item of view.shares.filter((candidate) => !candidate.test)) {
     const row = document.createElement("li");
@@ -763,8 +861,10 @@ function renderShare(view: ShareView): void {
       revoke.addEventListener("click", async () => {
         clearError(settingsError);
         try {
+          if (shareNewHandle === item.handle) hideNewShare();
           renderShare(await invoke<ShareView>("revoke_share", { handle: item.handle }));
           announce(`Revoked the link to ${item.name}.`);
+          focusShareFallback();
         } catch (error) {
           showError(settingsError, error);
         }
@@ -773,22 +873,32 @@ function renderShare(view: ShareView): void {
     }
     shareList.append(row);
   }
+  if (focusedInList && !shareList.contains(document.activeElement)) focusShareFallback();
   // The setup test counts when the engine saw it delivered in order.
   if (view.tested && !shareWasTested && shareShowingTest && !shareNew.hidden) {
     shareNewText.textContent = "The test link was downloaded through your address. You can now allow public file links.";
     announce(shareNewText.textContent);
   }
   shareWasTested = view.tested;
-  const waiting = !view.tested && view.shares.some((item) => item.test && item.state === "live");
-  if (waiting && sharePoll === undefined) {
+  const waitingForTest = !view.tested && view.shares.some((item) => item.test && item.state === "live");
+  const connecting = Boolean(view.base_url) && !listening && !view.problem;
+  const shouldPoll = settingsDialog.open && (waitingForTest || connecting);
+  if (shouldPoll && sharePoll === undefined) {
     sharePoll = window.setInterval(() => void refreshShare(), 1000);
-  } else if (!waiting && sharePoll !== undefined) {
+  } else if (!shouldPoll && sharePoll !== undefined) {
     window.clearInterval(sharePoll);
     sharePoll = undefined;
   }
 }
 
 async function refreshShare(): Promise<void> {
+  if (!settingsDialog.open) {
+    if (sharePoll !== undefined) {
+      window.clearInterval(sharePoll);
+      sharePoll = undefined;
+    }
+    return;
+  }
   try {
     renderShare(await invoke<ShareView>("share_status"));
   } catch (error) {
@@ -804,17 +914,18 @@ async function refreshShare(): Promise<void> {
 shareSave.addEventListener("click", async () => {
   clearError(settingsError);
   const port = sharePort.value.trim() ? Number(sharePort.value) : null;
-  if (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-    showError(settingsError, "Enter a port between 1 and 65535.");
+  if (port !== null && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
+    showError(settingsError, "Enter a port between 1024 and 65535.");
     return;
   }
+  const baseUrl = shareUrl.value.trim();
   try {
+    const view = await invoke<ShareView>("configure_sharing", { baseUrl, port });
     hideNewShare();
     shareWasTested = false;
-    renderShare(await invoke<ShareView>("configure_sharing", { baseUrl: shareUrl.value.trim(), port }));
-    // The listener starts a moment after the address is stored.
+    renderShare(view);
     window.setTimeout(() => void refreshShare(), 1000);
-    announce("Address saved. Make a test link to check that it works.");
+    announce(baseUrl ? "Address saved. Make a test link to check that it works." : "Address cleared.");
   } catch (error) {
     showError(settingsError, error);
     await refreshShare();
@@ -827,11 +938,12 @@ shareRelayOn.addEventListener("click", async () => {
   const key = shareRelayKey.value.trim();
   shareRelayKey.value = "";
   try {
+    const view = await invoke<ShareView>("configure_relay", { relay: true, key: key || null });
     hideNewShare();
     shareWasTested = false;
-    renderShare(await invoke<ShareView>("configure_relay", { relay: true, key: key || null }));
+    renderShare(view);
     window.setTimeout(() => void refreshShare(), 1000);
-    announce("Relay saved. Make a test link to check that it works.");
+    announce("Relay saved. Waiting for enrollment…");
   } catch (error) {
     showError(settingsError, error);
     await refreshShare();
@@ -840,10 +952,12 @@ shareRelayOn.addEventListener("click", async () => {
 
 shareRelayOff.addEventListener("click", async () => {
   clearError(settingsError);
+  shareRelayKey.value = "";
   try {
+    const view = await invoke<ShareView>("configure_relay", { relay: false, key: null });
     hideNewShare();
     shareWasTested = false;
-    renderShare(await invoke<ShareView>("configure_relay", { relay: false, key: null }));
+    renderShare(view);
     window.setTimeout(() => void refreshShare(), 1000);
     announce("Back to a tunnel. Make a test link to check that it works.");
   } catch (error) {
@@ -868,9 +982,13 @@ shareTest.addEventListener("click", async () => {
 shareCopy.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(shareNewLink.value);
+    settingsStatus.textContent = "Link copied.";
+    settingsStatus.hidden = false;
     announce("Link copied.");
   } catch {
     shareNewLink.select();
+    settingsStatus.textContent = "Select the link and copy it.";
+    settingsStatus.hidden = false;
     announce("Select the link and copy it.");
   }
 });
@@ -889,7 +1007,9 @@ shareSaveQr.addEventListener("click", async () => {
     });
     if (typeof chosen !== "string") return;
     await invoke("save_share_qr", { path: chosen, link: shareNewLink.value });
-    announce("QR image saved. It holds the whole link: delete it after sending.");
+    settingsStatus.textContent = "QR image saved. It holds the whole link: delete it after sending.";
+    settingsStatus.hidden = false;
+    announce(settingsStatus.textContent);
   } catch (error) {
     showError(settingsError, error);
   }
@@ -897,13 +1017,15 @@ shareSaveQr.addEventListener("click", async () => {
 
 shareHide.addEventListener("click", () => {
   hideNewShare();
-  shareFile.focus();
+  focusShareFallback();
 });
 
 shareEnabled.addEventListener("change", async () => {
   clearError(settingsError);
   try {
-    renderShare(await invoke<ShareView>("set_sharing_enabled", { enabled: shareEnabled.checked }));
+    const view = await invoke<ShareView>("set_sharing_enabled", { enabled: shareEnabled.checked });
+    if (!view.enabled && !shareShowingTest) hideNewShare();
+    renderShare(view);
     announce(shareEnabledState.textContent ?? "");
   } catch (error) {
     showError(settingsError, error);
@@ -913,9 +1035,12 @@ shareEnabled.addEventListener("change", async () => {
 
 shareFile.addEventListener("click", async () => {
   clearError(settingsError);
+  const label = shareFile.textContent;
+  shareFile.disabled = true;
   try {
     const selected = await open({ directory: false, multiple: false, title: "Choose a file to share with a link" });
     if (typeof selected !== "string") return;
+    shareFile.textContent = "Making link…";
     const made = await invoke<NewShare>("create_share", {
       path: selected,
       expiresInSeconds: Number(shareExpiry.value),
@@ -923,17 +1048,21 @@ shareFile.addEventListener("click", async () => {
     shareShowingTest = false;
     showNewShare(made, `Link to ${made.share.name}. It works once and cannot be shown again, so copy it now. The file stays locked while the link lives.`);
     announce("Link made. Copy it now: it is shown only once.");
-    await refreshShare();
   } catch (error) {
     showError(settingsError, error);
+  } finally {
+    shareFile.textContent = label;
+    await refreshShare();
   }
 });
 
 shareRevokeAll.addEventListener("click", async () => {
   clearError(settingsError);
   try {
+    hideNewShare();
     renderShare(await invoke<ShareView>("revoke_share", { handle: null }));
     announce("Every link is revoked.");
+    focusShareFallback();
   } catch (error) {
     showError(settingsError, error);
   }
@@ -1138,20 +1267,37 @@ async function refreshAgents(): Promise<void> {
 
 const inboxPanel = required<HTMLElement>("inbox-panel");
 const inboxList = required<HTMLDivElement>("inbox-list");
+const inboxStatusRow = required<HTMLElement>("inbox-status-row");
 const inboxStatus = required<HTMLParagraphElement>("inbox-status");
+const inboxStatusDismiss = required<HTMLButtonElement>("inbox-status-dismiss");
 let inboxOffers: OfferRow[] = [];
+let inboxRenderedSignature = "";
 let inboxBusy = false;
+const trackedCopyingOfferIds = new Set<string>();
+
+function reportFinishedOffer(after: OfferRow): void {
+  if (after.state === "completed") {
+    announceInbox(`Saved ${after.fileName}${after.savedTo ? ` to ${after.savedTo}` : ""}.`);
+  } else if (after.state === "failed") {
+    announceInbox(`${after.fileName} was not saved (${after.reason ?? "failed"}).`);
+  }
+}
 
 async function refreshInbox(): Promise<void> {
   if (inboxBusy) return;
   try {
     const next = await invoke<OfferRow[]>("list_inbox");
-    // Say how a copy ended once it leaves the open list.
+    // Say how a copy ended once it leaves the open list, including copies that
+    // finished before the first poll saw `state === "copying"`.
     for (const before of inboxOffers) {
-      if (before.state !== "copying") continue;
-      const after = next.find((offer) => offer.id === before.id);
-      if (after?.state === "completed") announceInbox(`Saved ${after.fileName}${after.savedTo ? ` to ${after.savedTo}` : ""}.`);
-      else if (after?.state === "failed") announceInbox(`${after.fileName} was not saved (${after.reason ?? "failed"}).`);
+      if (before.state === "copying") trackedCopyingOfferIds.add(before.id);
+    }
+    for (const id of [...trackedCopyingOfferIds]) {
+      const after = next.find((offer) => offer.id === id);
+      if (!after || after.state !== "copying") {
+        trackedCopyingOfferIds.delete(id);
+        if (after) reportFinishedOffer(after);
+      }
     }
     inboxOffers = next;
     renderInbox();
@@ -1162,14 +1308,38 @@ async function refreshInbox(): Promise<void> {
 
 function announceInbox(message: string): void {
   inboxStatus.textContent = message;
+  inboxStatusRow.hidden = !message;
   announce(message);
 }
+
+inboxStatusDismiss.addEventListener("click", () => {
+  inboxStatus.textContent = "";
+  inboxStatusRow.hidden = true;
+  inboxStatusDismiss.hidden = true;
+  renderInbox();
+  queueTitle.focus({ preventScroll: true });
+});
 
 function renderInbox(): void {
   // Offers waiting for an answer, and those being copied. Finished ones are
   // reported once, in the status line.
   const incoming = inboxOffers.filter((offer) => offer.open && !offer.from.startsWith("user"));
-  inboxPanel.hidden = incoming.length === 0 && !inboxStatus.textContent;
+  const hasStatus = Boolean(inboxStatus.textContent);
+  inboxStatusRow.hidden = !hasStatus;
+  inboxStatusDismiss.hidden = !hasStatus || incoming.length > 0;
+  inboxPanel.hidden = incoming.length === 0 && !hasStatus;
+  const signature = JSON.stringify(
+    incoming.map((offer) => [offer.id, offer.state, offer.fileName, offer.size, offer.from, offer.sha256, offer.origin ?? ""]),
+  );
+  if (signature === inboxRenderedSignature) return;
+  inboxRenderedSignature = signature;
+
+  const active = document.activeElement;
+  const focused =
+    active instanceof HTMLButtonElement && inboxList.contains(active)
+      ? { offerId: active.dataset.offerId, action: active.dataset.action }
+      : null;
+
   inboxList.replaceChildren(
     ...incoming.map((offer) => {
       const card = document.createElement("section");
@@ -1198,12 +1368,16 @@ function renderInbox(): void {
       const copying = offer.state === "copying";
       const accept = document.createElement("button");
       accept.type = "button";
+      accept.dataset.offerId = offer.id;
+      accept.dataset.action = "accept";
       accept.textContent = copying ? "Copying…" : "Accept…";
       accept.disabled = copying;
       accept.setAttribute("aria-label", `Accept ${offer.fileName}: choose a folder to copy it into`);
       accept.addEventListener("click", () => void answerOffer(offer, "accept"));
       const decline = document.createElement("button");
       decline.type = "button";
+      decline.dataset.offerId = offer.id;
+      decline.dataset.action = "decline";
       decline.className = "secondary";
       decline.textContent = "Decline";
       decline.disabled = copying;
@@ -1214,6 +1388,19 @@ function renderInbox(): void {
       return card;
     }),
   );
+
+  if (focused?.offerId && focused.action) {
+    const replacement = inboxList.querySelector<HTMLButtonElement>(
+      `button[data-offer-id="${CSS.escape(focused.offerId)}"][data-action="${CSS.escape(focused.action)}"]:not([disabled])`,
+    );
+    const sameCard = inboxList.querySelector<HTMLButtonElement>(
+      `button[data-offer-id="${CSS.escape(focused.offerId)}"]:not([disabled])`,
+    );
+    if (replacement) replacement.focus({ preventScroll: true });
+    else if (sameCard) sameCard.focus({ preventScroll: true });
+    else if (!inboxStatusDismiss.hidden) inboxStatusDismiss.focus({ preventScroll: true });
+    else queueTitle.focus({ preventScroll: true });
+  }
 }
 
 async function answerOffer(offer: OfferRow, action: "accept" | "decline"): Promise<void> {
@@ -1225,8 +1412,15 @@ async function answerOffer(offer: OfferRow, action: "accept" | "decline"): Promi
     } else {
       const folder = await open({ directory: true, title: `Choose a folder for ${offer.fileName}` });
       if (typeof folder !== "string") return;
-      await invoke<OfferRow>("accept_offer", { offerId: offer.id, folder });
-      announceInbox(`Copying ${offer.fileName}…`);
+      const accepted = await invoke<OfferRow>("accept_offer", { offerId: offer.id, folder });
+      inboxOffers = inboxOffers.map((item) => (item.id === accepted.id ? accepted : item));
+      if (accepted.state === "copying") {
+        trackedCopyingOfferIds.add(accepted.id);
+        announceInbox(`Copying ${offer.fileName}…`);
+      } else {
+        trackedCopyingOfferIds.delete(accepted.id);
+        reportFinishedOffer(accepted);
+      }
     }
   } catch (error) {
     announceInbox(errorMessage(error));
@@ -1557,7 +1751,11 @@ async function refreshCliStatus(): Promise<void> {
 
 function openComposer(prefill?: string): void {
   if (prefill !== undefined) {
-    if (!editingJobId) urlInput.value = prefill;
+    if (!editingJobId) {
+      kindChosenByPerson = false;
+      destinationIsSuggested = true;
+      urlInput.value = prefill;
+    }
     urlInput.dispatchEvent(new Event("input"));
   }
   if (!addDialog.open) openDialog(addDialog, urlInput);
@@ -1578,7 +1776,8 @@ addDialog.addEventListener("close", () => {
   // about a form that is no longer on screen would only confuse.
   liveAlert.textContent = "";
   announcedAlert = "";
-  restoreDialogFocus(addOpenButton);
+  restoreDialogFocus(addOpenButton, addDialog);
+  if (pendingReviews.length) void refreshQueue();
 });
 
 /**
@@ -1588,7 +1787,7 @@ addDialog.addEventListener("close", () => {
 document.addEventListener("paste", (event) => {
   const target = event.target as HTMLElement | null;
   if (target?.closest("input, textarea, select, [contenteditable]")) return;
-  if (settingsDialog.open || shortcutsDialog.open) return;
+  if (settingsDialog.open || shortcutsDialog.open || stopDialog.open || details.isOpen()) return;
   const text = event.clipboardData?.getData("text")?.trim() ?? "";
   const links = text.split(/\s+/).filter((part) => /^(?:https?:\/\/|magnet:\?|hf:\/\/)/i.test(part));
   if (!links.length) return;
@@ -1659,10 +1858,15 @@ browserOpenFolder.addEventListener("click", async () => {
 browserCopyFolder.addEventListener("click", async () => {
   const folder = browserExtensionPath.textContent ?? "";
   if (!folder) return;
-  await navigator.clipboard.writeText(folder);
-  settingsStatus.textContent = "Copied the extension folder. Paste it into the folder picker's address bar.";
-  settingsStatus.hidden = false;
-  announce(settingsStatus.textContent);
+  clearError(settingsError);
+  try {
+    await navigator.clipboard.writeText(folder);
+    settingsStatus.textContent = "Copied the extension folder. Paste it into the folder picker's address bar.";
+    settingsStatus.hidden = false;
+    announce(settingsStatus.textContent);
+  } catch (error) {
+    showError(settingsError, error);
+  }
 });
 
 for (const [button, browser] of [
@@ -1689,12 +1893,17 @@ for (const [button, address, browser] of [
   [browserCopyEdge, "edge://extensions", "Edge"],
 ] as const) {
   button.addEventListener("click", async () => {
-    // Browsers refuse to open their internal pages from another program, so
-    // the address is copied for the person to paste instead.
-    await navigator.clipboard.writeText(address);
-    settingsStatus.textContent = `Copied ${address}. Paste it into ${browser}'s address bar.`;
-    settingsStatus.hidden = false;
-    announce(settingsStatus.textContent);
+    clearError(settingsError);
+    try {
+      // Browsers refuse to open their internal pages from another program, so
+      // the address is copied for the person to paste instead.
+      await navigator.clipboard.writeText(address);
+      settingsStatus.textContent = `Copied ${address}. Paste it into ${browser}'s address bar.`;
+      settingsStatus.hidden = false;
+      announce(settingsStatus.textContent);
+    } catch (error) {
+      showError(settingsError, error);
+    }
   });
 }
 
@@ -1772,26 +1981,30 @@ function applyDensity(density: Settings["density"]): void {
   else document.documentElement.removeAttribute("data-density");
 }
 
-/** Sends one changed field, then re-applies whatever the backend accepted. */
-async function changeSetting(patch: Partial<Settings>, note?: string): Promise<void> {
-  if (!settingsView) return;
-  clearError(settingsError);
-  const next = { ...settingsView.settings, ...patch };
-  try {
-    settingsView = await invoke<SettingsView>("update_settings", { next });
-    applySettingsToForm(settingsView);
-    if (note) {
-      settingsStatus.textContent = note;
-      settingsStatus.hidden = false;
-      announce(note);
+/** Sends one changed field, serialized so rapid changes never overwrite each other. */
+function changeSetting(patch: Partial<Settings>, note?: string): Promise<void> {
+  const run = async (): Promise<void> => {
+    if (!settingsView) return;
+    clearError(settingsError);
+    const next = { ...settingsView.settings, ...patch };
+    try {
+      settingsView = await invoke<SettingsView>("update_settings", { next });
+      applySettingsToForm(settingsView);
+      if (note) {
+        settingsStatus.textContent = note;
+        settingsStatus.hidden = false;
+        announce(note);
+      }
+      await refreshQueue();
+    } catch (error) {
+      showError(settingsError, error);
+      // The backend refused, so the control must go back to the stored value
+      // rather than showing a change that did not happen.
+      applySettingsToForm(settingsView);
     }
-    await refreshQueue();
-  } catch (error) {
-    showError(settingsError, error);
-    // The backend refused, so the control must go back to the stored value
-    // rather than showing a change that did not happen.
-    applySettingsToForm(settingsView);
-  }
+  };
+  settingsQueue = settingsQueue.then(run, run);
+  return settingsQueue;
 }
 
 concurrencyInput.addEventListener("input", () => {
@@ -1906,6 +2119,7 @@ async function changeSettingWithoutDialog(patch: Partial<Settings>): Promise<boo
 /* Media tools ------------------------------------------------------------- */
 
 async function refreshToolsStatus(): Promise<void> {
+  const wasReady = toolsStatus?.ready === true;
   try {
     toolsStatus = await invoke<ToolsStatus>("media_tools_status");
     renderToolsStatus(toolsStatus);
@@ -1913,6 +2127,12 @@ async function refreshToolsStatus(): Promise<void> {
     showError(settingsError, error);
   }
   updateMediaAvailability();
+  // If a link was pasted while startup was still probing yt-dlp/ffmpeg, run
+  // analysis now that the helpers are ready.
+  if (!wasReady && toolsStatus?.ready && addDialog.open && !editingJobId && parseUrls().length === 1 && !mediaInspection) {
+    analyzedUrl = "";
+    void analyzeLink();
+  }
 }
 
 function renderToolsStatus(status: ToolsStatus): void {
@@ -1959,7 +2179,12 @@ mediaToolsInstall.addEventListener("click", async () => {
     announce(toolsStatus.ready ? "Media tools are ready." : "The media tools were not set up.");
   } catch (error) {
     showError(settingsError, error);
-    if (toolsStatus) renderToolsStatus(toolsStatus);
+    if (toolsStatus) {
+      renderToolsStatus(toolsStatus);
+    } else {
+      mediaToolsInstall.disabled = false;
+      mediaToolsInstall.textContent = "Download and set up";
+    }
   } finally {
     updateMediaAvailability();
     if (mediaToolsInstall.isConnected && !mediaToolsInstall.disabled) {
@@ -2013,13 +2238,17 @@ kindChooser.addEventListener("change", () => {
   urlInput.rows = media || torrent ? 2 : 3;
   urlInput.placeholder = torrent ? "magnet:?xt=urn:btih:…" : media ? "https://example.com/watch/…" : "https://example.com/archive.zip";
   // A torrent needs no Save as: left empty, the engine picks the folder.
-  destinationInput.placeholder = torrent ? "Optional: a new folder for this torrent" : "Choose a destination file";
-  destinationInput.required = !torrent;
+  destinationInput.placeholder = torrent
+    ? "Optional: a new folder for this torrent"
+    : media
+      ? "Filled after inspecting the link, or choose a file"
+      : "Choose a destination file";
+  destinationInput.required = !torrent && !media;
   destinationLabel.textContent = torrent ? "Folder (optional)" : "Save as";
   destinationHint.textContent = torrent
     ? "Left empty, Fetchpath chooses the folder. A folder you name must be new: Fetchpath will not replace one that exists."
     : "For a batch, the other files go in the same folder under their own names.";
-  if (torrent && destinationIsSuggested) destinationInput.value = "";
+  if ((torrent || (media && !mediaInspection)) && destinationIsSuggested) destinationInput.value = "";
   if (media && !toolsStatus) void refreshToolsStatus();
   renderPreview();
 });
@@ -2044,14 +2273,58 @@ torrentPickFile.addEventListener("click", async () => {
   }
 });
 
-inspectMediaButton.addEventListener("click", () => {
+interface PageImageView {
+  url: string;
+  filename: string;
+  title: string | null;
+  contentType: string | null;
+}
+
+function isPhotoPageLink(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\.|^m\./, "");
+    if ((host === "x.com" || host === "twitter.com") && /\/status\/\d+\/photo\/\d+\/?$/i.test(url.pathname)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePageImage(url: string): Promise<boolean> {
+  try {
+    const found = await invoke<PageImageView | null>("inspect_page_image", { url });
+    if (!found || parseUrls()[0] !== url) return false;
+    kindChosenByPerson = false;
+    setKind("file");
+    urlInput.value = found.url;
+    analyzedUrl = found.url;
+    destinationIsSuggested = true;
+    destinationInput.value = joinPath(ruleFolder ?? defaultDestinationDir, found.filename);
+    clearError(formError);
+    showNotice("Found the photo on this page — ready to add to the queue.");
+    renderPreview();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+inspectMediaButton.addEventListener("click", async () => {
   clearError(formError);
   const urls = parseUrls();
   if (urls.length !== 1) {
     showError(formError, "Enter one media address to inspect.");
     return;
   }
-  void inspectMedia(urls[0], false);
+  const inspection = await inspectMedia(urls[0], false);
+  if (inspection) {
+    applyInspection(urls[0], inspection);
+  } else if (await resolvePageImage(urls[0])) {
+    return;
+  }
 });
 
 /**
@@ -2079,7 +2352,7 @@ async function inspectMedia(url: string, quiet: boolean): Promise<MediaInspectio
       mediaTitle.textContent = "";
       showError(formError, error);
     } else if (downloadKind() === "media") {
-      mediaTitle.textContent = "No video or audio was found at this link.";
+      mediaTitle.textContent = errorMessage(error);
     }
     // The helpers may have gone missing since the last check; re-reading the
     // status turns a repeated failure into the setup path.
@@ -2222,6 +2495,12 @@ async function analyzeLink(): Promise<void> {
     repositoryUrl = "";
     showRepository(null);
   }
+  if (isPhotoPageLink(url)) {
+    setKind("file");
+    showNotice("Checking for a photo on this page…");
+    if (await resolvePageImage(url)) return;
+    clearNotice();
+  }
   const ready = toolsStatus?.ready ?? false;
   if (kindChosenByPerson) {
     if (downloadKind() === "media" && ready) {
@@ -2242,12 +2521,21 @@ async function analyzeLink(): Promise<void> {
   if (kind === "media") {
     // Without the helpers this shows the setup step instead of a dead end.
     setKind("media");
-    if (!ready) return;
+    if (!ready) {
+      // Still try resolving a photo page (no yt-dlp needed for images).
+      await resolvePageImage(url);
+      return;
+    }
   } else if (!ready) {
     return;
   }
   const inspection = await inspectMedia(url, true);
-  if (!inspection) return;
+  if (!inspection) {
+    // When yt-dlp finds no video/audio on a social/media post (for instance a
+    // photo post on X), fall back to resolving a public page image.
+    if (kind === "media") await resolvePageImage(url);
+    return;
+  }
   setKind("media");
   applyInspection(url, inspection);
 }
@@ -2397,9 +2685,21 @@ for (const eventName of ["input", "change"] as const) {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError(formError);
+  if (!editingJobId && downloadKind() === "media") {
+    const urls = parseUrls();
+    const variant = selectedMediaVariant();
+    if (!urls.length) {
+      showError(formError, "Add at least one download address.");
+      return;
+    }
+    if (!variant || inspectedMediaUrl !== urls[0]) {
+      showError(formError, "Inspect this media link and choose a quality first.");
+      return;
+    }
+  }
   const drafts = buildDrafts();
   if (!editingJobId && !drafts.length) {
-    showError(formError, "Add at least one download address.");
+    showError(formError, parseUrls().length ? "Choose where to save this download." : "Add at least one download address.");
     return;
   }
   setComposerAvailability(false, editingJobId ? "Saving…" : "Adding…");
@@ -2455,7 +2755,7 @@ form.addEventListener("submit", async (event) => {
     clearComposer();
     // The empty state's Add button is about to disappear with the first
     // download, so focus returns to the app bar's Add download instead.
-    dialogOpener = null;
+    clearDialogOpener(addDialog);
     addDialog.close();
     queue.invalidate();
     queue.setSummary(count === 1 ? "Added 1 download to the queue." : `Added ${count} downloads to the queue.`);
@@ -2504,7 +2804,7 @@ const queue = createQueueView({
   handlers: rowHandlers,
   announce,
   announceProblem,
-  showError: (error) => showError(formError, error),
+  showError: (error) => showQueueError(error),
   refresh: refreshQueue,
   openDetails: (jobId, opener) => void details.open(jobId, opener),
   powerMode: () => settingsView?.settings.powerMode === true,
@@ -2519,9 +2819,9 @@ const queue = createQueueView({
 
 
 document.addEventListener("keydown", (event) => {
-  // While Settings or help is modal it owns every key. Escape in Add download
-  // is the dialog's own cancel, which closes it and keeps the draft.
-  if (shortcutsDialog.open || settingsDialog.open || details.isOpen()) return;
+  // While Settings, help or Stop engine is modal it owns every key. Escape in
+  // Add download is the dialog's own cancel, which closes it and keeps the draft.
+  if (shortcutsDialog.open || settingsDialog.open || stopDialog.open || details.isOpen()) return;
   const key = event.key.toLowerCase();
   if (event.ctrlKey && (key === "l" || key === "n")) {
     event.preventDefault();
@@ -2583,6 +2883,7 @@ async function refreshQueue(): Promise<void> {
   refreshRunning = true;
   try {
     const list = await engine.listDownloads();
+    clearQueueError();
     details.recordSpeeds(list);
     queue.update(list);
     if (details.isOpen()) await details.refresh();
@@ -2592,14 +2893,17 @@ async function refreshQueue(): Promise<void> {
     // Taking a review consumes it, so one that arrives while the person is busy
     // elsewhere waits here rather than being dropped.
     pendingReviews.push(...(await invoke<string[]>("take_link_reviews")));
-    const busy = settingsDialog.open || shortcutsDialog.open || (addDialog.open && urlInput.value.trim() !== "");
+    const busy =
+      settingsDialog.open || shortcutsDialog.open || stopDialog.open || (addDialog.open && urlInput.value.trim() !== "");
     if (pendingReviews.length && !busy) {
       details.close();
       openComposer(pendingReviews.splice(0).join("\n"));
       announce("A link from your browser is ready to add.");
     }
   } catch (error) {
-    showError(formError, typeof error === "string" ? error : "Could not refresh the queue.");
+    if (engineState === "running") {
+      showQueueError(typeof error === "string" ? error : "Could not refresh the queue.");
+    }
   } finally {
     refreshRunning = false;
     if (refreshAgain) {
@@ -2726,7 +3030,7 @@ function askToStopEngine(): void {
 
 stopEngineButton.addEventListener("click", askToStopEngine);
 stopCancel.addEventListener("click", () => stopDialog.close());
-stopDialog.addEventListener("close", () => restoreDialogFocus(stopEngineButton));
+stopDialog.addEventListener("close", () => restoreDialogFocus(stopEngineButton, stopDialog));
 stopConfirm.addEventListener("click", async () => {
   stopConfirm.disabled = true;
   try {
@@ -2768,12 +3072,23 @@ function showInboxNotice(text: string | undefined): void {
 inboxNoticeDismiss.addEventListener("click", () => {
   dismissedInboxNotice = inboxNoticeText.textContent ?? "";
   inboxNotice.hidden = true;
+  queueTitle.focus({ preventScroll: true });
 });
 
 function showEngineState(state: EngineConnection): void {
   engineState = state.connected ? "running" : state.stopped ? "stopped" : "reconnecting";
   renderEngineSummary();
   showInboxNotice(state.connected ? state.inboxNotice : undefined);
+  if (state.connected && !settingsView) {
+    void loadSettings();
+    void invoke<string | null>("default_destination_dir")
+      .then((dir) => {
+        defaultDestinationDir = dir;
+      })
+      .catch(() => {
+        defaultDestinationDir = systemDownloadDir;
+      });
+  }
   if (state.connected && state.readOnly) {
     window.clearTimeout(engineNoticeTimer);
     engineNoticeTimer = 0;
@@ -2852,11 +3167,17 @@ function renderStats(stats: QueueStats): void {
 
 function beginEdit(job: JobSnapshot): void {
   editingJobId = job.jobId;
+  editingChecksum = false;
+  urlInput.required = true;
   const kind = form.querySelector<HTMLInputElement>(`input[name="download-kind"][value="${job.kind}"]`);
   if (kind) kind.checked = true;
   mediaOptions.hidden = job.kind !== "media";
   torrentOptions.hidden = true;
   checksumField.hidden = job.kind !== "file";
+  destinationInput.placeholder = "Choose a destination file";
+  destinationInput.required = true;
+  destinationLabel.textContent = "Save as";
+  destinationHint.textContent = "For a batch, the other files go in the same folder under their own names.";
   if (job.kind === "media") {
     mediaTitle.textContent = `${job.qualityLabel ?? "Selected quality"} will be revalidated before retrying.`;
   }
@@ -2875,6 +3196,7 @@ function beginEdit(job: JobSnapshot): void {
 function beginChecksumEdit(job: JobSnapshot): void {
   beginEdit(job);
   editingChecksum = true;
+  urlInput.required = false;
   advancedOptions.open = true;
   showNotice("Correct the checksum, then choose Save and retry. Leave the address empty to keep the current link.");
   checksumInput.focus();
@@ -2885,6 +3207,7 @@ function clearComposer(): void {
   editingJobId = null;
   editingChecksum = false;
   form.reset();
+  urlInput.required = true;
   destinationIsSuggested = true;
   kindChosenByPerson = false;
   analyzedUrl = "";
@@ -2906,6 +3229,9 @@ function clearComposer(): void {
   urlInput.rows = 3;
   urlInput.placeholder = "https://example.com/archive.zip";
   destinationInput.placeholder = "Choose a destination file";
+  destinationInput.required = true;
+  destinationLabel.textContent = "Save as";
+  destinationHint.textContent = "For a batch, the other files go in the same folder under their own names.";
   clearError(formError);
   clearNotice();
   renderPreview();
@@ -2968,7 +3294,9 @@ function setMediaDestination(variant: MediaVariant, replaceExtension = false): v
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "Something went wrong. Please try again.";
+  // Strip leading machine error codes (e.g. `helper_crash: `, `media.helper_unavailable: `).
+  return raw.replace(/^[a-z][a-z0-9_]*[._][a-z0-9_.]*:\s+/i, "");
 }
 
 function showError(element: HTMLElement, error: unknown): void {

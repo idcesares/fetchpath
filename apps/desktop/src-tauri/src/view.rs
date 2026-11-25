@@ -9,7 +9,7 @@ use fetchpath_protocol::model::{
 use fetchpath_protocol::principal::AgentAccess;
 use fetchpath_protocol::send::{HASH_NOTICE, OfferState, OfferView, SENDER_NOTICE};
 pub use fetchpath_protocol::view::{
-    JobDetails, JobDraft, JobView, QueueStats, Segment, at, destination, job, jobs, link,
+    JobDetails, JobDraft, JobView, QueueStats, at, destination, job, jobs, link,
 };
 use serde::{Deserialize, Serialize};
 

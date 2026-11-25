@@ -10,7 +10,7 @@
 mod assets;
 pub(crate) mod bind;
 mod http;
-mod listener;
+pub(crate) mod listener;
 mod sessions;
 mod socket;
 #[cfg(test)]
@@ -178,6 +178,7 @@ pub struct Web {
     connections: Arc<AtomicUsize>,
     ticket_ttl: Duration,
     running: Mutex<Option<Running>>,
+    last_error: Mutex<Option<String>>,
 }
 
 impl Web {
@@ -189,24 +190,33 @@ impl Web {
             connections,
             ticket_ttl: TICKET_TTL,
             running: Mutex::new(None),
+            last_error: Mutex::new(None),
         }
     }
 
     /// Turns the listener on or off. Either way its sessions end with it.
-    pub fn apply(&self, enabled: bool) {
+    pub fn apply(&self, enabled: bool) -> Result<(), String> {
         let mut running = lock(&self.running);
         if enabled {
             if running.is_none() {
                 match self.start() {
-                    Ok(started) => *running = Some(started),
-                    Err(message) => eprintln!("fetchpath engine: {message}"),
+                    Ok(started) => {
+                        *running = Some(started);
+                        *lock(&self.last_error) = None;
+                    }
+                    Err(message) => {
+                        *lock(&self.last_error) = Some(message.clone());
+                        return Err(message);
+                    }
                 }
             }
         } else {
+            *lock(&self.last_error) = None;
             if let Some(started) = running.take() {
                 stop(started);
             }
         }
+        Ok(())
     }
 
     /// Closes the port and every socket, keeping the sessions.
@@ -280,12 +290,17 @@ impl Web {
                     .shared
                     .open_link()
                     .map(|url| CommandResult::WebUiLink { url }),
-                None => Err(ProtocolError::new(
-                    ErrorCode::try_from("contract.unsupported".to_owned())
-                        .expect("a valid built-in code"),
-                    ErrorScope::Command,
-                    "The web UI is off. Turn it on first (fetchpath web on).",
-                )),
+                None => {
+                    let message = lock(&self.last_error).clone().unwrap_or_else(|| {
+                        "The web UI is off. Turn it on first (fetchpath web on).".to_owned()
+                    });
+                    Err(ProtocolError::new(
+                        ErrorCode::try_from("contract.unsupported".to_owned())
+                            .expect("a valid built-in code"),
+                        ErrorScope::Command,
+                        message,
+                    ))
+                }
             },
             _ => {
                 if let Some(started) = running.as_ref() {

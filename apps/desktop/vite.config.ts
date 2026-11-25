@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => ({
           assetsInlineLimit: 0,
           rolldownOptions: { input: "web.html" },
         }
-      : { cssTarget: "chrome123" },
+      : { cssTarget: "chrome123", assetsInlineLimit: 0 },
   plugins: mode === "web" ? [webIndex()] : [],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

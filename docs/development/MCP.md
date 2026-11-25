@@ -178,13 +178,11 @@ canonical grants, create-only publication, and no HTML sinks in the desktop.
 
 Residual risks, with reasons:
 
-- A link or junction made inside a granted folder after a download is
-  queued can carry its write outside the grant: grants are checked at
-  creation, retry and access changes, not again at publication. Doing so
-  needs a filesystem write as the same user, which the design places out of
-  scope (an agent host with a shell already has it). Re-checking at start
-  would need a persisted marker so a download the person approved outside
-  the grant is not held again.
+- A link or junction made inside a granted folder after a download starts
+  can carry its write outside the grant: grants are checked at creation,
+  start (FP-112), retry, and access changes, not again at publication. Doing
+  so needs a filesystem write as the same user, which the design places out of
+  scope (an agent host with a shell already has it).
 - The approval card's From line shows the link as the agent sent it (query
   and user info removed); its labels, the agent's name and the reasons are
   Fetchpath's own, so it cannot pose as an approval.

@@ -24,8 +24,8 @@ one your task names.
 
 - [Checkpoint and recovery](CHECKPOINT-RECOVERY.md) — FP-011.
 - [Desktop queue and recovery](DESKTOP-QUEUE-RECOVERY.md) — FP-012.
-- [Browser capture](BROWSER-CAPTURE.md) — FP-013, FP-036.
-- [Media integration](MEDIA-INTEGRATION.md) — FP-014, FP-039.
+- [Browser capture](BROWSER-CAPTURE.md) — FP-013, FP-036, FP-056, FP-078, FP-081, FP-142, FP-143.
+- [Media integration](MEDIA-INTEGRATION.md) — FP-014, FP-039, FP-081 (FP-140/141 in `LOCAL-QUALITY.md`).
 - [Adaptive HTTP](ADAPTIVE-HTTP.md) — FP-015.
 - [FTP, FTPS and SFTP compatibility](PROTOCOL-COMPATIBILITY.md) — FP-016.
 - [Metalink repair](METALINK-REPAIR.md) — FP-019.
@@ -35,12 +35,12 @@ one your task names.
 - [Torrents and magnets](TORRENTS.md) — FP-021: isolated helper, consent boundaries, publication and current limits.
 - [Efficiency research: chunking, deltas, paths, coding](EFFICIENCY-RESEARCH.md) — FP-023, FP-024.
 
-- [Share relay and encryption framing](SHARE-RELAY.md) — FP-116, FP-117, FP-118: thin relay vs iroh, the chunked AES-GCM framing, what the share listener and Tunnel mode built, and the relay design and limits. The owner's unrun VPS checklist is [the Linux plan](../plan/linux-vps-validation.md).
+- [Share relay and encryption framing](SHARE-RELAY.md) — FP-116, FP-117, FP-118, FP-138: thin relay vs iroh, the chunked AES-GCM framing, what the share listener and Tunnel mode built, and the relay design and limits. The owner's unrun VPS checklist is [the Linux plan](../plan/linux-vps-validation.md).
 
 ## Release
 
-- [Local development quality](LOCAL-QUALITY.md) — FP-106/107: reproducible builds, test fixtures and local recovery/keyboard journeys.
+- [Local development quality](LOCAL-QUALITY.md) — FP-106–112, FP-136, FP-137, FP-139–141, FP-144: reproducible builds, test fixtures, local recovery/keyboard journeys, stabilization, and cleanup.
 
-- [Release gate](RELEASE-CANDIDATE.md) — the current 0.4.0 candidate gate, security scope and publication verdict (FP-113).
+- [Release gate](RELEASE-CANDIDATE.md) — the 0.4.1 security patch (FP-114), 0.4.0 release gate (FP-113), security scope and publication verdict.
 - [Windows UX and packaging](WINDOWS-PACKAGING.md) — FP-017.
 - [First end-user test](FIELD-FEEDBACK.md) — FP-040 onward.

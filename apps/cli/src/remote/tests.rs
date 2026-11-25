@@ -39,7 +39,7 @@ fn fixture(ticket_ttl: Option<Duration>) -> Fixture {
     if let Some(ttl) = ticket_ttl {
         web.ticket_ttl = ttl;
     }
-    web.apply(true);
+    web.apply(true).unwrap();
     Fixture {
         _dir: dir,
         engine,
@@ -371,7 +371,7 @@ fn only_the_person_gets_a_link_or_signs_browsers_out() {
 #[test]
 fn the_link_is_refused_while_the_web_ui_is_off() {
     let f = fixture(None);
-    f.web.apply(false);
+    f.web.apply(false).unwrap();
     let answer = f.web.answer(&Principal::User, &Command::OpenWebUi).unwrap();
     assert_eq!(answer.unwrap_err().code.as_str(), "contract.unsupported");
 }
@@ -410,7 +410,7 @@ fn turning_it_off_closes_sockets_and_the_port() {
     let f = fixture(None);
     let mut socket = f.socket(&f.sign_in());
     let port = f.port();
-    f.web.apply(false);
+    f.web.apply(false).unwrap();
     assert!(next_answer(&mut socket).is_none());
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
 }
@@ -506,8 +506,8 @@ fn a_foreign_origin_is_refused_on_any_request_and_refusals_close_the_connection(
 fn a_new_listener_does_not_know_the_old_listeners_cookie() {
     let f = fixture(None);
     let cookie = f.sign_in();
-    f.web.apply(false);
-    f.web.apply(true);
+    f.web.apply(false).unwrap();
+    f.web.apply(true).unwrap();
     let header = format!("{COOKIE}={cookie}");
     let host = f.host();
     let own = format!("http://{host}");

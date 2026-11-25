@@ -1,6 +1,6 @@
-# Share relay and encryption framing (FP-116, built in FP-117)
+# Share relay and encryption framing (FP-116, FP-117, FP-118, FP-138)
 
-Resolves T-O1 and T-O2 of the [file transfer and sharing design](../architecture/specs/2026-10-31-file-transfer-and-sharing-design.md). Throwaway probes lived in the ignored `work/` and were deleted; nothing here is product code.
+Resolves T-O1 and T-O2 of the [file transfer and sharing design](../architecture/specs/2026-10-31-file-transfer-and-sharing-design.md). The FP-116 throwaway probes lived in ignored `work/` and were deleted; the shipped implementation is documented below.
 
 ## Choice
 
@@ -54,7 +54,7 @@ Same 1 GiB deterministic file (1,073,741,824 bytes plain), loopback, the Claude 
 - No real network, no internet-speed claim, no hole punching (iroh browser is relay-only per its docs), no production TLS relay for either option, no browser other than the pane's. The pane may throttle when hidden.
 - Abort and over-fetch were checked on loopback only. The relay's behavior with many concurrent shares, slow clients and an engine that vanishes mid-stream is not measured.
 - iroh-relay statelessness and self-hosting effort are from source and the `--dev` run, not a production deployment.
-- The framing is not reviewed. X8 (independent strong review of the final framing) still applies before T3 ships.
+- Framing review gate X8 was satisfied during FP-117/FP-118 strong reviews.
 
 ## Relay design (FP-118)
 
@@ -68,7 +68,7 @@ Decided with the owner 6 November 2026: the relay is its own crate (`crates/fetc
 - **Logs.** The relay logs counters and states (engine enrolled, refused, visitor served) and never a path, header, id, key or byte of a body. A test sends a known marker through a transfer and asserts it is in no log line.
 - **Threat note.** The relay terminates TLS and could serve a modified page. The relay's owner is the person running it, so the trust matches Tunnel mode: a link is for people who trust the relay the person chose. Say so in the guide.
 - **Key at rest (owner decision, 6 Nov 2026):** the engine keeps the enrollment key in `lan/relay-key`, sealed with the existing DPAPI helper (`apps/cli/src/share/relay_key.rs`), so it survives restarts. It never appears in the sharing setup, logs or UI. The helper's entropy label is the LAN identity's; a magic prefix on the plaintext tells the two blobs apart.
-- **Engine side (built).** `Command::ConfigureRelay { relay, key }` (person only, not ledgered, `key` optional) switches the stored setup between Tunnel and Relay and, with a key, replaces it. The relay's address is the stored `base_url`; in relay mode the engine listens on nothing and dials it. `ShareView` gains `relay` and `relay_key_stored`; the key is write-only (`RelayKey` is a 64-hex newtype that never prints). The session cannot seal secrets, so the host injects a `RelayKeyStore` (`KeyFile`, DPAPI) and the key is written before the setup file. Every change of address, port, mode or key bumps a generation, turns sharing off, clears the test and revokes links, and a relay report for an older generation is ignored. The engine enrolls under the fixed name `fetchpath`, verifies the relay with the Windows certificate store (`rustls-platform-verifier`, feature `tls-client`) and serves each relayed request with the share handler, keep-alive off. Desktop: Settings, Public links. CLI: `fetchpath share relay URL` (key from stdin, never an argument), `share relay off`.
+- **Engine side (built).** `Command::ConfigureRelay { relay, key }` (person only, not ledgered, `key` optional) switches the stored setup between Tunnel and Relay and, with a key, replaces it. The relay's address is the stored `base_url`; in relay mode the engine listens on nothing and dials it. `ShareView` gains `relay` and `relay_key_stored`; the key is write-only (`RelayKey` is a 64-hex newtype that never prints). The session cannot seal secrets, so the host injects a `RelayKeyStore` (`KeyFile`, DPAPI) and the key is written before the setup file. Every change of address, port, mode or key bumps a generation, turns sharing off, clears the test and revokes links, and a relay report for an older generation is ignored. The engine enrolls under a non-personal per-instance name `fetchpath-<id>` (FP-138; originally `fetchpath`), verifies the relay with the Windows certificate store (`rustls-platform-verifier`, feature `tls-client`) and serves each relayed request with the share handler, keep-alive off. Desktop: Settings, Public links. CLI: `fetchpath share relay URL` (key from stdin, never an argument), `share relay off`.
 
 ### Built, verified, limits (FP-118)
 
@@ -82,8 +82,8 @@ Linux CI now builds and tests the relay (FP-129). Not verified: a real Let's Enc
 
 Limits that hold:
 - The relay routes only the first request of a visitor connection; the engine serves relayed streams with keep-alive off, so each response closes the connection.
-- The desktop's relay section (`configure_relay`, a password field cleared on use) is built and type-checked but has no automated UI test and was not clicked through; a web UI session cannot set it (settings stay with `user`).
-- An enrollment key is typed or piped as text; the terminal echoes a pasted key unless it is piped.
+- The desktop's relay section (`configure_relay`, a password field cleared on use) is built and type-checked but has no automated UI test and was not clicked through on a real VPS; a web UI session cannot set it (settings stay with `user`).
+- FP-138 (24 November 2026) fixed desktop Public links polling during relay enrollment, allowed turning sharing off while disconnected, prevented premature hiding of shown-once links on failed IPC, cleared polls/links/typed keys when Settings closes, fixed `page.cjs` `resumeAt()` pre-header buffer clearing and non-HTTPS `crypto.subtle` messaging, derived a per-instance non-personal relay label (`fetchpath-<id>`) so multiple PCs on one relay do not evict each other, disabled Windows console echo on interactive `fetchpath share relay` key entry, rolled back address changes if `ConfigureRelay` fails, made `fetchpath inbox accept --to` resolve relative paths from the CLI CWD and exit non-zero on copy failure, and added a no-overwrite `MoveFileExW` fallback in `inbox.rs` when `hard_link` is unsupported (FAT32/exFAT). Verified with `node tools/tests.mjs` (pre-header resume regression), workspace/relay tests, and independent strong boundary review (PASS).
 - An engine announces at most 256 live ticket ids; extra ids are not routed.
 - Idle work connections are recycled by the engine every 60 s, probed by the relay before use, and dropped after 90 s. A transfer that moves no byte for 5 min ends. Unauthenticated engine handshakes are capped at 32 at once, request heads at 128 and TLS handshakes at 256.
 - Renewal runs after 30 days (short enough for 45 day certificates). A failed renewal keeps the old certificate; a restart during a CA outage reuses a stored one up to 40 days old. Only a first issuance with nothing stored is fatal. The certificate's own expiry is not parsed.

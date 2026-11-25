@@ -39,7 +39,8 @@
   // it, so the last-chunk flag in its nonce decides whether the stream is
   // whole: truncation, trailing bytes and reordering all fail to open.
   async function createDecryptor(keyBytes) {
-    const subtle = globalThis.crypto.subtle;
+    const subtle = globalThis.crypto && globalThis.crypto.subtle;
+    if (!subtle) throw new ShareError('secure');
     let buffer = new Uint8Array(0);
     let context = null;
     let index = 0;
@@ -97,8 +98,8 @@
       // Where to ask the server to continue after a dropped connection: the
       // start of the first chunk not opened yet. Drops what was buffered.
       resumeAt() {
-        if (context === null) return 0;
         buffer = new Uint8Array(0);
+        if (context === null) return 0;
         return HEADER_LEN + index * context.sealed;
       },
     };
@@ -151,6 +152,7 @@
     key: 'This link is incomplete: the part after the # is missing or was changed. Ask for the link again.',
     format: 'This is not a Fetchpath file, or it needs a newer browser or Fetchpath.',
     damaged: 'The file did not arrive intact, so nothing was saved. Ask the sender for a new link.',
+    secure: 'This page can only decrypt files over HTTPS.',
   };
   const message = document.getElementById('message');
   const button = document.getElementById('start');

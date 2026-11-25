@@ -109,12 +109,20 @@
           <p class="hint" id="inbox-note">Nothing is copied until you accept. The sender is a name the program gave, not proof of who it is.</p>
         </div>
         <div id="inbox-list" class="inbox-list"></div>
-        <p id="inbox-status" class="hint field-note" role="status" aria-live="polite"></p>
+        <div id="inbox-status-row" class="engine-status" hidden>
+          <p id="inbox-status" class="hint field-note" role="status" aria-live="polite"></p>
+          <button id="inbox-status-dismiss" class="quiet compact" type="button" hidden>Dismiss</button>
+        </div>
       </section>
 
       <div id="engine-status" class="engine-status" hidden>
         <p id="engine-status-text" class="error"></p>
         <button id="engine-start" class="secondary" type="button" hidden>Start Fetchpath</button>
+      </div>
+
+      <div id="queue-error-banner" class="engine-status" hidden>
+        <p id="queue-error" class="error"></p>
+        <button id="queue-error-dismiss" class="secondary" type="button">Dismiss</button>
       </div>
 
       <div id="inbox-notice" class="engine-status" hidden>
@@ -206,7 +214,7 @@
           </div>
         </section>
 
-        <section id="torrent-options" class="media-options" aria-label="Torrent network options" hidden>
+        <section id="torrent-options" class="media-options torrent-options" aria-label="Torrent network options" hidden>
           <div class="torrent-source">
             <button id="torrent-pick-file" class="secondary" type="button">Choose a .torrent file…</button>
             <p class="hint">Or paste a magnet link above.</p>
@@ -569,7 +577,7 @@
             <summary>Port on this computer</summary>
             <div class="rule-form">
               <label for="share-port">The tunnel forwards to 127.0.0.1 on this port</label>
-              <input id="share-port" type="number" min="1" max="65535" inputmode="numeric" />
+              <input id="share-port" type="number" min="1024" max="65535" inputmode="numeric" />
             </div>
           </details>
           <details class="advanced">

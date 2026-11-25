@@ -7,8 +7,7 @@
 pub mod setup;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -84,6 +83,9 @@ pub enum MediaError {
     InvalidSource,
     HelperUnavailable,
     HelperCrash,
+    NoMediaFound,
+    AuthRequired,
+    SourceUnavailable,
     SourceExpired,
     UnknownVariant,
     DestinationConflict,
@@ -107,6 +109,15 @@ impl std::fmt::Display for MediaError {
             }
             Self::HelperCrash => {
                 "helper_crash: The media helper stopped unexpectedly. Retry this download."
+            }
+            Self::NoMediaFound => {
+                "no_media_found: No video or audio was found at this link. Fetchpath's media tools only save video and audio — for a photo, copy the direct image address instead."
+            }
+            Self::AuthRequired => {
+                "auth_required: This site requires signing in to view this media."
+            }
+            Self::SourceUnavailable => {
+                "source_unavailable: This media is unavailable or has been removed."
             }
             Self::SourceExpired => {
                 "source_expired: This media session expired. Refresh the source and inspect it again."
@@ -320,9 +331,9 @@ impl MediaJob {
                     snapshot.state = MediaJobState::Failed;
                     snapshot.action = Some(
                         match error {
-                            MediaError::SourceExpired | MediaError::UnknownVariant => {
-                                "refresh_source"
-                            }
+                            MediaError::SourceExpired
+                            | MediaError::UnknownVariant
+                            | MediaError::AuthRequired => "refresh_source",
                             MediaError::DestinationConflict => "choose_new_path",
                             MediaError::HelperUnavailable => "configure_media_tools",
                             _ => "retry",
@@ -559,7 +570,7 @@ impl MediaJob {
             self.update(|snapshot| snapshot.bytes_received = bytes);
             return Err(MediaError::SizeLimit);
         }
-        let hash = sha256_file(output)?;
+        let hash = setup::sha256_file(output)?;
         match fs::hard_link(output, &self.destination) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -839,6 +850,36 @@ fn drain_bounded(mut reader: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> 
 fn classify_helper_failure(stderr: &[u8]) -> MediaError {
     let message = String::from_utf8_lossy(stderr).to_ascii_lowercase();
     if [
+        "is not a video",
+        "no video could be found",
+        "there is no video",
+        "no video formats found",
+        "does not contain a video",
+        "unsupported url",
+        "requested format is not available",
+        "no media found",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+    {
+        MediaError::NoMediaFound
+    } else if [
+        "login required",
+        "sign in to confirm",
+        "use --cookies",
+        "requires authentication",
+        "authentication required",
+        "members-only",
+        "private video",
+        "protected tweets",
+        "only available to",
+        "age-restricted",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+    {
+        MediaError::AuthRequired
+    } else if [
         "http error 401",
         "http error 403",
         "forbidden",
@@ -849,23 +890,25 @@ fn classify_helper_failure(stderr: &[u8]) -> MediaError {
     .any(|needle| message.contains(needle))
     {
         MediaError::SourceExpired
+    } else if [
+        "http error 404",
+        "http error 410",
+        "status code 404",
+        "video unavailable",
+        "not available",
+        "unavailable",
+        "has been deleted",
+        "has been removed",
+        "does not exist",
+        "account has been suspended",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+    {
+        MediaError::SourceUnavailable
     } else {
         MediaError::HelperCrash
     }
-}
-
-fn sha256_file(path: &Path) -> Result<String, MediaError> {
-    let mut file = File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 128 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn first_line(bytes: &[u8]) -> String {
@@ -953,6 +996,28 @@ mod tests {
         assert!(matches!(
             classify_helper_failure(b"access violation"),
             MediaError::HelperCrash
+        ));
+        let photo = classify_helper_failure(
+            b"ERROR: [twitter] 2125380143606644868: Media #1 is not a video",
+        );
+        assert!(matches!(photo, MediaError::NoMediaFound));
+        assert!(!photo.to_string().contains("2125380143606644868"));
+        let unsupported = classify_helper_failure(
+            b"ERROR: Unsupported URL: https://secret.example/photo/1?token=xyz",
+        );
+        assert!(matches!(unsupported, MediaError::NoMediaFound));
+        assert!(!unsupported.to_string().contains("secret.example"));
+        assert!(matches!(
+            classify_helper_failure(b"ERROR: [twitter] NSFW tweet requires authentication"),
+            MediaError::AuthRequired
+        ));
+        assert!(matches!(
+            classify_helper_failure(b"ERROR: [youtube] abc: Video unavailable"),
+            MediaError::SourceUnavailable
+        ));
+        assert!(matches!(
+            classify_helper_failure(b"ERROR: HTTP Error 404: Not Found"),
+            MediaError::SourceUnavailable
         ));
     }
 

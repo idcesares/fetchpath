@@ -62,12 +62,18 @@ fn status(status: StatusCode) -> Reply {
     response
 }
 
+const SESSION_HEADER: HeaderName = HeaderName::from_static("x-fetchpath-session");
+
 fn signed_out() -> Reply {
-    reply(
+    let mut response = reply(
         StatusCode::OK,
         Some("text/html; charset=utf-8"),
         SIGNED_OUT.as_bytes(),
-    )
+    );
+    response
+        .headers_mut()
+        .insert(SESSION_HEADER, value("signed-out"));
+    response
 }
 
 /// The request's `Host`, when there is exactly one, it names this listener
@@ -131,7 +137,15 @@ pub(super) fn respond(shared: &Arc<Shared>, mut request: Request<Incoming>) -> R
                 };
             }
             match assets::lookup(path) {
-                Some((body, content_type)) => reply(StatusCode::OK, Some(content_type), body),
+                Some((body, content_type)) => {
+                    let mut response = reply(StatusCode::OK, Some(content_type), body);
+                    if path == "/" {
+                        response
+                            .headers_mut()
+                            .insert(SESSION_HEADER, value("active"));
+                    }
+                    response
+                }
                 None => status(StatusCode::NOT_FOUND),
             }
         }

@@ -158,11 +158,16 @@ struct LiveGuard(Arc<AtomicUsize>);
 
 impl LiveGuard {
     fn claim(live: &Arc<AtomicUsize>, limit: usize) -> Option<Self> {
-        live.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-            (count < limit).then_some(count + 1)
-        })
-        .ok()
-        .map(|_| Self(Arc::clone(live)))
+        let mut count = live.load(Ordering::SeqCst);
+        loop {
+            if count >= limit {
+                return None;
+            }
+            match live.compare_exchange_weak(count, count + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(Self(Arc::clone(live))),
+                Err(actual) => count = actual,
+            }
+        }
     }
 }
 
@@ -394,11 +399,18 @@ impl ConnectionSender {
             ..
         }) = message
         {
-            let _ = self
-                .pending
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
-                    count.checked_sub(1)
-                });
+            let mut count = self.pending.load(Ordering::SeqCst);
+            while let Some(next) = count.checked_sub(1) {
+                match self.pending.compare_exchange_weak(
+                    count,
+                    next,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => count = actual,
+                }
+            }
         }
         Ok(())
     }

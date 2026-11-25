@@ -51,11 +51,9 @@ export interface QueueView {
   readonly jobs: readonly JobSnapshot[];
   /** Takes a new list from the engine and draws it. */
   update(jobs: JobSnapshot[]): void;
-  render(): void;
   /** Forces the next render to rebuild every row. */
   invalidate(): void;
   setSummary(message: string): void;
-  focusTitle(options?: FocusOptions): void;
   focusSearch(): void;
   detailsButton(jobId: string): HTMLElement | null;
 }
@@ -137,7 +135,7 @@ export function createQueueView(ctx: QueueContext): QueueView {
     // churn the accessibility tree and steal keyboard focus, so it only rebuilds
     // when something structural has changed. Progress, speed and remaining time
     // change constantly and are written into the existing cards instead.
-    const signature = JSON.stringify([selectedFilter, query, visible.map(queueRowSignature)]);
+    const signature = JSON.stringify([selectedFilter, query, ctx.powerMode(), visible.map(queueRowSignature)]);
     if (signature === renderedQueueSignature) {
       updateLiveMetrics(visible);
       return;
@@ -509,7 +507,6 @@ export function createQueueView(ctx: QueueContext): QueueView {
     selectedFilter = button.dataset.filter as QueueFilter;
     for (const candidate of queueFilters.querySelectorAll<HTMLButtonElement>("button[data-filter]")) {
       const selected = candidate === button;
-      candidate.classList.toggle("is-selected", selected);
       candidate.setAttribute("aria-pressed", String(selected));
     }
     // The pressed state is announced by the button itself, and `renderQueue`
@@ -679,14 +676,10 @@ export function createQueueView(ctx: QueueContext): QueueView {
       jobs = next;
       renderQueue();
     },
-    render: renderQueue,
     invalidate() {
       renderedQueueSignature = "";
     },
     setSummary: setQueueSummary,
-    focusTitle(options) {
-      queueTitle.focus(options);
-    },
     focusSearch() {
       queueSearch.focus();
       queueSearch.select();
