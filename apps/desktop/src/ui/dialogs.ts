@@ -72,10 +72,17 @@ export function createDialogManager(): DialogManager {
     dialog.addEventListener("close", placeLiveRegions);
   }
 
+  function resetDialogScroll(dialog: HTMLDialogElement): void {
+    dialog.scrollTop = 0;
+    for (const scroller of dialog.querySelectorAll<HTMLElement>(".dialog-body, .settings-form")) {
+      scroller.scrollTop = 0;
+    }
+  }
+
   function openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void {
     if (dialog.open) {
       placeLiveRegions();
-      focus.focus();
+      focus.focus({ preventScroll: true });
       return;
     }
     // Opened from the page itself (a paste, a shortcut), there is no control to
@@ -85,7 +92,10 @@ export function createDialogManager(): DialogManager {
     dialogOpeners.push({ dialog, opener });
     dialog.showModal();
     placeLiveRegions();
-    focus.focus();
+    resetDialogScroll(dialog);
+    focus.focus({ preventScroll: true });
+    // Ensure initial browser focus-scroll never pushes the dialog away from the top.
+    resetDialogScroll(dialog);
   }
 
   function clearDialogOpener(dialog: HTMLDialogElement): void {

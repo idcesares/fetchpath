@@ -22,7 +22,7 @@ const STATE_GLYPH: Record<JobState, string> = {
 };
 
 /** A decorative glyph, then the word. The glyph is hidden from assistive technology. */
-function glyph(id: string): SVGSVGElement {
+export function glyph(id: string): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("class", "i");
   svg.setAttribute("aria-hidden", "true");

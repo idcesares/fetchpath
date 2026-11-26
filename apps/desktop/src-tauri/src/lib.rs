@@ -969,7 +969,33 @@ pub fn run() {
                 false,
                 None::<&str>,
             )?;
+            let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
+            let web = MenuItem::with_id(app, "web", "Open in browser", true, None::<&str>)?;
+            let start = MenuItem::with_id(app, "start", "Start engine", false, None::<&str>)?;
+            let stop = MenuItem::with_id(
+                app,
+                "stop",
+                "Stop engine…",
+                true,
+                None::<&str>,
+            )?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Quit tray (downloads continue)",
+                true,
+                None::<&str>,
+            )?;
+            let quit_all = MenuItem::with_id(
+                app,
+                "quit_all",
+                "Quit and stop engine",
+                true,
+                None::<&str>,
+            )?;
             let tray_status = status.clone();
+            let tray_start = start.clone();
+            let tray_stop = stop.clone();
             let summary_link = Arc::clone(&engine);
             let show_summary = move |handle: &tauri::AppHandle, text: String| {
                 let _ = tray_status.set_text(&text);
@@ -1014,6 +1040,8 @@ pub fn run() {
                     }
                 };
                 if state["connected"] == true {
+                    let _ = tray_start.set_enabled(false);
+                    let _ = tray_stop.set_enabled(true);
                     let notice = inbox_notice
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1028,6 +1056,8 @@ pub fn run() {
                     }
                 }
                 if state["connected"] != true {
+                    let _ = tray_start.set_enabled(true);
+                    let _ = tray_stop.set_enabled(false);
                     show_summary(
                         &handle,
                         if state["stopped"] == true {
@@ -1044,30 +1074,6 @@ pub fn run() {
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = state.clone();
                 let _ = handle.emit("fetchpath://engine", state);
             });
-            let show = MenuItem::with_id(app, "show", "Show Fetchpath", true, None::<&str>)?;
-            let web = MenuItem::with_id(app, "web", "Open in browser", true, None::<&str>)?;
-            let quit = MenuItem::with_id(
-                app,
-                "quit",
-                "Close desktop and tray (downloads continue)",
-                true,
-                None::<&str>,
-            )?;
-            let start = MenuItem::with_id(app, "start", "Start engine", true, None::<&str>)?;
-            let quit_all = MenuItem::with_id(
-                app,
-                "quit_all",
-                "Close desktop, tray and engine (stops downloads)",
-                true,
-                None::<&str>,
-            )?;
-            let stop = MenuItem::with_id(
-                app,
-                "stop",
-                "Stop engine (stops downloads)…",
-                true,
-                None::<&str>,
-            )?;
             let menu = Menu::with_items(
                 app,
                 &[
@@ -1077,9 +1083,10 @@ pub fn run() {
                     &web,
                     &PredefinedMenuItem::separator(app)?,
                     &start,
+                    &stop,
+                    &PredefinedMenuItem::separator(app)?,
                     &quit,
                     &quit_all,
-                    &stop,
                 ],
             )?;
             let tray = TrayIconBuilder::with_id(TRAY_ID)
@@ -1137,6 +1144,7 @@ pub fn run() {
                 })
                 .build(app)?;
             app.manage(tray);
+            fit_main_window_to_monitor(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1174,6 +1182,28 @@ pub fn run() {
             api.prevent_exit();
         }
     });
+}
+
+/// Sizes and centers the main window relative to the active monitor's logical
+/// work area so it fits comfortably on both compact scaled laptops and large displays.
+fn fit_main_window_to_monitor(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        let _ = window.center();
+        return;
+    };
+    let scale = monitor.scale_factor().max(0.5);
+    let work = monitor.work_area();
+    let avail_w = (f64::from(work.size.width) / scale).max(520.0);
+    let avail_h = (f64::from(work.size.height) / scale).max(500.0);
+    let max_w = (avail_w - 48.0).max(520.0);
+    let max_h = (avail_h - 48.0).max(500.0);
+    let target_w = (avail_w * 0.78).clamp(680.0, 1180.0).min(max_w);
+    let target_h = (avail_h * 0.82).clamp(540.0, 820.0).min(max_h);
+    let _ = window.set_size(tauri::LogicalSize::new(target_w.round(), target_h.round()));
+    let _ = window.center();
 }
 
 fn show_main_window(app: &AppHandle) {

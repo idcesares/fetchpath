@@ -1,11 +1,14 @@
 import type { EngineApi } from "../engine/api";
 import type { JobSnapshot, JobState } from "../engine/types";
 import { type QueueCapabilities, actionButton, actionsFor, unavailableNote } from "./actions";
-import { required, setStatus } from "./dom";
+import { renderSpeedChart } from "./chart";
+import { glyph, required, setStatus } from "./dom";
 import {
   type QueueFilter,
+  type SpeedSample,
   approvalText,
   checksumMismatch,
+  fileKindMeta,
   filename,
   formatBytes,
   formatDurationLong,
@@ -13,9 +16,80 @@ import {
   isActive,
   jobLabel,
   matchesFilter,
-  waitingForSpaceText,
   matchesSearch,
+  sourceHost,
+  waitingForSpaceText,
 } from "./format";
+
+export type QueueViewMode = "cards" | "compact" | "grid" | "table";
+export type QueueSort = "newest" | "active" | "name" | "size" | "progress";
+
+const VIEW_KEY = "fetchpath.ui.view";
+const SORT_KEY = "fetchpath.ui.sort";
+const CHART_KEY = "fetchpath.ui.speedChart";
+const SESSION_MAX_SAMPLES = 180;
+
+const STATE_PRIORITY: Record<JobState, number> = {
+  awaiting_approval: 0,
+  running: 1,
+  cancelling: 2,
+  queued: 3,
+  scheduled: 4,
+  paused: 5,
+  failed: 6,
+  needs_source: 7,
+  completed: 8,
+  cancelled: 9,
+};
+
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Storage may be unavailable in restricted contexts.
+  }
+}
+
+function sortJobs(list: JobSnapshot[], sort: QueueSort): JobSnapshot[] {
+  if (sort === "newest") return list;
+  const copy = [...list];
+  copy.sort((a, b) => {
+    if (sort === "active") {
+      const diff = STATE_PRIORITY[a.state] - STATE_PRIORITY[b.state];
+      return diff !== 0 ? diff : b.createdAtMs - a.createdAtMs;
+    }
+    if (sort === "name") {
+      return (filename(a.destination) || a.source).localeCompare(filename(b.destination) || b.source, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    }
+    if (sort === "size") {
+      const sizeA = a.totalBytes ?? a.bytesReceived;
+      const sizeB = b.totalBytes ?? b.bytesReceived;
+      return sizeB - sizeA || b.createdAtMs - a.createdAtMs;
+    }
+    // progress
+    const progA = a.state === "completed" ? 1 : a.totalBytes ? a.bytesReceived / a.totalBytes : -1;
+    const progB = b.state === "completed" ? 1 : b.totalBytes ? b.bytesReceived / b.totalBytes : -1;
+    return progB - progA || b.createdAtMs - a.createdAtMs;
+  });
+  return copy;
+}
+
+function setIconButtonText(button: HTMLButtonElement, iconId: string, label: string): void {
+  if (button.dataset.label === label) return;
+  button.dataset.label = label;
+  button.replaceChildren(glyph(iconId), document.createTextNode(label));
+}
 
 /** What only the desktop does for a row. A missing handler leaves its action inert. */
 export interface RowHandlers {
@@ -38,6 +112,8 @@ export interface QueueContext {
   /** Reloads the queue after an action changed it. */
   refresh(): Promise<void>;
   openDetails(jobId: string, opener: HTMLElement | null): void;
+  openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void;
+  restoreDialogFocus(fallback: HTMLElement, dialog?: HTMLDialogElement): void;
   /** Power mode adds a diagnostics block to each row. */
   powerMode(): boolean;
   confirmRemoveCompleted(): boolean;
@@ -56,30 +132,190 @@ export interface QueueView {
   setSummary(message: string): void;
   focusSearch(): void;
   detailsButton(jobId: string): HTMLElement | null;
+  isConfirmOpen(): boolean;
+  /** Runs a row action on a job (also used by the Details dialog). */
+  runAction(job: JobSnapshot, action: string, trigger?: HTMLButtonElement): Promise<void>;
 }
 
-/** Filters, search, summary, rows and their actions. Mount the queue markup first. */
+/** Filters, search, sort, display modes, live speed chart, rows and their actions. Mount markup first. */
 export function createQueueView(ctx: QueueContext): QueueView {
   const { engine, capabilities, handlers } = ctx;
   const queueSearch = required<HTMLInputElement>("queue-search");
+  const queueToolbar = required<HTMLElement>("queue-toolbar");
   const queueFilters = required<HTMLElement>("queue-filters");
+  const queueSortSelect = required<HTMLSelectElement>("queue-sort");
+  const viewModesGroup = required<HTMLElement>("view-modes");
+  const toggleSpeedChart = required<HTMLButtonElement>("toggle-speed-chart");
+  const sessionSpeedPanel = required<HTMLElement>("session-speed-panel");
+  const sessionGraph = required<SVGSVGElement>("session-graph");
+  const sessionGraphLabel = required<SVGTitleElement>("session-graph-label");
+  const sessionSpeedStats = required<HTMLElement>("session-speed-stats");
+  const sessionSpeedNote = required<HTMLElement>("session-speed-note");
   const queueSummary = required<HTMLParagraphElement>("queue-summary");
-  const cancelCurrentButton = required<HTMLButtonElement>("cancel-download");
   const pauseAllButton = required<HTMLButtonElement>("pause-all");
   const resumeAllButton = required<HTMLButtonElement>("resume-all");
+  const clearCompletedButton = required<HTMLButtonElement>("clear-completed");
   const jobCard = required<HTMLElement>("job-card");
+  const tableHead = required<HTMLElement>("table-head");
   const jobList = required<HTMLDivElement>("job-list");
   const queueTitle = required<HTMLHeadingElement>("queue-title");
   const queueEmpty = required<HTMLElement>("queue-empty");
+  const queueNoMatch = required<HTMLElement>("queue-no-match");
+  const resetFiltersButton = required<HTMLButtonElement>("reset-filters");
+
+  const confirmDialog = required<HTMLDialogElement>("confirm-dialog");
+  const confirmTitle = required<HTMLHeadingElement>("confirm-title");
+  const confirmDetail = required<HTMLParagraphElement>("confirm-detail");
+  const confirmNote = required<HTMLParagraphElement>("confirm-note");
+  const confirmCancel = required<HTMLButtonElement>("confirm-cancel");
+  const confirmClose = required<HTMLButtonElement>("confirm-close");
+  const confirmAccept = required<HTMLButtonElement>("confirm-accept");
 
   let jobs: JobSnapshot[] = [];
   let selectedFilter: QueueFilter = "all";
+  let viewMode: QueueViewMode = (() => {
+    const saved = readStorage(VIEW_KEY);
+    return saved === "compact" || saved === "grid" || saved === "table" ? saved : "cards";
+  })();
+  let sortMode: QueueSort = (() => {
+    const saved = readStorage(SORT_KEY);
+    return saved === "active" || saved === "name" || saved === "size" || saved === "progress" ? saved : "newest";
+  })();
+  let showSpeedChart = readStorage(CHART_KEY) === "1";
+  const sessionSamples: SpeedSample[] = [];
   let renderedQueueSignature = "";
   let observedStates = new Map<string, JobState>();
+  let confirmResolve: ((accepted: boolean) => void) | null = null;
+  let confirmFallback: HTMLElement = queueTitle;
+
+  function applyViewMode(next: QueueViewMode): void {
+    viewMode = next;
+    jobCard.dataset.view = next;
+    tableHead.hidden = next !== "table";
+    for (const button of viewModesGroup.querySelectorAll<HTMLButtonElement>("button[data-view]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.view === next));
+    }
+    writeStorage(VIEW_KEY, next);
+  }
+
+  function applySpeedChartToggle(open: boolean): void {
+    showSpeedChart = open;
+    toggleSpeedChart.setAttribute("aria-pressed", String(open));
+    sessionSpeedPanel.hidden = !open || jobs.length === 0;
+    writeStorage(CHART_KEY, open ? "1" : "0");
+    if (open && jobs.length > 0) renderSessionSpeedChart();
+  }
+
+  queueSortSelect.value = sortMode;
+  applyViewMode(viewMode);
+  toggleSpeedChart.setAttribute("aria-pressed", String(showSpeedChart));
+
+  function recordSessionSpeed(list: JobSnapshot[]): void {
+    const running = list.some((job) => job.state === "running");
+    const combined = list.reduce((sum, job) => sum + (job.state === "running" ? (job.bytesPerSecond ?? 0) : 0), 0);
+    if (!running && sessionSamples.length === 0) return;
+    // Only append while running, or once right after returning to 0 so the history freezes cleanly.
+    const last = sessionSamples[sessionSamples.length - 1];
+    if (!running && last && last.bytesPerSecond === 0) return;
+    sessionSamples.push({ at: Date.now(), bytesPerSecond: combined });
+    if (sessionSamples.length > SESSION_MAX_SAMPLES) sessionSamples.shift();
+  }
+
+  function renderSessionSpeedChart(): void {
+    const live = jobs.some((job) => job.state === "running");
+    renderSpeedChart({
+      svg: sessionGraph,
+      title: sessionGraphLabel,
+      statsEl: sessionSpeedStats,
+      noteEl: sessionSpeedNote,
+      samples: sessionSamples,
+      live,
+      liveWindowMs: 90_000,
+      emptyMessage: live
+        ? "Measuring combined download speed…"
+        : "Start a download to watch live speed history, average, median, and peak throughput.",
+    });
+  }
+
+  viewModesGroup.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-view]");
+    if (!button) return;
+    applyViewMode(button.dataset.view as QueueViewMode);
+    renderQueue();
+  });
+
+  queueSortSelect.addEventListener("change", () => {
+    sortMode = queueSortSelect.value as QueueSort;
+    writeStorage(SORT_KEY, sortMode);
+    renderQueue();
+  });
+
+  toggleSpeedChart.addEventListener("click", () => {
+    applySpeedChartToggle(!showSpeedChart);
+  });
+
+  resetFiltersButton.addEventListener("click", () => {
+    selectedFilter = "all";
+    queueSearch.value = "";
+    for (const candidate of queueFilters.querySelectorAll<HTMLButtonElement>("button[data-filter]")) {
+      candidate.setAttribute("aria-pressed", String(candidate.dataset.filter === "all"));
+    }
+    renderQueue();
+    queueTitle.focus({ preventScroll: true });
+  });
+
+  function askConfirm(opts: {
+    title: string;
+    detail: string;
+    note?: string;
+    acceptLabel: string;
+    fallback?: HTMLElement;
+  }): Promise<boolean> {
+    if (confirmDialog.open) return Promise.resolve(false);
+    confirmTitle.textContent = opts.title;
+    confirmDetail.textContent = opts.detail;
+    confirmNote.textContent = opts.note ?? "";
+    confirmNote.hidden = !opts.note;
+    confirmAccept.textContent = opts.acceptLabel;
+    confirmFallback = opts.fallback ?? queueTitle;
+    return new Promise<boolean>((resolve) => {
+      confirmResolve = resolve;
+      ctx.openDialog(confirmDialog, confirmCancel);
+    });
+  }
+
+  function finishConfirm(accepted: boolean): void {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    if (confirmDialog.open) confirmDialog.close();
+    resolve?.(accepted);
+  }
+
+  confirmCancel.addEventListener("click", () => finishConfirm(false));
+  confirmClose.addEventListener("click", () => finishConfirm(false));
+  confirmAccept.addEventListener("click", () => finishConfirm(true));
+  confirmDialog.addEventListener("close", () => {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    resolve?.(false);
+    ctx.restoreDialogFocus(confirmFallback, confirmDialog);
+  });
 
   function setQueueSummary(message: string): void {
     queueSummary.textContent = message;
     ctx.announce(message);
+  }
+
+  function updateFilterCounts(): void {
+    for (const button of queueFilters.querySelectorAll<HTMLButtonElement>("button[data-filter]")) {
+      const filter = button.dataset.filter as QueueFilter;
+      const count = jobs.filter((job) => matchesFilter(job, filter)).length;
+      const badge = button.querySelector<HTMLElement>(".filter-count");
+      if (!badge) continue;
+      const text = count > 0 ? String(count) : "";
+      if (badge.textContent !== text) badge.textContent = text;
+      badge.hidden = count === 0;
+    }
   }
 
   function renderQueue(): void {
@@ -88,34 +324,33 @@ export function createQueueView(ctx: QueueContext): QueueView {
       : null;
     const active = jobs.filter((job) => isActive(job.state)).length;
     ctx.showActive(active);
-
-    const current = jobs.find((job) => ["running", "queued", "scheduled", "cancelling"].includes(job.state));
-    cancelCurrentButton.hidden = !current;
-    cancelCurrentButton.disabled = current?.state === "cancelling";
-    cancelCurrentButton.textContent = current?.state === "cancelling" ? "Cancelling…" : "Cancel current download";
-    if (current) {
-      cancelCurrentButton.setAttribute(
-        "aria-label",
-        `Cancel the current download, ${filename(current.destination) || "download"}`,
-      );
-    } else {
-      cancelCurrentButton.removeAttribute("aria-label");
-    }
+    updateFilterCounts();
 
     const pausable = jobs.filter((job) => job.kind === "file" && ["running", "queued", "scheduled"].includes(job.state));
     const resumable = jobs.filter((job) => job.state === "paused");
+    const completed = jobs.filter((job) => job.state === "completed");
     pauseAllButton.hidden = pausable.length < 2;
     resumeAllButton.hidden = resumable.length < 2;
-    pauseAllButton.textContent = `Pause all (${pausable.length})`;
-    resumeAllButton.textContent = `Resume all (${resumable.length})`;
+    clearCompletedButton.hidden = completed.length === 0;
+    setIconButtonText(pauseAllButton, "i-pause", `Pause all (${pausable.length})`);
+    setIconButtonText(resumeAllButton, "i-play", `Resume all (${resumable.length})`);
+    setIconButtonText(
+      clearCompletedButton,
+      "i-trash",
+      completed.length === 1 ? "Clear completed" : `Clear completed (${completed.length})`,
+    );
 
     const query = queueSearch.value.trim().toLocaleLowerCase();
-    const visible = jobs.filter((job) => matchesFilter(job, selectedFilter) && matchesSearch(job, query));
+    const filtered = jobs.filter((job) => matchesFilter(job, selectedFilter) && matchesSearch(job, query));
+    const visible = sortJobs(filtered, sortMode);
     jobCard.hidden = visible.length === 0;
-    // With nothing in the list, the empty state says it all: the filters have
+    // With nothing in the list, the empty state says it all: the toolbar has
     // nothing to act on and the summary stays for screen readers only.
     queueEmpty.hidden = jobs.length > 0;
-    queueFilters.hidden = jobs.length === 0;
+    queueToolbar.hidden = jobs.length === 0;
+    queueNoMatch.hidden = jobs.length === 0 || visible.length > 0;
+    sessionSpeedPanel.hidden = !showSpeedChart || jobs.length === 0;
+    if (!sessionSpeedPanel.hidden) renderSessionSpeedChart();
     queueSummary.classList.toggle("sr-only", jobs.length === 0);
 
     if (!jobs.length) {
@@ -135,7 +370,18 @@ export function createQueueView(ctx: QueueContext): QueueView {
     // churn the accessibility tree and steal keyboard focus, so it only rebuilds
     // when something structural has changed. Progress, speed and remaining time
     // change constantly and are written into the existing cards instead.
-    const signature = JSON.stringify([selectedFilter, query, ctx.powerMode(), visible.map(queueRowSignature)]);
+    const firstCancelableId = visible.find((job) =>
+      ["running", "queued", "scheduled", "cancelling"].includes(job.state),
+    )?.jobId ?? "";
+    const signature = JSON.stringify([
+      selectedFilter,
+      query,
+      sortMode,
+      viewMode,
+      ctx.powerMode(),
+      firstCancelableId,
+      visible.map(queueRowSignature),
+    ]);
     if (signature === renderedQueueSignature) {
       updateLiveMetrics(visible);
       return;
@@ -143,7 +389,7 @@ export function createQueueView(ctx: QueueContext): QueueView {
     renderedQueueSignature = signature;
 
     jobList.replaceChildren();
-    visible.forEach((job, index) => jobList.append(createJobCard(job, index === 0)));
+    visible.forEach((job, index) => jobList.append(createJobCard(job, index === 0, job.jobId === firstCancelableId)));
     if (!focusedAction?.jobId || !focusedAction.action) return;
     const replacement = Array.from(jobList.querySelectorAll<HTMLButtonElement>("button[data-job-id][data-action]")).find(
       (button) => button.dataset.jobId === focusedAction.jobId && button.dataset.action === focusedAction.action,
@@ -198,11 +444,37 @@ export function createQueueView(ctx: QueueContext): QueueView {
       if (progress) applyProgress(progress, job);
       const metrics = card.querySelector<HTMLElement>(".metrics");
       if (metrics) metrics.replaceChildren(...metricSpans(job));
+      const sizeCol = card.querySelector<HTMLElement>(".job-col-size");
+      if (sizeCol) sizeCol.textContent = tableSizeText(job);
+      const speedCol = card.querySelector<HTMLElement>(".job-col-speed");
+      if (speedCol) speedCol.textContent = tableSpeedText(job);
     }
   }
 
-  function createJobCard(job: JobSnapshot, primary: boolean): HTMLElement {
+  function tableSizeText(job: JobSnapshot): string {
+    if (job.state === "completed") return formatBytes(job.totalBytes ?? job.bytesReceived);
+    if (job.totalBytes && job.totalBytes > 0) {
+      return `${formatBytes(job.bytesReceived)} / ${formatBytes(job.totalBytes)}`;
+    }
+    return formatBytes(job.bytesReceived);
+  }
+
+  function tableSpeedText(job: JobSnapshot): string {
+    if (job.state === "running") {
+      const parts: string[] = [];
+      if (job.bytesPerSecond) parts.push(`${formatBytes(job.bytesPerSecond)}/s`);
+      if (job.etaSeconds != null) parts.push(formatDurationLong(job.etaSeconds));
+      return parts.join(" · ") || "Measuring…";
+    }
+    if (job.state === "completed" && job.reusedFromCache) return "Cached";
+    if (job.state === "paused") return "Paused";
+    if (job.state === "scheduled") return "Scheduled";
+    return "—";
+  }
+
+  function createJobCard(job: JobSnapshot, primary: boolean, firstCancelable: boolean): HTMLElement {
     const name = filename(job.destination) || "Download";
+    const meta = fileKindMeta(job);
     const article = document.createElement("article");
     article.className = "card job";
     article.dataset.state = job.state;
@@ -212,18 +484,31 @@ export function createQueueView(ctx: QueueContext): QueueView {
 
     const header = document.createElement("header");
     header.className = "job-header";
+    const titleGroup = document.createElement("div");
+    titleGroup.className = "job-title-group";
+    const iconBadge = document.createElement("span");
+    iconBadge.className = "kind-badge";
+    iconBadge.dataset.kind = meta.category;
+    iconBadge.setAttribute("aria-hidden", "true");
+    iconBadge.append(glyph(meta.icon));
+
     const titleWrap = document.createElement("div");
-    const source = document.createElement("p");
-    source.className = "job-source";
-    source.textContent = job.source;
+    titleWrap.className = "job-title-wrap";
     const heading = document.createElement("h3");
     heading.textContent = name;
+    heading.title = name;
+    const source = document.createElement("p");
+    source.className = "job-source";
+    source.textContent = sourceHost(job.source);
+    source.title = job.source;
     titleWrap.append(heading, source);
+    titleGroup.append(iconBadge, titleWrap);
+
     const status = document.createElement("output");
     status.className = "status";
     setStatus(status, job);
     if (primary) status.id = "job-status";
-    header.append(titleWrap, status);
+    header.append(titleGroup, status);
     article.append(header);
 
     const destination = document.createElement("p");
@@ -298,21 +583,34 @@ export function createQueueView(ctx: QueueContext): QueueView {
     if (job.observedSha256) {
       const matched = job.state === "completed" && !!job.expectedSha256;
       const completion = document.createElement("div");
-      completion.className = "completion";
-      const label = document.createElement("p");
+      completion.className = matched ? "completion completion-matched" : "completion";
+      const row = document.createElement("div");
+      row.className = "completion-row";
+      const label = document.createElement("span");
       label.className = "digest-label";
       label.textContent = matched ? "SHA-256 · matches the checksum you entered" : "Observed SHA-256";
       const digest = document.createElement("code");
       digest.textContent = job.observedSha256;
+      digest.title = matched
+        ? "The file is exactly what that checksum describes. Trust it as far as you trust where the checksum came from."
+        : "Observed locally; compare with a trusted publisher hash for authenticity.";
       if (primary) digest.id = "observed-hash";
+      const copyHash = document.createElement("button");
+      copyHash.type = "button";
+      copyHash.className = "quiet copy-inline";
+      copyHash.textContent = "Copy";
+      copyHash.dataset.action = "copy-hash";
+      copyHash.dataset.jobId = job.jobId;
+      copyHash.setAttribute("aria-label", `Copy SHA-256 for ${name}`);
+      row.append(label, digest, copyHash);
       const note = document.createElement("p");
       note.className = "fine-print";
       // A match proves the bytes are the ones the checksum describes. Whether
       // the checksum itself is trustworthy depends on where it came from.
       note.textContent = matched
-        ? "The file is exactly what that checksum describes. Trust it as far as you trust where the checksum came from."
+        ? "Matches the checksum you entered; trust depends on where that checksum came from."
         : "Observed locally; compare with a trusted publisher hash for authenticity.";
-      completion.append(label, digest, note);
+      completion.append(row, note);
       article.append(completion);
     }
 
@@ -337,12 +635,25 @@ export function createQueueView(ctx: QueueContext): QueueView {
 
     if (ctx.powerMode()) article.append(diagnostics(job));
 
+    // Table-mode columns (hidden in cards/compact/grid views via CSS).
+    const sizeCol = document.createElement("span");
+    sizeCol.className = "job-col-size";
+    sizeCol.textContent = tableSizeText(job);
+    const speedCol = document.createElement("span");
+    speedCol.className = "job-col-speed";
+    speedCol.textContent = tableSpeedText(job);
+    article.append(sizeCol, speedCol);
+
     // Measurements and actions share the last line, so a row stays compact.
     const footer = document.createElement("div");
     footer.className = "job-footer";
     const actions = document.createElement("div");
     actions.className = "job-actions";
-    for (const action of actionsFor(job, capabilities)) actions.append(actionButton(job, action));
+    for (const action of actionsFor(job, capabilities)) {
+      const btn = actionButton(job, action);
+      if (firstCancelable && action.action === "cancel") btn.id = "cancel-download";
+      actions.append(btn);
+    }
     const unavailable = unavailableNote(job, capabilities);
     if (unavailable) {
       const note = document.createElement("span");
@@ -516,22 +827,33 @@ export function createQueueView(ctx: QueueContext): QueueView {
 
   queueSearch.addEventListener("input", renderQueue);
 
-  cancelCurrentButton.addEventListener("click", async () => {
-    const current = jobs.find((job) => ["running", "queued", "scheduled", "cancelling"].includes(job.state));
-    if (!current) return;
-    cancelCurrentButton.disabled = true;
-    try {
-      await engine.cancelDownload(current.jobId);
-      await ctx.refresh();
-    } catch (error) {
-      ctx.showError(error);
-    } finally {
-      cancelCurrentButton.disabled = false;
-      // The button disappears once nothing is running, so focus moves to the
-      // queue heading rather than being lost with it.
-      if (cancelCurrentButton.hidden) queueTitle.focus({ preventScroll: true });
-      else cancelCurrentButton.focus({ preventScroll: true });
+  clearCompletedButton.addEventListener("click", async () => {
+    const targets = jobs.filter((job) => job.state === "completed");
+    if (!targets.length) return;
+    if (ctx.confirmRemoveCompleted()) {
+      const ok = await askConfirm({
+        title: targets.length === 1 ? "Clear 1 completed download?" : `Clear ${targets.length} completed downloads?`,
+        detail: "This removes finished downloads from the list.",
+        note: "Downloaded files stay on your computer.",
+        acceptLabel: "Clear completed",
+        fallback: clearCompletedButton,
+      });
+      if (!ok) return;
     }
+    clearCompletedButton.disabled = true;
+    let removed = 0;
+    for (const job of targets) {
+      try {
+        await engine.removeDownload(job.jobId);
+        removed += 1;
+      } catch {
+        // Already gone.
+      }
+    }
+    clearCompletedButton.disabled = false;
+    await ctx.refresh();
+    setQueueSummary(removed === 1 ? "Cleared 1 completed download." : `Cleared ${removed} completed downloads.`);
+    if (clearCompletedButton.hidden) queueTitle.focus({ preventScroll: true });
   });
 
   pauseAllButton.addEventListener("click", () => void bulkPauseOrResume("pause"));
@@ -568,28 +890,11 @@ export function createQueueView(ctx: QueueContext): QueueView {
     if (button.hidden) queueTitle.focus({ preventScroll: true });
   }
 
-  jobList.addEventListener("click", async (event) => {
-    const target = event.target as HTMLElement;
-    const button = target.closest<HTMLButtonElement>("button[data-action][data-job-id]");
-    if (!button) {
-      // A click on the card itself opens its details, unless it was selecting
-      // text (a path or a checksum) to copy.
-      const card = target.closest<HTMLElement>("article.job[data-job-id]");
-      if (card && !target.closest("a, code, input") && !window.getSelection()?.toString()) {
-        ctx.openDetails(card.dataset.jobId!, null);
-      }
-      return;
-    }
-    if (button.dataset.action === "details") {
-      ctx.openDetails(button.dataset.jobId!, button);
-      return;
-    }
-    const jobId = button.dataset.jobId!;
-    const job = jobs.find((candidate) => candidate.jobId === jobId);
-    if (!job) return;
-    button.disabled = true;
+  async function runAction(job: JobSnapshot, action: string, button?: HTMLButtonElement): Promise<void> {
+    const jobId = job.jobId;
+    if (button) button.disabled = true;
     try {
-      switch (button.dataset.action) {
+      switch (action) {
         case "cancel":
           await engine.cancelDownload(jobId);
           break;
@@ -611,10 +916,9 @@ export function createQueueView(ctx: QueueContext): QueueView {
         case "retry":
           await engine.retryDownload(jobId, null, null);
           break;
-        case "choose-new-path": {
+        case "choose-new-path":
           await handlers.chooseNewPath?.(job);
           break;
-        }
         case "edit-link":
           handlers.editLink?.(job);
           return;
@@ -634,17 +938,21 @@ export function createQueueView(ctx: QueueContext): QueueView {
         case "copy-path":
           if (job.destination) await navigator.clipboard.writeText(job.destination);
           setQueueSummary("Destination copied.");
-          break;
+          return;
+        case "copy-hash":
+          if (job.observedSha256) await navigator.clipboard.writeText(job.observedSha256);
+          setQueueSummary("SHA-256 copied.");
+          return;
         case "remove":
-          if (
-            job.state === "completed" &&
-            ctx.confirmRemoveCompleted() &&
-            !window.confirm(
-              `Remove ${filename(job.destination) || "this download"} from the list?\n\n` +
-                "The downloaded file stays on your computer.",
-            )
-          ) {
-            return;
+          if (job.state === "completed" && ctx.confirmRemoveCompleted()) {
+            const ok = await askConfirm({
+              title: "Remove from list?",
+              detail: `Remove ${filename(job.destination) || "this download"} from the list?`,
+              note: "The downloaded file stays on your computer.",
+              acceptLabel: "Remove",
+              fallback: button ?? queueTitle,
+            });
+            if (!ok) return;
           }
           await engine.removeDownload(jobId);
           break;
@@ -653,19 +961,42 @@ export function createQueueView(ctx: QueueContext): QueueView {
     } catch (error) {
       ctx.showError(error);
     } finally {
-      button.disabled = false;
-      if (button.isConnected) button.focus({ preventScroll: true });
-      else if (document.activeElement === document.body) {
-        // The action can replace its own row (Pause becomes Resume). Disabling
-        // the old button already released focus before renderQueue could save
-        // it, so recover on the updated row or the stable queue heading.
-        const next = jobList.querySelector<HTMLButtonElement>(
-          `button[data-job-id="${CSS.escape(jobId)}"]:not(:disabled)`,
-        );
-        (next ?? queueTitle).focus({ preventScroll: true });
+      if (button) {
+        button.disabled = false;
+        if (button.isConnected) button.focus({ preventScroll: true });
+        else if (document.activeElement === document.body) {
+          // The action can replace its own row (Pause becomes Resume). Disabling
+          // the old button already released focus before renderQueue could save
+          // it, so recover on the updated row or the stable queue heading.
+          const next = jobList.querySelector<HTMLButtonElement>(
+            `button[data-job-id="${CSS.escape(jobId)}"]:not(:disabled)`,
+          );
+          (next ?? queueTitle).focus({ preventScroll: true });
+        }
       }
     }
+  }
 
+  jobList.addEventListener("click", async (event) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest<HTMLButtonElement>("button[data-action][data-job-id]");
+    if (!button) {
+      // A click on the card itself opens its details, unless it was selecting
+      // text (a path or a checksum) to copy.
+      const card = target.closest<HTMLElement>("article.job[data-job-id]");
+      if (card && !target.closest("a, code, input, button") && !window.getSelection()?.toString()) {
+        ctx.openDetails(card.dataset.jobId!, null);
+      }
+      return;
+    }
+    if (button.dataset.action === "details") {
+      ctx.openDetails(button.dataset.jobId!, button);
+      return;
+    }
+    const jobId = button.dataset.jobId!;
+    const job = jobs.find((candidate) => candidate.jobId === jobId);
+    if (!job) return;
+    await runAction(job, button.dataset.action!, button);
   });
 
   return {
@@ -674,6 +1005,7 @@ export function createQueueView(ctx: QueueContext): QueueView {
     },
     update(next) {
       jobs = next;
+      recordSessionSpeed(next);
       renderQueue();
     },
     invalidate() {
@@ -687,5 +1019,7 @@ export function createQueueView(ctx: QueueContext): QueueView {
     detailsButton(jobId) {
       return jobList.querySelector<HTMLElement>(`button[data-action="details"][data-job-id="${CSS.escape(jobId)}"]`);
     },
+    isConfirmOpen: () => confirmDialog.open,
+    runAction,
   };
 }

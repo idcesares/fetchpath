@@ -185,3 +185,80 @@ export function redactedSource(url: string): string {
   const index = url.search(/[?#]/);
   return index < 0 ? url : `${url.slice(0, index)}?…`;
 }
+
+export type FileCategory = "video" | "audio" | "archive" | "image" | "doc" | "pkg" | "torrent" | "file";
+
+const VIDEO_EXT = new Set(["mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "flv", "ts"]);
+const AUDIO_EXT = new Set(["mp3", "flac", "wav", "m4a", "ogg", "opus", "aac", "wma"]);
+const ARCHIVE_EXT = new Set(["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst", "cab"]);
+const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"]);
+const DOC_EXT = new Set(["pdf", "doc", "docx", "txt", "md", "epub", "mobi", "csv", "json", "xml", "xls", "xlsx", "ppt", "pptx"]);
+const PKG_EXT = new Set(["exe", "msi", "msix", "appx", "iso", "img", "dmg", "deb", "rpm", "apk", "aab", "pkg", "jar"]);
+
+/** Semantic file-type category and icon id for a download row or details header. */
+export function fileKindMeta(job: Pick<JobSnapshot, "kind" | "destination" | "qualityLabel">): {
+  category: FileCategory;
+  icon: string;
+} {
+  if (job.kind === "torrent") return { category: "torrent", icon: "i-torrent" };
+  const name = filename(job.destination);
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  if (job.kind === "media") {
+    if (AUDIO_EXT.has(ext) || /audio/i.test(job.qualityLabel ?? "")) return { category: "audio", icon: "i-audio" };
+    return { category: "video", icon: "i-video" };
+  }
+  if (VIDEO_EXT.has(ext)) return { category: "video", icon: "i-video" };
+  if (AUDIO_EXT.has(ext)) return { category: "audio", icon: "i-audio" };
+  if (ARCHIVE_EXT.has(ext)) return { category: "archive", icon: "i-archive" };
+  if (IMAGE_EXT.has(ext)) return { category: "image", icon: "i-image" };
+  if (DOC_EXT.has(ext)) return { category: "doc", icon: "i-doc" };
+  if (PKG_EXT.has(ext)) return { category: "pkg", icon: "i-pkg" };
+  return { category: "file", icon: "i-file" };
+}
+
+/** Short host name for quick scanning, falling back to the raw source string. */
+export function sourceHost(source: string): string {
+  try {
+    const parsed = new URL(source);
+    return parsed.hostname.replace(/^www\./, "") || source;
+  } catch {
+    return source;
+  }
+}
+
+export interface SpeedSample {
+  at: number;
+  bytesPerSecond: number;
+}
+
+export interface SpeedStats {
+  peak: number;
+  mean: number;
+  median: number;
+  latest: number;
+}
+
+/** Computes peak, arithmetic mean, and median speed from observed non-negative samples. */
+export function computeSpeedStats(samples: readonly SpeedSample[]): SpeedStats {
+  if (!samples.length) return { peak: 0, mean: 0, median: 0, latest: 0 };
+  const active = samples.filter((s) => s.bytesPerSecond > 0);
+  const pool = active.length ? active : samples;
+  let peak = 0;
+  let sum = 0;
+  const values: number[] = [];
+  for (const s of pool) {
+    if (s.bytesPerSecond > peak) peak = s.bytesPerSecond;
+    sum += s.bytesPerSecond;
+    values.push(s.bytesPerSecond);
+  }
+  values.sort((a, b) => a - b);
+  const mid = Math.floor(values.length / 2);
+  const median = values.length % 2 === 1 ? values[mid] : Math.round((values[mid - 1] + values[mid]) / 2);
+  return {
+    peak,
+    mean: Math.round(sum / values.length),
+    median,
+    latest: samples[samples.length - 1].bytesPerSecond,
+  };
+}

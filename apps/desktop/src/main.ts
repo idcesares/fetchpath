@@ -25,6 +25,7 @@ const queueTitle = required<HTMLHeadingElement>("queue-title");
 const keyboardHelpButton = required<HTMLButtonElement>("keyboard-help");
 const shortcutsDialog = required<HTMLDialogElement>("shortcuts-dialog");
 const shortcutsCloseButton = required<HTMLButtonElement>("shortcuts-close");
+const shortcutsCloseX = required<HTMLButtonElement>("shortcuts-close-x");
 const statsGrid = required<HTMLDListElement>("stats-grid");
 
 const queueErrorBanner = required<HTMLElement>("queue-error-banner");
@@ -63,6 +64,7 @@ queueErrorDismiss.addEventListener("click", () => {
 
 keyboardHelpButton.addEventListener("click", () => dialogs.openDialog(shortcutsDialog, shortcutsCloseButton));
 shortcutsCloseButton.addEventListener("click", () => shortcutsDialog.close());
+shortcutsCloseX.addEventListener("click", () => shortcutsDialog.close());
 shortcutsDialog.addEventListener("close", () => dialogs.restoreDialogFocus(keyboardHelpButton, shortcutsDialog));
 
 /* Panels ------------------------------------------------------------------ */
@@ -89,7 +91,13 @@ const composer = createComposer({
   mediaToolsReady: () => settings.toolsStatus?.ready === true,
   hasToolsStatus: () => settings.toolsStatus !== null,
   refreshToolsStatus: () => settings.refreshToolsStatus(),
-  hasBlockingModalOpen: () => settings.dialog.open || shortcutsDialog.open || stopDialog.open || details.isOpen(),
+  hasBlockingModalOpen: () =>
+    settings.dialog.open ||
+    shortcutsDialog.open ||
+    stopDialog.open ||
+    engineDialog.open ||
+    details.isOpen() ||
+    queue.isConfirmOpen(),
   async onSubmitted(count) {
     queue.invalidate();
     queue.setSummary(count === 1 ? "Added 1 download to the queue." : `Added ${count} downloads to the queue.`);
@@ -125,10 +133,13 @@ const rowHandlers: RowHandlers = {
 
 const details = createDetailsView({
   engine,
+  capabilities: fullCapabilities,
   openDialog: dialogs.openDialog,
   restoreFocus: dialogs.restoreDialogFocus,
   rowDetailsButton: (jobId) => queue.detailsButton(jobId),
   fallbackFocus: queueTitle,
+  announce: dialogs.announce,
+  onAction: (job, action, trigger) => queue.runAction(job, action, trigger),
 });
 
 const queue = createQueueView({
@@ -140,6 +151,8 @@ const queue = createQueueView({
   showError: showQueueError,
   refresh: refreshQueue,
   openDetails: (jobId, opener) => void details.open(jobId, opener),
+  openDialog: dialogs.openDialog,
+  restoreDialogFocus: dialogs.restoreDialogFocus,
   powerMode: () => settings.view?.settings.powerMode === true,
   confirmRemoveCompleted: () => settings.view?.settings.confirmRemoveCompleted === true,
   showActive(active) {
@@ -151,9 +164,9 @@ const queue = createQueueView({
 });
 
 document.addEventListener("keydown", (event) => {
-  // While Settings, help or Stop engine is modal it owns every key. Escape in
+  // While Settings, help, Engine or Stop engine is modal it owns every key. Escape in
   // Add download is the dialog's own cancel, which closes it and keeps the draft.
-  if (shortcutsDialog.open || settings.dialog.open || stopDialog.open || details.isOpen()) return;
+  if (shortcutsDialog.open || settings.dialog.open || stopDialog.open || engineDialog.open || details.isOpen() || queue.isConfirmOpen()) return;
   const key = event.key.toLowerCase();
   if (event.ctrlKey && (key === "l" || key === "n")) {
     event.preventDefault();
@@ -164,6 +177,16 @@ document.addEventListener("keydown", (event) => {
   } else if (event.ctrlKey && key === "f" && !composer.dialog.open) {
     event.preventDefault();
     queue.focusSearch();
+  } else if (
+    event.key === "?" &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    !composer.dialog.open &&
+    !(event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable]"))
+  ) {
+    event.preventDefault();
+    dialogs.openDialog(shortcutsDialog, shortcutsCloseButton);
   }
 });
 
@@ -228,6 +251,10 @@ const ENGINE_STOPPED =
 const engineChip = required<HTMLElement>("engine-chip");
 const engineChipText = required<HTMLElement>("engine-chip-text");
 const engineSummary = required<HTMLParagraphElement>("engine-summary");
+const engineDialog = required<HTMLDialogElement>("engine-dialog");
+const engineDialogSummary = required<HTMLParagraphElement>("engine-dialog-summary");
+const openEngineControls = required<HTMLButtonElement>("open-engine-controls");
+const engineDialogClose = required<HTMLButtonElement>("engine-dialog-close");
 const closeWindowButton = required<HTMLButtonElement>("close-window");
 const stopEngineButton = required<HTMLButtonElement>("stop-engine");
 const stopDialog = required<HTMLDialogElement>("stop-dialog");
@@ -235,6 +262,7 @@ const stopActive = required<HTMLParagraphElement>("stop-active");
 const stopHub = required<HTMLParagraphElement>("stop-hub");
 const stopError = required<HTMLParagraphElement>("stop-error");
 const stopCancel = required<HTMLButtonElement>("stop-cancel");
+const stopCloseX = required<HTMLButtonElement>("stop-close-x");
 const stopConfirm = required<HTMLButtonElement>("stop-confirm");
 const pendingApprovalsButton = required<HTMLButtonElement>("pending-approvals");
 const pendingApprovalsText = required<HTMLElement>("pending-approvals-text");
@@ -244,9 +272,13 @@ const pendingApprovalsText = required<HTMLElement>("pending-approvals-text");
 let engineState: "checking" | "running" | "reconnecting" | "stopped" = "checking";
 
 function renderEngineSummary(): void {
+  const rate =
+    engineState === "running"
+      ? queue.jobs.reduce((sum, job) => sum + (job.state === "running" ? (job.bytesPerSecond ?? 0) : 0), 0)
+      : 0;
   const chipText = {
     checking: "Checking the engine",
-    running: "Engine running",
+    running: rate > 0 ? `Engine running · ${formatBytes(rate)}/s` : "Engine running",
     reconnecting: "Engine not responding",
     stopped: "Engine stopped",
   }[engineState];
@@ -268,12 +300,11 @@ function renderEngineSummary(): void {
   if (engineState === "running") {
     const running = queue.jobs.filter((job) => isActive(job.state)).length;
     const waiting = queue.jobs.filter((job) => job.state === "queued" || job.state === "scheduled").length;
-    const rate = queue.jobs.reduce((sum, job) => sum + (job.state === "running" ? (job.bytesPerSecond ?? 0) : 0), 0);
     const parts = [
       running ? `${running} downloading${rate > 0 ? ` at ${formatBytes(rate)}/s` : ""}` : "Nothing downloading",
       waiting ? `${waiting} waiting` : "",
     ].filter(Boolean);
-    summary = `Engine running. ${parts.join(", ")}.`;
+    summary = `Engine running · ${parts.join(", ")}.`;
   } else if (engineState === "stopped") {
     summary = "Engine stopped. Downloads are waiting in the queue and nothing is downloading.";
   } else if (engineState === "reconnecting") {
@@ -283,6 +314,7 @@ function renderEngineSummary(): void {
   }
 
   setText(engineSummary, summary);
+  setText(engineDialogSummary, summary);
 
   const approvals = queue.jobs.filter((job) => job.state === "awaiting_approval").length;
   if (pendingApprovalsButton.hidden !== (approvals === 0)) pendingApprovalsButton.hidden = approvals === 0;
@@ -300,10 +332,15 @@ pendingApprovalsButton.addEventListener("click", () => {
   queueTitle.focus({ preventScroll: false });
 });
 
+openEngineControls.addEventListener("click", () => dialogs.openDialog(engineDialog, closeWindowButton));
+engineDialogClose.addEventListener("click", () => engineDialog.close());
+engineDialog.addEventListener("close", () => dialogs.restoreDialogFocus(openEngineControls, engineDialog));
+
 closeWindowButton.addEventListener("click", () => void invoke("close_window"));
 
 function askToStopEngine(): void {
   if (engineState === "stopped" || stopDialog.open) return;
+  if (engineDialog.open) engineDialog.close();
   const running = queue.jobs.filter((job) => isActive(job.state)).length;
   stopActive.textContent =
     engineState !== "running"
@@ -321,7 +358,8 @@ function askToStopEngine(): void {
 
 stopEngineButton.addEventListener("click", askToStopEngine);
 stopCancel.addEventListener("click", () => stopDialog.close());
-stopDialog.addEventListener("close", () => dialogs.restoreDialogFocus(stopEngineButton, stopDialog));
+stopCloseX.addEventListener("click", () => stopDialog.close());
+stopDialog.addEventListener("close", () => dialogs.restoreDialogFocus(openEngineControls, stopDialog));
 stopConfirm.addEventListener("click", async () => {
   stopConfirm.disabled = true;
   try {

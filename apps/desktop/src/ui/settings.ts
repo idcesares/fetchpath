@@ -109,6 +109,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
   const openSettingsButton = required<HTMLButtonElement>("open-settings");
   const settingsDialog = required<HTMLDialogElement>("settings-dialog");
   const settingsCloseButton = required<HTMLButtonElement>("settings-close");
+  const settingsCloseX = required<HTMLButtonElement>("settings-close-x");
   const settingsForm = required<HTMLFormElement>("settings-form");
   const settingsError = required<HTMLParagraphElement>("settings-error");
   const settingsStatus = required<HTMLParagraphElement>("settings-status");
@@ -152,6 +153,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
   const browserSetupState = required<HTMLParagraphElement>("browser-setup-state");
   const browserSetupDetail = required<HTMLParagraphElement>("browser-setup-detail");
   const browserSetupSteps = required<HTMLOListElement>("browser-setup-steps");
+  const browserManualDetails = required<HTMLDetailsElement>("browser-manual-details");
   const browserOpenFolder = required<HTMLButtonElement>("browser-open-folder");
   const browserCopyChrome = required<HTMLButtonElement>("browser-copy-chrome");
   const browserCopyEdge = required<HTMLButtonElement>("browser-copy-edge");
@@ -232,6 +234,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
 
   openSettingsButton.addEventListener("click", () => void show());
   settingsCloseButton.addEventListener("click", () => settingsDialog.close());
+  settingsCloseX.addEventListener("click", () => settingsDialog.close());
   settingsDialog.addEventListener("close", () => {
     sharePanel.onDialogClose();
     lanPanel.onDialogClose();
@@ -287,6 +290,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
       ? "Firefox is not supported yet: it only accepts signed add-ons."
       : "This copy was not installed with the installer, so browser capture is unavailable here.";
     browserSetupSteps.hidden = !ready;
+    browserManualDetails.hidden = !ready;
     browserExtensionPath.textContent = status.extensionDir ?? "";
     for (const button of [
       browserConnectChrome,

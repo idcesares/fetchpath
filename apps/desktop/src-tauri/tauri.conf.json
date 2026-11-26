@@ -14,10 +14,11 @@
     "windows": [
       {
         "title": "Fetchpath",
-        "width": 1040,
-        "height": 760,
-        "minWidth": 600,
-        "minHeight": 620
+        "width": 1120,
+        "height": 740,
+        "minWidth": 520,
+        "minHeight": 500,
+        "center": true
       }
     ],
     "security": {

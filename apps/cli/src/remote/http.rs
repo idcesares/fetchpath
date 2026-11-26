@@ -17,7 +17,8 @@ use hyper::header::{
 };
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use std::sync::Arc;
+use sha2::{Digest, Sha256};
+use std::sync::{Arc, OnceLock};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 
 /// The attributes of the session cookie, in one place. It has no `Max-Age`:
@@ -29,9 +30,87 @@ const COOKIE_ATTRIBUTES: &str = "HttpOnly; SameSite=Strict; Path=/";
 
 const POLICY: &str = "default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'";
 
-const SIGNED_OUT: &str = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-<title>Fetchpath</title></head><body><h1>Fetchpath</h1>\
-<p>Open Fetchpath from the tray or desktop to sign in.</p></body></html>";
+const SIGNED_OUT_STYLE: &str = concat!(
+    include_str!("../../../../design/tokens.css"),
+    "*{box-sizing:border-box}html{background:var(--fp-bg)}body{margin:0;min-height:100vh;\
+     color:var(--fp-text);font:16px/var(--fp-leading) var(--fp-font-sans);font-synthesis:none;\
+     background:radial-gradient(circle at 8% -4%,color-mix(in srgb,var(--fp-accent) 14%,transparent),transparent 30rem),var(--fp-bg)}\
+     .bar{display:flex;align-items:center;gap:10px;padding:var(--fp-space-3) var(--fp-space-4);border-bottom:1px solid var(--fp-line)}\
+     .brand{font-weight:var(--fp-weight-strong);font-size:var(--fp-text-lg)}\
+     .mark{display:grid;flex:none;width:28px;height:28px;place-items:center;border-radius:8px;color:var(--fp-on-accent);background:var(--fp-accent)}\
+     svg.i{flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}\
+     main{display:flex;justify-content:center;padding:var(--fp-space-6) var(--fp-space-4)}\
+     .card{width:100%;max-width:30rem;padding:var(--fp-space-5);border:1px solid var(--fp-line);\
+     border-radius:var(--fp-radius-lg);background:var(--fp-surface);box-shadow:var(--fp-shadow-1)}\
+     .eyebrow{margin:0 0 var(--fp-space-1);color:var(--fp-accent-text);font-size:var(--fp-text-xs);\
+     font-weight:760;letter-spacing:var(--fp-track-caps);text-transform:uppercase}\
+     h1{margin:0 0 var(--fp-space-3);font-size:var(--fp-text-2xl);line-height:var(--fp-leading-tight);letter-spacing:-.025em}\
+     p{margin:0 0 var(--fp-space-3);color:var(--fp-text-muted)}\
+     ol{margin:0;padding-left:var(--fp-space-5);color:var(--fp-text);font-size:var(--fp-text-sm)}\
+     li+li{margin-top:var(--fp-space-1)}\
+     .note{margin:var(--fp-space-4) 0 0;padding-top:var(--fp-space-3);border-top:1px solid var(--fp-line);\
+     color:var(--fp-text-quiet);font-size:var(--fp-text-xs)}"
+);
+
+struct SignedOutPage {
+    html: Bytes,
+    policy: HeaderValue,
+}
+
+fn signed_out_page() -> &'static SignedOutPage {
+    static PAGE: OnceLock<SignedOutPage> = OnceLock::new();
+    PAGE.get_or_init(|| {
+        let html = format!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+             <meta name=\"color-scheme\" content=\"light dark\">\
+             <title>Fetchpath — Sign in</title><style>{SIGNED_OUT_STYLE}</style></head><body>\
+             <header class=\"bar\"><span class=\"mark\" aria-hidden=\"true\">\
+             <svg class=\"i\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\">\
+             <path d=\"M5 18c5 0 3-12 8-12h6\"/><circle cx=\"5\" cy=\"18\" r=\"1.6\"/>\
+             <path d=\"m16 3 3 3-3 3\"/></svg></span><span class=\"brand\">Fetchpath</span></header>\
+             <main><section class=\"card\"><p class=\"eyebrow\">Local Web UI</p>\
+             <h1>This browser isn't signed in</h1>\
+             <p>Each browser signs in with a single-use link from Fetchpath on this PC.</p>\
+             <ol><li>Open Fetchpath from your desktop window or the Windows notification area.</li>\
+             <li>Choose <strong>Open in browser</strong> (or turn on <strong>Web UI</strong> in Settings).</li></ol>\
+             <p class=\"note\">Downloads keep running on this PC even while this page is signed out.</p>\
+             </section></main></body></html>"
+        );
+        let digest = Sha256::digest(SIGNED_OUT_STYLE.as_bytes());
+        let policy = format!(
+            "default-src 'self'; style-src 'sha256-{}'; base-uri 'none'; object-src 'none'; form-action 'self'; frame-ancestors 'none'",
+            base64_encode(&digest)
+        );
+        SignedOutPage {
+            html: Bytes::from(html),
+            policy: value(&policy),
+        }
+    })
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for group in bytes.chunks(3) {
+        let n = u32::from(group[0]) << 16
+            | u32::from(*group.get(1).unwrap_or(&0)) << 8
+            | u32::from(*group.get(2).unwrap_or(&0));
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if group.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if group.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
 
 type Reply = Response<Full<Bytes>>;
 
@@ -65,14 +144,16 @@ fn status(status: StatusCode) -> Reply {
 const SESSION_HEADER: HeaderName = HeaderName::from_static("x-fetchpath-session");
 
 fn signed_out() -> Reply {
-    let mut response = reply(
-        StatusCode::OK,
-        Some("text/html; charset=utf-8"),
-        SIGNED_OUT.as_bytes(),
-    );
-    response
-        .headers_mut()
-        .insert(SESSION_HEADER, value("signed-out"));
+    let page = signed_out_page();
+    let mut response = Response::new(Full::new(page.html.clone()));
+    *response.status_mut() = StatusCode::OK;
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_SECURITY_POLICY, page.policy.clone());
+    headers.insert(REFERRER_POLICY, value("no-referrer"));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, value("nosniff"));
+    headers.insert(CACHE_CONTROL, value("no-store"));
+    headers.insert(CONTENT_TYPE, value("text/html; charset=utf-8"));
+    headers.insert(SESSION_HEADER, value("signed-out"));
     response
 }
 

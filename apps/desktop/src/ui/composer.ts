@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { EngineApi } from "../engine/api";
 import type { JobDraft, JobSnapshot } from "../engine/types";
@@ -128,8 +129,10 @@ function isRepositoryLink(value: string): boolean {
 export function createComposer(ctx: ComposerContext): Composer {
   const { engine, dialogs, addOpenButton } = ctx;
   const addDialog = required<HTMLDialogElement>("add-dialog");
+  const addCloseX = required<HTMLButtonElement>("add-close-x");
   const addCancelButton = required<HTMLButtonElement>("add-cancel");
   const emptyAddButton = required<HTMLButtonElement>("empty-add");
+  const dropOverlay = required<HTMLElement>("drop-overlay");
   const form = required<HTMLFormElement>("download-form");
   const urlInput = required<HTMLTextAreaElement>("url");
   const destinationInput = required<HTMLInputElement>("destination");
@@ -155,6 +158,7 @@ export function createComposer(ctx: ComposerContext): Composer {
   const destinationHint = required<HTMLParagraphElement>("destination-hint");
   const torrentPickFile = required<HTMLButtonElement>("torrent-pick-file");
   const inspectMediaButton = required<HTMLButtonElement>("inspect-media");
+  const mediaInspectSpinner = required<HTMLElement>("media-inspect-spinner");
   const mediaQuality = required<HTMLSelectElement>("media-quality");
   const mediaTitle = required<HTMLParagraphElement>("media-title");
   const repositoryNote = required<HTMLParagraphElement>("repository-note");
@@ -163,6 +167,7 @@ export function createComposer(ctx: ComposerContext): Composer {
   let editingChecksum = false;
   let mediaInspection: MediaInspection | null = null;
   let inspectedMediaUrl = "";
+  let inspectingMedia = false;
   let composerFocus: HTMLElement | null = null;
   let destinationIsSuggested = true;
   let ruleFolder: string | null = null;
@@ -298,24 +303,31 @@ export function createComposer(ctx: ComposerContext): Composer {
 
   function renderPreview(): void {
     const drafts = buildDrafts();
-    batchPreview.hidden = drafts.length === 0;
+    // Single links already display their filename and URL directly in the form;
+    // reserve Batch preview for 2+ links so the common single-link path stays crisp.
+    batchPreview.hidden = drafts.length < 2;
     previewList.replaceChildren();
-    if (!drafts.length) return;
-    previewCount.textContent = drafts.length === 1 ? "1 item" : `${drafts.length} items`;
-    for (const draft of drafts) {
-      const item = document.createElement("li");
-      const name = document.createElement("strong");
-      name.textContent = draft.destination ? filename(draft.destination) : "Default download folder";
-      const source = document.createElement("span");
-      source.textContent = redactedSource(draft.url);
-      item.append(name, source);
-      previewList.append(item);
+    if (drafts.length >= 2) {
+      previewCount.textContent = `${drafts.length} items`;
+      for (const draft of drafts) {
+        const item = document.createElement("li");
+        const name = document.createElement("strong");
+        name.textContent = draft.destination ? filename(draft.destination) : "Default download folder";
+        const source = document.createElement("span");
+        source.textContent = redactedSource(draft.url);
+        item.append(name, source);
+        previewList.append(item);
+      }
     }
-    startButton.textContent = editingJobId
-      ? "Save and retry"
-      : drafts.length === 1
-        ? "Add to queue"
-        : `Add ${drafts.length} to queue`;
+    const waitingMedia = inspectingMedia && downloadKind() === "media";
+    startButton.disabled = waitingMedia;
+    startButton.textContent = waitingMedia
+      ? "Inspecting…"
+      : editingJobId
+        ? "Save and retry"
+        : drafts.length > 1
+          ? `Add ${drafts.length} to queue`
+          : "Add to queue";
   }
 
   function setKind(kind: "file" | "media" | "torrent"): void {
@@ -381,9 +393,12 @@ export function createComposer(ctx: ComposerContext): Composer {
 
   async function inspectMedia(url: string, quiet: boolean): Promise<MediaInspection | null> {
     const wasFocused = document.activeElement === inspectMediaButton;
+    inspectingMedia = true;
+    mediaInspectSpinner.hidden = false;
     inspectMediaButton.disabled = true;
     inspectMediaButton.textContent = "Inspecting…";
     if (!quiet || downloadKind() === "media") mediaTitle.textContent = "Checking the available qualities…";
+    renderPreview();
     dialogs.announce("Inspecting the media link.");
     try {
       const inspection = await invoke<MediaInspection>("inspect_media", { url });
@@ -406,8 +421,11 @@ export function createComposer(ctx: ComposerContext): Composer {
       void ctx.refreshToolsStatus();
       return null;
     } finally {
+      inspectingMedia = false;
+      mediaInspectSpinner.hidden = true;
       inspectMediaButton.disabled = false;
       inspectMediaButton.textContent = "Inspect again";
+      renderPreview();
       if (wasFocused) inspectMediaButton.focus({ preventScroll: true });
     }
   }
@@ -541,6 +559,8 @@ export function createComposer(ctx: ComposerContext): Composer {
     window.clearTimeout(analysisTimer);
     mediaInspection = null;
     inspectedMediaUrl = "";
+    inspectingMedia = false;
+    mediaInspectSpinner.hidden = true;
     mediaOptions.hidden = true;
     torrentOptions.hidden = true;
     checksumField.hidden = false;
@@ -634,6 +654,7 @@ export function createComposer(ctx: ComposerContext): Composer {
 
   addOpenButton.addEventListener("click", () => openComposer());
   emptyAddButton.addEventListener("click", () => openComposer());
+  addCloseX.addEventListener("click", () => addDialog.close());
   addCancelButton.addEventListener("click", () => {
     clearComposer();
     addDialog.close();
@@ -662,6 +683,73 @@ export function createComposer(ctx: ComposerContext): Composer {
     event.preventDefault();
     openComposer(links.join("\n"));
   });
+
+  /**
+   * Dragging a URL from a browser or dropping a `.torrent` file onto the window
+   * opens Add download pre-filled for review before anything starts.
+   */
+  let dragDepth = 0;
+  function showDropOverlay(show: boolean): void {
+    dropOverlay.hidden = !show;
+  }
+
+  function extractDroppedLinks(data: DataTransfer | null): string[] {
+    if (!data) return [];
+    const raw = data.getData("text/uri-list") || data.getData("text/plain") || "";
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+      .filter((line) => /^(?:https?:\/\/|magnet:\?|hf:\/\/)/i.test(line));
+  }
+
+  window.addEventListener("dragenter", (event) => {
+    if (ctx.hasBlockingModalOpen()) return;
+    const types = event.dataTransfer?.types ?? [];
+    if (!types.includes("text/uri-list") && !types.includes("text/plain")) return;
+    event.preventDefault();
+    dragDepth += 1;
+    showDropOverlay(true);
+  });
+  window.addEventListener("dragover", (event) => {
+    if (dropOverlay.hidden) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  });
+  window.addEventListener("dragleave", () => {
+    if (dragDepth > 0) dragDepth -= 1;
+    if (dragDepth === 0) showDropOverlay(false);
+  });
+  window.addEventListener("drop", (event) => {
+    dragDepth = 0;
+    showDropOverlay(false);
+    if (ctx.hasBlockingModalOpen()) return;
+    const links = extractDroppedLinks(event.dataTransfer);
+    if (!links.length) return;
+    event.preventDefault();
+    openComposer(links.join("\n"));
+  });
+
+  void getCurrentWebview()
+    .onDragDropEvent((event) => {
+      if (ctx.hasBlockingModalOpen()) {
+        showDropOverlay(false);
+        return;
+      }
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        const paths = "paths" in event.payload ? event.payload.paths : [];
+        if (paths.some((path) => /\.torrent$/i.test(path))) showDropOverlay(true);
+      } else if (event.payload.type === "leave") {
+        showDropOverlay(false);
+      } else if (event.payload.type === "drop") {
+        showDropOverlay(false);
+        const torrent = event.payload.paths.find((path) => /\.torrent$/i.test(path));
+        if (torrent) openComposer(torrent);
+      }
+    })
+    .catch(() => {
+      // Running outside the Tauri webview (e.g. Vite preview).
+    });
 
   kindChooser.addEventListener("change", () => {
     mediaInspection = null;

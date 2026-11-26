@@ -1,16 +1,29 @@
 import type { EngineApi } from "../engine/api";
 import type { JobDetails, JobSnapshot, SegmentView } from "../engine/types";
-import { required, setStatus } from "./dom";
-import { filename, formatBytes, formatDurationLong, friendlyError } from "./format";
+import { type QueueCapabilities, actionButton, actionsFor } from "./actions";
+import { renderSpeedChart } from "./chart";
+import { glyph, required, setStatus } from "./dom";
+import {
+  type SpeedSample,
+  computeSpeedStats,
+  fileKindMeta,
+  filename,
+  formatBytes,
+  formatDurationLong,
+  friendlyError,
+} from "./format";
 
 export interface DetailsContext {
   engine: EngineApi;
+  capabilities: QueueCapabilities;
   openDialog(dialog: HTMLDialogElement, focus: HTMLElement): void;
-  restoreFocus(fallback: HTMLElement): void;
+  restoreFocus(fallback: HTMLElement, dialog?: HTMLDialogElement): void;
   /** The row's Details button, which gets focus back when the dialog closes. */
   rowDetailsButton(jobId: string): HTMLElement | null;
   /** Where focus goes when the row is gone. */
   fallbackFocus: HTMLElement;
+  announce(message: string): void;
+  onAction(job: JobSnapshot, action: string, trigger?: HTMLButtonElement): Promise<void>;
 }
 
 export interface DetailsView {
@@ -27,10 +40,12 @@ export interface DetailsView {
 export function createDetailsView(ctx: DetailsContext): DetailsView {
   const { engine } = ctx;
   const detailsDialog = required<HTMLDialogElement>("details-dialog");
+  const detailsKindIcon = required<HTMLElement>("details-kind-icon");
   const detailsTitle = required<HTMLElement>("details-title");
   const detailsSource = required<HTMLElement>("details-source");
   const detailsStatus = required<HTMLOutputElement>("details-status");
   const detailsFigures = required<HTMLElement>("details-figures");
+  const detailsSpeedStats = required<HTMLElement>("details-speed-stats");
   const detailsGraph = required<SVGSVGElement>("details-graph");
   const detailsGraphLabel = required<SVGTitleElement>("details-graph-label");
   const detailsGraphNote = required<HTMLElement>("details-graph-note");
@@ -39,23 +54,27 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
   const detailsSegments = required<HTMLOListElement>("details-segments");
   const detailsSegmentsNote = required<HTMLElement>("details-segments-note");
   const detailsInfo = required<HTMLElement>("details-info");
+  const detailsActions = required<HTMLDivElement>("details-actions");
   const detailsClose = required<HTMLButtonElement>("details-close");
+  const detailsCloseX = required<HTMLButtonElement>("details-close-x");
 
-  /** How far back the speed graph looks. */
-  const SPEED_WINDOW_MS = 60_000;
+  /** Maximum samples kept per download (frozen once a download stops so history stays visible). */
+  const MAX_SAMPLES = 180;
 
   /**
-   * Speed samples per running download, taken from the engine-measured rate on
-   * every queue refresh, so the graph already has history when it is opened.
-   * Live only; a restart starts a new history.
+   * Speed samples per download, taken from the engine-measured rate on every
+   * queue refresh. Samples remain frozen after completion/pause so inspecting
+   * a finished download still displays its transfer speed history.
    */
-  const speedHistory = new Map<string, Array<{ at: number; bytesPerSecond: number }>>();
+  const speedHistory = new Map<string, SpeedSample[]>();
   let detailsJobId: string | null = null;
+  let currentJob: JobSnapshot | null = null;
+  let renderedActionsSignature = "";
 
   /* Details window ------------------------------------------------------------
      Everything here is drawn from engine-reported values: the smoothed rate the
      queue already shows, bytes written, and the ranges in flight. Nothing is
-     interpolated between samples, and a stopped download shows no speed. */
+     interpolated between samples, and a stopped download shows no live speed. */
 
   function recordSpeeds(snapshot: JobSnapshot[]): void {
     const now = Date.now();
@@ -65,7 +84,7 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
       if (job.state !== "running") continue;
       const samples = speedHistory.get(job.jobId) ?? [];
       samples.push({ at: now, bytesPerSecond: job.bytesPerSecond ?? 0 });
-      while (samples.length && samples[0].at < now - SPEED_WINDOW_MS) samples.shift();
+      if (samples.length > MAX_SAMPLES) samples.shift();
       speedHistory.set(job.jobId, samples);
     }
     for (const jobId of speedHistory.keys()) if (!present.has(jobId)) speedHistory.delete(jobId);
@@ -73,20 +92,42 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
 
   async function openDetails(jobId: string, opener: HTMLElement | null): Promise<void> {
     detailsJobId = jobId;
+    renderedActionsSignature = "";
     if (!(await refreshDetails())) return;
     // A click on the card leaves focus on the body; return it to the row instead.
-    if (opener === null) ctx.rowDetailsButton(jobId)?.focus();
-    ctx.openDialog(detailsDialog, detailsClose);
+    if (opener === null) ctx.rowDetailsButton(jobId)?.focus({ preventScroll: true });
+    // Focus the top-right close button (not the footer button) so the dialog
+    // always opens at the very top showing the title, KPIs, and speed history.
+    ctx.openDialog(detailsDialog, detailsCloseX);
   }
 
   detailsClose.addEventListener("click", () => detailsDialog.close());
+  detailsCloseX.addEventListener("click", () => detailsDialog.close());
   detailsDialog.addEventListener("close", () => {
     const jobId = detailsJobId;
     detailsJobId = null;
+    currentJob = null;
+    renderedActionsSignature = "";
     const button = jobId
       ? ctx.rowDetailsButton(jobId)
       : null;
-    ctx.restoreFocus(button ?? ctx.fallbackFocus);
+    ctx.restoreFocus(button ?? ctx.fallbackFocus, detailsDialog);
+  });
+
+  detailsActions.addEventListener("click", async (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-action][data-job-id]");
+    if (!button || !currentJob) return;
+    const action = button.dataset.action!;
+    // Actions that open another dialog or delete the item close Details first so
+    // modals do not stack unnecessarily.
+    if (["edit-link", "edit-checksum", "configure-media"].includes(action)) {
+      const targetJob = currentJob;
+      detailsDialog.close();
+      await ctx.onAction(targetJob, action, button);
+      return;
+    }
+    await ctx.onAction(currentJob, action, button);
+    if (detailsDialog.open) await refreshDetails();
   });
 
   /** Returns false when the download is gone, having closed the window. */
@@ -103,31 +144,77 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
     return true;
   }
 
+  function renderDetailsActions(job: JobSnapshot): void {
+    const specs = actionsFor(job, ctx.capabilities).filter((spec) => spec.action !== "details");
+    const signature = JSON.stringify([job.jobId, job.state, job.action ?? "", specs.map((s) => `${s.action}:${s.label}`)]);
+    if (signature === renderedActionsSignature) return;
+    renderedActionsSignature = signature;
+    detailsActions.replaceChildren(...specs.map((spec) => actionButton(job, spec)));
+  }
+
   function renderDetails({ job, segments }: JobDetails): void {
+    currentJob = job;
     const name = filename(job.destination) || "Download";
+    const meta = fileKindMeta(job);
+    detailsKindIcon.dataset.kind = meta.category;
+    detailsKindIcon.replaceChildren(glyph(meta.icon));
     detailsTitle.textContent = name;
     detailsSource.textContent = job.source;
     detailsSource.title = job.source;
     setStatus(detailsStatus, job);
+    renderDetailsActions(job);
 
     const running = job.state === "running";
+    const completed = job.state === "completed";
     const known = job.totalBytes && job.totalBytes > 0 ? job.totalBytes : null;
     const inFlight = segments.reduce((sum, segment) => sum + segment.received, 0);
-    const figures: Array<[string, string]> = [
-      ["Speed", running && job.bytesPerSecond ? `${formatBytes(job.bytesPerSecond)}/s` : "—"],
-      [
-        "Received",
-        known
-          ? `${formatBytes(job.bytesReceived)} of ${formatBytes(known)}`
-          : `${formatBytes(job.bytesReceived)}`,
-      ],
-      [
-        "Progress",
-        job.state === "completed" ? "100%" : known ? `${Math.floor(Math.min(job.bytesReceived / known, 1) * 100)}%` : "—",
-      ],
-      ["Time left", running && job.etaSeconds != null ? formatDurationLong(job.etaSeconds) : "—"],
-      ["Connections", running ? String(Math.max(segments.length, 1)) : "—"],
-    ];
+    const samples = speedHistory.get(job.jobId) ?? [];
+    const stats = computeSpeedStats(samples);
+    const elapsedSec =
+      completed && job.finishedAtMs && job.finishedAtMs > job.createdAtMs
+        ? Math.max(1, Math.round((job.finishedAtMs - job.createdAtMs) / 1000))
+        : null;
+
+    let figures: Array<[string, string]>;
+    if (completed) {
+      const avgLabel = stats.mean > 0 ? `${formatBytes(stats.mean)}/s` : "—";
+      const medLabel = stats.median > 0 ? `${formatBytes(stats.median)}/s` : "—";
+      const peakLabel = stats.peak > 0 ? `${formatBytes(stats.peak)}/s` : "—";
+      figures = [
+        ["File size", formatBytes(known ?? job.bytesReceived)],
+        ["Average speed", avgLabel],
+        ["Median speed", medLabel],
+        ["Peak speed", peakLabel],
+        ["Duration", elapsedSec ? formatDurationLong(elapsedSec) : "Under 1 sec"],
+      ];
+    } else if (running) {
+      figures = [
+        ["Current speed", job.bytesPerSecond ? `${formatBytes(job.bytesPerSecond)}/s` : "Measuring…"],
+        ["Median speed", stats.median > 0 ? `${formatBytes(stats.median)}/s` : "—"],
+        [
+          "Received",
+          known
+            ? `${formatBytes(job.bytesReceived)} / ${formatBytes(known)}`
+            : formatBytes(job.bytesReceived),
+        ],
+        ["Progress", known ? `${Math.floor(Math.min(job.bytesReceived / known, 1) * 100)}%` : "Unknown"],
+        ["Time left", job.etaSeconds != null ? formatDurationLong(job.etaSeconds) : "—"],
+        ["Connections", String(Math.max(segments.length, 1))],
+      ];
+    } else {
+      figures = [
+        [
+          "Received",
+          known
+            ? `${formatBytes(job.bytesReceived)} / ${formatBytes(known)}`
+            : formatBytes(job.bytesReceived),
+        ],
+        ["Progress", known ? `${Math.floor(Math.min(job.bytesReceived / known, 1) * 100)}%` : "—"],
+        ["Average speed", stats.mean > 0 ? `${formatBytes(stats.mean)}/s` : "—"],
+        ["Peak speed", stats.peak > 0 ? `${formatBytes(stats.peak)}/s` : "—"],
+        ["Retries", String(job.attempt)],
+      ];
+    }
     detailsFigures.replaceChildren(...figures.map(([term, value]) => figureGroup(term, value)));
 
     renderSpeedGraph(job);
@@ -137,10 +224,12 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
 
   function figureGroup(term: string, value: string): HTMLElement {
     const group = document.createElement("div");
+    group.className = "kpi-tile";
     const dt = document.createElement("dt");
     dt.textContent = term;
     const dd = document.createElement("dd");
     dd.textContent = value;
+    dd.title = value;
     group.append(dt, dd);
     return group;
   }
@@ -162,42 +251,23 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
   }
 
   function renderSpeedGraph(job: JobSnapshot): void {
-    const width = 600;
-    const height = 140;
     const samples = speedHistory.get(job.jobId) ?? [];
-    const now = Date.now();
-    const peak = samples.reduce((max, sample) => Math.max(max, sample.bytesPerSecond), 0);
-    const grid = [0.25, 0.5, 0.75].map((fraction) =>
-      svgElement("line", { x1: 0, x2: width, y1: height * fraction, y2: height * fraction, class: "graph-grid" }),
-    );
-    if (samples.length < 2 || peak === 0) {
-      redraw(detailsGraph, detailsGraphLabel, ...grid);
-      detailsGraphLabel.textContent = "Speed over the last minute: no transfer measured yet";
-      detailsGraphNote.textContent =
-        job.state === "running"
-          ? "Measuring…"
-          : "Speed is drawn while a download is running in this window's session.";
-      return;
-    }
-    // Headroom above the peak so the line never touches the top edge.
-    const scale = peak * 1.15;
-    const x = (at: number) => ((at - (now - SPEED_WINDOW_MS)) / SPEED_WINDOW_MS) * width;
-    const y = (rate: number) => height - (rate / scale) * height;
-    const points = samples.map((sample) => `${x(sample.at).toFixed(1)},${y(sample.bytesPerSecond).toFixed(1)}`);
-    const first = x(samples[0].at).toFixed(1);
-    const last = x(samples[samples.length - 1].at).toFixed(1);
-    const area = svgElement("polygon", {
-      points: `${first},${height} ${points.join(" ")} ${last},${height}`,
-      class: "graph-area",
+    const live = job.state === "running";
+    const emptyMessage = live
+      ? "Measuring transfer speed…"
+      : job.reusedFromCache
+        ? "Reused directly from this computer's verified cache (no network transfer)."
+        : "No transfer speed samples were recorded during this window's session.";
+    renderSpeedChart({
+      svg: detailsGraph,
+      title: detailsGraphLabel,
+      statsEl: detailsSpeedStats,
+      noteEl: detailsGraphNote,
+      samples,
+      live,
+      liveWindowMs: 90_000,
+      emptyMessage,
     });
-    const line = svgElement("polyline", { points: points.join(" "), class: "graph-line" });
-    redraw(detailsGraph, detailsGraphLabel, ...grid, area, line);
-    const average = samples.reduce((sum, sample) => sum + sample.bytesPerSecond, 0) / samples.length;
-    const summary = `Peak ${formatBytes(peak)}/s · average ${formatBytes(Math.round(average))}/s over the last ${formatDurationLong(
-      Math.max(1, Math.round((now - samples[0].at) / 1000)),
-    )}`;
-    detailsGraphLabel.textContent = `Speed over the last minute. ${summary}.`;
-    detailsGraphNote.textContent = summary;
   }
 
   function renderFileMap(job: JobSnapshot, segments: SegmentView[], known: number | null, inFlight: number): void {
@@ -257,32 +327,73 @@ export function createDetailsView(ctx: DetailsContext): DetailsView {
   }
 
   function renderDetailsInfo(job: JobSnapshot): void {
-    const rows: Array<[string, string]> = [
-      ["Saved to", job.destination ?? "Not chosen yet"],
-      ["Total size", job.totalBytes === null ? "Not stated by the source" : `${formatBytes(job.totalBytes)} (${job.totalBytes.toLocaleString()} bytes)`],
-      ["Kind", job.kind === "torrent" ? "Torrent" : job.kind === "media" ? `Media${job.qualityLabel ? ` · ${job.qualityLabel}` : ""}` : "File"],
-      ["Added", new Date(job.createdAtMs).toLocaleString()],
+    const rows: Array<{ term: string; value: string; mono?: boolean; copyValue?: string; copyLabel?: string }> = [
+      {
+        term: "Saved to",
+        value: job.destination ?? "Not chosen yet",
+        mono: Boolean(job.destination),
+        copyValue: job.destination ?? undefined,
+        copyLabel: "Copy destination path",
+      },
+      {
+        term: "Total size",
+        value: job.totalBytes === null ? "Not stated by the source" : `${formatBytes(job.totalBytes)} (${job.totalBytes.toLocaleString()} bytes)`,
+      },
+      {
+        term: "Kind",
+        value: job.kind === "torrent" ? "Torrent" : job.kind === "media" ? `Media${job.qualityLabel ? ` · ${job.qualityLabel}` : ""}` : "File",
+      },
+      { term: "Added", value: new Date(job.createdAtMs).toLocaleString() },
     ];
     if (job.finishedAtMs) {
-      rows.push(["Finished", new Date(job.finishedAtMs).toLocaleString()]);
+      rows.push({ term: "Finished", value: new Date(job.finishedAtMs).toLocaleString() });
       // Includes any time spent waiting in the queue, so no average speed is
       // derived from it.
       const elapsed = Math.round((job.finishedAtMs - job.createdAtMs) / 1000);
-      if (elapsed > 0) rows.push(["Added to finished", formatDurationLong(elapsed)]);
+      if (elapsed > 0) rows.push({ term: "Added to finished", value: formatDurationLong(elapsed) });
     }
-    if (job.attempt > 0) rows.push(["Automatic retries", String(job.attempt)]);
-    if (job.observedSha256) rows.push(["SHA-256", job.observedSha256]);
-    if (job.error) rows.push(["Problem", friendlyError(job)]);
+    if (job.attempt > 0) rows.push({ term: "Automatic retries", value: String(job.attempt) });
+    if (job.observedSha256) {
+      const matched = job.state === "completed" && !!job.expectedSha256;
+      rows.push({
+        term: matched ? "SHA-256 (matched)" : "Observed SHA-256",
+        value: job.observedSha256,
+        mono: true,
+        copyValue: job.observedSha256,
+        copyLabel: "Copy SHA-256",
+      });
+    }
+    if (job.error) rows.push({ term: "Problem", value: friendlyError(job) });
     detailsInfo.replaceChildren(
-      ...rows.flatMap(([term, value]) => {
+      ...rows.flatMap(({ term, value, mono, copyValue, copyLabel }) => {
         const dt = document.createElement("dt");
         dt.textContent = term;
         const dd = document.createElement("dd");
-        if (term === "SHA-256") {
-          const code = document.createElement("code");
-          code.textContent = value;
-          dd.append(code);
-        } else dd.textContent = value;
+        const content = mono ? document.createElement("code") : document.createElement("span");
+        content.textContent = value;
+        if (copyValue && navigator.clipboard) {
+          dd.className = "details-copy-row";
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "quiet copy-inline";
+          copy.textContent = "Copy";
+          copy.setAttribute("aria-label", copyLabel ?? `Copy ${term}`);
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(copyValue);
+              copy.textContent = "Copied";
+              ctx.announce(`${term} copied.`);
+              window.setTimeout(() => {
+                if (copy.isConnected) copy.textContent = "Copy";
+              }, 1500);
+            } catch {
+              ctx.announce(`Could not copy ${term.toLowerCase()}.`);
+            }
+          });
+          dd.append(content, copy);
+        } else {
+          dd.append(content);
+        }
         return [dt, dd];
       }),
     );
