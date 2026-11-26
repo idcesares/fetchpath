@@ -7,41 +7,52 @@ desktop's queue and Settings; the boundary itself is the engine's
 
 ## What exists
 
-`fetchpath mcp [--agent NAME]` serves the Model Context Protocol over stdio
+`fetchpath mcp [--agent NAME] [--tools SET]` serves the Model Context Protocol over stdio
 with the official Rust SDK, `rmcp` 3.4.1 (chosen 27 September 2026 from its
 crates.io record and docs: published 23 September, spec revision
 2026-07-28, Apache-2.0; built without default features, with `server`,
 `macros` and `transport-io`; it adds four crates, tokio being linked
 already). Standard output carries only protocol messages.
 
-- **Principal.** Every tool call connects to the engine (starting it if
-  needed) as `agent:NAME` (default `agent`), so the engine enforces grants,
+- **Principal & automatic identity.** Every tool call connects to the engine (starting it if
+  needed) as `agent:NAME`, so the engine enforces grants,
   size and rate holds, credential and replacement refusals, and job
-  ownership exactly as for any agent client. The MCP layer only shapes what
-  the agent sees. Engine calls run on tokio's blocking pool.
-- **Tools.** `download` (url, folder, file_name, kind auto|file|media|torrent,
-  quality, sha256, discover_peers and upload (torrents; each waits for approval), wait, timeout_seconds), `inspect_link`, `list_downloads`,
-  `get_download`, `wait_for_download`, `pause`, `resume` (a failed download
-  is retried), `cancel`, `search_history`. `download` goes through the same
-  `queue::add_named` as `fetchpath add`: the link is looked at, a video
-  page becomes a video at a quality (never the page), names are made safe.
-  Auto refuses a web page unless `kind` is `file`. Without a folder it uses
-  the agent's first granted folder, else sends the bare name (rules or the
-  default folder decide, and the grant check makes it wait). A folder must
-  be absolute; a file name must survive `safe_file_name` unchanged.
+  ownership exactly as for any agent client. When `--agent` is omitted, the
+  server normalizes the MCP host's `initialize` `clientInfo.name` into a valid
+  `AgentName` (falling back to `agent`), so generic configs need no
+  host-specific arguments. The MCP layer only shapes what the agent sees.
+  Engine calls run on tokio's blocking pool.
+- **Tools & modular toolsets.** `--tools` selects exposed groups (`all` by
+  default, or a comma-separated subset of `core`, `repository`, `inbox`) so
+  hosts can keep prompt context tight:
+  - `core`: `get_access` (resolved name, granted folders, limits, automatic
+    mode, active toolsets), `download` (url, folder, file_name, kind
+    auto|file|media|torrent, quality, sha256, discover_peers and upload, wait,
+    timeout_seconds), `inspect_link` (also hints Hugging Face repos),
+    `list_downloads`, `get_download`, `wait_for_download`, `pause`, `resume`
+    (a failed download is retried), `cancel`, `resolve_conflict` (safe rename
+    via `ChooseNewPath`, never replaces), `refresh_source` (fresh non-credential
+    URL to resume from checkpoint), `search_history`.
+  - `repository`: `inspect_repository` and `download_repository` (pinned public
+    Hugging Face repos with per-file stated SHA-256 and optional `files`
+    subset, subject to normal agent policy per file).
+  - `inbox`: `offer_file`, `list_inbox`, `accept`, `decline`.
+- **MCP Resources.** Advertises `capabilities.resources` with read-only live
+  views (`fetchpath://access`, `fetchpath://downloads`, `fetchpath://inbox`
+  when enabled) plus `fetchpath://guide` (on-demand playbook). All resource
+  payloads apply the same grant redaction and `untrusted` framing as tools.
 - **Schemas from protocol types.** Inputs and outputs derive `JsonSchema`
   and embed protocol types (`JobId`, `JobState`, `JobKind`, `JobFilter`,
   `ApprovalReason`, `IntegrityOutcome`, `LinkKind`, `WaitingReason`);
   schemars' non-standard numeric formats (`uint64` and so on) are stripped,
   since hosts' validators warn about them.
-- **Progress.** A wait holds one connection, attach-only so it never
-  restarts an engine the person stopped, polls the job every 500 ms for up
-  to 120 s by default (1800 s at most, then the agent calls again), ends
-  early when the job settles (finished, paused, awaiting approval, waiting
-  for a source or a choice) or the call is cancelled, and sends
-  `notifications/progress` with bytes and total when the caller gave a
-  progress token; progress never goes backwards, and the message is
-  Fetchpath's own (sizes only). At most 16 waits run at once.
+- **Event-driven progress.** A wait attaches to a running engine (never
+  restarting a stopped engine) and subscribes to `Command::SubscribeJob`
+  instead of polling, ending immediately when the job settles, times out (120 s
+  default, 1800 s max), or is cancelled. Sends `notifications/progress` with
+  bytes and total when a progress token was given; progress never goes
+  backwards and carries Fetchpath's own size text only. At most 16 waits run at
+  once.
 - **What an agent is shown** (`view.rs`). Text from outside (file name,
   source link without query or user info, format labels, problem text,
   page titles, content types, media formats) sits under `untrusted`;
@@ -66,17 +77,29 @@ already). Standard output carries only protocol messages.
   source, failed with a retry due): any whose destination is outside the
   new folders waits for approval again, a running one stopped at its
   checkpoint as a size stop is (contract D4). Revoking removes all folders.
-- **Command line.** `fetchpath agents [list | grant NAME FOLDER... | revoke
-  NAME [FOLDER...] | limit NAME --size S --per-hour N]` (folders must exist
-  and are stored absolute; `--json` prints `AgentPolicies`), and `fetchpath
-  approvals [--json]`, worded as the terminal's approval card.
+- **Command line & TUI.** `fetchpath agents [list | mode NAME|--all
+  ask|scoped|auto|full | grant NAME FOLDER... | revoke NAME [FOLDER...] |
+  limit NAME --size S --per-hour N | auto NAME on|off]` (folders must exist
+  and are stored absolute; `--json` prints `AgentPolicies`), interactive
+  `/agents` menu in the TUI, and `fetchpath approvals [--json]`, worded as the
+  terminal's approval card.
+- **Permission modes.** Every agent policy has a harness-style permission mode
+  (`ask`, `scoped` default, `auto`, or `full_access` — opt-in by `user` only,
+  never enabled by installers or MCP). `ask` requires approval for every
+  download while preserving saved folders/limits; `scoped` allows granted
+  folders up to size/hourly limits; `auto` lifts size, hourly, and torrent
+  peer-discovery holds inside granted folders; `full_access` bypasses all
+  download approval prompts anywhere on disk while preserving hard safety
+  invariants (never overwrites existing files, never exposes settings, rules,
+  policies, shares, or credentials).
 - **Desktop.** A waiting request's card names its agent and why it asks,
   offers Approve and Deny (named for the download), counts under Needs
   attention, and is announced in the assertive region, also when the window
   first sees it (several at once as a count). Other agent downloads say who
-  requested them. Settings has an AI agents section: add an agent by name,
-  folders with Remove, Add folder (the Windows folder picker), largest
-  download and downloads an hour with Save limits, and Revoke access; focus
+  requested them. Settings -> Automation -> AI agents lets the person set
+  permission modes directly on connected host rows, apply a mode to all
+  connected/configured agents at once, or manage per-agent cards (mode,
+  folders, size/hourly limits, and Revoke access).
   stays where the person was after each change.
 
 ## Verification
@@ -193,20 +216,26 @@ Residual risks, with reasons:
 - Three copies of the reserved-name list (engine, command line, browser
   inbox) agree now but are separate.
 
-## Guided host setup (FP-102)
+## Guided host setup (FP-102) & universal linking
 
-`apps/cli/src/agent_setup.rs` owns user-scope Codex and Claude Code registration,
-with a separate `%LOCALAPPDATA%\FetchpathAgentSetup` ownership inventory.
-`agent-setup add`, `remove`, `reconcile` and `cleanup` change only an explicitly
-selected or still-matching owned `fetchpath` entry. Codex comments and unrelated
-TOML settings survive; unrelated Claude JSON values survive. Conflicts require
-explicit adoption/replacement; edited entries stop cleanup until resolved or
-explicitly released with `remove HOST --keep-config`. Configuration writes use
-a staged, flushed replacement and a pending ownership journal; recovery compares
-the entry and prewrite digest, never stores the rest of a host's configuration.
-Registration grants no agent access. `check HOST` performs a bounded stdio
-handshake and tool discovery against an unchanged owned entry, without model
-or download calls. Host loading policy still needs checking in the host.
+`apps/cli/src/agent_setup.rs` drives user-scope MCP registration from a single
+declarative `HOSTS` table (`codex`, `claude-code`, `claude-desktop`, `cursor`,
+`vscode`, `windsurf`, `gemini-cli`), with a separate
+`%LOCALAPPDATA%\FetchpathAgentSetup` ownership inventory.
+`agent-setup add <HOST>|--detected`, `remove`, `reconcile`, `cleanup`, and
+`snippet` share the same ownership, recovery, and non-grant invariants:
+only an explicitly selected or still-matching owned `fetchpath` entry is ever
+touched; Codex comments and unrelated TOML/JSON settings survive; conflicts
+require explicit `--adopt` or `--replace`; edited entries stop cleanup until
+resolved or released with `remove HOST --keep-config`.
+`agent-setup status --json` exposes both backward-compatible `codex`/
+`claude_code` fields and the full `hosts` catalog plus `universal` snippets
+(standard `mcpServers` JSON, VS Code `servers` JSON, Codex TOML, CLI commands,
+VS Code/Cursor deeplinks, and the portable `skills/fetchpath/SKILL.md` install
+command). The desktop Settings UI reads `hosts` and `universal` dynamically
+from `agent-setup status --json` with no duplicated host list, offering
+one-click Connect/Disconnect, Connect all detected, Grant folder shortcuts,
+and copyable snippets for any other MCP host.
 
 The format/location sources checked on 3 October 2026 are the official
 [Codex MCP reference](https://learn.chatgpt.com/docs/extend/mcp?surface=cli),

@@ -57,9 +57,35 @@ export interface ToolsStatus {
   ffmpegDir: string | null;
   ytDlpVersion: string | null;
   ffmpegVersion: string | null;
+  jsRuntimeName?: string | null;
+  jsRuntimePath?: string | null;
+  jsRuntimeVersion?: string | null;
   installDir: string;
   available: AvailableTool[];
   problem: string | null;
+}
+
+interface SetupReport {
+  version: string;
+  cliOnPath: boolean;
+  engineReady: boolean;
+  defaultFolderReady: boolean;
+  media: {
+    ready: boolean;
+    ytDlpVersion?: string | null;
+    ffmpegVersion?: string | null;
+    jsRuntimeName?: string | null;
+    jsRuntimeVersion?: string | null;
+    jsRuntimeReady: boolean;
+  };
+  torrent: { ready: boolean };
+  browser: { hostInstalled: boolean; extensionPresent: boolean };
+  agents: {
+    detected: string[];
+    connected: string[];
+    ungrantedConnected: string[];
+    totalGrantedAgents: number;
+  };
 }
 
 interface BrowserSetupStatus {
@@ -145,6 +171,13 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
   const dismissOnboarding = required<HTMLButtonElement>("dismiss-onboarding");
   const onboardingMedia = required<HTMLElement>("onboarding-media");
   const onboardingOpenMedia = required<HTMLButtonElement>("onboarding-open-media");
+  const onboardingAgents = required<HTMLElement>("onboarding-agents");
+  const onboardingAgentsNote = required<HTMLElement>("onboarding-agents-note");
+  const onboardingOpenAgents = required<HTMLButtonElement>("onboarding-open-agents");
+  const setupChecklistGroup = required<HTMLElement>("setup-checklist-group");
+  const setupChecklist = required<HTMLUListElement>("setup-checklist");
+  const setupRecheck = required<HTMLButtonElement>("setup-recheck");
+  const setupOpenAgents = required<HTMLButtonElement>("setup-open-agents");
   const mediaOpenSettings = required<HTMLButtonElement>("media-open-settings");
   const mediaSetupNeeded = required<HTMLElement>("media-setup-needed");
   const mediaInspectControls = required<HTMLElement>("media-inspect-controls");
@@ -220,7 +253,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
       const category = button.dataset.settingsCategory;
       for (const choice of settingsCategories) choice.setAttribute("aria-pressed", String(choice === button));
       for (const panel of settingsForm.querySelectorAll<HTMLElement>("[data-settings-panel]")) {
-        panel.hidden = panel.dataset.settingsPanel !== category;
+        panel.hidden = panel.dataset.settingsPanel !== category || panel.dataset.unavailable === "true";
       }
       settingsForm.setAttribute("aria-label", `${button.textContent} settings`);
       settingsForm.scrollTop = 0;
@@ -426,6 +459,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
     try {
       settingsView = await invoke<SettingsView>("get_settings");
       applySettingsToForm(settingsView);
+      void refreshSetupCheck();
     } catch (error) {
       showSettingsError(error);
     }
@@ -563,7 +597,99 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
   });
 
   onboardingOpenMedia.addEventListener("click", () => void show("integrations"));
+  onboardingOpenAgents.addEventListener("click", () => void show("automation"));
+  setupOpenAgents.addEventListener("click", () => void show("automation"));
+  setupRecheck.addEventListener("click", async () => {
+    clearSettingsError();
+    setupRecheck.disabled = true;
+    try {
+      await Promise.all([refreshToolsStatus(), refreshBrowserSetup(), refreshSetupCheck()]);
+      setSettingsStatus("Requirements check updated.");
+    } finally {
+      setupRecheck.disabled = false;
+    }
+  });
   mediaOpenSettings.addEventListener("click", () => void show("integrations"));
+
+  function renderSetupChecklist(report: SetupReport): void {
+    const rows: Array<[string, string, string]> = [
+      [
+        report.media.ready ? "ok" : "missing",
+        "Video & audio",
+        report.media.ready
+          ? `yt-dlp ${report.media.ytDlpVersion ?? ""} · ffmpeg ${report.media.ffmpegVersion ?? ""}`.trim()
+          : "yt-dlp and ffmpeg not installed yet — use Download and set up below.",
+      ],
+      [
+        report.media.jsRuntimeReady ? "ok" : "optional",
+        "JS runtime (YouTube)",
+        report.media.jsRuntimeReady
+          ? `${report.media.jsRuntimeName ?? "runtime"} ${report.media.jsRuntimeVersion ?? ""}`.trim()
+          : "Not found (optional; install Deno 2.3+ or Node.js 22+ for full YouTube formats).",
+      ],
+      [
+        report.torrent.ready ? "ok" : "optional",
+        "Torrent helper",
+        report.torrent.ready ? "Installed" : "Optional — enable the Torrent component in Fetchpath Setup.",
+      ],
+      [
+        report.browser.hostInstalled && report.browser.extensionPresent ? "ok" : "optional",
+        "Browser extension",
+        report.browser.hostInstalled && report.browser.extensionPresent
+          ? "Native host and extension files ready"
+          : "Optional — enable Browser integration in Fetchpath Setup.",
+      ],
+      [
+        report.agents.connected.length > 0 && report.agents.ungrantedConnected.length === 0
+          ? "ok"
+          : report.agents.detected.length > 0
+            ? "ready"
+            : "optional",
+        "AI agents (MCP)",
+        report.agents.connected.length > 0
+          ? report.agents.ungrantedConnected.length > 0
+            ? `Connected (${report.agents.connected.join(", ")}) — grant a folder in Agents and rules`
+            : `Connected and granted (${report.agents.connected.join(", ")})`
+          : report.agents.detected.length > 0
+            ? `Detected (${report.agents.detected.join(", ")}) — ready to connect`
+            : "Use Agents and rules to copy MCP config for any host.",
+      ],
+    ];
+    setupChecklist.replaceChildren(
+      ...rows.map(([state, label, detail]) => {
+        const li = document.createElement("li");
+        li.dataset.state = state;
+        const name = document.createElement("strong");
+        name.textContent = label;
+        const text = document.createElement("span");
+        text.textContent = detail;
+        li.append(name, text);
+        return li;
+      }),
+    );
+
+    const unconnected = report.agents.detected.filter((id) => !report.agents.connected.includes(id));
+    if (unconnected.length > 0) {
+      onboardingAgentsNote.textContent = `Detected ${unconnected.join(", ")} on this PC. Connect in one click in Settings.`;
+      onboardingAgents.hidden = false;
+    } else {
+      onboardingAgents.hidden = true;
+    }
+  }
+
+  async function refreshSetupCheck(): Promise<void> {
+    try {
+      const report = JSON.parse(await invoke<string>("setup_check")) as SetupReport;
+      delete setupChecklistGroup.dataset.unavailable;
+      const active = settingsCategories.find((b) => b.getAttribute("aria-pressed") === "true")?.dataset.settingsCategory;
+      setupChecklistGroup.hidden = active !== "integrations";
+      renderSetupChecklist(report);
+    } catch {
+      setupChecklistGroup.dataset.unavailable = "true";
+      setupChecklistGroup.hidden = true;
+      onboardingAgents.hidden = true;
+    }
+  }
 
   function updateMediaAvailability(): void {
     const ready = toolsStatus?.ready ?? false;
@@ -577,8 +703,11 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
     mediaToolsState.dataset.ready = String(status.ready);
     if (status.ready) {
       mediaToolsState.textContent = "Ready to save video and audio";
+      const jsPart = status.jsRuntimeName
+        ? `JS runtime: ${status.jsRuntimeName}${status.jsRuntimeVersion ? ` ${status.jsRuntimeVersion}` : ""}`
+        : "No JS runtime found (optional: install Deno or Node.js 22+ for full YouTube formats)";
       mediaToolsDetail.textContent =
-        [status.ytDlpVersion, status.ffmpegVersion].filter(Boolean).join(" · ") || status.installDir;
+        [status.ytDlpVersion, status.ffmpegVersion, jsPart].filter(Boolean).join(" · ") || status.installDir;
     } else if (status.problem) {
       mediaToolsState.textContent = "Found, but they would not run";
       mediaToolsDetail.textContent = status.problem;
@@ -671,6 +800,7 @@ export function createSettingsPanel(ctx: SettingsPanelContext): SettingsPanel {
       load(),
       refreshToolsStatus(),
       refreshBrowserSetup(),
+      refreshSetupCheck(),
       refreshInstalledComponents(),
       refreshCliStatus(),
       agentsPanel.refresh(),

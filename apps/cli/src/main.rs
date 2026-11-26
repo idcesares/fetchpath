@@ -1,6 +1,7 @@
 mod agent_setup;
 mod agents;
 mod cache;
+mod cli_help;
 mod client;
 mod download;
 mod engine;
@@ -11,6 +12,7 @@ mod queue;
 mod remote;
 mod reveal;
 mod rules;
+mod setup_cmd;
 mod share;
 mod sharing;
 mod tools;
@@ -21,90 +23,33 @@ mod when;
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const HELP: &str = "Fetchpath — download files from the command line.
-
-Usage:
-  fetchpath [--plain]        Open the interactive terminal (in a terminal only)
-  fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
-  fetchpath --version
-  fetchpath --help
-
-The download queue, kept by the Fetchpath engine:
-  fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--upload] [--wait]
-  fetchpath torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait] [--json]
-  fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
-  fetchpath ls [--active | --failed]          fetchpath show JOB...
-  fetchpath pause | resume | cancel | retry | rm JOB...
-  fetchpath approvals                         agents' requests that wait for you
-  fetchpath approve | deny JOB...             answer an agent's request that waits for you
-  fetchpath inbox [accept OFFER [--to FOLDER] | decline OFFER]   files an agent offered you
-  fetchpath share [setup URL | test | on | off | create FILE | revoke HANDLE|all]   public links to your files through your tunnel
-  fetchpath agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]
-  fetchpath watch [JOB]                       fetchpath inspect LINK
-  fetchpath folder JOB                        show its file in File Explorer
-  fetchpath history [TEXT] [--limit N]        fetchpath settings [NAME [VALUE]]
-  fetchpath engine status | stop
-  fetchpath hub [on | off]                    keep this computer's engine running in the background
-  fetchpath web on | off | open | sign-out    the web UI on this computer (off until you turn it on)
-  fetchpath rules [list | add ... | rm ID | test LINK]   where downloads go, by site, type or size
-  fetchpath cache [status | clear]            verified copies kept for downloads with a checksum
-  fetchpath mcp [--agent NAME]               serve Fetchpath to an AI agent host (MCP, stdio)
-  fetchpath agent-setup status [--json]       detect Codex / Claude Code and owned registrations
-  fetchpath agent-setup add codex|claude-code [--adopt|--replace]   register in user scope
-  fetchpath agent-setup remove codex|claude-code [--keep-config] | cleanup | reconcile
-  fetchpath agent-setup check codex|claude-code   verify owned stdio MCP connection
-
-Video and audio need two free programs, yt-dlp and ffmpeg, that are not
-part of Fetchpath:
-  fetchpath tools                             whether they are set up
-  fetchpath tools install [--yes]             download and set them up (asks first)
-  fetchpath tools use FOLDER                  use copies you already have
-
-JOB is a download's number in `fetchpath ls`, or the start of its id.
-Every queue command takes --json to print the engine's own records.
-
-
-Paired devices (advanced; sharing is off until you run `fetchpath lan on`):
-  fetchpath lan [status]                      this computer and its paired devices
-  fetchpath lan on | off                      share checksum-verified public files with them
-  fetchpath lan pair                          show a code; then on the other device:
-  fetchpath lan join ADDRESS CODE [NAME]      fetchpath lan unpair KEY
-  fetchpath fetch-verified --sha256 HEX --size BYTES [--peer ADDRESS=KEY]... LINK DESTINATION
-
-DESTINATION may be a file name or a folder. Without one, the file goes where
-a matching rule says, or to your Downloads folder, under the name the link
-suggests. Fetchpath never
-overwrites an existing file.
-
-Options:
-  --sha256 HEX   Save the file only if it matches this SHA-256 checksum.
-  --json         Print one JSON result on standard output, and no progress.
-  -q, --quiet    Print only the saved path.
-
-Exit codes:
-  0 saved   1 engine unavailable   2 bad input   3 file already exists
-  4 network or server   5 checksum did not match   6 could not write
-  130 cancelled or interrupted
-
-The full guide is docs\\CLI.md in the Fetchpath install folder.";
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        None => tui::run(&[], HELP),
-        Some("--plain" | "--json") => tui::run(&args, HELP),
-        Some("-h" | "--help" | "help") => {
-            println!("{HELP}");
+        None => tui::run(&[], cli_help::HELP),
+        Some("--plain" | "--json") => tui::run(&args, cli_help::HELP),
+        Some("-h" | "--help") => {
+            println!("{}", cli_help::HELP);
             0
         }
+        Some("help") => cli_help::run_help(&args[1..]),
         Some("-V" | "--version" | "version") => {
             println!("fetchpath {VERSION}");
+            0
+        }
+        Some(cmd)
+            if args.len() == 2
+                && matches!(args[1].as_str(), "-h" | "--help")
+                && cli_help::command_help(cmd).is_some() =>
+        {
+            println!("{}", cli_help::command_help(cmd).expect("checked"));
             0
         }
         Some("download") => download::run(&args[1..]),
         Some("add") => queue::add(&args[1..]),
         Some("torrent") => queue::torrent(&args[1..]),
         Some("batch") => queue::batch(&args[1..]),
+        Some("status") => queue::status(&args[1..]),
         Some("ls" | "list") => queue::ls(&args[1..]),
         Some("show") => queue::show(&args[1..]),
         Some("pause") => queue::control(queue::Control::Pause, &args[1..]),
@@ -112,6 +57,7 @@ fn main() {
         Some("cancel") => queue::control(queue::Control::Cancel, &args[1..]),
         Some("retry") => queue::control(queue::Control::Retry, &args[1..]),
         Some("rm" | "remove") => queue::control(queue::Control::Remove, &args[1..]),
+        Some("clean") => queue::clean(&args[1..]),
         Some("approve") => queue::control(queue::Control::Approve, &args[1..]),
         Some("deny") => queue::control(queue::Control::Deny, &args[1..]),
         Some("watch") => queue::watch(&args[1..]),
@@ -122,6 +68,8 @@ fn main() {
         Some("hub") => queue::hub(&args[1..]),
         Some("web") => web::run(&args[1..]),
         Some("tools") => tools::run(&args[1..]),
+        Some("setup" | "doctor") => setup_cmd::run(&args[1..]),
+        Some("completions") => cli_help::completions(&args[1..]),
         Some("folder") => reveal::run(&args[1..]),
         Some("rules") => rules::run(&args[1..]),
         Some("mcp") => mcp::run(&args[1..]),
@@ -133,8 +81,15 @@ fn main() {
         Some("cache") => cache::run(&args[1..]),
         Some("lan") => lan::run(&args[1..]),
         Some("fetch-verified") => fetch_verified(&args[1..]),
+        Some(other) if cli_help::looks_like_direct_link(other) => queue::add(&args),
         Some(other) => {
-            eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");
+            if let Some(suggestion) = cli_help::suggest(other, cli_help::COMMANDS.iter().copied()) {
+                eprintln!(
+                    "fetchpath: unknown command {other}. Did you mean `{suggestion}`?\nRun `fetchpath --help` for usage."
+                );
+            } else {
+                eprintln!("fetchpath: unknown command {other}\nRun `fetchpath --help` for usage.");
+            }
             download::EXIT_USAGE
         }
     };

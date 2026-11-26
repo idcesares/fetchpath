@@ -53,6 +53,8 @@ pub struct Reply {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Open {
     Settings,
+    /// Interactive AI agent permissions menu.
+    Agents,
     /// The full-screen dashboard.
     Dashboard,
     /// Cards for agents' requests that wait for the person.
@@ -77,19 +79,46 @@ enum Takes {
     Setting,
 }
 
+/// Grouping for `/help` so commands are easy to scan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Category {
+    Downloads,
+    Queue,
+    Agents,
+    Setup,
+}
+
+impl Category {
+    const ALL: [Self; 4] = [Self::Downloads, Self::Queue, Self::Agents, Self::Setup];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Downloads => "Downloads",
+            Self::Queue => "Queue & Control",
+            Self::Agents => "Agents & Inbox",
+            Self::Setup => "Setup & Terminal",
+        }
+    }
+}
+
 pub struct Spec {
     pub name: &'static str,
     aliases: &'static [&'static str],
     pub usage: &'static str,
     pub summary: &'static str,
     takes: Takes,
+    category: Category,
 }
 
 impl Spec {
     /// Whether the command needs words after it before it can run. Only
-    /// `/add` does; job commands without a job open a picker instead.
+    /// link-taking commands do; job commands without a job open a picker instead.
     pub fn needs_words(&self) -> bool {
         self.takes == Takes::Links
+    }
+
+    pub fn aliases(&self) -> &'static [&'static str] {
+        self.aliases
     }
 }
 
@@ -100,6 +129,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/add LINK... [--to FOLDER] [--at TIME] [--sha256 HEX] [--quality Q] [--upload]",
         summary: "Look at links and confirm to download (or just paste one)",
         takes: Takes::Links,
+        category: Category::Downloads,
     },
     Spec {
         name: "torrent",
@@ -107,13 +137,39 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/torrent MAGNET|HTTPS_TORRENT|TORRENT_FILE [--to NEW_FOLDER] [--upload]",
         summary: "Add a torrent; peers see your IP address, upload stays off unless chosen",
         takes: Takes::Links,
+        category: Category::Downloads,
+    },
+    Spec {
+        name: "inspect",
+        aliases: &[],
+        usage: "/inspect LINK",
+        summary: "Inspect a link's file size, media formats, or repository files",
+        takes: Takes::Links,
+        category: Category::Downloads,
+    },
+    Spec {
+        name: "status",
+        aliases: &["st"],
+        usage: "/status",
+        summary: "One-glance engine and queue summary",
+        takes: Takes::Nothing,
+        category: Category::Queue,
     },
     Spec {
         name: "queue",
         aliases: &["ls", "list"],
-        usage: "/queue [--active | --failed]",
+        usage: "/queue [--active | --paused | --failed | --finished | --approvals]",
         summary: "Choose a download to pause, resume, retry or remove",
         takes: Takes::Nothing,
+        category: Category::Queue,
+    },
+    Spec {
+        name: "dashboard",
+        aliases: &["dash"],
+        usage: "/dashboard",
+        summary: "Full screen: filterable queue with speed and connections (F2)",
+        takes: Takes::Nothing,
+        category: Category::Queue,
     },
     Spec {
         name: "show",
@@ -121,20 +177,23 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/show JOB...",
         summary: "Describe downloads in full",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "pause",
         aliases: &[],
-        usage: "/pause JOB...",
-        summary: "Pause downloads",
+        usage: "/pause JOB...|all",
+        summary: "Pause downloads (or `all` active)",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "resume",
         aliases: &[],
-        usage: "/resume JOB...",
-        summary: "Resume paused or scheduled downloads",
+        usage: "/resume JOB...|all",
+        summary: "Resume paused or scheduled downloads (or `all`)",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "cancel",
@@ -142,41 +201,31 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/cancel JOB...",
         summary: "Cancel downloads",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "retry",
         aliases: &[],
-        usage: "/retry JOB...",
-        summary: "Try failed downloads again",
+        usage: "/retry JOB...|all",
+        summary: "Try failed downloads again (or `all`)",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "rm",
         aliases: &["remove"],
-        usage: "/rm JOB...",
-        summary: "Remove finished downloads from the list",
+        usage: "/rm JOB...|all",
+        summary: "Remove finished downloads from the list (keeps files)",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
-        name: "approvals",
-        aliases: &[],
-        usage: "/approvals",
-        summary: "Answer agents' requests that wait for you",
+        name: "clean",
+        aliases: &["clear-done"],
+        usage: "/clean [--failed]",
+        summary: "Remove finished and cancelled downloads from the list",
         takes: Takes::Nothing,
-    },
-    Spec {
-        name: "approve",
-        aliases: &[],
-        usage: "/approve JOB...",
-        summary: "Let an agent's request download",
-        takes: Takes::Jobs,
-    },
-    Spec {
-        name: "deny",
-        aliases: &[],
-        usage: "/deny JOB...",
-        summary: "Refuse an agent's request",
-        takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "rename",
@@ -184,6 +233,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/rename JOB NAME",
         summary: "Save a download stopped by an existing file under another name",
         takes: Takes::Jobs,
+        category: Category::Queue,
     },
     Spec {
         name: "folder",
@@ -191,13 +241,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/folder [JOB]",
         summary: "Show a download's file in File Explorer",
         takes: Takes::Jobs,
-    },
-    Spec {
-        name: "dashboard",
-        aliases: &["dash"],
-        usage: "/dashboard",
-        summary: "Full screen: the queue with speed and connections (F2)",
-        takes: Takes::Nothing,
+        category: Category::Queue,
     },
     Spec {
         name: "history",
@@ -205,41 +249,55 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/history [TEXT] [--limit N]",
         summary: "Search finished downloads",
         takes: Takes::Text,
+        category: Category::Queue,
     },
     Spec {
-        name: "forget",
+        name: "approvals",
         aliases: &[],
-        usage: "/forget",
-        summary: "Forget the lines typed at this prompt",
+        usage: "/approvals",
+        summary: "Answer agents' requests that wait for you",
         takes: Takes::Nothing,
+        category: Category::Agents,
     },
     Spec {
-        name: "settings",
+        name: "approve",
         aliases: &[],
-        usage: "/settings [NAME [VALUE]]",
-        summary: "Change settings from a menu",
-        takes: Takes::Setting,
+        usage: "/approve JOB...|all",
+        summary: "Let an agent's request download",
+        takes: Takes::Jobs,
+        category: Category::Agents,
     },
     Spec {
-        name: "rules",
+        name: "deny",
         aliases: &[],
-        usage: "/rules [add ... | rm ID | test LINK]",
-        summary: "Where downloads go by site, type or size, and why",
+        usage: "/deny JOB...|all",
+        summary: "Refuse an agent's request",
+        takes: Takes::Jobs,
+        category: Category::Agents,
+    },
+    Spec {
+        name: "inbox",
+        aliases: &[],
+        usage: "/inbox [accept OFFER [--to FOLDER] | decline OFFER]",
+        summary: "View, accept, or decline files an agent offered you",
         takes: Takes::Text,
+        category: Category::Agents,
     },
     Spec {
         name: "agents",
         aliases: &[],
-        usage: "/agents [grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]",
-        summary: "Which AI agents may download, where, and whether they ask",
+        usage: "/agents [mode NAME|--all ask|scoped|auto|full | grant NAME FOLDER... | revoke NAME [FOLDER...] | limit NAME --size S --per-hour N | auto NAME on|off]",
+        summary: "Manage AI agent permission modes, folders, and limits",
         takes: Takes::Text,
+        category: Category::Agents,
     },
     Spec {
-        name: "hub",
-        aliases: &[],
-        usage: "/hub [on | off]",
-        summary: "Keep the engine running in the background (always on)",
-        takes: Takes::Text,
+        name: "setup",
+        aliases: &["doctor"],
+        usage: "/setup [media]",
+        summary: "Check all requirements (media, JS runtime, torrent, AI agents)",
+        takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "tools",
@@ -247,6 +305,39 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/tools [install | use FOLDER]",
         summary: "Video tools (yt-dlp, ffmpeg): check or set them up",
         takes: Takes::Nothing,
+        category: Category::Setup,
+    },
+    Spec {
+        name: "settings",
+        aliases: &[],
+        usage: "/settings [NAME [VALUE]]",
+        summary: "Change settings from a menu",
+        takes: Takes::Setting,
+        category: Category::Setup,
+    },
+    Spec {
+        name: "rules",
+        aliases: &[],
+        usage: "/rules [add ... | rm ID | test LINK]",
+        summary: "Where downloads go by site, type or size, and why",
+        takes: Takes::Text,
+        category: Category::Setup,
+    },
+    Spec {
+        name: "hub",
+        aliases: &[],
+        usage: "/hub [on | off]",
+        summary: "Keep the engine running in the background (always on)",
+        takes: Takes::Text,
+        category: Category::Setup,
+    },
+    Spec {
+        name: "web",
+        aliases: &[],
+        usage: "/web on | off | open | sign-out",
+        summary: "Control the local loopback web UI",
+        takes: Takes::Text,
+        category: Category::Setup,
     },
     Spec {
         name: "theme",
@@ -254,6 +345,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/theme [NAME | glyphs auto|unicode|ascii | density comfortable|compact]",
         summary: "Colors, symbols and density of this terminal",
         takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "keys",
@@ -261,6 +353,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/keys [ACTION KEY | ACTION default]",
         summary: "Keys for the dashboard and its actions",
         takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "alias",
@@ -268,6 +361,15 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/alias [NAME COMMAND... | remove NAME]",
         summary: "Your own names for Fetchpath commands",
         takes: Takes::Nothing,
+        category: Category::Setup,
+    },
+    Spec {
+        name: "forget",
+        aliases: &[],
+        usage: "/forget",
+        summary: "Forget the lines typed at this prompt",
+        takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "engine",
@@ -275,6 +377,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/engine",
         summary: "Show the engine's status",
         takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "help",
@@ -282,6 +385,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/help [COMMAND]",
         summary: "Show commands and keys",
         takes: Takes::Nothing,
+        category: Category::Setup,
     },
     Spec {
         name: "quit",
@@ -289,6 +393,7 @@ pub const COMMANDS: &[Spec] = &[
         usage: "/quit",
         summary: "Leave; downloads carry on in the background",
         takes: Takes::Nothing,
+        category: Category::Setup,
     },
 ];
 
@@ -360,6 +465,7 @@ const UNKNOWN: Spec = Spec {
     usage: "",
     summary: "",
     takes: Takes::Nothing,
+    category: Category::Setup,
 };
 
 /// Runs one line against the engine. Errors become lines, never a crash:
@@ -372,10 +478,23 @@ pub fn run(engine: &Engine, jobs: &[JobSnapshot], line: &str, menus: bool) -> Re
         return reply;
     };
     if spec.name.is_empty() {
-        reply.say(
-            Tone::Bad,
-            format!("There is no /{} command. Type /help to see them.", args[0]),
-        );
+        let candidates = COMMANDS
+            .iter()
+            .flat_map(|spec| std::iter::once(spec.name).chain(spec.aliases.iter().copied()));
+        if let Some(suggestion) = crate::cli_help::suggest(&args[0], candidates) {
+            reply.say(
+                Tone::Bad,
+                format!(
+                    "There is no /{} command. Did you mean /{suggestion}? Type /help to see them.",
+                    args[0]
+                ),
+            );
+        } else {
+            reply.say(
+                Tone::Bad,
+                format!("There is no /{} command. Type /help to see them.", args[0]),
+            );
+        }
         return reply;
     }
     if menus && let Some(open) = menu_for(spec, &args) {
@@ -395,6 +514,7 @@ fn menu_for(spec: &Spec, args: &[String]) -> Option<Open> {
     }
     match spec.name {
         "settings" => Some(Open::Settings),
+        "agents" => Some(Open::Agents),
         "dashboard" => Some(Open::Dashboard),
         "approvals" => Some(Open::Approvals),
         "queue" => Some(Open::Jobs(None)),
@@ -504,6 +624,19 @@ fn execute(
     if spec.name == "hub" {
         return hub(engine, spec, args, reply);
     }
+    if spec.name == "inbox" {
+        for line in crate::inbox::run_lines(engine, args)? {
+            reply.say(Tone::Normal, line);
+        }
+        return Ok(());
+    }
+    if spec.name == "web" {
+        let [action] = args else {
+            return Err(usage_error(spec, "Say on, off, open, or sign-out"));
+        };
+        reply.say(Tone::Normal, crate::web::act_message(engine, action)?);
+        return Ok(());
+    }
     let flags: &[&str] = match spec.name {
         "add" => &[
             "--to",
@@ -514,7 +647,15 @@ fn execute(
             "--upload",
         ],
         "torrent" => &["--to", "--discover-peers", "--upload"],
-        "queue" => &["--active", "--failed"],
+        "queue" => &[
+            "--active",
+            "--failed",
+            "--finished",
+            "--paused",
+            "--approvals",
+        ],
+        "clean" => &["--failed", "--all"],
+        "pause" | "resume" | "retry" | "rm" | "approve" | "deny" => &["--all"],
         "history" => &["--limit"],
         _ => &[],
     };
@@ -542,19 +683,26 @@ fn execute(
             reply.say(Tone::Dim, queue::torrent_note());
             Ok(())
         }
+        "inspect" => {
+            let [link] = parsed.words.as_slice() else {
+                return Err(usage_error(spec, "Give one link to inspect"));
+            };
+            for line in queue::inspect_lines(engine, link)? {
+                reply.say(Tone::Normal, line);
+            }
+            Ok(())
+        }
+        "status" => {
+            for (warn, line) in queue::status_lines(engine)? {
+                reply.say(if warn { Tone::Bad } else { Tone::Normal }, line);
+            }
+            Ok(())
+        }
         "queue" => {
             let all = engine.jobs(JobFilter::All)?;
             let shown: Vec<&JobSnapshot> = all
                 .iter()
-                .filter(|job| {
-                    if parsed.failed {
-                        job.state == JobState::Failed
-                    } else if parsed.active {
-                        !job.state.is_terminal() && job.state != JobState::Failed
-                    } else {
-                        true
-                    }
-                })
+                .filter(|job| queue::matches_ls_filter(job, &parsed))
                 .collect();
             if shown.is_empty() {
                 reply.say(Tone::Normal, "No downloads.");
@@ -562,6 +710,41 @@ fn execute(
             }
             for line in queue::table_lines(&all, &shown) {
                 reply.say(Tone::Normal, line);
+            }
+            Ok(())
+        }
+        "clean" => {
+            if !parsed.words.is_empty() {
+                return Err(usage_error(spec, "clean takes no job names"));
+            }
+            let queue::CleanOutcome { removed, failed } =
+                queue::clean_jobs(engine, parsed.failed || parsed.all)?;
+            if removed.is_empty() && failed.is_empty() {
+                reply.say(Tone::Normal, "Nothing to clean.");
+            } else if !removed.is_empty() {
+                let noun = if removed.len() == 1 {
+                    "download"
+                } else {
+                    "downloads"
+                };
+                reply.say(
+                    Tone::Good,
+                    format!(
+                        "Removed {} {noun} from the list (saved files kept).",
+                        removed.len()
+                    ),
+                );
+            }
+            for (job, error) in failed {
+                reply.say(
+                    Tone::Bad,
+                    format!(
+                        "{} {}: {}",
+                        client::short_id(&job),
+                        client::name(&job),
+                        error.message
+                    ),
+                );
             }
             Ok(())
         }
@@ -601,10 +784,27 @@ fn execute(
                 "deny" => Control::Deny,
                 _ => Control::Remove,
             };
-            if parsed.words.is_empty() {
-                return Err(usage_error(spec, "Name at least one download"));
+            let bulk = parsed.all
+                || (parsed.words.len() == 1 && parsed.words[0].eq_ignore_ascii_case("all"));
+            let targets = if bulk {
+                if parsed.all && !parsed.words.is_empty() {
+                    return Err(usage_error(
+                        spec,
+                        "Use either --all or specific downloads, not both",
+                    ));
+                }
+                queue::bulk_targets(action, jobs).map_err(|message| usage_error(spec, &message))?
+            } else {
+                if parsed.words.is_empty() {
+                    return Err(usage_error(spec, "Name at least one download"));
+                }
+                resolve(jobs, &parsed.words)?
+            };
+            if targets.is_empty() {
+                reply.say(Tone::Normal, "No matching downloads.");
+                return Ok(());
             }
-            for job in resolve(jobs, &parsed.words)? {
+            for job in targets {
                 match engine.send(queue::control_command(action, &job)) {
                     Ok(result) => reply.say(Tone::Normal, queue::describe(action, &job, &result)),
                     Err(error) => reply.say(
@@ -649,6 +849,33 @@ fn execute(
             }
             Ok(())
         }
+        "setup" => match parsed
+            .words
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] | ["check"] | ["status"] => {
+                let report = crate::setup_cmd::inspect();
+                for line in crate::setup_cmd::report_lines(&report) {
+                    let tone = if line.contains("[missing]") || line.contains("[warn]") {
+                        Tone::Bad
+                    } else if line.contains("[ok]") {
+                        Tone::Good
+                    } else {
+                        Tone::Normal
+                    };
+                    reply.say(tone, line);
+                }
+                Ok(())
+            }
+            ["media"] => {
+                reply.set_up_tools = true;
+                Ok(())
+            }
+            _ => Err(usage_error(spec, "Use /setup to check, or /setup media")),
+        },
         "tools" => match parsed
             .words
             .iter()
@@ -856,36 +1083,56 @@ fn torrent_add_destination<'a>(
 
 fn help(topic: Option<&str>, reply: &mut Reply) {
     if let Some(topic) = topic {
-        match find(topic.trim_start_matches('/')) {
+        let clean = topic.trim_start_matches('/');
+        match find(clean) {
             Some(spec) => {
                 reply.say(Tone::Normal, spec.usage);
                 reply.say(Tone::Normal, format!("  {}", spec.summary));
+                if !spec.aliases.is_empty() {
+                    let aliases: Vec<String> = spec
+                        .aliases
+                        .iter()
+                        .map(|alias| format!("/{alias}"))
+                        .collect();
+                    reply.say(Tone::Dim, format!("  Aliases: {}", aliases.join(", ")));
+                }
             }
-            None => reply.say(Tone::Bad, format!("There is no /{topic} command.")),
+            None => {
+                let candidates = COMMANDS.iter().flat_map(|spec| {
+                    std::iter::once(spec.name).chain(spec.aliases.iter().copied())
+                });
+                if let Some(suggestion) = crate::cli_help::suggest(clean, candidates) {
+                    reply.say(
+                        Tone::Bad,
+                        format!("There is no /{clean} command. Did you mean /{suggestion}?"),
+                    );
+                } else {
+                    reply.say(Tone::Bad, format!("There is no /{clean} command."));
+                }
+            }
         }
         return;
     }
     reply.say(
         Tone::Normal,
-        "Paste or type a link to download it. Commands start with /:",
+        "Paste or type a link to download it. Commands start with / (use /help COMMAND for details):",
     );
-    for spec in COMMANDS {
-        reply.say(
-            Tone::Normal,
-            format!("  {:<11}{}", format!("/{}", spec.name), spec.summary),
-        );
+    for category in Category::ALL {
+        reply.say(Tone::Dim, format!("\n{}:", category.title()));
+        for spec in COMMANDS.iter().filter(|spec| spec.category == category) {
+            reply.say(
+                Tone::Normal,
+                format!("  {:<12}{}", format!("/{}", spec.name), spec.summary),
+            );
+        }
     }
     reply.say(
         Tone::Normal,
-        "JOB is a number from the panel or /queue, or the start of its id.",
+        "\nJOB is a number from the panel or /queue, or the start of its id. Bulk commands also accept `all`.",
     );
     reply.say(
-        Tone::Normal,
-        "Keys: Tab completes, Up and Down recall earlier lines, Esc clears the line, F2 opens the dashboard (/keys changes it), Ctrl+C on an empty line leaves. Typing / lists the commands to choose from; menus and cards take the mouse too.",
-    );
-    reply.say(
-        Tone::Normal,
-        "/alias lists your own commands; /theme and /keys change how this terminal looks and which keys it takes (kept in cli.toml in the data folder).",
+        Tone::Dim,
+        "Keys: Tab completes, Up/Down recall, Esc clears, Ctrl+L refreshes, F2 opens the dashboard (Tab filter, / find, Space pause/resume), Ctrl+C on an empty line leaves.",
     );
 }
 
@@ -1255,5 +1502,49 @@ mod tests {
         );
         assert_eq!(common_prefix(&[candidate("Abc"), candidate("abd")]), "Ab");
         assert_eq!(common_prefix(&[candidate("x")]), "x");
+    }
+
+    #[test]
+    fn new_slash_commands_aliases_and_grouped_help_work() {
+        assert_eq!(parse("/doctor").unwrap().0.name, "setup");
+        assert_eq!(parse("/st").unwrap().0.name, "status");
+        assert_eq!(parse("/clear-done").unwrap().0.name, "clean");
+        assert_eq!(
+            parse("/inspect https://a.test/x").unwrap().0.name,
+            "inspect"
+        );
+        assert_eq!(parse("/inbox").unwrap().0.name, "inbox");
+        assert_eq!(parse("/web on").unwrap().0.name, "web");
+
+        let mut reply = Reply::default();
+        help(None, &mut reply);
+        let text: String = reply
+            .lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Downloads:"));
+        assert!(text.contains("Queue & Control:"));
+        assert!(text.contains("Agents & Inbox:"));
+        assert!(text.contains("Setup & Terminal:"));
+        assert!(text.contains("/setup"));
+        assert!(text.contains("/status"));
+        assert!(text.contains("/clean"));
+
+        let mut topic_reply = Reply::default();
+        help(Some("doctor"), &mut topic_reply);
+        let topic_text: String = topic_reply
+            .lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(topic_text.contains("/setup"));
+        assert!(topic_text.contains("/doctor"));
+
+        let mut typo_reply = Reply::default();
+        help(Some("stauts"), &mut typo_reply);
+        assert!(typo_reply.lines[0].text.contains("Did you mean /status?"));
     }
 }

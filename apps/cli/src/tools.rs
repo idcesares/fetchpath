@@ -93,7 +93,7 @@ pub fn disclosure(dir: &Path) -> Vec<String> {
 /// How the helpers stand, for `fetchpath tools` and `/tools`.
 pub fn status_lines(status: &ToolsStatus) -> Vec<String> {
     if status.ready {
-        return vec![
+        let mut lines = vec![
             "Video and audio tools are ready:".to_owned(),
             format!(
                 "  yt-dlp  {}  {}",
@@ -110,6 +110,20 @@ pub fn status_lines(status: &ToolsStatus) -> Vec<String> {
                 status.ffmpeg_dir.as_deref().unwrap_or_default()
             ),
         ];
+        if let Some(name) = &status.js_runtime_name {
+            lines.push(format!(
+                "  js      {} ({})  {}",
+                name,
+                status.js_runtime_version.as_deref().unwrap_or("?"),
+                status.js_runtime_path.as_deref().unwrap_or_default()
+            ));
+        } else {
+            lines.push(
+                "  js      not found (optional, recommended: install Deno or Node.js 22+ for full YouTube format extraction)"
+                    .to_owned(),
+            );
+        }
+        return lines;
     }
     let mut lines = Vec::new();
     if let Some(problem) = &status.problem {

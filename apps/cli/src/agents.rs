@@ -6,19 +6,27 @@ use crate::client::{self, Engine};
 use crate::download::{self, EXIT_USAGE};
 use fetchpath_protocol::command::{Command, JobFilter};
 use fetchpath_protocol::message::CommandResult;
-use fetchpath_protocol::principal::{AgentAccess, AgentName, AgentPolicy};
+use fetchpath_protocol::principal::{AgentAccess, AgentName, AgentPermissionMode, AgentPolicy};
 use fetchpath_protocol::{JobSnapshot, ProtocolError};
 use std::path::Path;
 
 pub const USAGE: &str = "usage: fetchpath agents [list]
+       fetchpath agents mode NAME ask|scoped|auto|full
+       fetchpath agents mode --all ask|scoped|auto|full
        fetchpath agents grant NAME FOLDER...      let NAME save into these folders
        fetchpath agents revoke NAME [FOLDER...]   take folders away, or all of NAME's access
        fetchpath agents limit NAME [--size SIZE] [--per-hour N]
-       fetchpath agents auto NAME on|off          inside its folders, never ask about size,
-                                                  downloads an hour or torrent peers
+       fetchpath agents auto NAME on|off          shorthand for `mode NAME auto` / `scoped`
        fetchpath approvals                        requests waiting for you
-NAME is the name given with `fetchpath mcp --agent NAME`. Anything outside
-an agent's folders or limits waits for `fetchpath approve JOB`.";
+
+Permission modes:
+  ask          every download waits for your approval (keeps saved folders/limits)
+  scoped       inside granted folders, allowed up to size/hourly limits (default)
+  auto         inside granted folders, skips size, hourly, and torrent peer holds
+  full         full access: skip all download approvals anywhere on disk
+               (still never overwrites files or exposes settings/credentials)
+
+NAME is the name given with `fetchpath mcp --agent NAME` (or auto-detected host id).";
 
 pub fn run(args: &[String]) -> i32 {
     let json = args.iter().any(|arg| arg == "--json");
@@ -44,6 +52,8 @@ pub fn run(args: &[String]) -> i32 {
 /// `/agents` share.
 pub(crate) enum Request<'a> {
     List,
+    Mode(&'a str, AgentPermissionMode),
+    ModeAll(AgentPermissionMode),
     Grant(&'a str, &'a [&'a str]),
     Revoke(&'a str, &'a [&'a str]),
     Limit(&'a str, &'a [&'a str]),
@@ -55,6 +65,8 @@ impl<'a> Request<'a> {
     pub(crate) fn parse(words: &'a [&'a str]) -> Option<Self> {
         Some(match words {
             [] | ["list"] => Self::List,
+            ["mode", "--all", mode] => Self::ModeAll(AgentPermissionMode::parse(mode)?),
+            ["mode", name, mode] => Self::Mode(name, AgentPermissionMode::parse(mode)?),
             ["grant", name, folders @ ..] if !folders.is_empty() => Self::Grant(name, folders),
             ["revoke", name, folders @ ..] => Self::Revoke(name, folders),
             ["limit", name, rest @ ..] if !rest.is_empty() => Self::Limit(name, rest),
@@ -67,6 +79,8 @@ impl<'a> Request<'a> {
     pub(crate) fn perform(&self, engine: &Engine) -> Result<Vec<AgentAccess>, ProtocolError> {
         match *self {
             Self::List => policies(engine),
+            Self::Mode(name, mode) => set_mode(engine, parse_name(name)?, mode),
+            Self::ModeAll(mode) => set_mode_all(engine, mode),
             Self::Grant(name, folders) => grant(engine, parse_name(name)?, folders),
             Self::Revoke(name, folders) => revoke(engine, parse_name(name)?, folders),
             Self::Limit(name, rest) => limit(engine, parse_name(name)?, rest),
@@ -114,25 +128,42 @@ pub fn lines(policies: &[AgentAccess]) -> Vec<String> {
     if policies.is_empty() {
         return vec![
             "No agent has access yet. Every agent's request waits for you.".into(),
-            "fetchpath agents grant NAME FOLDER lets one save into a folder.".into(),
+            "Run `fetchpath agents grant NAME FOLDER` or `fetchpath agents mode NAME full`.".into(),
         ];
     }
     let mut out = Vec::new();
     for access in policies {
         let policy = &access.policy;
-        out.push(if policy.automatic {
-            format!(
-                "{}  automatic: inside its folders, nothing it downloads waits for you",
+        let mode = policy.effective_mode();
+        out.push(match mode {
+            AgentPermissionMode::Ask => format!(
+                "{}  [ask] every download waits for your approval",
                 access.agent
-            )
-        } else {
-            format!(
-                "{}  up to {} a download, {} downloads an hour",
+            ),
+            AgentPermissionMode::Scoped => format!(
+                "{}  [scoped] up to {} a download, {} downloads an hour",
                 access.agent,
                 client::bytes(policy.max_bytes),
                 policy.max_new_jobs_per_hour
-            )
+            ),
+            AgentPermissionMode::Auto => format!(
+                "{}  [auto] automatic inside its folders, nothing it downloads waits for you",
+                access.agent
+            ),
+            AgentPermissionMode::FullAccess => format!(
+                "{}  [full-access] skips all download approvals anywhere on disk",
+                access.agent
+            ),
         });
+        if mode == AgentPermissionMode::FullAccess {
+            if !policy.folders.is_empty() {
+                out.push("  (saved folders kept if you switch back to scoped/auto:)".into());
+                for folder in &policy.folders {
+                    out.push(format!("  {folder}"));
+                }
+            }
+            continue;
+        }
         if policy.folders.is_empty() {
             out.push("  no folders: everything it asks for waits for you".into());
         }
@@ -258,15 +289,65 @@ fn limit(
     set(engine, &agent, Some(policy))
 }
 
+/// `fetchpath agents mode NAME ask|scoped|auto|full`.
+pub(crate) fn set_mode(
+    engine: &Engine,
+    agent: AgentName,
+    mode: AgentPermissionMode,
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    let mut policy = current(engine, &agent)?;
+    policy.set_mode(mode);
+    set(engine, &agent, Some(policy))
+}
+
+/// Applies `mode` to every configured agent and every connected MCP host on this PC.
+fn set_mode_all(
+    engine: &Engine,
+    mode: AgentPermissionMode,
+) -> Result<Vec<AgentAccess>, ProtocolError> {
+    let mut names: std::collections::BTreeSet<AgentName> = policies(engine)?
+        .into_iter()
+        .map(|access| access.agent)
+        .collect();
+    if let Ok(status) = crate::agent_setup::status_json()
+        && let Some(hosts) = status["hosts"].as_array()
+    {
+        for host in hosts {
+            if host["registered"] == serde_json::Value::Bool(true)
+                && let Some(id) = host["id"].as_str()
+                && let Ok(name) = AgentName::try_from(id)
+            {
+                names.insert(name);
+            }
+        }
+    }
+    if names.is_empty() {
+        return Err(client::input_error(
+            "No configured or connected agents found. Connect a host with `fetchpath agent-setup add --detected` or pass a specific name: `fetchpath agents mode NAME full`.",
+        ));
+    }
+    let mut latest = Vec::new();
+    for agent in names {
+        latest = set_mode(engine, agent, mode)?;
+    }
+    Ok(latest)
+}
+
 /// `fetchpath agents auto NAME on|off` (contract D7). Folders still apply.
 fn automatic(
     engine: &Engine,
     agent: AgentName,
     on: bool,
 ) -> Result<Vec<AgentAccess>, ProtocolError> {
-    let mut policy = current(engine, &agent)?;
-    policy.automatic = on;
-    set(engine, &agent, Some(policy))
+    set_mode(
+        engine,
+        agent,
+        if on {
+            AgentPermissionMode::Auto
+        } else {
+            AgentPermissionMode::Scoped
+        },
+    )
 }
 
 /// `fetchpath approvals`: every request waiting for the person, as the
@@ -324,7 +405,24 @@ mod tests {
             agent: AgentName::try_from("helper").unwrap(),
             policy: AgentPolicy::default(),
         }]);
-        assert!(lines[0].starts_with("helper  up to 1.0 GiB a download, 20 downloads"));
+        assert!(lines[0].starts_with("helper  [scoped] up to 1.0 GiB a download, 20 downloads"));
         assert!(lines[1].contains("waits for you"));
+    }
+
+    #[test]
+    fn mode_requests_parse_aliases_and_all_flag() {
+        assert!(matches!(
+            Request::parse(&["mode", "codex", "full"]),
+            Some(Request::Mode("codex", AgentPermissionMode::FullAccess))
+        ));
+        assert!(matches!(
+            Request::parse(&["mode", "codex", "bypass"]),
+            Some(Request::Mode("codex", AgentPermissionMode::FullAccess))
+        ));
+        assert!(matches!(
+            Request::parse(&["mode", "--all", "ask"]),
+            Some(Request::ModeAll(AgentPermissionMode::Ask))
+        ));
+        assert!(Request::parse(&["mode", "codex", "invalid"]).is_none());
     }
 }

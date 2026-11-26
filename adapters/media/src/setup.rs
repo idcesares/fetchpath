@@ -89,6 +89,14 @@ pub struct ToolsStatus {
     /// Reported by the helpers themselves, never inferred from a file name.
     pub yt_dlp_version: Option<String>,
     pub ffmpeg_version: Option<String>,
+    /// Optional JavaScript runtime (`deno`, `node`, `quickjs`) detected for
+    /// modern `yt-dlp` EJS challenges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_version: Option<String>,
     /// Where a guided install would put them.
     pub install_dir: String,
     /// One entry per pinned artifact, so the interface can name versions,
@@ -126,6 +134,12 @@ pub fn status(configured_dir: Option<&str>, install_dir: &Path) -> ToolsStatus {
         ..ToolsStatus::default()
     };
 
+    if let Some(runtime) = MediaTools::discover_js_runtime(Some(install_dir)) {
+        status.js_runtime_name = Some(runtime.name.to_owned());
+        status.js_runtime_path = Some(runtime.path.display().to_string());
+        status.js_runtime_version = runtime.version();
+    }
+
     let resolved = configured_dir
         .map(PathBuf::from)
         .and_then(|root| MediaTools::discover_in(&root).ok())
@@ -137,6 +151,13 @@ pub fn status(configured_dir: Option<&str>, install_dir: &Path) -> ToolsStatus {
     };
     status.yt_dlp_path = Some(tools.yt_dlp.display().to_string());
     status.ffmpeg_dir = Some(tools.ffmpeg_dir.display().to_string());
+    if let Some(runtime) = &tools.js_runtime {
+        status.js_runtime_name = Some(runtime.name.to_owned());
+        status.js_runtime_path = Some(runtime.path.display().to_string());
+        if status.js_runtime_version.is_none() {
+            status.js_runtime_version = runtime.version();
+        }
+    }
 
     // Presence on disk is not readiness. A helper that will not run is a
     // clearer thing to say now than a failed download later.

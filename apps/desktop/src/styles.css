@@ -1036,13 +1036,28 @@ code { display: block; color: inherit; overflow-wrap: anywhere; }
 /* Agents in Settings and their requests in the queue (FP-066). */
 .agents-list { display: grid; gap: var(--fp-space-3); margin: var(--fp-space-2) 0 var(--fp-space-3); }
 .agent-card { padding: var(--fp-space-3) 16px; border: 1px solid var(--fp-line); border-radius: var(--fp-radius-md); background: var(--fp-field); }
-.agent-card h3 { margin: 0 0 var(--fp-space-1); font-size: var(--fp-text-md); }
+.agent-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fp-space-2); margin-bottom: var(--fp-space-1); }
+.agent-card h3 { margin: 0; font-size: var(--fp-text-md); }
+.agent-mode-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: var(--fp-text-xs); font-weight: 600; border: 1px solid var(--fp-line); background: var(--fp-surface); color: var(--fp-text-muted); }
+.agent-mode-badge[data-mode="auto"] { color: var(--fp-accent); border-color: var(--fp-accent); }
+.agent-mode-badge[data-mode="full_access"] { color: var(--fp-warn-fg, #f59e0b); border-color: var(--fp-warn-fg, #f59e0b); background: var(--fp-warn-bg, rgba(245, 158, 11, 0.12)); }
+.agent-mode-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--fp-space-2); align-items: center; margin: var(--fp-space-2) 0; }
+.agent-mode-row label { margin: 0; font-size: var(--fp-text-sm); color: var(--fp-text-muted); }
+.agent-mode-select { max-width: 100%; font-size: var(--fp-text-sm); }
+.agent-mode-select.compact { width: auto; min-width: 170px; padding: 4px 8px; }
+.agent-full-warning { margin: var(--fp-space-2) 0; padding: 8px 12px; border-left: var(--fp-rail) solid var(--fp-warn-fg, #f59e0b); border-radius: 0 var(--fp-radius-sm) var(--fp-radius-sm) 0; background: var(--fp-warn-bg, rgba(245, 158, 11, 0.1)); font-size: var(--fp-text-sm); }
+.agent-bulk-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fp-space-2); padding: 8px 12px; margin-bottom: var(--fp-space-2); border: 1px solid var(--fp-line); border-radius: var(--fp-radius-sm); background: var(--fp-field); }
 .agent-folders { margin: var(--fp-space-2) 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .agent-folders li { display: grid; grid-template-columns: 1fr auto; gap: var(--fp-space-2); align-items: center; }
 .agent-folders code { overflow-wrap: anywhere; font: var(--fp-text-sm)/1.4 var(--fp-font-mono); }
 .agent-limits { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--fp-space-2); align-items: end; margin-top: var(--fp-space-2); }
 .agent-actions { display: flex; flex-wrap: wrap; gap: var(--fp-space-2); margin-top: 12px; }
 .agent-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fp-space-2) var(--fp-space-3); padding: 8px 0; }
+.agent-row-actions { display: flex; flex-wrap: wrap; gap: var(--fp-space-2); align-items: center; }
+.setup-checklist { list-style: none; margin: var(--fp-space-2) 0 var(--fp-space-3); padding: 0; display: grid; gap: 8px; }
+.setup-checklist li { display: grid; gap: 2px; padding: 8px 12px; border: 1px solid var(--fp-line); border-radius: var(--fp-radius-sm); background: var(--fp-field); font-size: var(--fp-text-sm); }
+.setup-checklist li[data-state="ok"] { border-left: var(--fp-rail) solid var(--fp-success-fg, var(--fp-accent)); }
+.setup-checklist li[data-state="missing"], .setup-checklist li[data-state="ready"] { border-left: var(--fp-rail) solid var(--fp-approval-fg); }
 /* An agent's request: violet is the approval role, with its glyph and words. */
 .approval-note { margin: 8px 0 var(--fp-space-2); padding: var(--fp-space-2) 12px; border-left: var(--fp-rail) solid var(--fp-approval-fg); border-radius: 0 var(--fp-radius-sm) var(--fp-radius-sm) 0; color: var(--fp-approval-fg); background: var(--fp-approval-bg); font-size: var(--fp-text-sm); }
 .rules-list { display: grid; gap: var(--fp-space-2); margin: var(--fp-space-2) 0 var(--fp-space-3); padding-left: 1.5em; }

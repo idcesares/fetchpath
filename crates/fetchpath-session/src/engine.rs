@@ -826,18 +826,24 @@ impl Engine {
                     };
                     let mut origin = self.origin(principal, source, &origin_destination)?;
                     if !principal.is_user() {
-                        // An agent in automatic mode may let its torrent
-                        // find peers (contract D7); uploading still asks.
-                        let automatic = matches!(
-                            principal,
-                            Principal::Agent(agent) if self.session.agent_policy(agent).automatic
+                        // Auto lifts peer discovery inside granted folders; full access
+                        // lifts both peer discovery and upload prompts (explicit opt-in).
+                        let access = match principal {
+                            Principal::Agent(agent) => Some(self.session.agent_policy(agent)),
+                            _ => None,
+                        };
+                        let lifts_discovery = access
+                            .as_ref()
+                            .is_some_and(fetchpath_protocol::principal::AgentPolicy::lifts_limits);
+                        let lifts_upload = access.as_ref().is_some_and(
+                            fetchpath_protocol::principal::AgentPolicy::is_full_access,
                         );
-                        if !automatic {
+                        if !lifts_discovery {
                             origin
                                 .approval
                                 .push(fetchpath_protocol::principal::ApprovalReason::PeerDiscovery);
                         }
-                        if *upload {
+                        if *upload && !lifts_upload {
                             origin
                                 .approval
                                 .push(fetchpath_protocol::principal::ApprovalReason::PeerUpload);
@@ -1341,10 +1347,12 @@ impl Engine {
                 let needle = query.as_deref().map(str::to_lowercase);
                 let limit = limit.unwrap_or(100).clamp(1, 1_000) as usize;
                 // An agent's words match a destination's folders only inside
-                // its grant, so a search cannot spell out a hidden path.
-                let grants = principal
-                    .agent()
-                    .map(|agent| self.session.agent_policy(agent).folders);
+                // its grant (unless full access is enabled), so a search
+                // cannot spell out a hidden path.
+                let grants = principal.agent().and_then(|agent| {
+                    let access = self.session.agent_policy(agent);
+                    (!access.is_full_access()).then_some(access.folders)
+                });
                 let searchable = |path: &str| -> String {
                     match &grants {
                         Some(folders)

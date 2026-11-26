@@ -23,11 +23,47 @@ const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(60);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsRuntime {
+    /// yt-dlp runtime identifier: `deno`, `node`, or `quickjs`.
+    pub name: &'static str,
+    pub path: PathBuf,
+}
+
+impl JsRuntime {
+    /// Argument value for `yt-dlp --js-runtimes`.
+    pub fn yt_dlp_arg(&self) -> String {
+        format!("{}:{}", self.name, self.path.display())
+    }
+
+    /// Queries the runtime's `--version` line safely with a short timeout.
+    pub fn version(&self) -> Option<String> {
+        let cancel = AtomicBool::new(false);
+        let pid = AtomicU32::new(0);
+        let output = run_helper(
+            &self.path,
+            &["--version".into()],
+            &cancel,
+            &pid,
+            Duration::from_secs(5),
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let line = first_line(&output.stdout);
+        (!line.is_empty()).then_some(line)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MediaTools {
     pub yt_dlp: PathBuf,
     pub ffmpeg_dir: PathBuf,
     pub ffprobe: PathBuf,
+    /// Optional JavaScript runtime passed via `--js-runtimes` for modern yt-dlp
+    /// EJS challenges (e.g. YouTube).
+    pub js_runtime: Option<JsRuntime>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -159,11 +195,53 @@ impl MediaTools {
             yt_dlp: yt_dlp.into(),
             ffmpeg_dir: ffmpeg_dir.into(),
             ffprobe: ffprobe.into(),
+            js_runtime: None,
         };
         if !tools.yt_dlp.is_file() || !tools.ffmpeg_dir.is_dir() || !tools.ffprobe.is_file() {
             return Err(MediaError::HelperUnavailable);
         }
         Ok(tools)
+    }
+
+    pub fn with_js_runtime(mut self, runtime: Option<JsRuntime>) -> Self {
+        self.js_runtime = runtime;
+        self
+    }
+
+    /// Locates a JavaScript runtime supported by `yt-dlp --js-runtimes`:
+    /// prefers `deno` (in `search_dir`, then `PATH`), then `node` (`PATH`),
+    /// then `quickjs` (`qjs` in `search_dir` or `PATH`).
+    pub fn discover_js_runtime(search_dir: Option<&Path>) -> Option<JsRuntime> {
+        let check_dir = |dir: &Path, bin: &str| {
+            let candidate = dir.join(executable(bin));
+            candidate.is_file().then_some(candidate)
+        };
+        if let Some(dir) = search_dir
+            && let Some(path) = check_dir(dir, "deno")
+        {
+            return Some(JsRuntime { name: "deno", path });
+        }
+        if let Some(path) = find_on_path("deno") {
+            return Some(JsRuntime { name: "deno", path });
+        }
+        if let Some(path) = find_on_path("node") {
+            return Some(JsRuntime { name: "node", path });
+        }
+        if let Some(dir) = search_dir
+            && let Some(path) = check_dir(dir, "qjs")
+        {
+            return Some(JsRuntime {
+                name: "quickjs",
+                path,
+            });
+        }
+        if let Some(path) = find_on_path("qjs") {
+            return Some(JsRuntime {
+                name: "quickjs",
+                path,
+            });
+        }
+        None
     }
 
     pub fn discover() -> Result<Self, MediaError> {
@@ -172,22 +250,34 @@ impl MediaTools {
             std::env::var_os("FETCHPATH_FFMPEG_DIR"),
         ) {
             let ffmpeg_dir = PathBuf::from(ffmpeg_dir);
-            return Self::new(
-                PathBuf::from(yt_dlp),
-                &ffmpeg_dir,
-                ffmpeg_dir.join(executable("ffprobe")),
-            );
+            let yt_dlp = PathBuf::from(yt_dlp);
+            let search = yt_dlp.parent().map(Path::to_path_buf);
+            return Self::new(yt_dlp, &ffmpeg_dir, ffmpeg_dir.join(executable("ffprobe")))
+                .map(|tools| tools.with_js_runtime(Self::discover_js_runtime(search.as_deref())));
         }
-        let root = std::env::var_os("FETCHPATH_MEDIA_TOOLS_DIR")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::current_exe()
-                    .ok()?
-                    .parent()
-                    .map(|parent| parent.join("media-tools"))
-            })
-            .ok_or(MediaError::HelperUnavailable)?;
-        Self::discover_in(&root)
+        if let Some(root) = std::env::var_os("FETCHPATH_MEDIA_TOOLS_DIR").map(PathBuf::from)
+            && let Ok(tools) = Self::discover_in(&root)
+        {
+            return Ok(tools);
+        }
+        if let Some(beside) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|parent| parent.join("media-tools")))
+            && let Ok(tools) = Self::discover_in(&beside)
+        {
+            return Ok(tools);
+        }
+        // Also find helpers already installed on PATH (e.g. winget/scoop/choco),
+        // even when yt-dlp and ffmpeg live in different directories.
+        if let (Some(yt_dlp), Some(ffmpeg)) = (find_on_path("yt-dlp"), find_on_path("ffmpeg"))
+            && let Some(ffmpeg_dir) = ffmpeg.parent()
+        {
+            let ffprobe = ffmpeg_dir.join(executable("ffprobe"));
+            if let Ok(tools) = Self::new(yt_dlp, ffmpeg_dir, ffprobe) {
+                return Ok(tools.with_js_runtime(Self::discover_js_runtime(None)));
+            }
+        }
+        Err(MediaError::HelperUnavailable)
     }
 
     /// Resolves the helpers inside one directory the user chose.
@@ -205,6 +295,7 @@ impl MediaTools {
             root.to_path_buf()
         };
         Self::new(yt_dlp, &ffmpeg_dir, ffmpeg_dir.join(executable("ffprobe")))
+            .map(|tools| tools.with_js_runtime(Self::discover_js_runtime(Some(root))))
     }
 
     /// The file name of a helper executable on this platform.
@@ -216,7 +307,7 @@ impl MediaTools {
         validate_source(source)?;
         let cancel = AtomicBool::new(false);
         let pid = AtomicU32::new(0);
-        let args = inspect_args(source);
+        let args = inspect_args(source, self.js_runtime.as_ref());
         let output = run_helper(&self.yt_dlp, &args, &cancel, &pid, INSPECT_TIMEOUT)?;
         if !output.status.success() {
             return Err(classify_helper_failure(&output.stderr));
@@ -425,7 +516,7 @@ impl MediaJob {
     }
 
     fn inspect_for_job(&self) -> Result<MediaInspection, MediaError> {
-        let args = inspect_args(&self.source);
+        let args = inspect_args(&self.source, self.tools.js_runtime.as_ref());
         let output = run_helper(
             &self.tools.yt_dlp,
             &args,
@@ -447,6 +538,11 @@ impl MediaJob {
             "--newline".into(),
             "--ffmpeg-location".into(),
             self.tools.ffmpeg_dir.display().to_string(),
+        ];
+        if let Some(runtime) = &self.tools.js_runtime {
+            args.extend(["--js-runtimes".into(), runtime.yt_dlp_arg()]);
+        }
+        args.extend([
             "-f".into(),
             variant.selector.clone(),
             "-P".into(),
@@ -455,7 +551,7 @@ impl MediaJob {
             format!("temp:{}", work.display()),
             "-o".into(),
             "media.%(ext)s".into(),
-        ];
+        ]);
         match variant.kind {
             MediaKind::Video => args.extend([
                 "--merge-output-format".into(),
@@ -587,16 +683,34 @@ impl MediaJob {
 /// `--dump-single-json` record of an ordinary YouTube talk is over 800 KiB,
 /// mostly automatic captions in 160 languages; it overran the output limit,
 /// was cut off mid-JSON, and every such video failed as "verification_failed".
-fn inspect_args(source: &str) -> Vec<String> {
-    vec![
+fn inspect_args(source: &str, js_runtime: Option<&JsRuntime>) -> Vec<String> {
+    let mut args = vec![
         "--ignore-config".into(),
         "--no-playlist".into(),
         "--no-warnings".into(),
         "--skip-download".into(),
+    ];
+    if let Some(runtime) = js_runtime {
+        args.extend(["--js-runtimes".into(), runtime.yt_dlp_arg()]);
+    }
+    args.extend([
         "--print".into(),
         "%(.{title,duration,formats})j".into(),
         source.into(),
-    ]
+    ]);
+    args
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let file = executable(name);
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(&file);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn validate_source(source: &str) -> Result<(), MediaError> {
@@ -1038,6 +1152,7 @@ mod tests {
                 yt_dlp: PathBuf::from("missing-helper"),
                 ffmpeg_dir: PathBuf::from("missing-ffmpeg"),
                 ffprobe: PathBuf::from("missing-ffprobe"),
+                js_runtime: None,
             },
         );
         job.cancel();
@@ -1185,7 +1300,21 @@ mod tests {
             .unwrap()
             .filter_map(Result::ok)
             .collect();
-        assert_eq!(left.len(), 1);
+        assert!(left.len() == 1);
+    }
+
+    #[test]
+    fn js_runtime_arg_is_passed_to_yt_dlp_when_present() {
+        let without = inspect_args("https://example.test/watch?v=1", None);
+        assert!(!without.iter().any(|arg| arg == "--js-runtimes"));
+
+        let rt = JsRuntime {
+            name: "node",
+            path: PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
+        };
+        let with = inspect_args("https://example.test/watch?v=1", Some(&rt));
+        let pos = with.iter().position(|arg| arg == "--js-runtimes").unwrap();
+        assert_eq!(with[pos + 1], r"node:C:\Program Files\nodejs\node.exe");
     }
 
     /// The real regression: a YouTube talk whose full metadata is over 800 KiB

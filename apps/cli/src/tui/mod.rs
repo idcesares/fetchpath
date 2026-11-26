@@ -6,6 +6,7 @@
 //! prints append-only lines instead. Both are clients of the engine; leaving
 //! never stops a download.
 
+mod agents_menu;
 mod config;
 mod dashboard;
 mod flows;

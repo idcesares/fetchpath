@@ -497,6 +497,9 @@ impl Session {
             ffmpeg_dir: status.ffmpeg_dir,
             yt_dlp_version: status.yt_dlp_version,
             ffmpeg_version: status.ffmpeg_version,
+            js_runtime_name: status.js_runtime_name,
+            js_runtime_path: status.js_runtime_path,
+            js_runtime_version: status.js_runtime_version,
             install_dir: status.install_dir,
             available: status
                 .available
@@ -1258,13 +1261,19 @@ impl Session {
             && !by.is_user()
             && let Some(policy) = record.torrent_policy
         {
-            let automatic =
-                matches!(by, Principal::Agent(agent) if self.agent_policy(agent).automatic);
-            if policy.discover_peers && !automatic && !hold.contains(&ApprovalReason::PeerDiscovery)
+            let access = match by {
+                Principal::Agent(agent) => Some(self.agent_policy(agent)),
+                _ => None,
+            };
+            let lifts_discovery = access.as_ref().is_some_and(AgentPolicy::lifts_limits);
+            let lifts_upload = access.as_ref().is_some_and(AgentPolicy::is_full_access);
+            if policy.discover_peers
+                && !lifts_discovery
+                && !hold.contains(&ApprovalReason::PeerDiscovery)
             {
                 hold.push(ApprovalReason::PeerDiscovery);
             }
-            if policy.upload && !hold.contains(&ApprovalReason::PeerUpload) {
+            if policy.upload && !lifts_upload && !hold.contains(&ApprovalReason::PeerUpload) {
                 hold.push(ApprovalReason::PeerUpload);
             }
         }
@@ -1574,7 +1583,9 @@ impl Session {
         if reasons.contains(&ApprovalReason::SizeLimit) {
             record.size_approved = true;
         }
-        if reasons.contains(&ApprovalReason::OutsideGrantedFolders) {
+        if reasons.contains(&ApprovalReason::OutsideGrantedFolders)
+            || reasons.contains(&ApprovalReason::AskMode)
+        {
             record.folder_approved = true;
         }
         record.finished_at_ms = None;
@@ -1859,9 +1870,9 @@ impl Session {
             let Principal::Agent(agent) = &record.principal else {
                 continue;
             };
-            // Automatic mode lifts size stops, including an adapter failure
-            // sampled just after the person changed the policy (contract D7).
-            if agents.get(agent).is_some_and(|policy| policy.automatic) {
+            // Auto and full-access modes lift size stops, including an adapter
+            // failure sampled just after the person changed the policy.
+            if agents.get(agent).is_some_and(AgentPolicy::lifts_limits) {
                 continue;
             }
             // A media download stopped by its byte cap has failed in the
@@ -2104,12 +2115,8 @@ impl Session {
         let next = next.map(policy::validated).transpose()?;
         let previous = self.agent_policy(&agent);
         let next_policy = next.clone().unwrap_or_default();
-        let cap_changed = previous.automatic != next_policy.automatic
+        let cap_changed = previous.lifts_limits() != next_policy.lifts_limits()
             || previous.max_bytes != next_policy.max_bytes;
-        let folders = next
-            .as_ref()
-            .map(|policy| policy.folders.clone())
-            .unwrap_or_default();
         {
             let mut agents = self.agents.lock().expect("agents poisoned");
             let mut updated = agents.clone();
@@ -2124,7 +2131,9 @@ impl Session {
             }
             *agents = updated;
         }
-        self.hold_outside_grants(&agent, &folders)?;
+        if !next_policy.is_full_access() {
+            self.hold_outside_grants(&agent, &next_policy)?;
+        }
         if cap_changed {
             self.restart_agent_helpers(&agent)?;
         }
@@ -2142,8 +2151,9 @@ impl Session {
             for record in &mut state.records {
                 // A sampler may have held the old cap just before the policy
                 // update. Lift that size reason, retaining every other hold.
-                if access.automatic
-                    && policy::inside_grants(&record.grant_path(), &access.folders)
+                if access.lifts_limits()
+                    && (access.is_full_access()
+                        || policy::inside_grants(&record.grant_path(), &access.folders))
                     && record.principal == Principal::Agent(agent.clone())
                     && matches!(
                         record.job,
@@ -2236,11 +2246,15 @@ impl Session {
         self.save_locked(&mut state)
     }
 
-    /// Holds `agent`'s unfinished downloads whose destination is outside
-    /// `folders`. The stop of a running one is requested here and joined on
-    /// approval, as a size stop is, so the queue lock never waits on it; a
-    /// download that published first reports its completion then.
-    fn hold_outside_grants(&self, agent: &AgentName, folders: &[String]) -> Result<(), String> {
+    /// Holds `agent`'s unfinished downloads that no longer match `policy`
+    /// (outside granted folders, or all unfinished downloads in Ask mode).
+    /// The stop of a running one is requested here and joined on approval, as a
+    /// size stop is, so the queue lock never waits on it; a download that
+    /// published first reports its completion then.
+    fn hold_outside_grants(&self, agent: &AgentName, policy: &AgentPolicy) -> Result<(), String> {
+        if policy.is_full_access() {
+            return Ok(());
+        }
         let principal = Principal::Agent(agent.clone());
         let mut state = self.inner.lock().expect("desktop jobs poisoned");
         let mut held = false;
@@ -2251,18 +2265,25 @@ impl Session {
                 "failed" => record.retry_at_ms.is_some(),
                 _ => false,
             };
-            if record.principal != principal
-                || record.approval.is_some()
-                || !unfinished
-                || policy::inside_grants(&record.grant_path(), folders)
-            {
+            if record.principal != principal || record.approval.is_some() || !unfinished {
                 continue;
             }
+            let reason = if policy.is_ask() {
+                if record.folder_approved {
+                    continue;
+                }
+                ApprovalReason::AskMode
+            } else {
+                if policy::inside_grants(&record.grant_path(), &policy.folders) {
+                    continue;
+                }
+                ApprovalReason::OutsideGrantedFolders
+            };
             if let Some(job) = record.job.as_ref() {
                 job.cancel();
             }
             record.retry_at_ms = None;
-            record.hold(vec![ApprovalReason::OutsideGrantedFolders]);
+            record.hold(vec![reason]);
             held = true;
         }
         if held {
@@ -2432,15 +2453,26 @@ impl Session {
             // agent's grants may have changed. The person's approval stands.
             if let Principal::Agent(agent) = &record.principal
                 && !record.folder_approved
-                && !policy::inside_grants(&record.grant_path(), &self.agent_policy(agent).folders)
             {
-                // Kept, cancelled: approving joins it before the job is rebuilt.
-                if let Some(job) = record.job.as_ref() {
-                    job.cancel();
+                let access = self.agent_policy(agent);
+                let hold_reason = if access.is_full_access() {
+                    None
+                } else if access.is_ask() {
+                    Some(ApprovalReason::AskMode)
+                } else if !policy::inside_grants(&record.grant_path(), &access.folders) {
+                    Some(ApprovalReason::OutsideGrantedFolders)
+                } else {
+                    None
+                };
+                if let Some(reason) = hold_reason {
+                    // Kept, cancelled: approving joins it before the job is rebuilt.
+                    if let Some(job) = record.job.as_ref() {
+                        job.cancel();
+                    }
+                    record.view.waiting_for_space = false;
+                    record.hold(vec![reason]);
+                    continue;
                 }
-                record.view.waiting_for_space = false;
-                record.hold(vec![ApprovalReason::OutsideGrantedFolders]);
-                continue;
             }
             // The disk reserve (FP-101): a download starts only when its
             // drive has room for what it still needs above the reserve,
@@ -2507,7 +2539,7 @@ impl Session {
                 Principal::Agent(agent) if !record.size_approved => {
                     let agents = self.agents.lock().expect("agents poisoned");
                     match agents.get(agent) {
-                        Some(policy) if policy.automatic => None,
+                        Some(policy) if policy.lifts_limits() => None,
                         policy => Some(
                             policy
                                 .map_or(AgentPolicy::DEFAULT_MAX_BYTES, |policy| policy.max_bytes),

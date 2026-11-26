@@ -10,7 +10,7 @@ export type JobState =
   | "needs_source"
   | "awaiting_approval";
 
-export type ApprovalReason = "outside_granted_folders" | "size_limit" | "rate_limit" | "peer_discovery" | "peer_upload" | "unknown";
+export type ApprovalReason = "ask_mode" | "outside_granted_folders" | "size_limit" | "rate_limit" | "peer_discovery" | "peer_upload" | "unknown";
 
 export interface JobSnapshot {
   jobId: string;

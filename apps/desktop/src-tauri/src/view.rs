@@ -69,8 +69,10 @@ pub struct AgentView {
     pub folders: Vec<String>,
     pub max_bytes: u64,
     pub max_new_jobs_per_hour: u32,
-    /// Inside its folders, nothing it downloads waits for approval.
+    /// Inside its folders (or everywhere in full-access), size/rate/peer holds are lifted.
     pub automatic: bool,
+    /// Active harness-style permission mode: `ask`, `scoped`, `auto`, or `full_access`.
+    pub permission_mode: &'static str,
 }
 
 pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
@@ -81,7 +83,8 @@ pub fn agents(policies: &[AgentAccess]) -> Vec<AgentView> {
             folders: access.policy.folders.clone(),
             max_bytes: access.policy.max_bytes,
             max_new_jobs_per_hour: access.policy.max_new_jobs_per_hour,
-            automatic: access.policy.automatic,
+            automatic: access.policy.lifts_limits(),
+            permission_mode: access.policy.effective_mode().as_str(),
         })
         .collect()
 }
@@ -382,6 +385,9 @@ pub struct ToolsStatus {
     pub ffmpeg_dir: Option<String>,
     pub yt_dlp_version: Option<String>,
     pub ffmpeg_version: Option<String>,
+    pub js_runtime_name: Option<String>,
+    pub js_runtime_path: Option<String>,
+    pub js_runtime_version: Option<String>,
     pub install_dir: String,
     pub available: Vec<AvailableTool>,
     pub problem: Option<String>,
@@ -395,6 +401,9 @@ impl From<model::MediaToolsStatus> for ToolsStatus {
             ffmpeg_dir: status.ffmpeg_dir,
             yt_dlp_version: status.yt_dlp_version,
             ffmpeg_version: status.ffmpeg_version,
+            js_runtime_name: status.js_runtime_name,
+            js_runtime_path: status.js_runtime_path,
+            js_runtime_version: status.js_runtime_version,
             install_dir: status.install_dir,
             available: status
                 .available

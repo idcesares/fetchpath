@@ -13,7 +13,9 @@
 .PARAMETER Components
   Comma-separated: desktop, cli, mcp, browser, torrent, or full. Default cli,mcp.
 .PARAMETER AgentHosts
-  codex and/or claude-code, to connect for this Windows user. Needs mcp.
+  Agent host id(s) to connect for this Windows user: codex, claude-code,
+  claude-desktop, cursor, vscode, windsurf, gemini-cli, or detected (connects
+  all detected hosts). Needs mcp.
 .PARAMETER MediaTools
   Also run `fetchpath tools install --yes` (yt-dlp and ffmpeg, checksum-pinned).
 .PARAMETER SetupFile
@@ -51,7 +53,8 @@ if ($Version -ne 'latest' -and $Version -notmatch '^v?\d+\.\d+\.\d+(-[\w.]+)?\z'
 if ($Sha256 -and $Sha256 -notmatch '^[0-9a-fA-F]{64}\z') { Fail '-Sha256 must be 64 hex characters.' 2 }
 if ($Sha256 -and -not $SetupFile) { Fail '-Sha256 is only used with -SetupFile; a download is checked against SHA256SUMS.txt.' 2 }
 if ($InstallDir -and ($InstallDir -match '["\r\n]' -or -not [IO.Path]::IsPathRooted($InstallDir))) { Fail '-InstallDir must be a full path without quotes.' 2 }
-foreach ($h in $AgentHosts) { if ($h -notin 'codex', 'claude-code') { Fail "Unknown agent host '$h'." 2 } }
+$validHosts = @('codex', 'claude-code', 'claude-desktop', 'cursor', 'vscode', 'windsurf', 'gemini-cli', 'detected')
+foreach ($h in $AgentHosts) { if ($h -notin $validHosts) { Fail "Unknown agent host '$h'." 2 } }
 
 # Where Fetchpath is installed for this user: -InstallDir, else the folder setup
 # recorded when it installed, else Setup's per-user default.
@@ -102,7 +105,9 @@ try {
   $existing = Test-Path -LiteralPath (Join-Path (Get-InstallFolder) 'fetchpath.exe')
   $setupArgs = @('/S')
   if ($PSBoundParameters.ContainsKey('Components') -or -not $existing) { $setupArgs += "/COMPONENTS=$Components" }
-  if ($AgentHosts.Count -gt 0) { $setupArgs += "/AGENTHOSTS=$($AgentHosts -join ',')" }
+  $nsisHosts = @($AgentHosts | Where-Object { $_ -in 'codex', 'claude-code' })
+  $extraHosts = @($AgentHosts | Where-Object { $_ -notin 'codex', 'claude-code' })
+  if ($nsisHosts.Count -gt 0) { $setupArgs += "/AGENTHOSTS=$($nsisHosts -join ',')" }
   if ($InstallDir) { $setupArgs += "/D=$InstallDir" }   # /D must be last
   $process = Start-Process -FilePath $setup -ArgumentList $setupArgs -Wait -PassThru
   if ($process.ExitCode -ne 0) {
@@ -122,6 +127,14 @@ try {
     if ($MediaTools) {
       & $cliPath tools install --yes
       if ($LASTEXITCODE -ne 0) { Fail 'Media tools were not set up.' $LASTEXITCODE }
+    }
+    foreach ($h in $extraHosts) {
+      if ($h -eq 'detected') {
+        & $cliPath agent-setup add --detected
+      } else {
+        & $cliPath agent-setup add $h
+      }
+      if ($LASTEXITCODE -ne 0) { Fail "Agent host setup failed for '$h' (Fetchpath stays installed)." 11 }
     }
     Write-Output "Installed: $cliPath"
     if ($Components -eq 'full' -or $Components -match '\bmcp\b') {

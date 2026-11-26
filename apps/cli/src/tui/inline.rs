@@ -3,6 +3,7 @@
 //! above it.
 
 use super::Session;
+use super::agents_menu::{AgentsMenu, Effect as AgentsEffect};
 use super::config::alias::Aliases;
 use super::config::keys::Act;
 use super::config::theme::Theme;
@@ -21,8 +22,8 @@ use super::setup::{Answer as SetupAnswer, Setup};
 use super::view::{self, Drawn, Frame, Glyphs, Overlay, Target};
 use crate::client::{self, EXIT_ENGINE, Engine};
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
-    MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use crossterm::terminal;
 use fetchpath_protocol::ProtocolError;
@@ -165,9 +166,16 @@ fn hint(prompt: &Prompt, completion: Option<&str>, config: &Config) -> String {
     if let Some(name) = text.strip_prefix('/')
         && !name.contains(' ')
     {
+        let typed = name.to_ascii_lowercase();
         let matches: Vec<&line::Spec> = line::COMMANDS
             .iter()
-            .filter(|spec| spec.name.starts_with(&name.to_ascii_lowercase()))
+            .filter(|spec| {
+                spec.name.starts_with(&typed)
+                    || spec.aliases().iter().any(|alias| {
+                        *alias == typed || (typed.len() >= 2 && alias.starts_with(&typed))
+                    })
+                    || (typed.len() >= 3 && spec.name.contains(&typed))
+            })
             .collect();
         return match matches.as_slice() {
             [] => "No such command; /help lists them".into(),
@@ -348,10 +356,8 @@ pub(super) fn confirmed(session: &Session, card: &Card) -> Out {
     }
 }
 
-/// Commands to offer while a command name is typed: every command whose
-/// name starts with it, as Claude Code lists them, then the person's
-/// aliases with what they run. The command or alias the name spells out
-/// comes first, so Enter runs `/d` rather than `/dashboard`.
+/// Commands to offer while a command name is typed: ranked exact match,
+/// name prefix, alias prefix, then substring match, followed by user aliases.
 fn palette(prompt: &Prompt, config: &Config) -> Vec<(String, String)> {
     let text = prompt.text();
     let Some(typed) = text.strip_prefix('/') else {
@@ -361,22 +367,61 @@ fn palette(prompt: &Prompt, config: &Config) -> Vec<(String, String)> {
         return Vec::new();
     }
     let typed = typed.to_ascii_lowercase();
-    // `/q` is quit's short name, so quit goes first for it.
-    let spelled = line::find(&typed).map_or(typed.as_str(), |spec| spec.name);
-    let mut found: Vec<(String, String)> = line::COMMANDS
-        .iter()
-        .filter(|spec| spec.name.starts_with(&typed) || spec.name == spelled)
-        .map(|spec| (spec.name.to_owned(), spec.summary.to_owned()))
-        .chain(
-            config
-                .aliases
-                .iter()
-                .filter(|(name, _)| name.starts_with(&typed))
-                .map(|(name, lines)| (name.to_owned(), format!("= {}", Aliases::describe(lines)))),
-        )
-        .collect();
-    found.sort_by_key(|(name, _)| *name != typed && *name != spelled);
-    found
+    let spelled = line::find(&typed).map(|spec| spec.name);
+    let mut ranked: Vec<(u8, String, String)> = Vec::new();
+    for spec in line::COMMANDS {
+        let alias_exact = spec.aliases().contains(&typed.as_str());
+        let alias_prefix = spec
+            .aliases()
+            .iter()
+            .copied()
+            .find(|alias| typed.len() >= 2 && alias.starts_with(&typed));
+        let rank = if spec.name == typed || alias_exact || spelled == Some(spec.name) {
+            Some(0)
+        } else if spec.name.starts_with(&typed) {
+            Some(1)
+        } else if alias_prefix.is_some() {
+            Some(2)
+        } else if typed.len() >= 3 && spec.name.contains(&typed) {
+            Some(3)
+        } else {
+            None
+        };
+        if let Some(rank) = rank {
+            let summary = if let Some(alias) = alias_prefix
+                && !spec.name.starts_with(&typed)
+            {
+                format!("{} (/{alias})", spec.summary)
+            } else {
+                spec.summary.to_owned()
+            };
+            ranked.push((rank, spec.name.to_owned(), summary));
+        }
+    }
+    for (name, lines) in config.aliases.iter() {
+        let lower = name.to_ascii_lowercase();
+        let rank = if lower == typed {
+            Some(0)
+        } else if lower.starts_with(&typed) {
+            Some(1)
+        } else if typed.len() >= 3 && lower.contains(&typed) {
+            Some(3)
+        } else {
+            None
+        };
+        if let Some(rank) = rank {
+            ranked.push((
+                rank,
+                name.to_owned(),
+                format!("= {}", Aliases::describe(lines)),
+            ));
+        }
+    }
+    ranked.sort_by_key(|(rank, _, _)| *rank);
+    ranked
+        .into_iter()
+        .map(|(_, name, summary)| (name, summary))
+        .collect()
 }
 
 /// Most commands listed under the prompt at once.
@@ -408,6 +453,7 @@ fn choose_command(name: &str, config: &Config) -> Chosen {
 struct Menus {
     setup: Option<Setup>,
     settings: Option<SettingsMenu>,
+    agents: Option<AgentsMenu>,
     jobs: Option<JobsMenu>,
     /// Asked for; opened by the loop, which owns the screen.
     dashboard: bool,
@@ -417,7 +463,10 @@ struct Menus {
 
 impl Menus {
     fn any(&self) -> bool {
-        self.setup.is_some() || self.settings.is_some() || self.jobs.is_some()
+        self.setup.is_some()
+            || self.settings.is_some()
+            || self.agents.is_some()
+            || self.jobs.is_some()
     }
 }
 
@@ -447,6 +496,10 @@ fn submit(
     match reply.open {
         Some(Open::Settings) => match SettingsMenu::open(&session.engine, session.tools_ready) {
             Ok(menu) => menus.settings = Some(menu),
+            Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
+        },
+        Some(Open::Agents) => match AgentsMenu::open(&session.engine) {
+            Ok(menu) => menus.agents = Some(menu),
             Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
         },
         Some(Open::Jobs(command)) => menus.jobs = Some(JobsMenu::open(&session.live, command)),
@@ -512,6 +565,23 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
     // What in cli.toml could not be used, once.
     screen.print(&std::mem::take(&mut session.config_problems))?;
     screen.print(&std::mem::take(&mut session.away))?;
+    let waiting_approvals = session
+        .live
+        .jobs()
+        .iter()
+        .filter(|job| job.state == fetchpath_protocol::model::JobState::AwaitingApproval)
+        .count();
+    if waiting_approvals > 0 {
+        let noun = if waiting_approvals == 1 {
+            "request is"
+        } else {
+            "requests are"
+        };
+        screen.print(&[Out::new(
+            Tone::Bad,
+            format!("{waiting_approvals} agent {noun} waiting for your approval — type /approvals or press F2."),
+        )])?;
+    }
     let mut code = 0;
     let mut dirty = true;
     let mut last_draw = Instant::now();
@@ -548,6 +618,8 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
                 Some(Overlay::Setup(setup))
             } else if let Some(settings) = &menus.settings {
                 Some(Overlay::Menu(&settings.menu, editing))
+            } else if let Some(agents) = &menus.agents {
+                Some(Overlay::Menu(&agents.menu, None))
             } else if let Some(jobs) = &menus.jobs {
                 Some(Overlay::Menu(&jobs.menu, None))
             } else {
@@ -631,6 +703,18 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
                             Ok(opened) => menus.setup = Some(opened),
                             Err(error) => screen.print(&[Out::new(Tone::Bad, error.message)])?,
                         },
+                    }
+                }
+                Event::Key(key) if menus.agents.is_some() => {
+                    let menu = menus.agents.as_mut().expect("checked");
+                    if menu.key(&session.engine, key) == AgentsEffect::Close {
+                        menus.agents = None;
+                    }
+                }
+                Event::Mouse(event) if menus.agents.is_some() => {
+                    let menu = menus.agents.as_mut().expect("checked");
+                    if menu.mouse(&session.engine, event, row_of) == AgentsEffect::Close {
+                        menus.agents = None;
                     }
                 }
                 Event::Key(_) | Event::Mouse(_) if menus.jobs.is_some() => {
@@ -801,6 +885,15 @@ fn run_view(session: &mut Session) -> std::io::Result<i32> {
                 }
                 Event::Key(key)
                     if key.kind != KeyEventKind::Release
+                        && key.code == KeyCode::Char('l')
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    let height = screen.height;
+                    screen.close()?;
+                    screen = Screen::open(height, session.config.theme)?;
+                }
+                Event::Key(key)
+                    if key.kind != KeyEventKind::Release
                         && session.config.keys.is(Act::Dashboard, &key) =>
                 {
                     menus.dashboard = true;
@@ -940,8 +1033,10 @@ mod tests {
     fn the_name_typed_in_full_is_listed_first_so_enter_runs_it() {
         let (config, problems) = Config::from_text("[aliases]\nd = \"dashboard\"\n");
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(listed("/d", &config), vec!["d", "deny", "dashboard"]);
+        assert_eq!(listed("/d", &config), vec!["d", "dashboard", "deny"]);
         assert_eq!(listed("/q", &config)[0], "quit");
         assert_eq!(listed("/de", &config), vec!["deny"]);
+        assert_eq!(listed("/doc", &config)[0], "setup");
+        assert_eq!(listed("/st", &config)[0], "status");
     }
 }

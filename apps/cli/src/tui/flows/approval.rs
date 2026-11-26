@@ -29,6 +29,7 @@ pub fn who(job: &JobSnapshot) -> String {
 
 fn reason(reason: &ApprovalReason) -> &'static str {
     match reason {
+        ApprovalReason::AskMode => "This agent is set to ask before every download.",
         ApprovalReason::OutsideGrantedFolders => {
             "It would save outside the folders you let it use."
         }

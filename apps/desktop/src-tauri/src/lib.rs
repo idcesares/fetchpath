@@ -678,18 +678,25 @@ fn cli_path() -> Option<String> {
         .map(|cli| cli.display().to_string())
 }
 
-/// Connects Codex or Claude Code after installing, or reads or removes that
+/// Connects detected AI agent hosts after installing, or reads or removes that
 /// connection, through the command line's own `agent-setup` so there is one
-/// implementation. Only these verbs and hosts are passed on; the returned text
-/// is the command's output, or its error line.
+/// host catalog and one implementation. Only bounded verbs and safe host ids
+/// are passed on; the returned text is the command's output, or its error line.
 #[tauri::command]
 async fn agent_host_setup(action: String, host: Option<String>) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
+    let valid_host = |h: &str| {
+        !h.is_empty()
+            && h.len() <= 32
+            && h.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    };
     let mut args = vec!["agent-setup".to_owned()];
     match (action.as_str(), host.as_deref()) {
         ("status", None) => args.extend(["status".into(), "--json".into()]),
-        ("add" | "remove" | "check", Some("codex" | "claude-code")) => {
-            args.extend([action.clone(), host.clone().unwrap_or_default()]);
+        ("add-detected", None) => args.extend(["add".into(), "--detected".into()]),
+        ("add" | "remove" | "check", Some(name)) if valid_host(name) => {
+            args.extend([action.clone(), name.to_owned()]);
         }
         _ => return Err("Unknown agent setup request.".into()),
     }
@@ -701,6 +708,30 @@ async fn agent_host_setup(action: String, host: Option<String>) -> Result<String
             .args(&args)
             .stdin(std::process::Stdio::null())
             // CREATE_NO_WINDOW: no console flash.
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|error| format!("Could not run fetchpath: {error}"))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+        }
+    })
+    .await
+}
+
+/// Runs `fetchpath setup --json` so the desktop's Setup checklist and
+/// onboarding share the CLI's single readiness check.
+#[tauri::command]
+async fn setup_check() -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let cli = engine_link::engine_exe()
+        .filter(|cli| cli.is_file())
+        .ok_or("The fetchpath command is not installed beside this copy of Fetchpath.")?;
+    off_thread(move || {
+        let output = std::process::Command::new(cli)
+            .args(["setup", "--json"])
+            .stdin(std::process::Stdio::null())
             .creation_flags(0x0800_0000)
             .output()
             .map_err(|error| format!("Could not run fetchpath: {error}"))?;
@@ -912,6 +943,7 @@ pub fn run() {
             installed_components,
             cli_path,
             agent_host_setup,
+            setup_check,
             reveal_extension_folder,
             connect_browser,
             connect_browser_requested,

@@ -24,9 +24,12 @@ pub(crate) struct Args {
     pub words: Vec<String>,
     json: bool,
     quiet: bool,
-    all: bool,
+    pub all: bool,
     pub active: bool,
     pub failed: bool,
+    pub finished: bool,
+    pub paused: bool,
+    pub approvals: bool,
     wait: bool,
     pub to: Option<String>,
     pub sha256: Option<String>,
@@ -49,6 +52,9 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
         all: false,
         active: false,
         failed: false,
+        finished: false,
+        paused: false,
+        approvals: false,
         wait: false,
         to: None,
         sha256: None,
@@ -64,7 +70,11 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
             Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_owned())),
             _ => (arg.as_str(), None),
         };
-        let flag = if flag == "-q" { "--quiet" } else { flag };
+        let flag = match flag {
+            "-q" => "--quiet",
+            "--completed" => "--finished",
+            other => other,
+        };
         if !flag.starts_with('-') || flag == "-" {
             parsed.words.push(arg.clone());
             continue;
@@ -101,6 +111,9 @@ pub(crate) fn parse(args: &[String], allowed: &[&str]) -> Result<Args, String> {
             "--all" => parsed.all = true,
             "--active" => parsed.active = true,
             "--failed" => parsed.failed = true,
+            "--finished" => parsed.finished = true,
+            "--paused" => parsed.paused = true,
+            "--approvals" => parsed.approvals = true,
             "--wait" => parsed.wait = true,
             "--discover-peers" => parsed.discover_peers = Some(true),
             "--upload" => parsed.upload = true,
@@ -768,26 +781,152 @@ pub(crate) fn safe_title(title: &str, link: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------- ls, history, show
+// ---------------------------------------------------------------- status, ls, clean, history, show
+
+/// Formats a compact status summary of engine + queue stats for CLI and TUI.
+pub(crate) fn status_lines(engine: &Engine) -> Result<Vec<(bool, String)>, ProtocolError> {
+    let status = match engine.send(Command::EngineStatus)? {
+        CommandResult::EngineStatus { status } => status,
+        other => return Err(client::unexpected(&other)),
+    };
+    let stats = match engine.send(Command::QueueStats)? {
+        CommandResult::QueueStats { stats } => stats,
+        other => return Err(client::unexpected(&other)),
+    };
+    let mut lines = Vec::new();
+    let speed = if stats.combined_bytes_per_second > 0 {
+        format!(" at {}/s", client::bytes(stats.combined_bytes_per_second))
+    } else {
+        String::new()
+    };
+    let mut parts = Vec::new();
+    if stats.running > 0 {
+        parts.push(format!("{} running{speed}", stats.running));
+    }
+    if stats.queued > 0 {
+        parts.push(format!("{} queued", stats.queued));
+    }
+    if stats.scheduled > 0 {
+        parts.push(format!("{} scheduled", stats.scheduled));
+    }
+    if stats.paused > 0 {
+        parts.push(format!("{} paused", stats.paused));
+    }
+    if stats.awaiting_approval > 0 {
+        parts.push(format!("{} awaiting approval", stats.awaiting_approval));
+    }
+    if stats.failed > 0 {
+        parts.push(format!("{} failed", stats.failed));
+    }
+    if stats.completed > 0 {
+        parts.push(format!("{} finished", stats.completed));
+    }
+    let summary = if parts.is_empty() {
+        "Queue is empty.".to_owned()
+    } else {
+        parts.join(" · ")
+    };
+    lines.push((false, format!("Queue    {summary}")));
+    lines.push((
+        false,
+        format!(
+            "Engine   {} running since {} ({} client{}, max {} active)",
+            status.engine_version,
+            when::local(status.started_at),
+            status.connected_clients,
+            if status.connected_clients == 1 {
+                ""
+            } else {
+                "s"
+            },
+            stats.max_active_downloads,
+        ),
+    ));
+    if stats.completed_bytes > 0 || stats.active_bytes > 0 {
+        lines.push((
+            false,
+            format!(
+                "Data     {} completed · {} in progress",
+                client::bytes(stats.completed_bytes),
+                client::bytes(stats.active_bytes),
+            ),
+        ));
+    }
+    if let Some(reason) = status.queue_read_only {
+        lines.push((true, reason.message));
+    }
+    if let Some(notice) = status.inbox_notice {
+        lines.push((true, notice));
+    }
+    Ok(lines)
+}
+
+pub fn status(args: &[String]) -> i32 {
+    with_engine(args, &["--json"], |engine, parsed| {
+        if !parsed.words.is_empty() {
+            return Ok(usage("status takes no positional arguments"));
+        }
+        if parsed.json {
+            let status = match engine.send(Command::EngineStatus)? {
+                CommandResult::EngineStatus { status } => status,
+                other => return Err(client::unexpected(&other)),
+            };
+            let stats = match engine.send(Command::QueueStats)? {
+                CommandResult::QueueStats { stats } => stats,
+                other => return Err(client::unexpected(&other)),
+            };
+            client::print_json(&serde_json::json!({
+                "engine": status,
+                "queue": stats,
+            }));
+            return Ok(0);
+        }
+        for (warn, line) in status_lines(engine)? {
+            if warn {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+        }
+        Ok(0)
+    })
+}
+
+/// Applies `ls` / `/queue` filter flags to a single job.
+pub(crate) fn matches_ls_filter(job: &JobSnapshot, parsed: &Args) -> bool {
+    use fetchpath_protocol::model::JobState;
+    if parsed.approvals {
+        job.state == JobState::AwaitingApproval
+    } else if parsed.failed {
+        job.state == JobState::Failed
+    } else if parsed.finished {
+        job.state == JobState::Completed
+    } else if parsed.paused {
+        job.state == JobState::Paused
+    } else if parsed.active {
+        !job.state.is_terminal() && job.state != JobState::Failed
+    } else {
+        true
+    }
+}
 
 pub fn ls(args: &[String]) -> i32 {
     with_engine(
         args,
-        &["--all", "--active", "--failed", "--json"],
+        &[
+            "--all",
+            "--active",
+            "--failed",
+            "--finished",
+            "--paused",
+            "--approvals",
+            "--json",
+        ],
         |engine, parsed| {
             let jobs = engine.jobs(JobFilter::All)?;
             let shown: Vec<&JobSnapshot> = jobs
                 .iter()
-                .filter(|job| {
-                    if parsed.failed {
-                        job.state == fetchpath_protocol::model::JobState::Failed
-                    } else if parsed.active {
-                        !job.state.is_terminal()
-                            && job.state != fetchpath_protocol::model::JobState::Failed
-                    } else {
-                        true
-                    }
-                })
+                .filter(|job| matches_ls_filter(job, parsed))
                 .collect();
             if parsed.json {
                 client::print_json(&CommandResult::Jobs {
@@ -809,6 +948,86 @@ pub fn ls(args: &[String]) -> i32 {
             Ok(0)
         },
     )
+}
+
+pub(crate) struct CleanOutcome {
+    pub removed: Vec<JobSnapshot>,
+    pub failed: Vec<(JobSnapshot, ProtocolError)>,
+}
+
+/// Removes completed and cancelled jobs (and failed jobs when `include_failed`
+/// is true) from the queue list without deleting saved files.
+pub(crate) fn clean_jobs(
+    engine: &Engine,
+    include_failed: bool,
+) -> Result<CleanOutcome, ProtocolError> {
+    use fetchpath_protocol::model::JobState;
+    let jobs = engine.jobs(JobFilter::All)?;
+    let targets: Vec<JobSnapshot> = jobs
+        .into_iter()
+        .filter(|job| {
+            matches!(job.state, JobState::Completed | JobState::Cancelled)
+                || (include_failed && job.state == JobState::Failed)
+        })
+        .collect();
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for job in targets {
+        match engine.send(Command::RemoveJob {
+            job_id: job.job_id.clone(),
+        }) {
+            Ok(_) => removed.push(job),
+            Err(error) => failed.push((job, error)),
+        }
+    }
+    Ok(CleanOutcome { removed, failed })
+}
+
+pub fn clean(args: &[String]) -> i32 {
+    with_engine(args, &["--failed", "--all", "--json"], |engine, parsed| {
+        if !parsed.words.is_empty() {
+            return Ok(usage("clean takes no positional arguments"));
+        }
+        let include_failed = parsed.failed || parsed.all;
+        let CleanOutcome { removed, failed } = clean_jobs(engine, include_failed)?;
+        if parsed.json {
+            client::print_json(&serde_json::json!({
+                "removed": removed.iter().map(|j| j.job_id.as_str()).collect::<Vec<_>>(),
+                "count": removed.len(),
+                "errors": failed.iter().map(|(j, e)| serde_json::json!({
+                    "job_id": j.job_id.as_str(),
+                    "error": e,
+                })).collect::<Vec<_>>(),
+            }));
+            return Ok(if failed.is_empty() { 0 } else { 1 });
+        }
+        if removed.is_empty() && failed.is_empty() {
+            println!("Nothing to clean.");
+            return Ok(0);
+        }
+        if !removed.is_empty() {
+            let noun = if removed.len() == 1 {
+                "download"
+            } else {
+                "downloads"
+            };
+            println!(
+                "Removed {} {noun} from the list (saved files kept).",
+                removed.len()
+            );
+        }
+        let mut worst = 0;
+        for (job, error) in failed {
+            eprintln!(
+                "fetchpath: {} {}: {}",
+                client::short_id(&job),
+                client::name(&job),
+                error.message
+            );
+            worst = first_failure(worst, client::exit_code(&error));
+        }
+        Ok(worst)
+    })
 }
 
 pub fn history(args: &[String]) -> i32 {
@@ -964,14 +1183,86 @@ pub enum Control {
     Deny,
 }
 
-pub fn control(action: Control, args: &[String]) -> i32 {
-    with_engine(args, &["--json"], |engine, parsed| {
-        if parsed.words.is_empty() {
-            return Ok(usage(
-                "name at least one download: its number in `fetchpath ls`, or the start of its id",
-            ));
+/// Selects matching jobs for `all` / `--all` bulk control actions.
+/// `Cancel` is intentionally excluded so users cannot cancel everything by mistake.
+pub(crate) fn bulk_targets(
+    action: Control,
+    jobs: &[JobSnapshot],
+) -> Result<Vec<JobSnapshot>, String> {
+    use fetchpath_protocol::model::JobState;
+    let matched: Vec<JobSnapshot> = match action {
+        Control::Pause => jobs
+            .iter()
+            .filter(|job| matches!(job.state, JobState::Running | JobState::Queued))
+            .cloned()
+            .collect(),
+        Control::Resume => jobs
+            .iter()
+            .filter(|job| {
+                job.state == JobState::Paused
+                    || (job.state == JobState::Queued && job.not_before.is_some())
+            })
+            .cloned()
+            .collect(),
+        Control::Retry => jobs
+            .iter()
+            .filter(|job| job.state == JobState::Failed)
+            .cloned()
+            .collect(),
+        Control::Remove => jobs
+            .iter()
+            .filter(|job| {
+                matches!(
+                    job.state,
+                    JobState::Completed | JobState::Cancelled | JobState::Failed
+                )
+            })
+            .cloned()
+            .collect(),
+        Control::Approve | Control::Deny => jobs
+            .iter()
+            .filter(|job| job.state == JobState::AwaitingApproval)
+            .cloned()
+            .collect(),
+        Control::Cancel => {
+            return Err("cancel requires explicit download ids or numbers (not `all`)".into());
         }
-        let jobs = engine.resolve(&parsed.words)?;
+    };
+    Ok(matched)
+}
+
+pub fn control(action: Control, args: &[String]) -> i32 {
+    let allowed: &[&str] = if action == Control::Cancel {
+        &["--json"]
+    } else {
+        &["--json", "--all"]
+    };
+    with_engine(args, allowed, |engine, parsed| {
+        let bulk =
+            parsed.all || (parsed.words.len() == 1 && parsed.words[0].eq_ignore_ascii_case("all"));
+        let jobs = if bulk {
+            if parsed.all && !parsed.words.is_empty() {
+                return Ok(usage("use either --all or specific download ids, not both"));
+            }
+            let all = engine.jobs(JobFilter::All)?;
+            match bulk_targets(action, &all) {
+                Ok(targets) => targets,
+                Err(message) => return Ok(usage(&message)),
+            }
+        } else {
+            if parsed.words.is_empty() {
+                return Ok(usage(
+                    "name at least one download: its number in `fetchpath ls`, or the start of its id",
+                ));
+            }
+            engine.resolve(&parsed.words)?
+        };
+        if jobs.is_empty() {
+            if !parsed.json {
+                println!("No matching downloads.");
+            }
+            return Ok(0);
+        }
         let mut worst = 0;
         for job in jobs {
             match engine.send(control_command(action, &job)) {
@@ -1166,6 +1457,97 @@ pub(crate) fn event_text(payload: &EventPayload) -> Option<String> {
 
 // ---------------------------------------------------------------- inspect
 
+fn format_media_inspection(inspection: &MediaInspection, hint: &str) -> Vec<String> {
+    let mut lines = vec![
+        inspection
+            .title
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect::<String>(),
+    ];
+    if let Some(seconds) = inspection.duration_seconds {
+        lines.push(format!("Length {}", client::duration(seconds as u64)));
+    }
+    for variant in &inspection.variants {
+        let kind = match variant.kind {
+            MediaVariantKind::Video => "video",
+            MediaVariantKind::Audio => "audio",
+            MediaVariantKind::Unknown => "other",
+        };
+        lines.push(format!(
+            "  {:<24} {kind:<6} .{}",
+            variant.label, variant.extension
+        ));
+    }
+    lines.push(hint.to_owned());
+    lines
+}
+
+/// Inspects a link (file, media page, or Hugging Face repository) for TUI `/inspect`.
+pub(crate) fn inspect_lines(engine: &Engine, link: &str) -> Result<Vec<String>, ProtocolError> {
+    let url = SensitiveUrl::try_from(link.to_owned())
+        .map_err(|message| client::input_error(&format!("That link cannot be used: {message}.")))?;
+    if is_repository_link(link) {
+        let result = engine.send(Command::InspectRepository { url })?;
+        let CommandResult::Repository { repository } = result else {
+            return Err(client::unexpected(&result));
+        };
+        let mut lines = vec![format!(
+            "Repository {} @ {} ({})",
+            repository.repo,
+            repository.revision,
+            &repository.commit[..repository.commit.len().min(8)]
+        )];
+        let total: u64 = repository.files.iter().filter_map(|f| f.size).sum();
+        lines.push(format!(
+            "Files    {} ({})",
+            repository.files.len(),
+            client::bytes(total)
+        ));
+        for file in repository.files.iter().take(12) {
+            let size = file
+                .size
+                .map(client::bytes)
+                .unwrap_or_else(|| "?".to_owned());
+            lines.push(format!("  {:<10} {}", size, file.path));
+        }
+        if repository.files.len() > 12 {
+            lines.push(format!("  … {} more files", repository.files.len() - 12));
+        }
+        lines.push("Paste this link or run /add LINK to queue it.".into());
+        return Ok(lines);
+    }
+    let inspected = match engine.send(Command::InspectLink { url: url.clone() })? {
+        CommandResult::LinkInspection { inspection } => inspection,
+        other => return Err(client::unexpected(&other)),
+    };
+    if inspected.kind == LinkKind::MediaPage {
+        let result = engine.send(Command::InspectMedia { url })?;
+        let CommandResult::MediaInspection { inspection } = result else {
+            return Err(client::unexpected(&result));
+        };
+        return Ok(format_media_inspection(
+            &inspection,
+            "Add one with: /add LINK --quality LABEL (or best, audio)",
+        ));
+    }
+    let mut lines = vec![format!(
+        "File     {}",
+        inspected.file_name.as_deref().unwrap_or("(unknown name)")
+    )];
+    if let Some(size) = inspected.size_bytes {
+        lines.push(format!("Size     {}", client::bytes(size)));
+    }
+    if let Some(content_type) = &inspected.content_type {
+        lines.push(format!("Type     {content_type}"));
+    }
+    if let Some(note) = crate::rules::card_line(inspected.rules.as_ref()) {
+        lines.push(format!("Rule     {note}"));
+    }
+    lines.push("Paste this link or run /add LINK to download it.".into());
+    Ok(lines)
+}
+
 pub fn inspect(args: &[String]) -> i32 {
     with_engine(args, &["--json"], |engine, parsed| {
         let [link] = parsed.words.as_slice() else {
@@ -1182,26 +1564,12 @@ pub fn inspect(args: &[String]) -> i32 {
         let CommandResult::MediaInspection { inspection } = result else {
             return Err(client::unexpected(&result));
         };
-        println!(
-            "{}",
-            inspection
-                .title
-                .chars()
-                .filter(|c| !c.is_control())
-                .collect::<String>()
-        );
-        if let Some(seconds) = inspection.duration_seconds {
-            println!("Length {}", client::duration(seconds as u64));
+        for line in format_media_inspection(
+            &inspection,
+            "Add one with: fetchpath add LINK --quality LABEL (or best, audio)",
+        ) {
+            println!("{line}");
         }
-        for variant in &inspection.variants {
-            let kind = match variant.kind {
-                MediaVariantKind::Video => "video",
-                MediaVariantKind::Audio => "audio",
-                MediaVariantKind::Unknown => "other",
-            };
-            println!("  {:<24} {kind:<6} .{}", variant.label, variant.extension);
-        }
-        println!("Add one with: fetchpath add LINK --quality LABEL (or best, audio)");
         Ok(0)
     })
 }

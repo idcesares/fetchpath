@@ -112,6 +112,7 @@ fn agent_policy() -> AgentPolicy {
         max_bytes: 104_857_600,
         max_new_jobs_per_hour: 10,
         automatic: true,
+        permission_mode: Some(AgentPermissionMode::Auto),
     }
 }
 
@@ -587,6 +588,9 @@ fn every_result() -> Vec<CommandResult> {
                 ffmpeg_dir: Some("C:\\Tools".into()),
                 yt_dlp_version: Some("2026.01.01".into()),
                 ffmpeg_version: Some("ffmpeg version 8.0".into()),
+                js_runtime_name: Some("node".into()),
+                js_runtime_path: Some("C:\\Program Files\\nodejs\\node.exe".into()),
+                js_runtime_version: Some("v22.14.0".into()),
                 install_dir: "C:\\Users\\person\\AppData\\Local\\Fetchpath\\media-tools".into(),
                 available: vec![AvailableTool {
                     name: "yt-dlp".into(),

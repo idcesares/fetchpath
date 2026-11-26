@@ -1,4 +1,5 @@
-//! Explicit user-scope MCP registration. This never talks to the engine or grants access.
+//! Explicit user-scope MCP registration and universal host linking.
+//! This never talks to the engine or grants download access.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -10,84 +11,431 @@ use std::{
 };
 
 const NAME: &str = "fetchpath";
-const USAGE: &str = "usage: fetchpath agent-setup status [--json] | add codex|claude-code [--adopt|--replace] | remove codex|claude-code [--keep-config] | check codex|claude-code | cleanup | reconcile\nGuided setup uses user scope only. Restart the host after changing registration. --keep-config explicitly relinquishes ownership without editing host settings. Registration grants no download access; use Fetchpath approvals or explicitly grant folders separately.";
+const USAGE: &str = "usage: fetchpath agent-setup status [--json]
+       fetchpath agent-setup add <HOST>|--detected [--adopt|--replace]
+       fetchpath agent-setup remove <HOST> [--keep-config]
+       fetchpath agent-setup check <HOST>
+       fetchpath agent-setup snippet [json|vscode|toml|claude|codex|deeplink-vscode|deeplink-cursor] [--agent NAME] [--tools SET]
+       fetchpath agent-setup cleanup | reconcile
+Hosts: codex, claude-code, claude-desktop, cursor, vscode, windsurf, gemini-cli.
+Guided setup uses user scope only. Restart the host after changing registration.
+--keep-config explicitly relinquishes ownership without editing host settings.
+Registration grants no download access; use Fetchpath approvals or explicitly grant folders separately.";
 type Result<T> = std::result::Result<T, String>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConfigFormat {
+    Toml,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetectMode {
+    /// Only available when the CLI executable is found on PATH.
+    PathOnly(&'static str),
+    /// Available when the CLI is on PATH or its user config/app directory exists.
+    PathOrConfigDir {
+        cli: Option<&'static str>,
+        local_app_subdir: Option<&'static str>,
+    },
+}
+
+struct HostSpec {
+    host: Host,
+    id: &'static str,
+    label: &'static str,
+    format: ConfigFormat,
+    section_key: &'static str,
+    include_type_stdio: bool,
+    lock_file: &'static str,
+    detect: DetectMode,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Host {
     Codex,
     ClaudeCode,
+    ClaudeDesktop,
+    Cursor,
+    Vscode,
+    Windsurf,
+    GeminiCli,
 }
+
+const HOSTS: &[HostSpec] = &[
+    HostSpec {
+        host: Host::Codex,
+        id: "codex",
+        label: "Codex",
+        format: ConfigFormat::Toml,
+        section_key: "mcp_servers",
+        include_type_stdio: false,
+        lock_file: ".fetchpath-codex.lock",
+        detect: DetectMode::PathOnly("codex"),
+    },
+    HostSpec {
+        host: Host::ClaudeCode,
+        id: "claude-code",
+        label: "Claude Code",
+        format: ConfigFormat::Json,
+        section_key: "mcpServers",
+        include_type_stdio: true,
+        lock_file: ".fetchpath-claude.lock",
+        detect: DetectMode::PathOnly("claude"),
+    },
+    HostSpec {
+        host: Host::ClaudeDesktop,
+        id: "claude-desktop",
+        label: "Claude Desktop",
+        format: ConfigFormat::Json,
+        section_key: "mcpServers",
+        include_type_stdio: false,
+        lock_file: ".fetchpath-claude-desktop.lock",
+        detect: DetectMode::PathOrConfigDir {
+            cli: None,
+            local_app_subdir: Some("AnthropicClaude"),
+        },
+    },
+    HostSpec {
+        host: Host::Cursor,
+        id: "cursor",
+        label: "Cursor",
+        format: ConfigFormat::Json,
+        section_key: "mcpServers",
+        include_type_stdio: false,
+        lock_file: ".fetchpath-cursor.lock",
+        detect: DetectMode::PathOrConfigDir {
+            cli: Some("cursor"),
+            local_app_subdir: Some("Programs\\cursor"),
+        },
+    },
+    HostSpec {
+        host: Host::Vscode,
+        id: "vscode",
+        label: "VS Code",
+        format: ConfigFormat::Json,
+        section_key: "servers",
+        include_type_stdio: true,
+        lock_file: ".fetchpath-vscode.lock",
+        detect: DetectMode::PathOrConfigDir {
+            cli: Some("code"),
+            local_app_subdir: Some("Programs\\Microsoft VS Code"),
+        },
+    },
+    HostSpec {
+        host: Host::Windsurf,
+        id: "windsurf",
+        label: "Windsurf",
+        format: ConfigFormat::Json,
+        section_key: "mcpServers",
+        include_type_stdio: false,
+        lock_file: ".fetchpath-windsurf.lock",
+        detect: DetectMode::PathOrConfigDir {
+            cli: Some("windsurf"),
+            local_app_subdir: Some("Programs\\Windsurf"),
+        },
+    },
+    HostSpec {
+        host: Host::GeminiCli,
+        id: "gemini-cli",
+        label: "Gemini CLI",
+        format: ConfigFormat::Json,
+        section_key: "mcpServers",
+        include_type_stdio: false,
+        lock_file: ".fetchpath-gemini-cli.lock",
+        detect: DetectMode::PathOrConfigDir {
+            cli: Some("gemini"),
+            local_app_subdir: None,
+        },
+    },
+];
+
+fn home_dir() -> Result<PathBuf> {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "Cannot locate your home directory".to_string())
+}
+
+fn appdata_dir() -> Result<PathBuf> {
+    env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().ok().map(|h| h.join("AppData").join("Roaming")))
+        .ok_or_else(|| "Cannot locate your AppData directory".to_string())
+}
+
+fn on_path(name: &str) -> bool {
+    env::var_os("PATH")
+        .map(|path| {
+            env::split_paths(&path).any(|dir| {
+                if dir.join(name).is_file() {
+                    return true;
+                }
+                #[cfg(windows)]
+                {
+                    for ext in ["exe", "cmd", "bat"] {
+                        if dir.join(format!("{name}.{ext}")).is_file() {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+        })
+        .unwrap_or(false)
+}
+
 impl Host {
+    fn spec(self) -> &'static HostSpec {
+        HOSTS
+            .iter()
+            .find(|spec| spec.host == self)
+            .expect("every host is in HOSTS")
+    }
+
     fn parse(s: &str) -> Result<Self> {
-        match s {
-            "codex" => Ok(Self::Codex),
-            "claude-code" => Ok(Self::ClaudeCode),
-            _ => Err(USAGE.into()),
-        }
+        HOSTS
+            .iter()
+            .find(|spec| spec.id == s)
+            .map(|spec| spec.host)
+            .ok_or_else(|| USAGE.into())
     }
+
     fn agent(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude-code",
-        }
+        self.spec().id
     }
+
     fn config(self) -> Result<PathBuf> {
-        let home = || {
-            env::var_os("USERPROFILE")
-                .or_else(|| env::var_os("HOME"))
-                .map(PathBuf::from)
-                .ok_or("Cannot locate your home directory".to_string())
-        };
         let path = match self {
             Self::Codex => env::var_os("CODEX_HOME")
                 .map(PathBuf::from)
-                .unwrap_or(home()?.join(".codex"))
+                .unwrap_or(home_dir()?.join(".codex"))
                 .join("config.toml"),
             Self::ClaudeCode => match env::var_os("CLAUDE_CONFIG_DIR") {
                 Some(dir) => PathBuf::from(dir).join(".claude.json"),
-                None => home()?.join(".claude.json"),
+                None => home_dir()?.join(".claude.json"),
             },
+            Self::ClaudeDesktop => env::var_os("CLAUDE_DESKTOP_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(appdata_dir()?.join("Claude"))
+                .join("claude_desktop_config.json"),
+            Self::Cursor => env::var_os("CURSOR_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(home_dir()?.join(".cursor"))
+                .join("mcp.json"),
+            Self::Vscode => env::var_os("VSCODE_USER_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(appdata_dir()?.join("Code").join("User"))
+                .join("mcp.json"),
+            Self::Windsurf => env::var_os("WINDSURF_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(home_dir()?.join(".codeium").join("windsurf"))
+                .join("mcp_config.json"),
+            Self::GeminiCli => env::var_os("GEMINI_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(home_dir()?.join(".gemini"))
+                .join("settings.json"),
         };
         std::path::absolute(path).map_err(|_| "Cannot resolve host configuration path".into())
     }
+
     fn available(self) -> bool {
-        let name = match self {
-            Self::Codex => "codex",
-            Self::ClaudeCode => "claude",
-        };
-        env::var_os("PATH")
-            .map(|path| {
-                env::split_paths(&path).any(|dir| {
-                    if dir.join(name).is_file() {
-                        return true;
-                    }
-                    #[cfg(windows)]
-                    {
-                        for ext in ["exe", "cmd", "bat"] {
-                            if dir.join(format!("{name}.{ext}")).is_file() {
-                                return true;
-                            }
-                        }
-                    }
-                    false
-                })
-            })
-            .unwrap_or(false)
+        match self.spec().detect {
+            DetectMode::PathOnly(cli) => on_path(cli),
+            DetectMode::PathOrConfigDir {
+                cli,
+                local_app_subdir,
+            } => {
+                if cli.is_some_and(on_path) {
+                    return true;
+                }
+                if self
+                    .config()
+                    .ok()
+                    .and_then(|p| p.parent().map(Path::is_dir))
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+                if let Some(sub) = local_app_subdir
+                    && let Some(local) = env::var_os("LOCALAPPDATA")
+                    && PathBuf::from(local).join(sub).is_dir()
+                {
+                    return true;
+                }
+                false
+            }
+        }
     }
+
     fn desired(self) -> Result<Value> {
-        let command =
-            env::current_exe().map_err(|_| "Cannot locate the installed Fetchpath executable")?;
-        let command = command
-            .to_str()
-            .ok_or("The executable path is not valid Unicode")?;
+        let command = current_exe_string()?;
         let mut value = json!({"command": command, "args": ["mcp", "--agent", self.agent()]});
-        if self == Self::ClaudeCode {
+        if self.spec().include_type_stdio {
             value["type"] = "stdio".into();
         }
         Ok(value)
     }
+
+    fn deeplink(self) -> Option<String> {
+        let exe = current_exe_string().ok()?;
+        match self {
+            Self::Vscode => Some(vscode_deeplink(&exe, Some(self.agent()), None)),
+            Self::Cursor => Some(cursor_deeplink(&exe, Some(self.agent()), None)),
+            _ => None,
+        }
+    }
+}
+
+fn current_exe_string() -> Result<String> {
+    let command =
+        env::current_exe().map_err(|_| "Cannot locate the installed Fetchpath executable")?;
+    command
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "The executable path is not valid Unicode".into())
+}
+
+fn mcp_args(agent: Option<&str>, tools: Option<&str>) -> Vec<String> {
+    let mut args = vec!["mcp".to_owned()];
+    if let Some(name) = agent {
+        args.push("--agent".into());
+        args.push(name.to_owned());
+    }
+    if let Some(set) = tools {
+        args.push("--tools".into());
+        args.push(set.to_owned());
+    }
+    args
+}
+
+fn vscode_deeplink(command: &str, agent: Option<&str>, tools: Option<&str>) -> String {
+    let payload = json!({
+        "name": NAME,
+        "type": "stdio",
+        "command": command,
+        "args": mcp_args(agent, tools),
+    })
+    .to_string();
+    format!("vscode:mcp/install?{}", percent_encode(&payload))
+}
+
+fn cursor_deeplink(command: &str, agent: Option<&str>, tools: Option<&str>) -> String {
+    let payload = json!({
+        "command": command,
+        "args": mcp_args(agent, tools),
+    })
+    .to_string();
+    format!(
+        "cursor://anysphere.cursor-deeplink/mcp/install?name={NAME}&config={}",
+        base64_encode(payload.as_bytes())
+    )
+}
+
+fn percent_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() * 3 / 2);
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((n >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((n >> 12) & 0x3f) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[((n >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(n & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+fn quote_shell_arg(arg: &str) -> String {
+    if arg.contains([' ', '\t', '"']) {
+        format!("\"{}\"", arg.replace('"', "\\\""))
+    } else {
+        arg.to_owned()
+    }
+}
+
+fn universal_snippets(agent: Option<&str>, tools: Option<&str>) -> Result<Value> {
+    let command = current_exe_string()?;
+    let args = mcp_args(agent, tools);
+    let mcp_json = serde_json::to_string_pretty(&json!({
+        "mcpServers": {
+            NAME: {
+                "command": command,
+                "args": args,
+            }
+        }
+    }))
+    .unwrap_or_default();
+    let vscode_json = serde_json::to_string_pretty(&json!({
+        "servers": {
+            NAME: {
+                "type": "stdio",
+                "command": command,
+                "args": args,
+            }
+        }
+    }))
+    .unwrap_or_default();
+    let mut toml_doc = toml_edit::DocumentMut::new();
+    let mut server = toml_edit::Table::new();
+    server["command"] = toml_edit::value(command.as_str());
+    let mut toml_args = toml_edit::Array::new();
+    for a in &args {
+        toml_args.push(a.as_str());
+    }
+    server["args"] = toml_edit::value(toml_args);
+    let mut servers = toml_edit::Table::new();
+    servers.insert(NAME, toml_edit::Item::Table(server));
+    toml_doc["mcp_servers"] = toml_edit::Item::Table(servers);
+    let codex_toml = toml_doc.to_string();
+
+    let quoted_cmd = quote_shell_arg(&command);
+    let joined_args = args
+        .iter()
+        .map(|a| quote_shell_arg(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let claude_cli = format!("claude mcp add --scope user {NAME} -- {quoted_cmd} {joined_args}");
+    let codex_cli = format!("codex mcp add {NAME} -- {quoted_cmd} {joined_args}");
+    let generic_command = format!("{quoted_cmd} {joined_args}");
+
+    Ok(json!({
+        "command": command,
+        "args": args,
+        "generic_command": generic_command,
+        "mcp_json": mcp_json,
+        "vscode_json": vscode_json,
+        "codex_toml": codex_toml.trim_end(),
+        "claude_cli": claude_cli,
+        "codex_cli": codex_cli,
+        "deeplink_vscode": vscode_deeplink(&command, agent.or(Some("vscode")), tools),
+        "deeplink_cursor": cursor_deeplink(&command, agent.or(Some("cursor")), tools),
+        "skill_install": "npx skills add idcesares/fetchpath",
+    }))
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -238,14 +586,15 @@ fn valid_expected(record: &Record) -> bool {
     let Some(map) = record.expected.as_object() else {
         return false;
     };
-    let expected_len = if record.host == Host::Codex { 2 } else { 3 };
+    let spec = record.host.spec();
+    let expected_len = if spec.include_type_stdio { 3 } else { 2 };
     map.len() == expected_len
         && map
             .get("command")
             .and_then(Value::as_str)
             .is_some_and(|p| Path::new(p).is_absolute())
         && map.get("args") == Some(&json!(["mcp", "--agent", record.host.agent()]))
-        && (record.host != Host::ClaudeCode || map.get("type") == Some(&json!("stdio")))
+        && (!spec.include_type_stdio || map.get("type") == Some(&json!("stdio")))
 }
 
 enum Document {
@@ -261,6 +610,7 @@ struct Config {
 }
 impl Config {
     fn load(host: Host, path: &Path) -> Result<Self> {
+        let spec = host.spec();
         let parent = path.parent().ok_or("Invalid configuration path")?;
         fs::create_dir_all(parent).map_err(|_| "Cannot access host configuration directory")?;
         let lock = OpenOptions::new()
@@ -268,17 +618,14 @@ impl Config {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(parent.join(match host {
-                Host::Codex => ".fetchpath-codex.lock",
-                Host::ClaudeCode => ".fetchpath-claude.lock",
-            }))
+            .open(parent.join(spec.lock_file))
             .map_err(|_| "Cannot open host configuration lock")?;
         lock.try_lock()
             .map_err(|_| "Another registration command is changing this host; retry")?;
         let before = read(path, 16 * 1024 * 1024)?;
-        let bytes = before.as_deref().unwrap_or(match host {
-            Host::Codex => b"",
-            Host::ClaudeCode => b"{}",
+        let bytes = before.as_deref().unwrap_or(match spec.format {
+            ConfigFormat::Toml => b"",
+            ConfigFormat::Json => b"{}",
         });
         let invalid = || {
             format!(
@@ -286,14 +633,14 @@ impl Config {
                 host.agent()
             )
         };
-        let doc = match host {
-            Host::Codex => Document::Toml(
+        let doc = match spec.format {
+            ConfigFormat::Toml => Document::Toml(
                 std::str::from_utf8(bytes)
                     .map_err(|_| invalid())?
                     .parse::<toml_edit::DocumentMut>()
                     .map_err(|_| invalid())?,
             ),
-            Host::ClaudeCode => Document::Json(parse_json(bytes).map_err(|_| invalid())?),
+            ConfigFormat::Json => Document::Json(parse_json(bytes).map_err(|_| invalid())?),
         };
         let config = Self {
             host,
@@ -306,19 +653,16 @@ impl Config {
         Ok(config)
     }
     fn entry(&self) -> Result<Option<Value>> {
+        let spec = self.host.spec();
         let value = match &self.doc {
             Document::Toml(doc) => toml_edit::de::from_str::<Value>(&doc.to_string())
-                .map_err(|_| "Unsupported Codex configuration")?,
+                .map_err(|_| format!("Unsupported {} configuration", spec.label))?,
             Document::Json(value) => value.clone(),
         };
         let root = value
             .as_object()
             .ok_or("Host configuration must be an object/table")?;
-        let key = match self.host {
-            Host::Codex => "mcp_servers",
-            Host::ClaudeCode => "mcpServers",
-        };
-        match root.get(key) {
+        match root.get(spec.section_key) {
             None => Ok(None),
             Some(servers) => Ok(servers
                 .as_object()
@@ -328,17 +672,18 @@ impl Config {
         }
     }
     fn set(&mut self, entry: Option<&Value>) -> Result<()> {
+        let spec = self.host.spec();
         match &mut self.doc {
             Document::Toml(doc) => {
-                if doc.get("mcp_servers").is_none() {
+                if doc.get(spec.section_key).is_none() {
                     if entry.is_none() {
                         return Ok(());
                     }
-                    doc["mcp_servers"] = toml_edit::Item::Table(toml_edit::Table::new());
+                    doc[spec.section_key] = toml_edit::Item::Table(toml_edit::Table::new());
                 }
-                let servers = doc["mcp_servers"]
+                let servers = doc[spec.section_key]
                     .as_table_like_mut()
-                    .ok_or("Codex MCP server configuration must be a table")?;
+                    .ok_or("Host MCP server configuration must be a table")?;
                 if let Some(entry) = entry {
                     let mut table = toml_edit::Table::new();
                     table["command"] =
@@ -356,17 +701,17 @@ impl Config {
             Document::Json(doc) => {
                 let root = doc
                     .as_object_mut()
-                    .ok_or("Claude user configuration must be an object")?;
-                if !root.contains_key("mcpServers") {
+                    .ok_or("Host user configuration must be an object")?;
+                if !root.contains_key(spec.section_key) {
                     if entry.is_none() {
                         return Ok(());
                     }
-                    root.insert("mcpServers".into(), json!({}));
+                    root.insert(spec.section_key.into(), json!({}));
                 }
                 let servers = root
-                    .get_mut("mcpServers")
+                    .get_mut(spec.section_key)
                     .and_then(Value::as_object_mut)
-                    .ok_or("Claude MCP server configuration must be an object")?;
+                    .ok_or("Host MCP server configuration must be an object")?;
                 if let Some(entry) = entry {
                     servers.insert(NAME.into(), entry.clone());
                 } else {
@@ -380,7 +725,7 @@ impl Config {
         let bytes = match &self.doc {
             Document::Toml(doc) => doc.to_string().into_bytes(),
             Document::Json(doc) => {
-                serde_json::to_vec_pretty(doc).map_err(|_| "Cannot encode Claude configuration")?
+                serde_json::to_vec_pretty(doc).map_err(|_| "Cannot encode host configuration")?
             }
         };
         if read(&self.path, 16 * 1024 * 1024)? != self.before {
@@ -545,7 +890,7 @@ fn parse_json(bytes: &[u8]) -> std::result::Result<Value, serde_json::Error> {
 fn add(store: &mut Store, host: Host, mode: Option<&str>) -> Result<()> {
     if !host.available() {
         return Err(format!(
-            "{} is not available on PATH. Install the host or use manual setup",
+            "{} is not detected on this computer. Install the host or use `fetchpath agent-setup snippet` for manual setup",
             host.agent()
         ));
     }
@@ -587,6 +932,27 @@ fn add(store: &mut Store, host: Host, mode: Option<&str>) -> Result<()> {
     } else {
         store.change(config, previous, Some(next))
     }
+}
+
+fn add_detected(store: &mut Store, mode: Option<&str>) -> Result<Vec<&'static str>> {
+    let mut connected = Vec::new();
+    let mut skipped = Vec::new();
+    for spec in HOSTS {
+        if !spec.host.available() {
+            continue;
+        }
+        match add(store, spec.host, mode) {
+            Ok(()) => connected.push(spec.id),
+            Err(reason) => skipped.push(format!("{}: {reason}", spec.id)),
+        }
+    }
+    if connected.is_empty() && !skipped.is_empty() {
+        return Err(skipped.join("\n"));
+    }
+    for note in skipped {
+        eprintln!("fetchpath agent-setup: skipped {note}");
+    }
+    Ok(connected)
 }
 
 fn process_owned(store: &mut Store, host: Option<Host>, reconcile: bool) -> Result<()> {
@@ -652,6 +1018,7 @@ fn process_owned(store: &mut Store, host: Option<Host>, reconcile: bool) -> Resu
 }
 
 fn status(store: &Store, host: Host) -> Result<Value> {
+    let spec = host.spec();
     let path = host.config()?;
     let (registered, owned, state) = match read(&path, 16 * 1024 * 1024)? {
         None => (false, false, "not-registered"),
@@ -675,9 +1042,21 @@ fn status(store: &Store, host: Host) -> Result<Value> {
             )
         }
     };
-    Ok(
-        json!({"available": host.available(), "scope": "user", "config": path, "registered": registered, "owned": owned, "connection": state, "restart_required": registered}),
-    )
+    let mut entry = json!({
+        "id": spec.id,
+        "label": spec.label,
+        "available": host.available(),
+        "scope": "user",
+        "config": path,
+        "registered": registered,
+        "owned": owned,
+        "connection": state,
+        "restart_required": registered
+    });
+    if let Some(deeplink) = host.deeplink() {
+        entry["deeplink"] = Value::String(deeplink);
+    }
+    Ok(entry)
 }
 
 fn check(store: &Store, host: Host) -> Result<()> {
@@ -709,7 +1088,21 @@ fn check(store: &Store, host: Host) -> Result<()> {
             let _ = self.0.wait();
         }
     }
-    let mut child = Child(Command::new(record.expected["command"].as_str().ok_or("Invalid owned command")?).args(["mcp", "--agent", host.agent()]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|_| "Cannot start owned Fetchpath command; run agent-setup reconcile from the installed executable")?);
+    let mut child = Child(
+        Command::new(
+            record.expected["command"]
+                .as_str()
+                .ok_or("Invalid owned command")?,
+        )
+        .args(["mcp", "--agent", host.agent()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| {
+            "Cannot start owned Fetchpath command; run agent-setup reconcile from the installed executable"
+        })?,
+    );
     let stdout = child.0.stdout.take().ok_or("Cannot read MCP output")?;
     let mut stdin = child.0.stdin.take().ok_or("Cannot write MCP input")?;
     let (sender, receiver) = mpsc::sync_channel(4);
@@ -755,9 +1148,16 @@ fn check(store: &Store, host: Host) -> Result<()> {
         }
     };
     let result = (|| {
-        write(
-            json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2024-11-05", "capabilities":{}, "clientInfo":{"name":"fetchpath-agent-setup", "version":crate::VERSION}}}),
-        )?;
+        write(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "fetchpath-agent-setup", "version": crate::VERSION}
+            }
+        }))?;
         let initialized = response(1)?;
         if initialized
             .get("protocolVersion")
@@ -770,8 +1170,8 @@ fn check(store: &Store, host: Host) -> Result<()> {
         {
             return Err("MCP server did not advertise a tools connection".into());
         }
-        write(json!({"jsonrpc":"2.0", "method":"notifications/initialized"}))?;
-        write(json!({"jsonrpc":"2.0", "id":2, "method":"tools/list", "params":{}}))?;
+        write(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+        write(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}))?;
         let tools = response(2)?;
         let count = tools["tools"]
             .as_array()
@@ -781,7 +1181,7 @@ fn check(store: &Store, host: Host) -> Result<()> {
             return Err("MCP server advertised no tools".into());
         }
         println!(
-            "{}: MCP handshake and tool discovery passed ({count} tools). Restart the host and check /mcp; host policy may restrict loading. No download access was granted.",
+            "{}: MCP handshake and tool discovery passed ({count} tools). Restart the host and check its MCP panel; host policy may restrict loading. No download access was granted.",
             host.agent()
         );
         Ok(())
@@ -793,24 +1193,144 @@ fn check(store: &Store, host: Host) -> Result<()> {
     result
 }
 
+fn run_snippet(args: &[String]) -> Result<()> {
+    let mut format = "json";
+    let mut agent: Option<String> = None;
+    let mut tools: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--agent" => {
+                let value = iter.next().ok_or("--agent needs a name")?;
+                fetchpath_protocol::principal::AgentName::try_from(value.as_str())?;
+                agent = Some(value.clone());
+            }
+            "--tools" => {
+                let value = iter.next().ok_or("--tools needs a value")?;
+                crate::mcp::Toolsets::parse(value)?;
+                tools = Some(value.clone());
+            }
+            other if other.starts_with("--agent=") => {
+                let value = &other["--agent=".len()..];
+                fetchpath_protocol::principal::AgentName::try_from(value)?;
+                agent = Some(value.to_owned());
+            }
+            other if other.starts_with("--tools=") => {
+                let value = &other["--tools=".len()..];
+                crate::mcp::Toolsets::parse(value)?;
+                tools = Some(value.to_owned());
+            }
+            "json" | "mcp-json" | "cursor" | "claude-desktop" | "windsurf" | "gemini-cli" => {
+                format = "json";
+            }
+            "vscode" => format = "vscode",
+            "toml" => format = "toml",
+            "claude" | "claude-code" => format = "claude",
+            "codex" => format = "codex",
+            "deeplink-vscode" => format = "deeplink-vscode",
+            "deeplink-cursor" => format = "deeplink-cursor",
+            "all" | "--json" => format = "all",
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let snippets = universal_snippets(agent.as_deref(), tools.as_deref())?;
+    let text = match format {
+        "json" => snippets["mcp_json"].as_str().unwrap_or_default().to_owned(),
+        "vscode" => snippets["vscode_json"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "toml" => snippets["codex_toml"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "claude" => snippets["claude_cli"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "codex" => snippets["codex_cli"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "deeplink-vscode" => snippets["deeplink_vscode"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "deeplink-cursor" => snippets["deeplink_cursor"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        "all" => serde_json::to_string_pretty(&snippets).unwrap_or_default(),
+        _ => unreachable!(),
+    };
+    println!("{text}");
+    Ok(())
+}
+
+pub(crate) fn status_json() -> Result<Value> {
+    let mut store = Store::open()?;
+    store.recover()?;
+    let report = |host: Host| {
+        status(&store, host).unwrap_or_else(|error| {
+            let spec = host.spec();
+            json!({
+                "id": spec.id,
+                "label": spec.label,
+                "available": host.available(),
+                "scope": "user",
+                "connection": "configuration-error",
+                "error": error
+            })
+        })
+    };
+    let hosts: Vec<Value> = HOSTS.iter().map(|spec| report(spec.host)).collect();
+    let universal = universal_snippets(None, None).ok();
+    Ok(json!({
+        "codex": report(Host::Codex),
+        "claude_code": report(Host::ClaudeCode),
+        "hosts": hosts,
+        "universal": universal,
+        "owned_registrations": store.inventory.records.len(),
+        "access_granted_by_setup": false
+    }))
+}
+
+pub(crate) fn connect_detected() -> Result<Vec<&'static str>> {
+    let mut store = Store::open()?;
+    store.recover()?;
+    add_detected(&mut store, None)
+}
+
 pub(crate) fn run(args: &[String]) -> i32 {
     let result: Result<()> = (|| {
         // Parse the entire request before opening or recovering any inventory.
         let command = args.first().map(String::as_str).ok_or(USAGE)?;
-        let host = match command {
-            "add"
-                if args.len() == 2
-                    || (args.len() == 3 && matches!(args[2].as_str(), "--adopt" | "--replace")) =>
-            {
-                Some(Host::parse(&args[1])?)
+        if command == "snippet" {
+            return run_snippet(&args[1..]);
+        }
+        let detected_add = command == "add"
+            && args.get(1).is_some_and(|a| a == "--detected")
+            && (args.len() == 2
+                || (args.len() == 3 && matches!(args[2].as_str(), "--adopt" | "--replace")));
+        let host = if detected_add {
+            None
+        } else {
+            match command {
+                "add"
+                    if args.len() == 2
+                        || (args.len() == 3
+                            && matches!(args[2].as_str(), "--adopt" | "--replace")) =>
+                {
+                    Some(Host::parse(&args[1])?)
+                }
+                "remove" if args.len() == 2 || (args.len() == 3 && args[2] == "--keep-config") => {
+                    Some(Host::parse(&args[1])?)
+                }
+                "check" if args.len() == 2 => Some(Host::parse(&args[1])?),
+                "status" if args.len() == 1 || (args.len() == 2 && args[1] == "--json") => None,
+                "cleanup" | "reconcile" if args.len() == 1 => None,
+                _ => return Err(USAGE.into()),
             }
-            "remove" if args.len() == 2 || (args.len() == 3 && args[2] == "--keep-config") => {
-                Some(Host::parse(&args[1])?)
-            }
-            "check" if args.len() == 2 => Some(Host::parse(&args[1])?),
-            "status" if args.len() == 1 || (args.len() == 2 && args[1] == "--json") => None,
-            "cleanup" | "reconcile" if args.len() == 1 => None,
-            _ => return Err(USAGE.into()),
         };
         let mut store = Store::open()?;
         if command == "remove" && args.get(2).is_some_and(|arg| arg == "--keep-config") {
@@ -834,28 +1354,64 @@ pub(crate) fn run(args: &[String]) -> i32 {
         store.recover()?;
         match command {
             "status" => {
-                let report = |host| {
-                    status(&store, host).unwrap_or_else(|error| json!({"available": host.available(), "scope":"user", "connection":"configuration-error", "error":error}))
+                let report = |host: Host| {
+                    status(&store, host).unwrap_or_else(|error| {
+                        let spec = host.spec();
+                        json!({
+                            "id": spec.id,
+                            "label": spec.label,
+                            "available": host.available(),
+                            "scope": "user",
+                            "connection": "configuration-error",
+                            "error": error
+                        })
+                    })
                 };
-                let value = json!({"codex": report(Host::Codex), "claude_code": report(Host::ClaudeCode), "owned_registrations": store.inventory.records.len(), "access_granted_by_setup": false});
+                let hosts: Vec<Value> = HOSTS.iter().map(|spec| report(spec.host)).collect();
+                let universal = universal_snippets(None, None).ok();
+                let value = json!({
+                    "codex": report(Host::Codex),
+                    "claude_code": report(Host::ClaudeCode),
+                    "hosts": hosts,
+                    "universal": universal,
+                    "owned_registrations": store.inventory.records.len(),
+                    "access_granted_by_setup": false
+                });
                 if args.len() == 2 {
                     println!("{value}");
                 } else {
-                    for key in ["codex", "claude_code"] {
+                    for item in value["hosts"].as_array().into_iter().flatten() {
                         println!(
-                            "{key}: available={}, registration={}, scope=user",
-                            value[key]["available"], value[key]["connection"]
+                            "{}: available={}, registration={}, scope=user",
+                            item["id"].as_str().unwrap_or("?"),
+                            item["available"],
+                            item["connection"].as_str().unwrap_or("?")
                         );
                     }
                     println!(
-                        "Restart registered hosts. Connection is checked in Codex /mcp or Claude Code /mcp, not by this command. Setup grants no access."
+                        "Connect detected hosts at once: fetchpath agent-setup add --detected\n\
+                         Any other MCP host: fetchpath agent-setup snippet json\n\
+                         Restart registered hosts. Setup grants no download access."
+                    );
+                }
+            }
+            "add" if detected_add => {
+                let connected = add_detected(&mut store, args.get(2).map(String::as_str))?;
+                if connected.is_empty() {
+                    println!(
+                        "No supported agent hosts were detected on this computer. Run `fetchpath agent-setup snippet json` for manual setup."
+                    );
+                } else {
+                    println!(
+                        "Registered Fetchpath in user scope for: {}. Restart those hosts to connect. No folder grants or automatic approvals were added.",
+                        connected.join(", ")
                     );
                 }
             }
             "add" => {
                 add(&mut store, host.unwrap(), args.get(2).map(String::as_str))?;
                 println!(
-                    "Registered Fetchpath in user scope. Restart the selected host and check /mcp. No folder grants or automatic approvals were added."
+                    "Registered Fetchpath in user scope. Restart the selected host and check its MCP list. No folder grants or automatic approvals were added."
                 );
             }
             "check" => check(&store, host.unwrap())?,
@@ -879,5 +1435,39 @@ pub(crate) fn run(args: &[String]) -> i32 {
             eprintln!("fetchpath agent-setup: {error}");
             if error.starts_with("usage:") { 2 } else { 6 }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deeplinks_encode_cleanly() {
+        let vs = vscode_deeplink(
+            r"C:\Program Files\Fetchpath\fetchpath.exe",
+            Some("vscode"),
+            None,
+        );
+        assert!(vs.starts_with("vscode:mcp/install?%7B"));
+        assert!(!vs.contains(' '));
+        assert!(!vs.contains('"'));
+
+        let cur = cursor_deeplink(r"C:\Fetchpath\fetchpath.exe", Some("cursor"), None);
+        assert!(
+            cur.starts_with(
+                "cursor://anysphere.cursor-deeplink/mcp/install?name=fetchpath&config="
+            )
+        );
+        assert!(!cur.contains(' '));
+    }
+
+    #[test]
+    fn base64_matches_standard_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     }
 }

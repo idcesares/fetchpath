@@ -128,6 +128,7 @@ pub fn job(job: &JobSnapshot, now: Timestamp) -> JobView {
                     .reasons
                     .iter()
                     .map(|reason| match reason {
+                        ApprovalReason::AskMode => "ask_mode",
                         ApprovalReason::OutsideGrantedFolders => "outside_granted_folders",
                         ApprovalReason::SizeLimit => "size_limit",
                         ApprovalReason::RateLimit => "rate_limit",

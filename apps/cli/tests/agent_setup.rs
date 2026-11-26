@@ -36,6 +36,7 @@ impl Home {
             .env("CLAUDE_CONFIG_DIR", self.path("claude"))
             .env("USERPROFILE", self.path("profile"))
             .env("HOME", self.path("profile"))
+            .env("APPDATA", self.path("appdata"))
             .env("LOCALAPPDATA", self.path("local"))
             .env("FETCHPATH_AGENT_SETUP_DIR", self.path("inventory"))
             .env("FETCHPATH_APP_DATA_DIR", self.path("data"))
@@ -396,4 +397,80 @@ fn owned_stdio_command_passes_mcp_handshake_and_tool_discovery_without_grants() 
     home.ok(&["add", "codex"]);
     let output = home.ok(&["check", "codex"]);
     assert!(String::from_utf8_lossy(&output.stdout).contains("tool discovery passed"));
+}
+
+#[test]
+fn data_driven_hosts_detected_add_and_universal_snippets_work_hermetically() {
+    let home = Home::new();
+    // Make Cursor and VS Code present in the isolated profile/appdata.
+    let cursor_dir = home.path("profile/.cursor");
+    let vscode_dir = home.path("appdata/Code/User");
+    fs::create_dir_all(&cursor_dir).unwrap();
+    fs::create_dir_all(&vscode_dir).unwrap();
+    fs::write(
+        vscode_dir.join("mcp.json"),
+        r#"{"servers":{"existing":{"type":"stdio","command":"other"}}}"#,
+    )
+    .unwrap();
+
+    // Status exposes the full declarative hosts array and universal snippets.
+    let status: Value = serde_json::from_slice(&home.ok(&["status", "--json"]).stdout).unwrap();
+    let hosts = status["hosts"].as_array().unwrap();
+    assert!(hosts.len() >= 7, "{status}");
+    let find_host = |id: &str| hosts.iter().find(|h| h["id"] == id).unwrap().clone();
+    assert_eq!(find_host("cursor")["available"], true);
+    assert_eq!(find_host("vscode")["available"], true);
+    assert_eq!(find_host("windsurf")["available"], false);
+    assert!(
+        find_host("vscode")["deeplink"]
+            .as_str()
+            .unwrap()
+            .starts_with("vscode:mcp/install?")
+    );
+    assert!(
+        find_host("cursor")["deeplink"]
+            .as_str()
+            .unwrap()
+            .starts_with("cursor://anysphere.cursor-deeplink/mcp/install?")
+    );
+    assert_eq!(status["universal"]["args"], json!(["mcp"]));
+
+    // One-shot --detected connects every detected host (codex, claude-code, cursor, vscode)
+    // while preserving unrelated settings and granting no download access.
+    home.ok(&["add", "--detected"]);
+    assert_eq!(home.inventory()["records"].as_array().unwrap().len(), 4);
+    let vscode_json: Value =
+        serde_json::from_slice(&fs::read(vscode_dir.join("mcp.json")).unwrap()).unwrap();
+    assert_eq!(vscode_json["servers"]["existing"]["command"], "other");
+    assert_eq!(vscode_json["servers"]["fetchpath"]["type"], "stdio");
+    assert_eq!(
+        vscode_json["servers"]["fetchpath"]["args"],
+        json!(["mcp", "--agent", "vscode"])
+    );
+    let cursor_json: Value =
+        serde_json::from_slice(&fs::read(cursor_dir.join("mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        cursor_json["mcpServers"]["fetchpath"]["args"],
+        json!(["mcp", "--agent", "cursor"])
+    );
+    assert!(!home.path("data").exists());
+
+    // Snippets produce valid JSON, VS Code JSON, and filtered toolset commands.
+    let snippet_json: Value =
+        serde_json::from_slice(&home.ok(&["snippet", "json", "--tools", "core"]).stdout).unwrap();
+    assert_eq!(
+        snippet_json["mcpServers"]["fetchpath"]["args"],
+        json!(["mcp", "--tools", "core"])
+    );
+    let vs_snippet: Value =
+        serde_json::from_slice(&home.ok(&["snippet", "vscode"]).stdout).unwrap();
+    assert_eq!(vs_snippet["servers"]["fetchpath"]["type"], "stdio");
+
+    // Cleanup removes all 4 owned registrations cleanly.
+    home.ok(&["cleanup"]);
+    assert_eq!(home.inventory()["records"], json!([]));
+    let vscode_after: Value =
+        serde_json::from_slice(&fs::read(vscode_dir.join("mcp.json")).unwrap()).unwrap();
+    assert!(vscode_after["servers"].get("fetchpath").is_none());
+    assert_eq!(vscode_after["servers"]["existing"]["command"], "other");
 }

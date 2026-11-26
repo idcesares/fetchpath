@@ -170,6 +170,7 @@ fn approval_error(record: &QueueRecord) -> Option<ProtocolError> {
         .reasons
         .iter()
         .map(|reason| match reason {
+            ApprovalReason::AskMode => "this agent is set to ask before every download",
             ApprovalReason::OutsideGrantedFolders => {
                 "it saves outside the folders this agent may use"
             }

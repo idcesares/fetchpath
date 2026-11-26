@@ -119,7 +119,8 @@ downloads a release, checks it against `SHA256SUMS.txt`, and installs silently w
 desktop window by default (`-Components cli,mcp`), optionally connecting
 `-AgentHosts codex,claude-code` and setting up `-MediaTools`. `tools/install/SKILL.md`
 is the same steps as an agent skill. Connecting a host later needs no reinstall:
-`fetchpath agent-setup add codex`, or **Settings → Agents and rules**.
+`fetchpath setup --agents` (or `fetchpath agent-setup add <HOST>`), or **Settings → Agents and rules**.
+Run `fetchpath setup` (or check **Settings → Integrations → Setup checklist**) anytime to verify media tools, JS runtime, torrent helper, browser bridge, and AI agent status.
 
 **Quiet installation.** These switches go after the setup file name:
 
@@ -312,7 +313,9 @@ approval. See [the torrent command](CLI.md#downloading) for terminal use.
 
 Fetchpath can save video and audio from pages that the free tool `yt-dlp`
 supports, and lets you choose the quality. It needs two programs, `yt-dlp` and
-`ffmpeg`, which don't come with Fetchpath.
+`ffmpeg`, which don't come with Fetchpath (Fetchpath also detects copies already
+on your `PATH`, and automatically passes a detected JavaScript runtime such as
+Deno or Node.js 22+ to `yt-dlp` for full YouTube format extraction).
 
 **Set them up once:** choose the optional setup step in the installer, or open
 **Settings → Integrations → Video and audio** and choose
@@ -464,9 +467,11 @@ shortcuts.
 
 ## Requests from AI agents
 
-Choose **AI agents (MCP)** in setup, then explicitly select Codex or Claude
-Code on the connection page. Its choices start unticked. You can connect later
-with `fetchpath agent-setup add codex` or `fetchpath agent-setup add claude-code`.
+Choose **AI agents (MCP)** in setup, then connect hosts from **Settings →
+Agents and rules** (or run `fetchpath agent-setup add --detected` /
+`fetchpath agent-setup add <HOST>` for Codex, Claude Code, Claude Desktop,
+Cursor, VS Code, Windsurf, or Gemini CLI; or `fetchpath agent-setup snippet`
+for any other MCP client).
 Restart the host, check its MCP connection, and approve Fetchpath's tools in
 the host when prompted. Connecting grants no download access; choose folders
 separately in **Settings → Agents and rules** or with `fetchpath agents grant`.

@@ -1392,6 +1392,7 @@ fn automatic_policy_restarts_running_helpers_and_applies_at_start() {
                 max_bytes: 256 * 1024,
                 max_new_jobs_per_hour: 20,
                 automatic: false,
+                permission_mode: None,
             };
             jobs.set_agent_policy(agent.clone(), Some(access.clone()))
                 .unwrap();
@@ -1598,6 +1599,7 @@ fn an_agent_media_download_stops_at_its_size_limit() {
             max_bytes: 256 * 1024,
             max_new_jobs_per_hour: 20,
             automatic: false,
+            permission_mode: None,
         }),
     )
     .unwrap();
@@ -1672,6 +1674,7 @@ fn an_agent_media_burst_past_its_limit_waits_and_approval_lifts_it() {
             max_bytes: 256 * 1024,
             max_new_jobs_per_hour: 20,
             automatic: false,
+            permission_mode: None,
         }),
     )
     .unwrap();

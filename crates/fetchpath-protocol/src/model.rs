@@ -494,6 +494,12 @@ pub struct MediaToolsStatus {
     pub yt_dlp_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ffmpeg_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js_runtime_version: Option<String>,
     pub install_dir: String,
     #[serde(default)]
     pub available: Vec<AvailableTool>,

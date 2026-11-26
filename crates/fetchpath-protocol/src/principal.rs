@@ -227,6 +227,87 @@ impl JsonSchema for Principal {
     }
 }
 
+/// Harness-style permission mode for one AI agent.
+///
+/// Always opt-in by the human `user`; new agents default to `Scoped` with no
+/// folders (every request waits for approval).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPermissionMode {
+    /// Strict: every download waits for the person's approval, even if
+    /// folders are saved on the agent's profile.
+    Ask,
+    /// Default: inside granted folders, downloads start without asking up to
+    /// `max_bytes` and `max_new_jobs_per_hour`. Everything else waits.
+    #[default]
+    Scoped,
+    /// Automatic inside granted folders: size limit, hourly rate limit, and
+    /// torrent peer-discovery holds do not apply. Outside granted folders
+    /// still waits.
+    Auto,
+    /// Full access (skip all download approvals): any valid destination folder,
+    /// no size or hourly limit, and torrents start without approval prompts.
+    /// Hard safety invariants (never overwriting files, no access to settings,
+    /// policies, shares, or credentials) still apply.
+    FullAccess,
+}
+
+impl AgentPermissionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Scoped => "scoped",
+            Self::Auto => "auto",
+            Self::FullAccess => "full_access",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Scoped => "scoped",
+            Self::Auto => "auto",
+            Self::FullAccess => "full-access",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Ask => Self::Scoped,
+            Self::Scoped => Self::Auto,
+            Self::Auto => Self::FullAccess,
+            Self::FullAccess => Self::Ask,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Ask => Self::FullAccess,
+            Self::Scoped => Self::Ask,
+            Self::Auto => Self::Scoped,
+            Self::FullAccess => Self::Auto,
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "ask" | "prompt" | "strict" => Some(Self::Ask),
+            "scoped" | "folders" | "allow" | "default" => Some(Self::Scoped),
+            "auto" | "automatic" => Some(Self::Auto),
+            "full" | "full-access" | "full_access" | "bypass" | "skip" | "unrestricted" => {
+                Some(Self::FullAccess)
+            }
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for AgentPermissionMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.label())
+    }
+}
+
 /// What the person allows one agent to do without asking.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentPolicy {
@@ -246,6 +327,11 @@ pub struct AgentPolicy {
     /// it on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub automatic: bool,
+    /// Explicit permission mode (`ask`, `scoped`, `auto`, `full_access`).
+    /// When omitted on older configs, derived from `automatic` (`auto` if true,
+    /// `scoped` otherwise).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<AgentPermissionMode>,
 }
 
 impl AgentPolicy {
@@ -253,6 +339,45 @@ impl AgentPolicy {
     pub const DEFAULT_MAX_NEW_JOBS_PER_HOUR: u32 = 20;
     pub const MAX_FOLDERS: usize = 32;
     pub const MAX_NEW_JOBS_PER_HOUR_LIMIT: u32 = 1_000;
+
+    /// The resolved permission mode, honoring older configs that only stored `automatic`.
+    pub fn effective_mode(&self) -> AgentPermissionMode {
+        match self.permission_mode {
+            Some(mode) => mode,
+            None if self.automatic => AgentPermissionMode::Auto,
+            None => AgentPermissionMode::Scoped,
+        }
+    }
+
+    /// True when every download must wait for approval regardless of saved folders.
+    pub fn is_ask(&self) -> bool {
+        self.effective_mode() == AgentPermissionMode::Ask
+    }
+
+    /// True when the person explicitly granted full access (skip all download approvals).
+    pub fn is_full_access(&self) -> bool {
+        self.effective_mode() == AgentPermissionMode::FullAccess
+    }
+
+    /// True when size limit, hourly rate limit, and torrent peer discovery holds are lifted.
+    pub fn lifts_limits(&self) -> bool {
+        matches!(
+            self.effective_mode(),
+            AgentPermissionMode::Auto | AgentPermissionMode::FullAccess
+        )
+    }
+
+    /// Sets `mode` while keeping the legacy `automatic` boolean synchronized.
+    pub fn set_mode(&mut self, mode: AgentPermissionMode) {
+        self.permission_mode = match mode {
+            AgentPermissionMode::Scoped => None,
+            other => Some(other),
+        };
+        self.automatic = matches!(
+            mode,
+            AgentPermissionMode::Auto | AgentPermissionMode::FullAccess
+        );
+    }
 }
 
 impl Default for AgentPolicy {
@@ -264,6 +389,7 @@ impl Default for AgentPolicy {
             max_bytes: Self::DEFAULT_MAX_BYTES,
             max_new_jobs_per_hour: Self::DEFAULT_MAX_NEW_JOBS_PER_HOUR,
             automatic: false,
+            permission_mode: None,
         }
     }
 }
@@ -279,6 +405,8 @@ pub struct AgentAccess {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalReason {
+    /// This agent's permission mode is set to Ask every time.
+    AskMode,
     /// The destination is not inside a folder granted to the agent.
     OutsideGrantedFolders,
     /// The download passed the agent's size limit and stopped.

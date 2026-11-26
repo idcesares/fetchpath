@@ -25,18 +25,22 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn act(engine: &Engine, action: &str) -> Result<(), ProtocolError> {
+    println!("{}", act_message(engine, action)?);
+    Ok(())
+}
+
+/// Runs one `/web` action against the engine and returns the human message.
+pub(crate) fn act_message(engine: &Engine, action: &str) -> Result<String, ProtocolError> {
     match action {
         "on" | "off" => {
             let on = action == "on";
             queue::settings_outcome(engine, &["web_ui".into(), on.to_string()])?;
-            println!(
-                "{}",
-                if on {
-                    "The web UI is on. Run `fetchpath web open` to sign in this browser."
-                } else {
-                    "The web UI is off and every browser is signed out."
-                }
-            );
+            Ok(if on {
+                "The web UI is on. Run `fetchpath web open` (or /web open) to sign in this browser."
+            } else {
+                "The web UI is off and every browser is signed out."
+            }
+            .into())
         }
         "open" => match engine.send(Command::OpenWebUi)? {
             // The link carries a single-use ticket: it goes to the browser,
@@ -45,16 +49,16 @@ fn act(engine: &Engine, action: &str) -> Result<(), ProtocolError> {
                 open_in_browser(url.expose()).map_err(|message| {
                     ProtocolError::new(ErrorCode::INTERNAL_UNKNOWN, ErrorScope::Command, message)
                 })?;
-                println!("Opening Fetchpath in your browser.");
+                Ok("Opening Fetchpath in your browser.".into())
             }
-            other => return Err(client::unexpected(&other)),
+            other => Err(client::unexpected(&other)),
         },
-        _ => match engine.send(Command::SignOutBrowsers)? {
-            CommandResult::BrowsersSignedOut => println!("Every browser is signed out."),
-            other => return Err(client::unexpected(&other)),
+        "sign-out" => match engine.send(Command::SignOutBrowsers)? {
+            CommandResult::BrowsersSignedOut => Ok("Every browser is signed out.".into()),
+            other => Err(client::unexpected(&other)),
         },
+        _ => Err(client::input_error("Say on, off, open, or sign-out.")),
     }
-    Ok(())
 }
 
 fn open_in_browser(url: &str) -> Result<(), String> {

@@ -40,6 +40,7 @@ export function matchesFilter(job: JobSnapshot, filter: QueueFilter): boolean {
 export function approvalText(job: JobSnapshot): string {
   const who = job.agent ? `The agent ${job.agent}` : "An agent";
   const why = job.approvalReasons.map((reason) => ({
+    ask_mode: "this agent is set to ask before every download",
     outside_granted_folders: "it would save outside the folders you let it use",
     size_limit: "it passed the size you let it download and stopped",
     rate_limit: "it asked for more downloads this hour than you allow",

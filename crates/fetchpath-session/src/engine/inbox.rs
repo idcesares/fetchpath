@@ -711,7 +711,9 @@ impl Engine {
                 .session
                 .data_dir()
                 .and_then(|dir| std::fs::canonicalize(dir).ok()),
-            grants: access.as_ref().map(|access| access.folders.clone()),
+            grants: access
+                .as_ref()
+                .and_then(|access| (!access.is_full_access()).then(|| access.folders.clone())),
         };
         let (mut file, canonical) =
             open_source(&path, &boundary, false).map_err(|why| match why {
@@ -744,8 +746,10 @@ impl Engine {
         }
         let file_name = canonical_name(&canonical).ok_or_else(not_offerable)?;
 
-        // The agent's limits (contract D1).
-        if let (Some(agent), Some(access)) = (agent, &access) {
+        // The agent's limits (contract D1). Full access skips size and rate limits.
+        if let (Some(agent), Some(access)) = (agent, &access)
+            && !access.is_full_access()
+        {
             let open = self
                 .inbox
                 .lock()
@@ -765,7 +769,10 @@ impl Engine {
             }
         }
 
-        let limit = access.as_ref().map(|access| access.max_bytes);
+        let limit = access
+            .as_ref()
+            .filter(|access| !access.is_full_access())
+            .map(|access| access.max_bytes);
         let (size, sha256) = match hash_file(&mut file, limit) {
             Ok(Some(hashed)) => hashed,
             Ok(None) => return Err(policy::size_limit()),
@@ -876,14 +883,25 @@ impl Engine {
             .map(|agent| self.session.agent_policy(agent));
         // The recipient's limit as it is now, not when the offer was made.
         if let Some(access) = &access
+            && !access.is_full_access()
             && offer.manifest.size > access.max_bytes
         {
             return Err(policy::size_limit());
         }
-        let limit = access.as_ref().map(|access| access.max_bytes);
+        let limit = access
+            .as_ref()
+            .filter(|access| !access.is_full_access())
+            .map(|access| access.max_bytes);
         let folder = match destination.map(str::trim).filter(|text| !text.is_empty()) {
             Some(text) => PathBuf::from(text),
             None => match &access {
+                Some(access) if access.is_full_access() => access
+                    .folders
+                    .first()
+                    .cloned()
+                    .or_else(|| self.session.settings().default_destination_dir)
+                    .map(PathBuf::from)
+                    .ok_or_else(|| input("Choose a folder to save the file in.".into()))?,
                 Some(access) => access.folders.first().map(PathBuf::from).ok_or_else(|| {
                     input("Choose a folder inside the folders you were given.".into())
                 })?,
@@ -901,6 +919,7 @@ impl Engine {
         let target = folder.join(&offer.manifest.file_name);
         crate::validated_destination(&target.to_string_lossy()).map_err(input)?;
         if let Some(access) = &access
+            && !access.is_full_access()
             && !policy::inside_grants(&target, &access.folders)
         {
             return Err(policy::outside_grants());

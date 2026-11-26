@@ -673,6 +673,30 @@ fn agents_are_granted_limited_and_revoked_from_the_command_line() {
     let output = home.run(&["agents", "revoke", "helper"]);
     assert_eq!(code(&output), 0, "{}", text(&output.stderr));
     assert!(text(&output.stdout).contains("No agent has access yet"));
+
+    // Permission modes (`ask`, `scoped`, `auto`, `full`) round-trip through the engine.
+    let (exit, lines) = home.json(&["agents", "mode", "helper", "full", "--json"]);
+    assert_eq!(exit, 0);
+    assert_eq!(
+        lines[0]["policies"][0]["policy"]["permission_mode"],
+        "full_access"
+    );
+    assert_eq!(lines[0]["policies"][0]["policy"]["automatic"], true);
+    assert!(text(&home.run(&["agents"]).stdout).contains("[full-access]"));
+
+    let (exit, lines) = home.json(&["agents", "mode", "helper", "ask", "--json"]);
+    assert_eq!(exit, 0);
+    assert_eq!(lines[0]["policies"][0]["policy"]["permission_mode"], "ask");
+    assert!(text(&home.run(&["agents"]).stdout).contains("[ask]"));
+
+    let (exit, lines) = home.json(&["agents", "mode", "helper", "scoped", "--json"]);
+    assert_eq!(exit, 0);
+    assert!(
+        lines[0]["policies"][0]["policy"]
+            .get("permission_mode")
+            .is_none()
+    );
+    assert_eq!(code(&home.run(&["agents", "mode", "helper", "bogus"])), 2);
 }
 
 #[test]
@@ -696,4 +720,93 @@ fn always_on_is_turned_on_and_off_from_the_command_line() {
     assert_eq!(code(&output), 0);
     assert!(text(&output.stdout).contains("Always on is off"));
     assert_eq!(code(&home.run(&["hub", "maybe"])), 2);
+}
+
+#[test]
+fn help_topics_typo_suggestions_and_shell_completions_work_without_starting_engine() {
+    let data = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(EXE)
+            .args(args)
+            .env("FETCHPATH_APP_DATA_DIR", data.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+
+    let help_add = run(&["help", "add"]);
+    assert_eq!(code(&help_add), 0, "{}", text(&help_add.stderr));
+    assert!(text(&help_add.stdout).contains("Usage: fetchpath add"));
+
+    let ls_flag_help = run(&["ls", "--help"]);
+    assert_eq!(code(&ls_flag_help), 0, "{}", text(&ls_flag_help.stderr));
+    assert!(text(&ls_flag_help.stdout).contains("--finished"));
+    assert!(text(&ls_flag_help.stdout).contains("--approvals"));
+
+    let typo = run(&["stauts"]);
+    assert_eq!(code(&typo), 2);
+    assert!(
+        text(&typo.stderr).contains("Did you mean `status`?"),
+        "{}",
+        text(&typo.stderr)
+    );
+
+    let pwsh = run(&["completions", "powershell"]);
+    assert_eq!(code(&pwsh), 0, "{}", text(&pwsh.stderr));
+    assert!(text(&pwsh.stdout).contains("Register-ArgumentCompleter"));
+
+    let bad_shell = run(&["completions", "tcsh"]);
+    assert_eq!(code(&bad_shell), 2);
+
+    // None of these needed the engine.
+    assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn direct_url_shorthand_status_ls_filters_and_clean_work_end_to_end() {
+    let home = Home::new();
+    let base = server(body(4096), Duration::from_millis(1));
+    let url = format!("{base}/quick.bin");
+    let dest = home.out().display().to_string();
+
+    // Direct URL shorthand (`fetchpath https://... --to ... --wait`) forwards to `add`.
+    let added = home.run(&[&url, "--to", &dest, "--wait"]);
+    assert_eq!(code(&added), 0, "{}", text(&added.stderr));
+    assert!(home.out().join("quick.bin").is_file());
+
+    // `status` and `status --json` report completed counts without errors.
+    let status_out = home.run(&["status"]);
+    assert_eq!(code(&status_out), 0, "{}", text(&status_out.stderr));
+    assert!(
+        text(&status_out.stdout).contains("1 finished"),
+        "{}",
+        text(&status_out.stdout)
+    );
+    let (status_code, status_json) = home.json(&["status", "--json"]);
+    assert_eq!(status_code, 0);
+    assert_eq!(status_json[0]["queue"]["completed"], 1);
+
+    // `ls --finished` finds the completed job; `--paused` and `--approvals` are empty.
+    let (_, finished) = home.json(&["ls", "--finished", "--json"]);
+    assert_eq!(finished[0]["jobs"].as_array().unwrap().len(), 1);
+    let (_, paused) = home.json(&["ls", "--paused", "--json"]);
+    assert_eq!(paused[0]["jobs"].as_array().unwrap().len(), 0);
+    let (_, approvals) = home.json(&["ls", "--approvals", "--json"]);
+    assert_eq!(approvals[0]["jobs"].as_array().unwrap().len(), 0);
+
+    // `clean` clears the completed job from the queue list while keeping the file on disk.
+    let cleaned = home.run(&["clean"]);
+    assert_eq!(code(&cleaned), 0, "{}", text(&cleaned.stderr));
+    assert!(
+        text(&cleaned.stdout).contains("Removed 1 download from the list"),
+        "{}",
+        text(&cleaned.stdout)
+    );
+    assert!(home.out().join("quick.bin").is_file());
+    let (_, after) = home.json(&["ls", "--json"]);
+    assert_eq!(after[0]["jobs"].as_array().unwrap().len(), 0);
+
+    // `cancel all` is refused so users cannot wipe active downloads accidentally.
+    let bad_cancel = home.run(&["cancel", "all"]);
+    assert_eq!(code(&bad_cancel), 2);
 }

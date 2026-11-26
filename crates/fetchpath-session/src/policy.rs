@@ -289,6 +289,8 @@ pub(crate) fn validated(mut policy: AgentPolicy) -> Result<AgentPolicy, String> 
     policy.max_new_jobs_per_hour = policy
         .max_new_jobs_per_hour
         .clamp(1, AgentPolicy::MAX_NEW_JOBS_PER_HOUR_LIMIT);
+    let mode = policy.effective_mode();
+    policy.set_mode(mode);
     Ok(policy)
 }
 
@@ -358,12 +360,18 @@ pub(crate) fn creation_reasons(
     policy: &AgentPolicy,
     rate_exceeded: bool,
 ) -> Vec<ApprovalReason> {
+    if policy.is_full_access() {
+        return Vec::new();
+    }
+    if policy.is_ask() {
+        return vec![ApprovalReason::AskMode];
+    }
     let mut reasons = Vec::new();
     if !inside_grants(destination, &policy.folders) {
         reasons.push(ApprovalReason::OutsideGrantedFolders);
     }
-    // Automatic mode lifts the rate, never the folders (contract D7).
-    if rate_exceeded && !policy.automatic {
+    // Auto mode lifts the rate, never the folders (contract D7).
+    if rate_exceeded && !policy.lifts_limits() {
         reasons.push(ApprovalReason::RateLimit);
     }
     reasons
@@ -372,6 +380,7 @@ pub(crate) fn creation_reasons(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fetchpath_protocol::principal::AgentPermissionMode;
 
     #[test]
     fn user_info_is_found_only_in_the_authority() {
@@ -400,6 +409,7 @@ mod tests {
             max_bytes: 1,
             max_new_jobs_per_hour: 0,
             automatic: false,
+            permission_mode: None,
         };
         assert_eq!(validated(good).unwrap().max_new_jobs_per_hour, 1);
         for folder in ["relative", r"\no-drive", r"C:\a\..\b", ""] {
@@ -414,5 +424,49 @@ mod tests {
             ..AgentPolicy::default()
         };
         assert!(validated(zero).is_err());
+    }
+
+    #[test]
+    fn permission_modes_decide_creation_holds() {
+        let temp = tempfile::tempdir().unwrap();
+        let inside = temp.path().join("file.bin");
+        let other = tempfile::tempdir().unwrap();
+        let outside = other.path().join("file.bin");
+        let grant = temp.path().display().to_string();
+
+        let mut policy = AgentPolicy {
+            folders: vec![grant],
+            ..AgentPolicy::default()
+        };
+        // Scoped: inside allowed unless rate exceeded; outside waits.
+        assert!(creation_reasons(&inside, &policy, false).is_empty());
+        assert_eq!(
+            creation_reasons(&inside, &policy, true),
+            vec![ApprovalReason::RateLimit]
+        );
+        assert_eq!(
+            creation_reasons(&outside, &policy, false),
+            vec![ApprovalReason::OutsideGrantedFolders]
+        );
+
+        // Ask: waits even inside a saved folder.
+        policy.set_mode(AgentPermissionMode::Ask);
+        assert_eq!(
+            creation_reasons(&inside, &policy, false),
+            vec![ApprovalReason::AskMode]
+        );
+
+        // Auto: lifts rate inside folder, still holds outside.
+        policy.set_mode(AgentPermissionMode::Auto);
+        assert!(creation_reasons(&inside, &policy, true).is_empty());
+        assert_eq!(
+            creation_reasons(&outside, &policy, true),
+            vec![ApprovalReason::OutsideGrantedFolders]
+        );
+
+        // FullAccess: bypasses folder and rate holds everywhere.
+        policy.set_mode(AgentPermissionMode::FullAccess);
+        assert!(creation_reasons(&inside, &policy, true).is_empty());
+        assert!(creation_reasons(&outside, &policy, true).is_empty());
     }
 }

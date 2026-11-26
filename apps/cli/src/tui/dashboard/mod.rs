@@ -23,7 +23,7 @@ use crossterm::{cursor, terminal};
 use draw::Board;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::message::CommandResult;
-use fetchpath_protocol::model::{JobKind, Segment};
+use fetchpath_protocol::model::{JobKind, JobState, Segment};
 use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -106,6 +106,62 @@ impl Speeds {
     }
 }
 
+/// Queue filter cycled with `Tab` / `Shift+Tab` in the dashboard.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Filter {
+    #[default]
+    All,
+    Active,
+    Attention,
+    Paused,
+    Finished,
+}
+
+impl Filter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Active,
+            Self::Active => Self::Attention,
+            Self::Attention => Self::Paused,
+            Self::Paused => Self::Finished,
+            Self::Finished => Self::All,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::All => Self::Finished,
+            Self::Active => Self::All,
+            Self::Attention => Self::Active,
+            Self::Paused => Self::Attention,
+            Self::Finished => Self::Paused,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Active => "Active",
+            Self::Attention => "Attention",
+            Self::Paused => "Paused",
+            Self::Finished => "Finished",
+        }
+    }
+
+    pub fn matches(self, row: &Row<'_>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Active => row.group == 0,
+            Self::Attention => matches!(
+                row.job.state,
+                JobState::Failed | JobState::AwaitingApproval | JobState::WaitingForSource
+            ),
+            Self::Paused => row.job.state == JobState::Paused,
+            Self::Finished => row.group == FINISHED,
+        }
+    }
+}
+
 /// The queue as the dashboard lists it: the panel's jobs, then recent
 /// finished ones.
 pub fn entries(live: &Live) -> Vec<Row<'_>> {
@@ -123,6 +179,35 @@ pub fn entries(live: &Live) -> Vec<Row<'_>> {
             }),
     );
     rows
+}
+
+/// Filters dashboard entries by `filter` and case-insensitive substring `query`
+/// matching file name, job id, or source URL.
+pub fn filtered_entries<'a>(live: &'a Live, filter: Filter, query: &str) -> Vec<Row<'a>> {
+    let needle = query.trim().to_ascii_lowercase();
+    entries(live)
+        .into_iter()
+        .filter(|row| filter.matches(row))
+        .filter(|row| {
+            if needle.is_empty() {
+                return true;
+            }
+            crate::client::name(row.job)
+                .to_ascii_lowercase()
+                .contains(&needle)
+                || row
+                    .job
+                    .job_id
+                    .as_str()
+                    .to_ascii_lowercase()
+                    .contains(&needle)
+                || row
+                    .job
+                    .source_display
+                    .to_ascii_lowercase()
+                    .contains(&needle)
+        })
+        .collect()
 }
 
 /// A single-key action on the chosen download.
@@ -188,6 +273,9 @@ struct Dashboard {
     said: Vec<Out>,
     /// Which screen row holds which list entry, from the last frame.
     rows: Vec<(u16, usize)>,
+    filter: Filter,
+    search: String,
+    searching: bool,
 }
 
 impl Dashboard {
@@ -200,7 +288,14 @@ impl Dashboard {
             armed: None,
             said: Vec::new(),
             rows: Vec::new(),
+            filter: Filter::All,
+            search: String::new(),
+            searching: false,
         }
+    }
+
+    fn visible<'a>(&self, live: &'a Live) -> Vec<Row<'a>> {
+        filtered_entries(live, self.filter, &self.search)
     }
 
     /// The chosen entry's position, falling back to the first entry when
@@ -239,7 +334,7 @@ impl Dashboard {
     /// Asks for the chosen download's ranges while it moves; a finished or
     /// waiting one has none.
     fn fetch_details(&mut self, session: &Session) {
-        let rows = entries(&session.live);
+        let rows = self.visible(&session.live);
         let position = self.position(&rows);
         let Some(row) = rows.get(position) else {
             self.details = None;
@@ -273,7 +368,7 @@ impl Dashboard {
     /// Does `act` to the chosen download, if it applies to it. Delete
     /// removes whatever key `remove` has, so this takes the action.
     fn act(&mut self, session: &Session, act: Act) {
-        let rows = entries(&session.live);
+        let rows = self.visible(&session.live);
         let position = self.position(&rows);
         let Some(job) = rows.get(position).map(|row| row.job.clone()) else {
             return;
@@ -300,6 +395,20 @@ impl Dashboard {
         self.armed = None;
         let lines = JobsMenu::act(&session.engine, deed, &job);
         self.say(lines);
+    }
+
+    /// Spacebar quick-toggle: pauses active jobs, resumes paused jobs, or retries failed jobs.
+    fn toggle_selected(&mut self, session: &Session) {
+        let rows = self.visible(&session.live);
+        let position = self.position(&rows);
+        let Some(job) = rows.get(position).map(|row| row.job) else {
+            return;
+        };
+        match job.state {
+            JobState::Running | JobState::Queued => self.act(session, Act::Pause),
+            JobState::Paused | JobState::Failed => self.act(session, Act::Resume),
+            _ => {}
+        }
     }
 }
 
@@ -353,7 +462,8 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
         let every = Duration::from_millis(if moving { 100 } else { 500 });
         if dirty || last_draw.elapsed() >= every {
             board.fetch_details(session);
-            let rows = entries(&session.live);
+            let total_rows = entries(&session.live).len();
+            let rows = board.visible(&session.live);
             let selected = board.position(&rows);
             let now = Instant::now();
             let speeds = rows
@@ -374,6 +484,7 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
                 let area = frame.area();
                 drawn = Board {
                     rows: &rows,
+                    total_rows,
                     selected,
                     first: board.first,
                     segments,
@@ -382,6 +493,9 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
                     tick: (started.elapsed().as_millis() / 100) as u64,
                     status: board.status.as_ref(),
                     keys: &offered,
+                    filter: board.filter,
+                    search: &board.search,
+                    searching: board.searching,
                 }
                 .render(area, frame.buffer_mut());
                 theme.apply(frame.buffer_mut());
@@ -393,16 +507,61 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
         }
         if event::poll(Duration::from_millis(40))? {
             dirty = true;
-            let rows = entries(&session.live);
+            let rows = board.visible(&session.live);
             let position = board.position(&rows);
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Release => dirty = false,
-                Event::Key(key) => match key.code {
-                    // These keys keep their meaning whatever is bound.
-                    KeyCode::Esc => break 'open,
+                Event::Key(key) if board.searching => match key.code {
+                    KeyCode::Esc => {
+                        board.search.clear();
+                        board.searching = false;
+                    }
+                    KeyCode::Enter => {
+                        board.searching = false;
+                    }
+                    KeyCode::Backspace => {
+                        board.search.pop();
+                    }
+                    KeyCode::Up => board.select(&rows, position.saturating_sub(1)),
+                    KeyCode::Down => board.select(&rows, position + 1),
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         break 'open;
                     }
+                    KeyCode::Char(c)
+                        if !key.modifiers.contains(KeyModifiers::CONTROL)
+                            && !key.modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        board.search.push(c);
+                    }
+                    _ => {}
+                },
+                Event::Key(key) => match key.code {
+                    // These keys keep their meaning whatever is bound.
+                    KeyCode::Esc => {
+                        if board.filter != Filter::All || !board.search.is_empty() {
+                            board.filter = Filter::All;
+                            board.search.clear();
+                            board.disarm();
+                        } else {
+                            break 'open;
+                        }
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        break 'open;
+                    }
+                    KeyCode::Tab => {
+                        board.filter = board.filter.next();
+                        board.disarm();
+                    }
+                    KeyCode::BackTab => {
+                        board.filter = board.filter.prev();
+                        board.disarm();
+                    }
+                    KeyCode::Char('/') => {
+                        board.searching = true;
+                        board.disarm();
+                    }
+                    KeyCode::Char(' ') => board.toggle_selected(session),
                     KeyCode::Up => board.select(&rows, position.saturating_sub(1)),
                     KeyCode::Down => board.select(&rows, position + 1),
                     KeyCode::PageUp => board.select(&rows, position.saturating_sub(10)),
@@ -415,7 +574,11 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
                         Some(Act::Up) => board.select(&rows, position.saturating_sub(1)),
                         Some(Act::Down) => board.select(&rows, position + 1),
                         Some(act) => board.act(session, act),
-                        None => board.disarm(),
+                        None => match key.code {
+                            KeyCode::Char('g') => board.select(&rows, 0),
+                            KeyCode::Char('G') => board.select(&rows, rows.len().saturating_sub(1)),
+                            _ => board.disarm(),
+                        },
                     },
                 },
                 Event::Mouse(mouse) => match mouse.kind {
@@ -461,12 +624,44 @@ pub fn run(session: &mut Session) -> std::io::Result<Leave> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::live::tests::recorded;
+    use fetchpath_protocol::message::ServerMessage;
 
     fn id(n: u8) -> JobId {
         serde_json::from_value(serde_json::json!(format!(
             "00000000-0000-4000-8000-0000000000{n:02}"
         )))
         .expect("an id")
+    }
+
+    #[test]
+    fn filter_cycles_and_filters_entries_by_state_and_query() {
+        assert_eq!(Filter::All.next().prev(), Filter::All);
+        assert_eq!(Filter::All.prev().next(), Filter::All);
+
+        let mut live = Live::default();
+        let mut samples = 0;
+        for message in recorded() {
+            match message {
+                ServerMessage::Event(event) => {
+                    live.apply(&event);
+                }
+                ServerMessage::Progress(sample) => {
+                    live.progress(&sample);
+                    samples += 1;
+                }
+                ServerMessage::Reply(_) => {}
+            }
+            if samples == 6 {
+                break;
+            }
+        }
+        assert_eq!(filtered_entries(&live, Filter::All, "").len(), 2);
+        assert_eq!(filtered_entries(&live, Filter::Active, "").len(), 1);
+        assert_eq!(filtered_entries(&live, Filter::Attention, "").len(), 1);
+        assert_eq!(filtered_entries(&live, Filter::Paused, "").len(), 0);
+        assert_eq!(filtered_entries(&live, Filter::All, "sample").len(), 1);
+        assert_eq!(filtered_entries(&live, Filter::All, "MISSING").len(), 1);
     }
 
     #[test]

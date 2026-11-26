@@ -29,8 +29,12 @@ struct Client {
 
 impl Client {
     fn start(home: &Home, agent: &str) -> Self {
+        Self::start_args(home, &["mcp", "--agent", agent])
+    }
+
+    fn start_args(home: &Home, args: &[&str]) -> Self {
         let mut child = Command::new(EXE)
-            .args(["mcp", "--agent", agent])
+            .args(args)
             .current_dir(home.out())
             .env("FETCHPATH_APP_DATA_DIR", home.dir.path().join("data"))
             .env("USERPROFILE", home.dir.path().join("profile"))
@@ -178,12 +182,17 @@ fn an_agent_downloads_through_mcp_inside_its_grant_and_asks_for_the_rest() {
             "cancel",
             "decline",
             "download",
+            "download_repository",
+            "get_access",
             "get_download",
             "inspect_link",
+            "inspect_repository",
             "list_downloads",
             "list_inbox",
             "offer_file",
             "pause",
+            "refresh_source",
+            "resolve_conflict",
             "resume",
             "search_history",
             "wait_for_download"
@@ -403,4 +412,223 @@ fn a_flood_of_waits_and_a_huge_argument_are_refused_and_the_server_carries_on() 
     assert_eq!(refused["isError"], true);
     let listed = client.call("list_downloads", json!({}));
     assert_eq!(listed["structuredContent"]["total"], 1, "{listed}");
+}
+
+#[test]
+fn mcp_derives_agent_from_client_info_exposes_resources_toolsets_and_conflict_recovery() {
+    let home = Home::new();
+    let granted = home.dir.path().join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    grant(&home, "cursor-editor", &granted);
+    let base = server(body(4_096), Duration::from_millis(10));
+
+    // No --agent passed: identity comes from MCP initialize clientInfo.name;
+    // --tools core trims inbox and repository tools cleanly.
+    let mut client = Client::start_args(&home, &["mcp", "--tools", "core"]);
+    let (hello, _) = client.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "Cursor Editor", "version": "1.0"}
+        }),
+    );
+    assert!(hello["result"]["capabilities"]["resources"].is_object());
+    client.write(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+
+    let (listed, _) = client.request("tools/list", json!({}));
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"get_access"));
+    assert!(names.contains(&"resolve_conflict"));
+    assert!(names.contains(&"refresh_source"));
+    assert!(!names.contains(&"offer_file"));
+    assert!(!names.contains(&"inspect_repository"));
+
+    // get_access reflects the derived agent identity and granted folder.
+    let access = client.call("get_access", json!({}));
+    let access = &access["structuredContent"];
+    assert_eq!(access["agent"], "cursor-editor");
+    assert_eq!(access["identity_source"], "client_info");
+    assert!(access["capabilities"]["media_ready"].is_boolean());
+    assert!(access["capabilities"]["media_js_runtime_ready"].is_boolean());
+    assert!(access["capabilities"]["torrent_ready"].is_boolean());
+    assert_eq!(
+        access["granted_folders"],
+        json!([granted.display().to_string()])
+    );
+    assert_eq!(access["toolsets"], json!(["core"]));
+
+    // MCP Resources list and read cleanly without inbox when inbox toolset is off.
+    let (res_list, _) = client.request("resources/list", json!({}));
+    let uris: Vec<&str> = res_list["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert!(uris.contains(&"fetchpath://access"));
+    assert!(uris.contains(&"fetchpath://downloads"));
+    assert!(uris.contains(&"fetchpath://guide"));
+    assert!(!uris.contains(&"fetchpath://inbox"));
+
+    let (guide, _) = client.request("resources/read", json!({"uri": "fetchpath://guide"}));
+    assert!(
+        guide["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("get_access")
+    );
+    let (access_res, _) = client.request("resources/read", json!({"uri": "fetchpath://access"}));
+    let access_json: Value = serde_json::from_str(
+        access_res["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(access_json["agent"], "cursor-editor");
+
+    // Pre-create a colliding file so download stops on destination_conflict,
+    // then resolve_conflict finishes it under a new safe name without overwriting.
+    let existing = granted.join("taken.bin");
+    std::fs::write(&existing, b"original-bytes").unwrap();
+    let collided = client.call(
+        "download",
+        json!({
+            "url": format!("{base}/taken.bin"),
+            "file_name": "taken.bin",
+            "wait": true,
+            "timeout_seconds": 30
+        }),
+    );
+    let collided = &collided["structuredContent"];
+    assert_eq!(collided["state"], "failed", "{collided}");
+    assert_eq!(collided["problem"]["code"], "storage.destination_conflict");
+    assert!(
+        collided["summary"]
+            .as_str()
+            .unwrap()
+            .contains("resolve_conflict"),
+        "{collided}"
+    );
+    let job_id = collided["id"].as_str().unwrap().to_owned();
+
+    let resolved = client.call(
+        "resolve_conflict",
+        json!({"id": job_id, "file_name": "renamed.bin"}),
+    );
+    assert!(resolved.get("isError") != Some(&json!(true)), "{resolved}");
+    let done = client.call(
+        "wait_for_download",
+        json!({"id": job_id, "timeout_seconds": 30}),
+    );
+    assert_eq!(done["structuredContent"]["state"], "completed", "{done}");
+    assert_eq!(std::fs::read(&existing).unwrap(), b"original-bytes");
+    assert_eq!(
+        std::fs::read(granted.join("renamed.bin")).unwrap(),
+        body(4_096)
+    );
+}
+
+#[test]
+fn an_unknown_toolset_is_refused_before_serving() {
+    let home = Home::new();
+    let output = home.run(&["mcp", "--tools", "bogus"]);
+    assert_eq!(code(&output), 2);
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn permission_modes_ask_and_full_access_work_through_cli_and_mcp() {
+    let home = Home::new();
+    let base = server(body(8_192), Duration::from_millis(1));
+    let granted = home.dir.path().join("granted");
+    let ungranted = home.dir.path().join("ungranted");
+    std::fs::create_dir_all(&granted).unwrap();
+    std::fs::create_dir_all(&ungranted).unwrap();
+
+    // Grant one folder, then put agent in `ask` mode: even inside its saved folder, it waits.
+    assert_eq!(
+        code(&home.run(&["agents", "grant", "helper", &granted.display().to_string()])),
+        0
+    );
+    assert_eq!(code(&home.run(&["agents", "mode", "helper", "ask"])), 0);
+
+    let mut client = Client::start(&home, "helper");
+    let _ = client.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test-host", "version": "1.0"}
+        }),
+    );
+    client.write(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+    let access = client.call("get_access", json!({}))["structuredContent"].clone();
+    assert_eq!(access["permission_mode"], "ask");
+
+    let held = client.call(
+        "download",
+        json!({
+            "url": format!("{base}/asked.bin"),
+            "folder": granted.display().to_string(),
+            "wait": true,
+            "timeout_seconds": 15
+        }),
+    )["structuredContent"]
+        .clone();
+    assert_eq!(held["state"], "awaiting_approval", "{held}");
+    assert!(
+        held["approval"]["reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ask_mode")),
+        "{held}"
+    );
+
+    // Switch to `full` (full_access): bypasses folder/size/rate approvals anywhere on disk
+    // and exposes saved_path, while still never overwriting existing files.
+    assert_eq!(code(&home.run(&["agents", "mode", "helper", "full"])), 0);
+    let access = client.call("get_access", json!({}))["structuredContent"].clone();
+    assert_eq!(access["permission_mode"], "full_access");
+    assert_eq!(access["automatic"], true);
+
+    let direct = client.call(
+        "download",
+        json!({
+            "url": format!("{base}/anywhere.bin"),
+            "folder": ungranted.display().to_string(),
+            "wait": true,
+            "timeout_seconds": 30
+        }),
+    )["structuredContent"]
+        .clone();
+    assert_eq!(direct["state"], "completed", "{direct}");
+    assert_eq!(direct["destination_granted"], true);
+    assert_eq!(
+        direct["saved_path"],
+        ungranted.join("anywhere.bin").display().to_string()
+    );
+    assert_eq!(
+        std::fs::read(ungranted.join("anywhere.bin")).unwrap(),
+        body(8_192)
+    );
+
+    // Even in full_access, Fetchpath still never overwrites an existing file.
+    let collision = client.call(
+        "download",
+        json!({
+            "url": format!("{base}/anywhere.bin"),
+            "folder": ungranted.display().to_string(),
+            "wait": true,
+            "timeout_seconds": 15
+        }),
+    )["structuredContent"]
+        .clone();
+    assert_eq!(collision["state"], "failed", "{collision}");
+    assert_eq!(collision["problem"]["code"], "storage.destination_conflict");
 }

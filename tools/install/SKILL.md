@@ -18,15 +18,16 @@ Windows 11 x64, current user, no administrator rights, nothing shown or asked.
    powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\fp-install.ps1 -AgentHosts claude-code -MediaTools
    ```
 
-   A rerun without `-Components` keeps what is installed. Options: `-Version v0.3.0`, `-Components cli,mcp,torrent` (or `full`),
-   `-AgentHosts codex,claude-code`, `-MediaTools`, `-InstallDir`, or offline
+   A rerun without `-Components` keeps what is installed. Options: `-Version v0.4.1`, `-Components cli,mcp,torrent` (or `full`),
+   `-AgentHosts detected` (or any of `codex,claude-code,claude-desktop,cursor,vscode,windsurf,gemini-cli`), `-MediaTools`, `-InstallDir`, or offline
    `-SetupFile PATH -Sha256 HASH`. Exit codes: 2 bad arguments; 3 checksum or release problem; 10 setup refused the component list; 11 an agent connection failed (Fetchpath stays installed); other values come from setup itself, so a message that starts "Setup exited with code" is setup's, even for 2 or 3.
 
-2. Restart the agent host, then check `/mcp`. Verify without a model call:
+2. Restart the agent host, then check its MCP list. Verify without a model call:
    `fetchpath agent-setup check claude-code`.
 3. The connection grants no download access. Ask the person for a folder, then
    `fetchpath agents grant NAME FOLDER`. Requests outside a grant wait in the
    queue for their approval.
 
-Connect later, with no reinstall: `fetchpath agent-setup add codex|claude-code`.
+Connect later, with no reinstall: `fetchpath agent-setup add --detected` or `fetchpath agent-setup add <HOST>`.
+For any other MCP host: `fetchpath agent-setup snippet json` (Fetchpath auto-identifies the host from MCP `clientInfo`).
 Never edit the person's agent configuration by hand when `agent-setup` can do it.

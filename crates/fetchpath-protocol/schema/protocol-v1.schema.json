@@ -126,6 +126,31 @@
       "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
       "type": "string"
     },
+    "AgentPermissionMode": {
+      "description": "Harness-style permission mode for one AI agent.\n\nAlways opt-in by the human `user`; new agents default to `Scoped` with no\nfolders (every request waits for approval).",
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Strict: every download waits for the person's approval, even if\nfolders are saved on the agent's profile.",
+          "type": "string"
+        },
+        {
+          "const": "scoped",
+          "description": "Default: inside granted folders, downloads start without asking up to\n`max_bytes` and `max_new_jobs_per_hour`. Everything else waits.",
+          "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Automatic inside granted folders: size limit, hourly rate limit, and\ntorrent peer-discovery holds do not apply. Outside granted folders\nstill waits.",
+          "type": "string"
+        },
+        {
+          "const": "full_access",
+          "description": "Full access (skip all download approvals): any valid destination folder,\nno size or hourly limit, and torrents start without approval prompts.\nHard safety invariants (never overwriting files, no access to settings,\npolicies, shares, or credentials) still apply.",
+          "type": "string"
+        }
+      ]
+    },
     "AgentPolicy": {
       "description": "What the person allows one agent to do without asking.",
       "properties": {
@@ -152,6 +177,17 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "permission_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentPermissionMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Explicit permission mode (`ask`, `scoped`, `auto`, `full_access`).\nWhen omitted on older configs, derived from `automatic` (`auto` if true,\n`scoped` otherwise)."
         }
       },
       "required": [
@@ -167,6 +203,11 @@
           "enum": [
             "unknown"
           ],
+          "type": "string"
+        },
+        {
+          "const": "ask_mode",
+          "description": "This agent's permission mode is set to Ask every time.",
           "type": "string"
         },
         {
@@ -3490,6 +3531,24 @@
         },
         "install_dir": {
           "type": "string"
+        },
+        "js_runtime_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "js_runtime_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "js_runtime_version": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "problem": {
           "type": [

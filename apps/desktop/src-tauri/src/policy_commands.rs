@@ -5,7 +5,7 @@ use fetchpath_protocol::SensitiveUrl;
 use fetchpath_protocol::command::Command;
 use fetchpath_protocol::message::CommandResult;
 use fetchpath_protocol::model::{self, RuleSpec};
-use fetchpath_protocol::principal::{AgentName, AgentPolicy};
+use fetchpath_protocol::principal::{AgentName, AgentPermissionMode, AgentPolicy};
 use std::sync::Arc;
 
 /// Files agents offered you. Only your own clients can answer them.
@@ -86,8 +86,8 @@ pub(crate) async fn list_agents(engine: Engine<'_>) -> Result<Vec<view::AgentVie
     off_thread(move || agent_views(engine.send(Command::GetAgentPolicies).map_err(text)?)).await
 }
 
-/// Sets one agent's folders and limits. Its unfinished downloads outside
-/// the new folders wait for approval again (engine, D4).
+/// Sets one agent's permission mode, folders, and limits. Its unfinished
+/// downloads outside the new policy wait for approval again (engine, D4).
 #[tauri::command]
 pub(crate) async fn set_agent(
     name: String,
@@ -95,18 +95,30 @@ pub(crate) async fn set_agent(
     max_bytes: u64,
     max_new_jobs_per_hour: u32,
     automatic: Option<bool>,
+    permission_mode: Option<String>,
     engine: Engine<'_>,
 ) -> Result<Vec<view::AgentView>, String> {
+    let mode = match permission_mode.as_deref() {
+        Some(raw) => Some(AgentPermissionMode::parse(raw).ok_or_else(|| {
+            format!("Unknown permission mode {raw:?}; expected ask, scoped, auto, or full_access.")
+        })?),
+        None => None,
+    };
     let engine = Arc::clone(&engine);
     off_thread(move || {
+        let mut policy = AgentPolicy {
+            folders,
+            max_bytes,
+            max_new_jobs_per_hour,
+            automatic: automatic.unwrap_or(false),
+            permission_mode: None,
+        };
+        if let Some(mode) = mode {
+            policy.set_mode(mode);
+        }
         let command = Command::SetAgentPolicy {
             agent: agent_name(&name)?,
-            policy: Some(AgentPolicy {
-                folders,
-                max_bytes,
-                max_new_jobs_per_hour,
-                automatic: automatic.unwrap_or(false),
-            }),
+            policy: Some(policy),
         };
         agent_views(engine.send(command).map_err(text)?)
     })

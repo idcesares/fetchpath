@@ -5,22 +5,28 @@ installing so it's found.
 
 ```powershell
 fetchpath [--plain]                      # the interactive terminal
+fetchpath LINK [OPTIONS]                 # shorthand for `fetchpath add LINK`
 fetchpath download LINK [DESTINATION] [--sha256 HEX] [--json] [--quiet]
 fetchpath add LINK... [--to FOLDER|FILE] [--sha256 HEX] [--quality Q] [--at TIME] [--upload] [--wait]
 fetchpath torrent MAGNET|HTTPS_LINK|TORRENT_FILE [--to NEW_FOLDER] [--upload] [--wait] [--json]
 fetchpath batch FILE|- [--to FOLDER] [--at TIME] [--wait]
-fetchpath ls [--all | --active | --failed] | show | pause | resume | cancel | retry | rm | watch | history | folder
+fetchpath status [--json]                # one-glance engine and queue summary
+fetchpath ls [--all|--active|--paused|--failed|--finished|--approvals] | show | watch | history | folder
+fetchpath pause | resume | retry | rm JOB...|all | cancel JOB... | clean [--failed]
 fetchpath inspect LINK | settings [NAME [VALUE]] | rules ... | engine status | engine stop [--for-update]
-fetchpath approvals | approve JOB... | deny JOB... | agents ...
+fetchpath approvals | approve JOB...|all | deny JOB...|all | agents [mode NAME|--all ask|scoped|auto|full | ...]
 fetchpath inbox [list] | accept OFFER [--to FOLDER] | decline OFFER
 fetchpath share [setup URL | relay URL | relay off | test | on | off | create FILE | revoke HANDLE|all]
 fetchpath hub [on | off]
 fetchpath web on | off | open | sign-out
-fetchpath agent-setup status | add | check | remove | cleanup | reconcile
-fetchpath mcp [--agent NAME]
+fetchpath agent-setup status | add [HOST|--detected] | snippet | check | remove | cleanup | reconcile
+fetchpath mcp [--agent NAME] [--tools SET]
 fetchpath tools [install [--yes] | use FOLDER]
+fetchpath setup | doctor [--json] [--media] [--agents] [--all] [--grant FOLDER] [--yes]
+fetchpath completions powershell|bash|zsh|fish
 fetchpath cache [status | clear]
 fetchpath lan [status | on | off | pair | join ... | unpair KEY] | fetch-verified ...
+fetchpath help [COMMAND]                 # or `fetchpath <COMMAND> --help`
 fetchpath --version
 fetchpath --help
 ```
@@ -321,11 +327,14 @@ line into the window's history saying where the file went or why it stopped.
 - **F2** (or `/dashboard`) fills the window with the queue and, beside or
   below it, the chosen download's details: its speed over the last minute
   as a graph, and each connection with how much of its range has arrived.
-  Move with the arrow keys, `j`/`k` or the mouse, and act with the keys
-  named at the bottom: `p` pause, `r` resume or retry, `c` twice to cancel,
-  `o` to open the folder, `x` to remove a finished one. Esc, `q` or F2 go
-  back to the prompt, where anything that happened meanwhile is printed.
-  `/keys` changes these keys (see below).
+  Move with the arrow keys, `j`/`k`, `g`/`G` (top/bottom) or the mouse;
+  filter by state with **Tab** / **Shift+Tab** (`All`, `Active`, `Attention`,
+  `Paused`, `Finished`) and live-search by name, id, or link with **`/`**.
+  Act with the keys named at the bottom: `Space` quick pause/resume/retry,
+  `p` pause, `r` resume or retry, `c` twice to cancel, `o` to open the
+  folder, `x` to remove a finished one. Esc clears active filters/search
+  first, then Esc, `q` or F2 go back to the prompt, where anything that
+  happened meanwhile is printed. `/keys` changes these keys (see below).
 - Several links at once (pasted together, or `/add` with more than one)
   show one card listing them all, each with a mark: files and videos start
   marked, web pages and links that could not be read do not. Space marks or
@@ -352,11 +361,9 @@ line into the window's history saying where the file went or why it stopped.
 - The mouse works in lists, menus and cards: click to choose, wheel to move,
   right-click to close. At the plain prompt the terminal keeps its own
   scrolling and text selection.
-- Commands start with `/`: `/add`, `/torrent`, `/folder`, `/queue`, `/show`, `/pause`, `/resume`, `/cancel`,
-  `/retry`, `/rm`, `/rename`, `/approvals`, `/approve`, `/deny`, `/dashboard`, `/history`, `/forget`, `/settings`, `/rules`, `/agents`, `/hub`, `/tools`, `/theme`, `/keys`, `/alias`, `/engine`, `/help`
-  and `/quit`. `/agents` and `/hub` take the same words as `fetchpath agents`
-  and `fetchpath hub`, and `/settings` has the name of this Fetchpath and the
-  always-on switch.
+- Commands start with `/`: `/add`, `/torrent`, `/inspect`, `/status`, `/queue`, `/dashboard`, `/show`, `/pause`, `/resume`, `/cancel`,
+  `/retry`, `/rm`, `/clean`, `/rename`, `/folder`, `/history`, `/approvals`, `/approve`, `/deny`, `/inbox`, `/agents`, `/setup` (`/doctor`), `/tools`, `/settings`, `/rules`, `/hub`, `/web`, `/theme`, `/keys`, `/alias`, `/forget`, `/engine`, `/help`
+  and `/quit`. `/agents`, `/inbox`, `/web`, and `/hub` take the same words as their CLI counterparts, and `/pause`, `/resume`, `/retry`, `/rm`, `/approve`, and `/deny` also accept `all`.
   A download is its number in the panel or `/queue`, or the start of its id.
 - Tab completes commands, downloads, setting names, folders (the ones
   recent downloads went to first) and links you downloaded before; Up and
@@ -419,27 +426,41 @@ numbers to mark or unmark; an agent's request takes `approve` or `deny`.
 
 ## AI agents (MCP)
 
-`fetchpath mcp` lets an AI agent host (Claude Code, Claude Desktop, Codex,
-VS Code and others that speak the Model Context Protocol) download through
-Fetchpath. The host starts it and talks to it over standard input and
-output; you never run it yourself. Give each host its own name with
-`--agent`, so you can tell their requests apart and grant them separately.
+`fetchpath mcp` lets any AI agent host that speaks the Model Context Protocol
+(Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, Gemini CLI,
+and others) download through Fetchpath. The host starts it and talks to it
+over standard input and output; you never run it yourself. Without `--agent`,
+Fetchpath derives the agent name from the host's MCP `clientInfo`
+automatically (pass `--agent NAME` to pin a specific name, and `--tools core`
+or `--tools core,repository` to trim the advertised toolset).
 
-### Guided setup (Codex and Claude Code)
+### Guided setup
 
-Select **AI agents (MCP)** in setup, then explicitly tick the hosts to connect.
-Both boxes start unchecked. The supported scope is your Windows user, across
-projects. To connect after installing, use:
+Connect all detected agent apps in one step (or pick a specific host:
+`codex`, `claude-code`, `claude-desktop`, `cursor`, `vscode`, `windsurf`,
+`gemini-cli`), either from Settings > Agents and rules in the desktop app or
+from the command line:
 
 ```powershell
 fetchpath agent-setup status --json
-fetchpath agent-setup add codex
-fetchpath agent-setup add claude-code
-fetchpath agent-setup check codex
-fetchpath agent-setup check claude-code
-fetchpath agent-setup remove codex
-fetchpath agent-setup remove claude-code
+fetchpath agent-setup add --detected
+fetchpath agent-setup add cursor
+fetchpath agent-setup check cursor
+fetchpath agent-setup remove cursor
 ```
+
+For any other MCP host, generate a ready-to-paste config, native CLI command,
+or editor deeplink:
+
+```powershell
+fetchpath agent-setup snippet json
+fetchpath agent-setup snippet vscode
+fetchpath agent-setup snippet claude
+fetchpath agent-setup snippet codex
+```
+
+You can also install Fetchpath's portable Agent Skill (`skills/fetchpath/SKILL.md`)
+for skill-aware agents with `npx skills add idcesares/fetchpath`.
 
 Restart the host after connecting. Registration uses the full installed path
 and `check` verifies an MCP handshake and tool discovery without a model call.
@@ -470,11 +491,12 @@ removing the executable, so you can resolve them and retry. Recovery metadata
 lives separately in `%LOCALAPPDATA%\FetchpathAgentSetup`; it is not part of the
 optional application-data deletion.
 
-### Manual setup (other MCP clients)
+### Manual setup (any other MCP client)
 
-Claude Desktop, VS Code and generic stdio MCP clients use manual registration
-and removal; the guided lifecycle covers Codex and Claude Code only. Manual
-entries are not owned by Fetchpath and are not removed automatically.
+Any other stdio MCP client can run `fetchpath mcp` directly (Fetchpath reads
+the host's `clientInfo` name automatically) or paste output from
+`fetchpath agent-setup snippet json`. Manual entries are not owned by
+Fetchpath and are not removed automatically.
 
 | Host | Setup |
 |---|---|

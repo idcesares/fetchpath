@@ -2,7 +2,7 @@
 //! chosen download's details pane, a status line and the key map. Wide
 //! windows put the details beside the queue, narrower ones below it.
 
-use super::Key;
+use super::{Filter, Key};
 use crate::client;
 use crate::tui::line::Out;
 use crate::tui::live::Row;
@@ -23,6 +23,7 @@ pub const MIN_HEIGHT: u16 = 8;
 
 pub struct Board<'a> {
     pub rows: &'a [Row<'a>],
+    pub total_rows: usize,
     pub selected: usize,
     /// The first list entry shown when it last drew.
     pub first: usize,
@@ -34,6 +35,9 @@ pub struct Board<'a> {
     pub tick: u64,
     pub status: Option<&'a Out>,
     pub keys: &'a [Key],
+    pub filter: Filter,
+    pub search: &'a str,
+    pub searching: bool,
 }
 
 /// What a frame drew: the first entry shown and which screen row holds
@@ -84,26 +88,57 @@ impl Board<'_> {
         }
         let width = area.width as usize;
 
-        // Header: the name and the queue's summary.
+        // Header: the name, the queue's summary, and any active filter/search pill.
+        let mut filter_parts = Vec::new();
+        if self.filter != Filter::All {
+            filter_parts.push(self.filter.label().to_owned());
+        }
+        if !self.search.is_empty() {
+            filter_parts.push(format!("/{}", self.search));
+        }
+        let filter_pill = if filter_parts.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "[{} {}/{}] ",
+                filter_parts.join(" · "),
+                self.rows.len(),
+                self.total_rows
+            )
+        };
         let summary = format!(" {} ", view::summary(self.rows));
         let title = " Fetchpath ";
         let lead = glyphs.rule.repeat(2);
-        let rest = width.saturating_sub(lead.width() + title.width() + summary.width());
-        put(
-            buffer,
-            area,
-            area.y,
-            &Line::from(vec![
-                Span::styled(lead, DIM),
-                heading(title),
-                Span::styled(summary, Style::new().fg(ACCENT)),
-                Span::styled(glyphs.rule.repeat(rest), DIM),
-            ]),
-        );
+        let rest = width
+            .saturating_sub(lead.width() + title.width() + summary.width() + filter_pill.width());
+        let mut header_spans = vec![
+            Span::styled(lead, DIM),
+            heading(title),
+            Span::styled(summary, Style::new().fg(ACCENT)),
+        ];
+        if !filter_pill.is_empty() {
+            header_spans.push(Span::styled(
+                filter_pill,
+                Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ));
+        }
+        header_spans.push(Span::styled(glyphs.rule.repeat(rest), DIM));
+        put(buffer, area, area.y, &Line::from(header_spans));
 
-        // Footer: what the last action said, then the keys.
+        // Footer: active search prompt or last status message, then the keys.
         let bottom = area.bottom();
-        if let Some(status) = self.status {
+        if self.searching {
+            let prompt = format!("Find: /{}_  (Enter keep · Esc clear)", self.search);
+            put(
+                buffer,
+                area,
+                bottom - 2,
+                &Line::styled(
+                    fit(&prompt, width, glyphs.more),
+                    Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                ),
+            );
+        } else if let Some(status) = self.status {
             put(
                 buffer,
                 area,
@@ -174,7 +209,14 @@ impl Board<'_> {
                 parts.push((key.key.to_string(), key.label));
             }
         }
-        parts.push(("Esc".to_owned(), "back"));
+        parts.push(("Tab".to_owned(), "filter"));
+        parts.push(("/".to_owned(), "find"));
+        let esc_label = if self.searching || self.filter != Filter::All || !self.search.is_empty() {
+            "clear"
+        } else {
+            "back"
+        };
+        parts.push(("Esc".to_owned(), esc_label));
         let mut spans = Vec::new();
         let mut used = 0;
         for (index, (key, label)) in parts.iter().enumerate() {
@@ -200,18 +242,16 @@ impl Board<'_> {
         let height = area.height as usize;
         let mut drawn = Drawn::default();
         if self.rows.is_empty() {
+            let message = if self.total_rows > 0 {
+                "  No downloads match this filter. Press Tab or Esc to clear."
+            } else {
+                "  Nothing here yet. Esc goes back; paste a link at the prompt."
+            };
             put(
                 buffer,
                 area,
                 area.y,
-                &Line::styled(
-                    fit(
-                        "  Nothing here yet. Esc goes back; paste a link at the prompt.",
-                        area.width as usize,
-                        self.glyphs.more,
-                    ),
-                    DIM,
-                ),
+                &Line::styled(fit(message, area.width as usize, self.glyphs.more), DIM),
             );
             return drawn;
         }
@@ -532,6 +572,7 @@ mod tests {
         let speeds = speeds();
         let board = Board {
             rows: &rows,
+            total_rows: rows.len(),
             selected: 0,
             first: 0,
             segments: Some(&SEGMENTS),
@@ -540,6 +581,9 @@ mod tests {
             tick: 0,
             status: None,
             keys: &offered,
+            filter: Filter::All,
+            search: "",
+            searching: false,
         };
         let area = Rect::new(0, 0, width, height);
         let mut buffer = Buffer::empty(area);
@@ -576,7 +620,7 @@ mod tests {
                 "                                                                  |",
                 "                                                                  |",
                 "",
-                "Up/Down choose  p pause  c cancel  o folder  Esc back",
+                "Up/Down choose  p pause  c cancel  o folder  Tab filter  / find  Esc back",
             ]
         );
         assert_eq!(drawn.rows, [(1, 0), (2, 1)]);
@@ -633,6 +677,7 @@ mod tests {
         let rows = entries(&live);
         let board = Board {
             rows: &rows,
+            total_rows: rows.len(),
             selected: 1,
             first: 0,
             segments: None,
@@ -641,6 +686,9 @@ mod tests {
             tick: 0,
             status: None,
             keys: &[],
+            filter: Filter::All,
+            search: "",
+            searching: false,
         };
         // Sixty columns, nine rows: the queue gets three rows, so both fit.
         let area = Rect::new(0, 0, 60, 9);
@@ -660,6 +708,7 @@ mod tests {
         let rows = entries(&live);
         let board = Board {
             rows: &rows,
+            total_rows: rows.len(),
             selected: 1,
             first: 0,
             segments: None,
@@ -668,6 +717,9 @@ mod tests {
             tick: 0,
             status: None,
             keys: &keys(rows[1].job, &Keys::default()),
+            filter: Filter::All,
+            search: "",
+            searching: false,
         };
         let area = Rect::new(0, 0, 120, 24);
         let mut buffer = Buffer::empty(area);
@@ -678,5 +730,37 @@ mod tests {
             text.contains("Ranges show while the download runs."),
             "{text}"
         );
+    }
+
+    #[test]
+    fn filtered_and_searching_states_show_in_header_and_status_line() {
+        let live = midway();
+        let board = Board {
+            rows: &[],
+            total_rows: entries(&live).len(),
+            selected: 0,
+            first: 0,
+            segments: None,
+            speeds: &[],
+            glyphs: &ASCII,
+            tick: 0,
+            status: None,
+            keys: &[],
+            filter: Filter::Paused,
+            search: "iso",
+            searching: true,
+        };
+        let area = Rect::new(0, 0, 100, 12);
+        let mut buffer = Buffer::empty(area);
+        board.render(area, &mut buffer);
+        let lines = text(&buffer);
+        assert!(lines[0].contains("[Paused · /iso 0/2]"), "{}", lines[0]);
+        assert!(
+            lines[1].contains("No downloads match this filter"),
+            "{}",
+            lines[1]
+        );
+        assert!(lines[10].contains("Find: /iso_"), "{}", lines[10]);
+        assert!(lines[11].contains("Esc clear"), "{}", lines[11]);
     }
 }

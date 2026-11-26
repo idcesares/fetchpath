@@ -110,6 +110,11 @@
             <span id="onboarding-media-note">need <code>yt-dlp</code> and <code>ffmpeg</code>. Fetchpath can set them up for you.</span>
             <button id="onboarding-open-media" class="secondary compact" type="button">Set up media tools</button>
           </li>
+          <li id="onboarding-agents" hidden>
+            <strong>AI agents</strong>
+            <span id="onboarding-agents-note">Connect detected AI agent apps to download through Fetchpath.</span>
+            <button id="onboarding-open-agents" class="secondary compact" type="button">Set up AI agents</button>
+          </li>
           <li>
             <strong>Closing keeps downloads running</strong>
             <span>from the notification area. You can change that in Settings.</span>
@@ -484,6 +489,18 @@
           </div>
         </fieldset>
 
+        <fieldset class="settings-group" id="setup-checklist-group" data-settings-panel="integrations" hidden>
+          <legend>Setup checklist</legend>
+          <p class="hint field-note">
+            Readiness of Fetchpath's optional helpers and integrations on this PC.
+          </p>
+          <ul id="setup-checklist" class="setup-checklist" aria-live="polite"></ul>
+          <div class="agent-actions">
+            <button id="setup-recheck" class="secondary compact" type="button">Re-check requirements</button>
+            <button id="setup-open-agents" class="secondary compact" type="button">Manage AI agents</button>
+          </div>
+        </fieldset>
+
         <fieldset class="settings-group" data-settings-panel="integrations" hidden>
           <legend>Video and audio</legend>
           <p id="media-tools-state" class="field-note">Checking…</p>
@@ -523,8 +540,10 @@
         <fieldset class="settings-group" id="agents-group" data-settings-panel="automation" hidden>
           <legend>AI agents</legend>
           <p class="hint field-note">
-            Agents such as Claude Code download through <code>fetchpath mcp --agent NAME</code>. What an agent saves
-            into the folders you give it starts at once; anything else waits for you in the queue.
+            AI agents download through <code>fetchpath mcp</code> (each host is identified automatically, or via
+            <code>--agent NAME</code>). Choose a permission mode per agent — from <strong>Ask every time</strong> or
+            <strong>Folders &amp; limits</strong> up to <strong>Full access (skip approvals)</strong>. Fetchpath never
+            overwrites existing files and keeps settings, rules, shares, and credentials locked to you.
           </p>
           <div id="agent-hosts" class="agents-list" aria-live="polite"></div>
           <div id="agents-list" class="agents-list"></div>

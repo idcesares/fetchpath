@@ -98,25 +98,113 @@ fn list(engine: &Engine, json: bool) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn print_offer(offer: &OfferView) {
+fn format_offer_lines(offer: &OfferView) -> Vec<String> {
     let id = offer.job_id.as_str();
-    println!(
-        "{}  {:?}  {}  {} bytes  from {}",
-        &id[..id.len().min(8)],
-        offer.state,
-        offer.manifest.file_name,
-        offer.manifest.size,
-        offer.manifest.sender_label
-    );
-    println!("    sha256 {}", offer.manifest.sha256);
+    let mut lines = vec![
+        format!(
+            "{}  {:?}  {}  {} bytes  from {}",
+            &id[..id.len().min(8)],
+            offer.state,
+            offer.manifest.file_name,
+            offer.manifest.size,
+            offer.manifest.sender_label
+        ),
+        format!("    sha256 {}", offer.manifest.sha256),
+    ];
     if let Some(origin) = &offer.manifest.origin {
-        println!("    link of the download it came from: {origin}");
+        lines.push(format!("    link of the download it came from: {origin}"));
     }
     if let Some(path) = &offer.saved_to {
-        println!("    saved to {path}");
+        lines.push(format!("    saved to {path}"));
     }
     if let Some(reason) = &offer.reason {
-        println!("    not copied: {reason}");
+        lines.push(format!("    not copied: {reason}"));
+    }
+    lines
+}
+
+fn print_offer(offer: &OfferView) {
+    for line in format_offer_lines(offer) {
+        println!("{line}");
+    }
+}
+
+/// Runs `/inbox` inside the TUI and returns lines for scrollback.
+pub(crate) fn run_lines(engine: &Engine, args: &[String]) -> Result<Vec<String>, ProtocolError> {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        [] | ["list"] => {
+            let offers = inbox(engine)?;
+            let mut out = Vec::new();
+            if let Ok(CommandResult::EngineStatus { status }) = engine.send(Command::EngineStatus)
+                && let Some(notice) = status.inbox_notice
+            {
+                out.push(notice);
+            }
+            if offers.is_empty() {
+                out.push("Nothing has been offered to you.".into());
+                return Ok(out);
+            }
+            for offer in &offers {
+                out.extend(format_offer_lines(offer));
+            }
+            out.push(HASH_NOTICE.into());
+            out.push(SENDER_NOTICE.into());
+            Ok(out)
+        }
+        ["accept", id] | ["accept", id, "--to", _] => {
+            let folder = words.get(3).copied();
+            let found = find(engine, id)?;
+            let destination = folder
+                .map(|raw| {
+                    std::path::absolute(raw)
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .map_err(|error| {
+                            client::input_error(&format!("That folder cannot be used: {error}"))
+                        })
+                })
+                .transpose()?;
+            engine.send(Command::AcceptOffer {
+                offer_id: found.job_id.clone(),
+                destination,
+            })?;
+            let deadline = Instant::now() + COPY_WAIT;
+            let mut current = found;
+            loop {
+                current = inbox(engine)?
+                    .into_iter()
+                    .find(|offer| offer.job_id == current.job_id)
+                    .unwrap_or(current);
+                if current.state != OfferState::Copying || Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            let mut out = format_offer_lines(&current);
+            out.push(HASH_NOTICE.into());
+            out.push(SENDER_NOTICE.into());
+            if current.state == OfferState::Copying {
+                out.push("Still copying; check /inbox.".into());
+            }
+            Ok(out)
+        }
+        ["decline", id] => {
+            let found = find(engine, id)?;
+            match engine.send(Command::DeclineOffer {
+                offer_id: found.job_id,
+            })? {
+                CommandResult::Offer { offer } => {
+                    let mut out = format_offer_lines(&offer);
+                    out.push(HASH_NOTICE.into());
+                    out.push(SENDER_NOTICE.into());
+                    Ok(out)
+                }
+                other => Err(client::unexpected(&other)),
+            }
+        }
+        _ => Err(client::input_error(
+            "Say /inbox, /inbox accept OFFER [--to FOLDER], or /inbox decline OFFER.",
+        )),
     }
 }
 
