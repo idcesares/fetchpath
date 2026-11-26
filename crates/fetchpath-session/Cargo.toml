@@ -14,18 +14,20 @@ fetchpath-media = { path = "../../adapters/media" }
 fetchpath-protocol = { path = "../fetchpath-protocol" }
 fetchpath-providers = { path = "../../adapters/providers" }
 fetchpath-torrent = { path = "../../adapters/torrent" }
-aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc"] }
-getrandom = "0.3.4"
-hkdf = "0.13.0"
+aes-gcm = { workspace = true }
+getrandom = { workspace = true }
+hkdf = { workspace = true }
 # hkdf 0.13 is built on sha2 0.11; the rest of this crate still hashes with 0.10.
-sha2_11 = { package = "sha2", version = "0.11.0" }
-zeroize = "1.9.0"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10.9"
-uuid = { version = "1.18.1", features = ["v4"] }
-url = "2.5"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+sha2_11 = { workspace = true }
+zeroize = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+url = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
-tempfile = "3.23.0"
+tempfile = { workspace = true }

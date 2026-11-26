@@ -1225,6 +1225,50 @@ impl Engine {
                 })?;
                 Ok(CommandResult::LinkInspection { inspection })
             }
+            Command::InspectPageImage { url } => {
+                let image = fetchpath_core::inspect_page_image(url.expose())
+                    .map_err(|message| {
+                        ProtocolError::new(
+                            ErrorCode::try_from("input.invalid_request".to_owned())
+                                .unwrap_or(ErrorCode::INTERNAL_UNKNOWN),
+                            ErrorScope::Command,
+                            message,
+                        )
+                    })?
+                    .map(|found| fetchpath_protocol::model::PageImage {
+                        url: found.url,
+                        filename: found.filename,
+                        title: found.title,
+                        content_type: found.content_type,
+                    });
+                Ok(CommandResult::PageImage { image })
+            }
+            Command::MediaToolsStatus => {
+                let status = self.session.media_tools_status().map_err(|message| {
+                    ProtocolError::new(ErrorCode::INTERNAL_UNKNOWN, ErrorScope::Command, message)
+                })?;
+                Ok(CommandResult::MediaTools { status })
+            }
+            Command::InstallMediaTools => {
+                let status = self.session.install_media_tools().map_err(|message| {
+                    ProtocolError::new(ErrorCode::INTERNAL_UNKNOWN, ErrorScope::Command, message)
+                })?;
+                Ok(CommandResult::MediaTools { status })
+            }
+            Command::UseMediaToolsDir { directory } => {
+                let status = self
+                    .session
+                    .use_media_tools_dir(directory)
+                    .map_err(|message| {
+                        ProtocolError::new(
+                            ErrorCode::try_from("input.invalid_request".to_owned())
+                                .unwrap_or(ErrorCode::INTERNAL_UNKNOWN),
+                            ErrorScope::Command,
+                            message,
+                        )
+                    })?;
+                Ok(CommandResult::MediaTools { status })
+            }
             Command::InspectMedia { url } => {
                 if !principal.is_user() && policy::has_userinfo(url.expose()) {
                     return Err(policy::credentials_not_allowed());

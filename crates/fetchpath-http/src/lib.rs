@@ -11,8 +11,12 @@ mod controller;
 mod frontier;
 mod link;
 mod scheduler;
+mod single;
 
-pub use link::{LinkFacts, disposition_file_name, fetch_small, inspect_link};
+pub use link::{
+    LinkFacts, PageHeadResponse, disposition_file_name, fetch_page_head, fetch_small, inspect_link,
+};
+pub use single::{SingleTransferError, fetch_single_request};
 
 pub use compatibility::{
     Authentication, CompatibilityCapabilities, CompatibilityContext, CompatibilityProtocol,

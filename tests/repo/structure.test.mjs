@@ -120,6 +120,9 @@ test('the desktop app never owns the queue', () => {
   }
   assert.ok(seen.has('crates/fetchpath-protocol'), 'the walk should reach the protocol crate');
   assert.ok(!seen.has('crates/fetchpath-session'), 'the desktop links fetchpath-session, which can build a queue');
+  assert.ok(!seen.has('crates/fetchpath-core'), 'the desktop links fetchpath-core; route inspection/transfer through the engine');
+  assert.ok(!seen.has('crates/fetchpath-http'), 'the desktop links fetchpath-http; route network calls through the engine');
+  assert.ok(!seen.has('adapters/media'), 'the desktop links adapters/media; route media helper setup through the engine');
   const sources = files.filter((file) => file.startsWith('apps/desktop/src-tauri/src/') && file.endsWith('.rs'));
   assert.ok(sources.length > 0);
   for (const file of sources) {

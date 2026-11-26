@@ -7,11 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-getrandom = "0.3.4"
-hmac = "0.13.0"
+getrandom = { workspace = true }
+hmac = { workspace = true }
 httparse = "1.10.1"
 sha2 = "0.11.0"
-tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
 
 # The server binary and its TLS/ACME stack; the engine side depends on the
 # crate without this feature.

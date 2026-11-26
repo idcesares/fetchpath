@@ -6,10 +6,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-curl = { version = "0.4.50", features = ["static-curl", "http2"] }
 fetchpath-cache = { path = "../fetchpath-cache" }
 fetchpath-http = { path = "../fetchpath-http" }
 fetchpath-metalink = { path = "../fetchpath-metalink" }
 fetchpath-storage = { path = "../fetchpath-storage" }
-sha2 = "0.10.9"
-uuid = { version = "1.18.1", features = ["v4"] }
+sha2 = { workspace = true }
+uuid = { workspace = true }

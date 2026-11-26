@@ -17,13 +17,14 @@
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use curl::easy::Easy;
 use fetchpath_cache::{
     Acquired, CachedVerification, ContentCache, ContentId, Provenance, TrustedCheck,
 };
-use fetchpath_http::TransferError;
+use fetchpath_http::{
+    RequestContext as HttpRequestContext, SingleTransferError, TransferError, fetch_single_request,
+};
 use fetchpath_metalink::{MetalinkFile, PieceMap};
 use fetchpath_storage::{
     CheckpointPhase, CheckpointRecord, CheckpointStore, FaultInjector, NoFaults, sha256_file,
@@ -1308,104 +1309,55 @@ fn perform(
             other => MirrorFailure::Protocol(other.to_string()),
         })?;
 
-    let mut easy = Easy::new();
-    transfer::configure(&mut easy, &mirror.url, &request.context)
-        .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-    easy.buffer_size(BUFFER_BYTES)
-        .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-    // A hard ceiling inside libcurl, so a mirror that stalls cannot hold the
-    // transfer open while the progress callback waits to be called again.
-    easy.timeout(request.mirror_attempt_timeout)
-        .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-    if let Some((start, length)) = range {
-        easy.range(&format!("{start}-{}", start + length - 1))
-            .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-    }
-
-    let started = Instant::now();
-    let deadline = request.mirror_attempt_timeout;
+    let context = HttpRequestContext {
+        cookie_lines: request.context.cookie_lines.clone(),
+        referer: request.context.referer.clone(),
+        http2_prior_knowledge: false,
+    };
     let headers = RefCell::new(ResponseHeaders::default());
     let offset = Cell::new(range.map_or(0, |(start, _)| start));
     let body_bytes = Cell::new(0_u64);
-    let failure: RefCell<Option<MirrorFailure>> = RefCell::new(None);
-    let timed_out = Cell::new(false);
 
-    let transfer_result = {
-        let mut stream = easy.transfer();
-        stream
-            .header_function(|line| {
-                headers.borrow_mut().ingest(line);
-                true
-            })
-            .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-        stream
-            .write_function(|data| {
-                if body_bytes.get() == 0
-                    && let Err(reason) = check_headers(&headers.borrow(), range)
-                {
-                    *failure.borrow_mut() = Some(MirrorFailure::Protocol(reason));
-                    return Ok(0);
-                }
-                if let Err(error) = sink(offset.get(), data) {
-                    *failure.borrow_mut() = Some(MirrorFailure::Storage(error));
-                    return Ok(0);
-                }
-                offset.set(offset.get() + data.len() as u64);
-                body_bytes.set(body_bytes.get() + data.len() as u64);
-                request.cancellation.set_received(offset.get());
-                Ok(data.len())
-            })
-            .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-        stream
-            .progress_function(|_, _, _, _| {
-                if request.cancellation.is_cancelled() {
-                    return false;
-                }
-                if started.elapsed() > deadline {
-                    timed_out.set(true);
-                    return false;
-                }
-                true
-            })
-            .map_err(|error| MirrorFailure::Protocol(error.to_string()))?;
-        stream.perform()
-    };
+    let transfer_result = fetch_single_request(
+        &mirror.url,
+        &context,
+        BUFFER_BYTES,
+        range,
+        request.mirror_attempt_timeout,
+        |line| headers.borrow_mut().ingest(line),
+        |data| {
+            if body_bytes.get() == 0
+                && let Err(reason) = check_headers(&headers.borrow(), range)
+            {
+                return Err(MirrorFailure::Protocol(reason));
+            }
+            if let Err(error) = sink(offset.get(), data) {
+                return Err(MirrorFailure::Storage(error));
+            }
+            offset.set(offset.get() + data.len() as u64);
+            body_bytes.set(body_bytes.get() + data.len() as u64);
+            request.cancellation.set_received(offset.get());
+            Ok(())
+        },
+        || request.cancellation.is_cancelled(),
+    );
 
-    if let Some(failure) = failure.into_inner() {
-        return Err(failure);
-    }
-    if request.cancellation.is_cancelled() {
-        return Err(MirrorFailure::Cancelled);
-    }
-    // A mirror that never began a response is unreachable, however that
-    // failure surfaced: some stacks refuse a dead port outright, others let the
-    // connection attempt run until the ceiling expires.
-    let responded = headers.borrow().status.is_some() || body_bytes.get() > 0;
     if let Err(error) = transfer_result {
-        if error.is_couldnt_connect()
-            || error.is_couldnt_resolve_host()
-            || error.is_couldnt_resolve_proxy()
-            || error.is_recv_error()
-        {
-            return Err(MirrorFailure::Offline(error.to_string()));
-        }
-        if timed_out.get() || error.is_operation_timedout() {
-            let detail = format!("nothing completed within {deadline:?}");
-            return Err(if responded {
-                MirrorFailure::Slow(detail)
-            } else {
-                MirrorFailure::Offline(detail)
-            });
-        }
-        return Err(MirrorFailure::Protocol(match easy.response_code() {
-            Ok(status) if status >= 400 => format!("HTTP status {status}"),
-            _ => error.to_string(),
-        }));
-    }
-    if started.elapsed() > deadline {
-        return Err(MirrorFailure::Slow(format!(
-            "no complete response within {deadline:?}"
-        )));
+        return Err(match error {
+            SingleTransferError::Callback(failure) => failure,
+            SingleTransferError::Cancelled => MirrorFailure::Cancelled,
+            SingleTransferError::Offline(detail) => MirrorFailure::Offline(detail),
+            SingleTransferError::TimedOut { detail, responded } => {
+                let responded =
+                    responded || headers.borrow().status.is_some() || body_bytes.get() > 0;
+                if responded {
+                    MirrorFailure::Slow(detail)
+                } else {
+                    MirrorFailure::Offline(detail)
+                }
+            }
+            SingleTransferError::Protocol(detail) => MirrorFailure::Protocol(detail),
+        });
     }
 
     let headers = headers.into_inner();
@@ -1565,7 +1517,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::{self, JoinHandle};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     const PIECE_LENGTH: u64 = 1024;
 

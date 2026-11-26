@@ -456,6 +456,51 @@ pub struct LinkInspection {
     pub rules: Option<RulesVerdict>,
 }
 
+/// A direct image URL resolved from a photo web page's public Open Graph /
+/// Twitter metadata (or a direct `image/*` response).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PageImage {
+    pub url: String,
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+}
+
+/// One pinned third-party media helper (`yt-dlp` or `ffmpeg`) described by the
+/// engine's built-in manifest.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableTool {
+    pub name: String,
+    pub version: String,
+    pub url: String,
+    pub checksum_source: String,
+    pub license: String,
+    pub pinned: bool,
+}
+
+/// Readiness and install location of the supervised media helpers (`yt-dlp` and
+/// `ffmpeg`), owned by the engine so desktop clients need not link the media
+/// adapter or transfer stack.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MediaToolsStatus {
+    pub ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yt_dlp_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ffmpeg_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yt_dlp_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ffmpeg_version: Option<String>,
+    pub install_dir: String,
+    #[serde(default)]
+    pub available: Vec<AvailableTool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
 /// A smart rule (FP-064). A link matches when it meets every condition the
 /// rule sets; rules are tried in order and the first match decides.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

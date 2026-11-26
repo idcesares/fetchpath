@@ -12,12 +12,12 @@ use fetchpath_protocol::message::{
     ControlOutcome, Correlation, ProgressKind, ReplyResult, StreamPosition,
 };
 use fetchpath_protocol::model::{
-    CacheView, Confidence, EngineSettings, EngineStatus, FolderChoice, InstanceInfo,
+    AvailableTool, CacheView, Confidence, EngineSettings, EngineStatus, FolderChoice, InstanceInfo,
     IntegrityOutcome, JobDetails, JobKind, LanView, LinkInspection, LinkKind, MediaInspection,
-    MediaVariant, MediaVariantKind, PairedDevice, PairingState, PairingView, Phase, Progress,
-    QueueStats, RepositoryFile, RepositoryView, Rule, RuleActions, RuleCheck, RuleConditions,
-    RuleSpec, RulesVerdict, Segment, SettingsView, ShareItem, ShareState, ShareView, Theme,
-    WaitingReason,
+    MediaToolsStatus, MediaVariant, MediaVariantKind, PageImage, PairedDevice, PairingState,
+    PairingView, Phase, Progress, QueueStats, RepositoryFile, RepositoryView, Rule, RuleActions,
+    RuleCheck, RuleConditions, RuleSpec, RulesVerdict, Segment, SettingsView, ShareItem,
+    ShareState, ShareView, Theme, WaitingReason,
 };
 use fetchpath_protocol::principal::{AgentAccess, ApprovalReason, ApprovalRequest};
 use fetchpath_protocol::schema::{protocol_schema, protocol_schema_text};
@@ -266,6 +266,12 @@ fn every_command() -> Vec<Command> {
         Command::JobDetails { job_id: job_id() },
         Command::InspectMedia { url: secret_url() },
         Command::InspectLink { url: secret_url() },
+        Command::InspectPageImage { url: secret_url() },
+        Command::MediaToolsStatus,
+        Command::InstallMediaTools,
+        Command::UseMediaToolsDir {
+            directory: "C:\\Tools\\media".into(),
+        },
         Command::QueueStats,
         Command::ListFolderChoices,
         Command::OpenWebUi,
@@ -376,6 +382,10 @@ fn every_command() -> Vec<Command> {
             | Command::JobDetails { .. }
             | Command::InspectMedia { .. }
             | Command::InspectLink { .. }
+            | Command::InspectPageImage { .. }
+            | Command::MediaToolsStatus
+            | Command::InstallMediaTools
+            | Command::UseMediaToolsDir { .. }
             | Command::QueueStats
             | Command::ListFolderChoices
             | Command::OpenWebUi
@@ -562,6 +572,33 @@ fn every_result() -> Vec<CommandResult> {
                 }),
             },
         },
+        CommandResult::PageImage {
+            image: Some(PageImage {
+                url: "https://images.example.test/photo.webp".into(),
+                filename: "photo.webp".into(),
+                title: Some("Sample photo".into()),
+                content_type: Some("image/webp".into()),
+            }),
+        },
+        CommandResult::MediaTools {
+            status: MediaToolsStatus {
+                ready: true,
+                yt_dlp_path: Some("C:\\Tools\\yt-dlp.exe".into()),
+                ffmpeg_dir: Some("C:\\Tools".into()),
+                yt_dlp_version: Some("2026.01.01".into()),
+                ffmpeg_version: Some("ffmpeg version 8.0".into()),
+                install_dir: "C:\\Users\\person\\AppData\\Local\\Fetchpath\\media-tools".into(),
+                available: vec![AvailableTool {
+                    name: "yt-dlp".into(),
+                    version: "2026.01.01".into(),
+                    url: "https://example.test/yt-dlp.exe".into(),
+                    checksum_source: "https://example.test/SHA2-256SUMS".into(),
+                    license: "Unlicense".into(),
+                    pinned: true,
+                }],
+                problem: None,
+            },
+        },
         CommandResult::Rules {
             rules: vec![rule()],
         },
@@ -718,6 +755,8 @@ fn every_result() -> Vec<CommandResult> {
             | CommandResult::Details { .. }
             | CommandResult::MediaInspection { .. }
             | CommandResult::LinkInspection { .. }
+            | CommandResult::PageImage { .. }
+            | CommandResult::MediaTools { .. }
             | CommandResult::QueueStats { .. }
             | CommandResult::FolderChoices { .. }
             | CommandResult::WebUiLink { .. }
@@ -1236,6 +1275,10 @@ fn only_queries_skip_the_command_ledger() {
         "JobDetails",
         "InspectMedia",
         "InspectLink",
+        "InspectPageImage",
+        "MediaToolsStatus",
+        "InstallMediaTools",
+        "UseMediaToolsDir",
         "QueueStats",
         "ListFolderChoices",
         "OpenWebUi",

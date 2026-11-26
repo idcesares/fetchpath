@@ -3,8 +3,6 @@
 //! posts can be resolved to their direct image download URL without cookies or
 //! site-specific proxies.
 
-use curl::easy::{Easy, List};
-use std::cell::RefCell;
 use std::time::Duration;
 
 const MAX_HTML_BYTES: usize = 512 * 1024;
@@ -29,102 +27,11 @@ pub fn inspect_page_image(page_url: &str) -> Result<Option<PageImage>, String> {
     }
 
     for _hop in 0..=5 {
-        let mut easy = Easy::new();
-        easy.url(&current)
-            .map_err(|e| format!("Invalid address: {e}"))?;
-        // Follow redirects manually so every redirect target is verified to stay
-        // strictly on http:// or https://.
-        easy.follow_location(false).map_err(|e| e.to_string())?;
-        easy.ssl_verify_peer(true).map_err(|e| e.to_string())?;
-        easy.ssl_verify_host(true).map_err(|e| e.to_string())?;
-        easy.timeout(INSPECT_TIMEOUT).map_err(|e| e.to_string())?;
-        easy.connect_timeout(Duration::from_secs(10))
-            .map_err(|e| e.to_string())?;
-        let mut headers = List::new();
-        let _ = headers.append("Accept: text/html,application/xhtml+xml,image/*;q=0.9,*/*;q=0.1");
-        easy.http_headers(headers).map_err(|e| e.to_string())?;
-        easy.useragent("Mozilla/5.0").map_err(|e| e.to_string())?;
+        let response = fetchpath_http::fetch_page_head(&current, MAX_HTML_BYTES, INSPECT_TIMEOUT)
+            .map_err(|error| format!("Could not inspect the page: {error}"))?;
 
-        let body: RefCell<Vec<u8>> = RefCell::new(Vec::new());
-        let content_type: RefCell<Option<String>> = RefCell::new(None);
-        let location: RefCell<Option<String>> = RefCell::new(None);
-        let status_code: RefCell<u32> = RefCell::new(0);
-        let stopped_early = RefCell::new(false);
-
-        let transfer_result = {
-            let mut transfer = easy.transfer();
-            transfer
-                .header_function(|line| {
-                    if let Ok(text) = std::str::from_utf8(line) {
-                        let trimmed_line = text.trim();
-                        if let Some(rest) = trimmed_line.strip_prefix("HTTP/") {
-                            *content_type.borrow_mut() = None;
-                            *location.borrow_mut() = None;
-                            *status_code.borrow_mut() = rest
-                                .split_whitespace()
-                                .nth(1)
-                                .and_then(|s| s.parse::<u32>().ok())
-                                .unwrap_or(0);
-                        } else if let Some((name, value)) = trimmed_line.split_once(':') {
-                            if name.trim().eq_ignore_ascii_case("content-type") {
-                                let mime = value
-                                    .split(';')
-                                    .next()
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_ascii_lowercase();
-                                if !mime.is_empty() {
-                                    *content_type.borrow_mut() = Some(mime);
-                                }
-                            } else if name.trim().eq_ignore_ascii_case("location") {
-                                let loc = value.trim();
-                                if !loc.is_empty() {
-                                    *location.borrow_mut() = Some(loc.to_owned());
-                                }
-                            }
-                        }
-                    }
-                    true
-                })
-                .map_err(|e| e.to_string())?;
-            transfer
-                .write_function(|chunk| {
-                    let code = *status_code.borrow();
-                    if matches!(code, 301 | 302 | 303 | 307 | 308) {
-                        *stopped_early.borrow_mut() = true;
-                        return Ok(0);
-                    }
-                    if content_type
-                        .borrow()
-                        .as_deref()
-                        .is_some_and(|mime| mime.starts_with("image/"))
-                    {
-                        *stopped_early.borrow_mut() = true;
-                        return Ok(0);
-                    }
-                    let mut buf = body.borrow_mut();
-                    let remaining = MAX_HTML_BYTES.saturating_sub(buf.len());
-                    let take = remaining.min(chunk.len());
-                    buf.extend_from_slice(&chunk[..take]);
-                    if buf.len() >= MAX_HTML_BYTES || has_head_end(&buf) {
-                        *stopped_early.borrow_mut() = true;
-                        return Ok(0);
-                    }
-                    Ok(chunk.len())
-                })
-                .map_err(|e| e.to_string())?;
-            transfer.perform()
-        };
-
-        if let Err(error) = transfer_result
-            && !(*stopped_early.borrow() && error.is_write_error())
-        {
-            return Err(format!("Could not inspect the page: {error}"));
-        }
-
-        let code = *status_code.borrow();
-        if matches!(code, 301 | 302 | 303 | 307 | 308) {
-            let Some(loc) = location.into_inner() else {
+        if matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+            let Some(loc) = response.location else {
                 return Ok(None);
             };
             let Some(next) = resolve_image_url(&current, &loc) else {
@@ -133,12 +40,11 @@ pub fn inspect_page_image(page_url: &str) -> Result<Option<PageImage>, String> {
             current = next;
             continue;
         }
-        if !(200..300).contains(&code) {
+        if !(200..300).contains(&response.status) {
             return Ok(None);
         }
 
-        let mime = content_type.into_inner();
-        if let Some(ref mime_type) = mime
+        if let Some(ref mime_type) = response.content_type
             && mime_type.starts_with("image/")
         {
             let filename = derive_filename(&current, Some(mime_type), None);
@@ -150,14 +56,15 @@ pub fn inspect_page_image(page_url: &str) -> Result<Option<PageImage>, String> {
             }));
         }
 
-        let is_html = mime
+        let is_html = response
+            .content_type
             .as_deref()
             .is_none_or(|m| m.contains("html") || m.contains("xml"));
         if !is_html {
             return Ok(None);
         }
 
-        let html = String::from_utf8_lossy(&body.into_inner()).into_owned();
+        let html = String::from_utf8_lossy(&response.body).into_owned();
         return Ok(extract_image_from_html(&current, &html));
     }
 
@@ -168,14 +75,6 @@ fn is_http_url(raw: &str) -> bool {
     let lower = raw.to_ascii_lowercase();
     (lower.starts_with("http://") || lower.starts_with("https://"))
         && !raw.chars().any(|c| c.is_control() || c.is_whitespace())
-}
-
-fn has_head_end(bytes: &[u8]) -> bool {
-    // Scan only the tail window to avoid O(n^2) on streaming chunks.
-    let start = bytes.len().saturating_sub(16 * 1024);
-    bytes[start..]
-        .windows(7)
-        .any(|w| w.eq_ignore_ascii_case(b"</head>"))
 }
 
 /// Pure HTML metadata parser, unit-tested offline.

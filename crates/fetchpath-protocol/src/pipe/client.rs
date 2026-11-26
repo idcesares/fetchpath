@@ -276,6 +276,18 @@ impl PipeEngineClient {
         }
         envelope
     }
+
+    /// Executes one long-running command on its own pipe connection with an
+    /// explicit timeout so it neither times out early nor blocks regular
+    /// commands sharing the main connection.
+    pub fn execute_dedicated(
+        &self,
+        envelope: &CommandEnvelope,
+        timeout: Duration,
+    ) -> Result<CommandResult, ProtocolError> {
+        let client = self.open()?;
+        client.call(&self.stamped(envelope), timeout)
+    }
 }
 
 impl EngineClient for PipeEngineClient {

@@ -6,8 +6,9 @@ use crate::error::ProtocolError;
 use crate::ids::{AttemptId, CommandId, JobId, Timestamp};
 use crate::model::{
     CacheView, EngineStatus, FolderChoice, IntegrityOutcome, JobDetails, JobSnapshot, JobState,
-    LanView, LinkInspection, MediaInspection, PairedDevice, Progress, QueueStats, RepositoryView,
-    Rule, SensitiveUrl, SettingsView, ShareItem, ShareView, WaitingReason,
+    LanView, LinkInspection, MediaInspection, MediaToolsStatus, PageImage, PairedDevice, Progress,
+    QueueStats, RepositoryView, Rule, SensitiveUrl, SettingsView, ShareItem, ShareView,
+    WaitingReason,
 };
 use crate::principal::AgentAccess;
 use schemars::JsonSchema;
@@ -102,6 +103,13 @@ pub enum CommandResult {
     },
     LinkInspection {
         inspection: LinkInspection,
+    },
+    PageImage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<PageImage>,
+    },
+    MediaTools {
+        status: MediaToolsStatus,
     },
     QueueStats {
         stats: QueueStats,

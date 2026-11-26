@@ -115,7 +115,7 @@ flowchart TD
 
 **HTTP:** one backend owner using libcurl's multi interface, with cancellable commands and bounded delivery into the writer/verifier. Prove callback lifetime, pause/resume behavior, connection reuse, TLS trust-store behavior, and Rust/native packaging in a small spike. Do not build a second scheduler accidentally inside each job. A pure Rust backend is an alternative if this integration fails the agreed constraints; implement only one initially.
 
-**Storage:** one staging file on the destination volume, positional writes, a bounded buffer pool, and SQLite metadata. Avoid mandatory CAS duplication on the first release. Define conflict behavior for existing destinations; do not silently overwrite. Size, preallocation, sparse support, disk-full behavior, filesystem limits, and rename semantics need native-platform tests.
+**Storage:** one staging file on the destination volume, positional writes, a bounded buffer pool, and SQLite metadata. Avoid mandatory CAS duplication on the first release. Define conflict behavior for existing destinations; do not silently overwrite. Size, preallocation, sparse support, disk-full behavior, filesystem limits, and rename semantics need native-platform tests. *(Implementation note: the shipped 0.1–0.4 engine uses atomic whole-file JSON persistence — `queue.json` plus generation-fenced `engine-v1.json` — rather than SQLite, avoiding a C database dependency while keeping crash recovery explicit and inspectable.)*
 
 **Identity:** track source-specific validators, representation-affecting request context, credential references, and optional trusted digests. Never store bearer tokens or signed URL query strings in routine telemetry. Credentials belong in a protected store with explicit origin scopes.
 

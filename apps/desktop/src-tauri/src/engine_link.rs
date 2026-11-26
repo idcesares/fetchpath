@@ -180,6 +180,24 @@ impl EngineLink {
         }
     }
 
+    /// Sends one long-running command on a dedicated pipe connection with an
+    /// explicit timeout so it neither times out early nor blocks queue updates.
+    pub fn send_dedicated(
+        &self,
+        command: Command,
+        timeout: Duration,
+    ) -> Result<CommandResult, ProtocolError> {
+        let envelope = CommandEnvelope::new(self.client_id.clone(), command);
+        let client = self.client()?;
+        match client.execute_dedicated(&envelope, timeout) {
+            Err(error) if lost(&error) => {
+                self.reset(&client);
+                self.client()?.execute_dedicated(&envelope, timeout)
+            }
+            other => other,
+        }
+    }
+
     fn subscribe(&self, command: Command) -> Result<Subscription, ProtocolError> {
         let envelope = CommandEnvelope::new(self.client_id.clone(), command);
         let client = self.client()?;

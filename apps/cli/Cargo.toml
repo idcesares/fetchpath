@@ -13,26 +13,26 @@ fetchpath-protocol = { path = "../../crates/fetchpath-protocol" }
 fetchpath-relay = { path = "../../crates/fetchpath-relay", features = ["tls-client"] }
 fetchpath-session = { path = "../../crates/fetchpath-session" }
 ctrlc = "3.5.1"
-zeroize = "1.9.0"
-serde = "1"
-serde_json = "1.0.145"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Time", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+zeroize = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Time", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 unicode-width = "0.2"
-url = "2.5.8"
+url = { workspace = true }
 fetchpath-media = { version = "0.1.0", path = "../../adapters/media" }
 rmcp = { version = "3.4.1", default-features = false, features = ["server", "macros", "transport-io"] }
-schemars = "1.2.2"
-tokio = { version = "1.48.0", features = ["rt", "time", "macros", "sync", "net"] }
+schemars = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "macros", "sync", "net"] }
 tokio-util = "0.7"
 toml_edit = { version = "0.25.15", features = ["serde"] }
-tempfile = "3.23.0"
-sha2 = "0.10.9"
+tempfile = { workspace = true }
+sha2 = { workspace = true }
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 http-body-util = "0.1"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-getrandom = "0.3.4"
+getrandom = { workspace = true }
 # Setup test link QR code (FP-117): the encoder only, no image or SVG features.
-qrcode = { version = "=0.14.1", default-features = false }
+qrcode = { workspace = true }

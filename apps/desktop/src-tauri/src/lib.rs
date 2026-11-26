@@ -1,18 +1,18 @@
 pub mod browser_bridge;
 pub mod browser_setup;
 pub mod engine_link;
-pub use fetchpath_media::setup as media_setup;
+mod lan_commands;
+mod policy_commands;
+mod share_commands;
+mod single_instance;
 pub mod view;
 
 use engine_link::{EngineLink, Signal};
 use fetchpath_protocol::command::{Command, DestinationDecision, JobFilter, JobInput};
 use fetchpath_protocol::launch::EngineHome;
 use fetchpath_protocol::message::{CommandResult, ControlOutcome};
-use fetchpath_protocol::model::{self, RuleSpec};
-use fetchpath_protocol::principal::{AgentName, AgentPolicy};
-use fetchpath_protocol::qr_image;
-use fetchpath_protocol::send::OfferSource;
-use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, SensitiveUrl, Timestamp};
+use fetchpath_protocol::model;
+use fetchpath_protocol::{JobId, JobSnapshot, ProtocolError, Timestamp};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 /// Longest folder path accepted from the interface.
 const MAX_PATH_LENGTH: usize = 4_096;
 
-type Engine<'a> = State<'a, Arc<EngineLink>>;
+pub(crate) type Engine<'a> = State<'a, Arc<EngineLink>>;
 
 const TRAY_ID: &str = "fetchpath-tray";
 
@@ -117,7 +117,7 @@ fn close_window(window: tauri::WebviewWindow) {
 /// Runs a command's body on a blocking thread: it may wait on the pipe, or
 /// up to ten seconds for an engine to start, and must not hold up Tauri's
 /// async runtime meanwhile.
-async fn off_thread<T: Send + 'static>(
+pub(crate) async fn off_thread<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)
@@ -126,11 +126,11 @@ async fn off_thread<T: Send + 'static>(
 }
 
 /// The interface shows errors as text.
-fn text(error: ProtocolError) -> String {
+pub(crate) fn text(error: ProtocolError) -> String {
     error.message
 }
 
-fn unexpected(result: &CommandResult) -> String {
+pub(crate) fn unexpected(result: &CommandResult) -> String {
     let kind = serde_json::to_value(result)
         .ok()
         .and_then(|value| {
@@ -142,7 +142,7 @@ fn unexpected(result: &CommandResult) -> String {
     format!("Fetchpath's engine gave an unexpected answer ({kind}).")
 }
 
-fn job_id(value: &str) -> Result<JobId, String> {
+pub(crate) fn job_id(value: &str) -> Result<JobId, String> {
     JobId::try_from(value).map_err(|_| "This download is no longer available.".to_string())
 }
 
@@ -250,16 +250,26 @@ struct PageImageView {
 }
 
 #[tauri::command]
-async fn inspect_page_image(url: String) -> Result<Option<PageImageView>, String> {
+async fn inspect_page_image(
+    url: String,
+    engine: Engine<'_>,
+) -> Result<Option<PageImageView>, String> {
+    let engine = Arc::clone(&engine);
     off_thread(move || {
-        fetchpath_core::inspect_page_image(&url).map(|found| {
-            found.map(|image| PageImageView {
+        match engine
+            .send(Command::InspectPageImage {
+                url: view::link(&url)?,
+            })
+            .map_err(text)?
+        {
+            CommandResult::PageImage { image } => Ok(image.map(|image| PageImageView {
                 url: image.url,
                 filename: image.filename,
                 title: image.title,
                 content_type: image.content_type,
-            })
-        })
+            })),
+            other => Err(unexpected(&other)),
+        }
     })
     .await
 }
@@ -551,25 +561,6 @@ async fn update_settings(
     .await
 }
 
-/// Changes settings starting from what the engine holds now.
-fn change_settings(
-    app: &AppHandle,
-    engine: &EngineLink,
-    change: impl FnOnce(&mut view::Settings),
-) -> Result<view::SettingsView, String> {
-    let current = settings_of(app, engine.send(Command::GetSettings).map_err(text)?)?;
-    let mut next = current.settings;
-    change(&mut next);
-    settings_of(
-        app,
-        engine
-            .send(Command::UpdateSettings {
-                settings: next.to_engine(),
-            })
-            .map_err(text)?,
-    )
-}
-
 /// The folder new downloads are saved in: the user's choice, else Windows'
 /// own Downloads folder.
 #[tauri::command]
@@ -631,37 +622,31 @@ async fn reveal_download(job_id: String, engine: Engine<'_>) -> Result<(), Strin
     .await
 }
 
+/// Timeout for downloading and verifying the media helpers (`yt-dlp` and `ffmpeg`).
+const MEDIA_INSTALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn tools_result(result: CommandResult) -> Result<view::ToolsStatus, String> {
+    match result {
+        CommandResult::MediaTools { status } => Ok(view::ToolsStatus::from(status)),
+        other => Err(unexpected(&other)),
+    }
+}
+
 #[tauri::command]
-async fn media_tools_status(
-    app: AppHandle,
-    engine: Engine<'_>,
-) -> Result<media_setup::ToolsStatus, String> {
+async fn media_tools_status(engine: Engine<'_>) -> Result<view::ToolsStatus, String> {
     let engine = Arc::clone(&engine);
-    off_thread(move || tools_status(&app, &engine)).await
-}
-
-fn tools_status(app: &AppHandle, engine: &EngineLink) -> Result<media_setup::ToolsStatus, String> {
-    let install_dir = media_tools_install_dir()?;
-    let view = settings_of(app, engine.send(Command::GetSettings).map_err(text)?)?;
-    Ok(media_setup::status(
-        view.settings.media_tools_dir.as_deref(),
-        &install_dir,
-    ))
+    off_thread(move || tools_result(engine.send(Command::MediaToolsStatus).map_err(text)?)).await
 }
 
 #[tauri::command]
-async fn install_media_tools(
-    app: AppHandle,
-    engine: Engine<'_>,
-) -> Result<media_setup::ToolsStatus, String> {
+async fn install_media_tools(engine: Engine<'_>) -> Result<view::ToolsStatus, String> {
     let engine = Arc::clone(&engine);
     off_thread(move || {
-        let install_dir = media_tools_install_dir()?;
-        media_setup::install(&install_dir)?;
-        change_settings(&app, &engine, |settings| {
-            settings.media_tools_dir = Some(install_dir.display().to_string());
-        })?;
-        tools_status(&app, &engine)
+        tools_result(
+            engine
+                .send_dedicated(Command::InstallMediaTools, MEDIA_INSTALL_TIMEOUT)
+                .map_err(text)?,
+        )
     })
     .await
 }
@@ -669,19 +654,18 @@ async fn install_media_tools(
 #[tauri::command]
 async fn use_media_tools_dir(
     directory: String,
-    app: AppHandle,
     engine: Engine<'_>,
-) -> Result<media_setup::ToolsStatus, String> {
+) -> Result<view::ToolsStatus, String> {
     let engine = Arc::clone(&engine);
     off_thread(move || {
         if directory.len() > MAX_PATH_LENGTH {
             return Err("That folder path is too long.".into());
         }
-        let accepted = media_setup::use_directory(&PathBuf::from(&directory))?;
-        change_settings(&app, &engine, |settings| {
-            settings.media_tools_dir = Some(accepted);
-        })?;
-        tools_status(&app, &engine)
+        tools_result(
+            engine
+                .send(Command::UseMediaToolsDir { directory })
+                .map_err(text)?,
+        )
     })
     .await
 }
@@ -837,18 +821,6 @@ async fn sign_out_browsers(engine: Engine<'_>) -> Result<(), String> {
     .await
 }
 
-/// The media helpers live in the engine's data folder, where it looks.
-fn media_tools_install_dir() -> Result<PathBuf, String> {
-    EngineHome::from_env()
-        .map(|home| home.dir().join("media-tools"))
-        .map_err(|error| {
-            format!(
-                "Could not resolve the Fetchpath data folder: {}",
-                error.message
-            )
-        })
-}
-
 #[tauri::command]
 async fn remove_download(job_id: String, engine: Engine<'_>) -> Result<(), String> {
     let engine = Arc::clone(&engine);
@@ -896,553 +868,6 @@ async fn deny_download(job_id: String, engine: Engine<'_>) -> Result<view::JobVi
         )
     })
     .await
-}
-
-/// Files agents offered you. Only your own clients can answer them.
-#[tauri::command]
-async fn list_inbox(engine: Engine<'_>) -> Result<Vec<view::OfferRow>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(
-        move || match engine.send(Command::ListInbox).map_err(text)? {
-            CommandResult::Inbox { offers } => Ok(offers.iter().map(view::offer).collect()),
-            other => Err(unexpected(&other)),
-        },
-    )
-    .await
-}
-
-fn offer_row(result: CommandResult) -> Result<view::OfferRow, String> {
-    match result {
-        CommandResult::Offer { offer } => Ok(view::offer(&offer)),
-        other => Err(unexpected(&other)),
-    }
-}
-
-/// Copies an offered file into `folder` (or the default save folder). The
-/// engine checks the copy against the offered hash and never replaces a file.
-#[tauri::command]
-async fn accept_offer(
-    offer_id: String,
-    folder: Option<String>,
-    engine: Engine<'_>,
-) -> Result<view::OfferRow, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        offer_row(
-            engine
-                .send(Command::AcceptOffer {
-                    offer_id: self::job_id(&offer_id)?,
-                    destination: folder,
-                })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-async fn decline_offer(offer_id: String, engine: Engine<'_>) -> Result<view::OfferRow, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        offer_row(
-            engine
-                .send(Command::DeclineOffer {
-                    offer_id: self::job_id(&offer_id)?,
-                })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-fn agent_views(result: CommandResult) -> Result<Vec<view::AgentView>, String> {
-    match result {
-        CommandResult::AgentPolicies { policies } => Ok(view::agents(&policies)),
-        other => Err(unexpected(&other)),
-    }
-}
-
-fn agent_name(name: &str) -> Result<AgentName, String> {
-    AgentName::try_from(name.trim())
-        .map_err(|message| format!("That name cannot be used: {message}."))
-}
-
-#[tauri::command]
-async fn list_agents(engine: Engine<'_>) -> Result<Vec<view::AgentView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || agent_views(engine.send(Command::GetAgentPolicies).map_err(text)?)).await
-}
-
-/// Sets one agent's folders and limits. Its unfinished downloads outside
-/// the new folders wait for approval again (engine, D4).
-#[tauri::command]
-async fn set_agent(
-    name: String,
-    folders: Vec<String>,
-    max_bytes: u64,
-    max_new_jobs_per_hour: u32,
-    automatic: Option<bool>,
-    engine: Engine<'_>,
-) -> Result<Vec<view::AgentView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let command = Command::SetAgentPolicy {
-            agent: agent_name(&name)?,
-            policy: Some(AgentPolicy {
-                folders,
-                max_bytes,
-                max_new_jobs_per_hour,
-                automatic: automatic.unwrap_or(false),
-            }),
-        };
-        agent_views(engine.send(command).map_err(text)?)
-    })
-    .await
-}
-
-/// Removes an agent's access; everything it has not finished waits for the
-/// person again.
-#[tauri::command]
-async fn revoke_agent(name: String, engine: Engine<'_>) -> Result<Vec<view::AgentView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let command = Command::SetAgentPolicy {
-            agent: agent_name(&name)?,
-            policy: None,
-        };
-        agent_views(engine.send(command).map_err(text)?)
-    })
-    .await
-}
-
-fn rule_views(result: CommandResult) -> Result<Vec<view::RuleView>, String> {
-    match result {
-        CommandResult::Rules { rules } => Ok(view::rules(&rules)),
-        other => Err(unexpected(&other)),
-    }
-}
-
-#[tauri::command]
-async fn list_rules(engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || rule_views(engine.send(Command::ListRules).map_err(text)?)).await
-}
-
-/// Adds a rule last. The engine checks and normalizes it (FP-064).
-#[tauri::command]
-async fn add_rule(rule: RuleSpec, engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let command = Command::AddRule {
-            rule: Box::new(rule),
-            position: None,
-        };
-        rule_views(engine.send(command).map_err(text)?)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn remove_rule(rule_id: u32, engine: Engine<'_>) -> Result<Vec<view::RuleView>, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || rule_views(engine.send(Command::RemoveRule { rule_id }).map_err(text)?))
-        .await
-}
-
-fn lan_view(result: CommandResult) -> Result<model::LanView, String> {
-    match result {
-        CommandResult::Lan { lan } => Ok(lan),
-        other => Err(unexpected(&other)),
-    }
-}
-
-/// Paired computers and sharing, kept by the engine (FP-033).
-#[tauri::command]
-async fn lan_status(engine: Engine<'_>) -> Result<model::LanView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || lan_view(engine.send(Command::LanStatus).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn set_lan_sharing(enabled: bool, engine: Engine<'_>) -> Result<model::LanView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        lan_view(
-            engine
-                .send(Command::SetLanSharing { enabled })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-async fn start_pairing(engine: Engine<'_>) -> Result<model::LanView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || lan_view(engine.send(Command::StartPairing).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn cancel_pairing(engine: Engine<'_>) -> Result<model::LanView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || lan_view(engine.send(Command::CancelPairing).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn join_pairing(
-    address: String,
-    code: String,
-    label: Option<String>,
-    engine: Engine<'_>,
-) -> Result<model::PairedDevice, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let command = Command::JoinPairing {
-            address,
-            code,
-            label: label.filter(|label| !label.trim().is_empty()),
-        };
-        match engine.send(command).map_err(text)? {
-            CommandResult::Joined { device } => Ok(device),
-            other => Err(unexpected(&other)),
-        }
-    })
-    .await
-}
-
-#[tauri::command]
-async fn unpair_device(key: String, engine: Engine<'_>) -> Result<model::LanView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || lan_view(engine.send(Command::Unpair { key }).map_err(text)?)).await
-}
-
-fn sharing_view(result: CommandResult) -> Result<model::ShareView, String> {
-    match result {
-        CommandResult::Sharing { sharing } => Ok(sharing),
-        other => Err(unexpected(&other)),
-    }
-}
-
-/// A link just made, with its QR code. The only time the link exists outside
-/// the engine's memory: the engine cannot show it again.
-#[derive(serde::Serialize)]
-struct NewShare {
-    link: String,
-    share: model::ShareItem,
-    /// The QR code's modules, row by row: `1` dark, `0` light.
-    qr_rows: Vec<String>,
-}
-
-/// The modules of the link's QR code, row by row: `1` dark, `0` light.
-fn qr_rows(link: &str) -> Option<Vec<String>> {
-    let code =
-        qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L).ok()?;
-    let width = code.width();
-    Some(
-        code.to_colors()
-            .chunks(width)
-            .map(|row| {
-                row.iter()
-                    .map(|color| {
-                        if *color == qrcode::Color::Dark {
-                            '1'
-                        } else {
-                            '0'
-                        }
-                    })
-                    .collect()
-            })
-            .collect(),
-    )
-}
-
-/// Saves the QR code of a link just made as an image, to the file the person
-/// chose in the save dialog. The image IS the link: this is the one way a link
-/// reaches disk, and only on their explicit choice (SECURITY.md). Nothing is
-/// logged, and the file type comes from the name (`.svg` or `.png`).
-#[tauri::command]
-async fn save_share_qr(path: String, link: String) -> Result<(), String> {
-    off_thread(move || {
-        let format = qr_image::Format::from_path(&path)
-            .ok_or_else(|| "Save the image as a .svg or .png file.".to_owned())?;
-        let rows =
-            qr_rows(&link).ok_or_else(|| "The link does not fit in a QR code.".to_owned())?;
-        let bytes = qr_image::render(&rows, format)
-            .ok_or_else(|| "The QR code could not be drawn.".to_owned())?;
-        // Written beside the target and renamed over it, so a write that fails
-        // leaves an existing file as it was and no cut-off image behind.
-        let temporary = format!("{path}.fetchpath-part");
-        let saved = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, &bytes))
-            .and_then(|()| std::fs::rename(&temporary, &path));
-        saved.map_err(|error| {
-            let _ = std::fs::remove_file(&temporary);
-            format!("Could not save the image: {error}")
-        })
-    })
-    .await
-}
-
-fn new_share(result: CommandResult) -> Result<NewShare, String> {
-    let CommandResult::ShareLink { link, share } = result else {
-        return Err(unexpected(&result));
-    };
-    let link = link.expose().to_owned();
-    let qr_rows = qr_rows(&link).unwrap_or_default();
-    Ok(NewShare {
-        link,
-        share,
-        qr_rows,
-    })
-}
-
-/// Public share links and their setup (FP-117).
-#[tauri::command]
-async fn share_status(engine: Engine<'_>) -> Result<model::ShareView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || sharing_view(engine.send(Command::ShareStatus).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn configure_sharing(
-    base_url: String,
-    port: Option<u16>,
-    engine: Engine<'_>,
-) -> Result<model::ShareView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        sharing_view(
-            engine
-                .send(Command::ConfigureSharing {
-                    base_url: Some(base_url),
-                    port,
-                })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-/// The relay's enrollment key goes from the field to the engine and no
-/// further: it is not kept here, not logged and not echoed in an error.
-#[tauri::command]
-async fn configure_relay(
-    relay: bool,
-    key: Option<String>,
-    engine: Engine<'_>,
-) -> Result<model::ShareView, String> {
-    let key = key
-        .filter(|key| !key.trim().is_empty())
-        .map(fetchpath_protocol::RelayKey::try_from)
-        .transpose()
-        .map_err(|_| "That is not a relay key (64 hexadecimal characters).".to_owned())?;
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        sharing_view(
-            engine
-                .send(Command::ConfigureRelay { relay, key })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-async fn set_sharing_enabled(
-    enabled: bool,
-    engine: Engine<'_>,
-) -> Result<model::ShareView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        sharing_view(
-            engine
-                .send(Command::SetSharingEnabled { enabled })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-async fn start_share_test(engine: Engine<'_>) -> Result<NewShare, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || new_share(engine.send(Command::StartShareTest).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn create_share(
-    path: String,
-    expires_in_seconds: Option<u64>,
-    engine: Engine<'_>,
-) -> Result<NewShare, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        new_share(
-            engine
-                .send(Command::CreateShare {
-                    source: OfferSource::Path { path },
-                    expires_in_seconds,
-                })
-                .map_err(text)?,
-        )
-    })
-    .await
-}
-
-/// One link by its handle, or every link when `handle` is empty.
-#[tauri::command]
-async fn revoke_share(
-    handle: Option<String>,
-    engine: Engine<'_>,
-) -> Result<model::ShareView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let command = match handle {
-            Some(handle) => Command::RevokeShare { handle },
-            None => Command::RevokeAllShares,
-        };
-        sharing_view(engine.send(command).map_err(text)?)
-    })
-    .await
-}
-
-fn cache_view(result: CommandResult) -> Result<model::CacheView, String> {
-    match result {
-        CommandResult::Cache { cache } => Ok(cache),
-        other => Err(unexpected(&other)),
-    }
-}
-
-/// How much the content cache holds, and its quota bounds (FP-032).
-#[tauri::command]
-async fn cache_status(engine: Engine<'_>) -> Result<model::CacheView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || cache_view(engine.send(Command::CacheStatus).map_err(text)?)).await
-}
-
-#[tauri::command]
-async fn clear_cache(engine: Engine<'_>) -> Result<model::CacheView, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || cache_view(engine.send(Command::ClearCache).map_err(text)?)).await
-}
-
-/// How the rules decide for a link. The engine reads the link's headers
-/// (not its body) so a size rule can decide.
-#[tauri::command]
-async fn inspect_rules(url: String, engine: Engine<'_>) -> Result<view::RuleAdvice, String> {
-    let engine = Arc::clone(&engine);
-    off_thread(move || {
-        let url = SensitiveUrl::try_from(url)
-            .map_err(|message| format!("That link cannot be used: {message}."))?;
-        match engine.send(Command::InspectLink { url }).map_err(text)? {
-            CommandResult::LinkInspection { inspection } => {
-                Ok(view::rule_advice(inspection.rules.as_ref()))
-            }
-            other => Err(unexpected(&other)),
-        }
-    })
-    .await
-}
-
-/// One Fetchpath window per Windows user account.
-///
-/// The queue belongs to the engine, which holds its own single-owner lock; this
-/// guard only keeps a second window (and a second tray icon) from opening.
-/// It is a deny-sharing handle on `desktop-window.lock` in the same folder:
-/// whoever opens it first keeps it for the life of the process.
-///
-/// It fails open. Only a sharing or locking violation means "another window is
-/// open"; any other error (an unwritable directory, a missing `%APPDATA%`)
-/// lets the application start, because two windows are only untidy: both are
-/// clients of the one engine.
-mod single_instance {
-    use std::fs::{File, OpenOptions};
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::path::{Path, PathBuf};
-    use std::sync::OnceLock;
-
-    /// `FILE_SHARE_NONE`: no other process may open this file at all.
-    const NO_SHARING: u32 = 0;
-    const ERROR_SHARING_VIOLATION: i32 = 32;
-    const ERROR_LOCK_VIOLATION: i32 = 33;
-    const SW_SHOW: i32 = 5;
-    const SW_RESTORE: i32 = 9;
-    /// The window class tao registers for a Tauri window. Matching on it as well
-    /// as the title avoids activating some unrelated window that happens to be
-    /// called "Fetchpath" — an Explorer window on a folder of that name, say.
-    const WINDOW_CLASS: &str = "Tauri Window";
-
-    /// Held for the lifetime of the process; dropping it would release the claim.
-    static HELD: OnceLock<File> = OnceLock::new();
-
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn FindWindowW(class_name: *const u16, window_name: *const u16) -> *mut core::ffi::c_void;
-        fn IsIconic(window: *mut core::ffi::c_void) -> i32;
-        fn ShowWindow(window: *mut core::ffi::c_void, command: i32) -> i32;
-        fn SetForegroundWindow(window: *mut core::ffi::c_void) -> i32;
-    }
-
-    /// Not the engine's lock: the engine is the queue's owner.
-    pub fn window_lock_path() -> Option<PathBuf> {
-        let home = fetchpath_protocol::launch::EngineHome::from_env().ok()?;
-        Some(home.dir().join("desktop-window.lock"))
-    }
-
-    /// `true` when this process may proceed as the single instance.
-    pub fn claim(path: &Path) -> bool {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .share_mode(NO_SHARING)
-            .open(path)
-        {
-            Ok(file) => {
-                let _ = HELD.set(file);
-                true
-            }
-            Err(error) => !matches!(
-                error.raw_os_error(),
-                Some(ERROR_SHARING_VIOLATION) | Some(ERROR_LOCK_VIOLATION)
-            ),
-        }
-    }
-
-    fn wide(value: &str) -> Vec<u16> {
-        let mut buffer: Vec<u16> = value.encode_utf16().collect();
-        buffer.push(0);
-        buffer
-    }
-
-    /// Brings the already-running window forward, including from the tray, so a
-    /// second launch looks like reopening Fetchpath rather than doing nothing.
-    pub fn activate_running_window(title: &str) {
-        let class = wide(WINDOW_CLASS);
-        let name = wide(title);
-        // SAFETY: both buffers are NUL-terminated UTF-16 and outlive the call.
-        unsafe {
-            let window = FindWindowW(class.as_ptr(), name.as_ptr());
-            if window.is_null() {
-                return;
-            }
-            // Hidden-to-tray needs SW_SHOW; minimized needs SW_RESTORE. Avoid
-            // calling SW_RESTORE unconditionally so a maximized window stays
-            // maximized when a browser capture activates Fetchpath.
-            ShowWindow(window, SW_SHOW);
-            if IsIconic(window) != 0 {
-                ShowWindow(window, SW_RESTORE);
-            }
-            SetForegroundWindow(window);
-        }
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1495,34 +920,34 @@ pub fn run() {
             sign_out_browsers,
             approve_download,
             deny_download,
-            list_inbox,
-            accept_offer,
-            decline_offer,
-            list_agents,
-            set_agent,
-            revoke_agent,
-            list_rules,
-            add_rule,
-            remove_rule,
-            inspect_rules,
-            cache_status,
-            clear_cache,
+            policy_commands::list_inbox,
+            policy_commands::accept_offer,
+            policy_commands::decline_offer,
+            policy_commands::list_agents,
+            policy_commands::set_agent,
+            policy_commands::revoke_agent,
+            policy_commands::list_rules,
+            policy_commands::add_rule,
+            policy_commands::remove_rule,
+            policy_commands::inspect_rules,
+            policy_commands::cache_status,
+            policy_commands::clear_cache,
             inspect_repository,
             add_repository,
-            lan_status,
-            set_lan_sharing,
-            start_pairing,
-            cancel_pairing,
-            join_pairing,
-            unpair_device,
-            share_status,
-            configure_sharing,
-            configure_relay,
-            set_sharing_enabled,
-            start_share_test,
-            create_share,
-            save_share_qr,
-            revoke_share
+            lan_commands::lan_status,
+            lan_commands::set_lan_sharing,
+            lan_commands::start_pairing,
+            lan_commands::cancel_pairing,
+            lan_commands::join_pairing,
+            lan_commands::unpair_device,
+            share_commands::share_status,
+            share_commands::configure_sharing,
+            share_commands::configure_relay,
+            share_commands::set_sharing_enabled,
+            share_commands::start_share_test,
+            share_commands::create_share,
+            share_commands::save_share_qr,
+            share_commands::revoke_share
         ])
         .setup(|app| {
             // The desktop holds no queue: the engine does, and this window is

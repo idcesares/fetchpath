@@ -212,6 +212,131 @@ pub fn fetch_small(
     Ok((status, body.into_inner()))
 }
 
+/// One HTTP(S) hop read by [`fetch_page_head`], without following redirects so
+/// the caller can validate each redirect target before stepping to it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PageHeadResponse {
+    pub status: u32,
+    pub content_type: Option<String>,
+    pub location: Option<String>,
+    pub body: Vec<u8>,
+}
+
+/// Fetches a single cookieless HTTP(S) hop (no automatic redirects, strict TLS)
+/// and stops reading as soon as the response is a redirect, an `image/*`
+/// resource, reaches `max_bytes`, or closes its HTML `</head>` element.
+pub fn fetch_page_head(
+    url: &str,
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<PageHeadResponse, TransferError> {
+    let mut easy = Easy::new();
+    easy.url(url).map_err(curl_error)?;
+    super::http_only(easy.raw())?;
+    easy.follow_location(false).map_err(curl_error)?;
+    easy.ssl_verify_peer(true).map_err(curl_error)?;
+    easy.ssl_verify_host(true).map_err(curl_error)?;
+    easy.timeout(timeout).map_err(curl_error)?;
+    easy.connect_timeout(timeout.min(Duration::from_secs(10)))
+        .map_err(curl_error)?;
+    let mut headers = List::new();
+    let _ = headers.append("Accept: text/html,application/xhtml+xml,image/*;q=0.9,*/*;q=0.1");
+    easy.http_headers(headers).map_err(curl_error)?;
+    easy.useragent("Mozilla/5.0").map_err(curl_error)?;
+
+    let body: RefCell<Vec<u8>> = RefCell::new(Vec::new());
+    let content_type: RefCell<Option<String>> = RefCell::new(None);
+    let location: RefCell<Option<String>> = RefCell::new(None);
+    let status_code: RefCell<u32> = RefCell::new(0);
+    let stopped_early = RefCell::new(false);
+
+    let transfer_result = {
+        let mut transfer = easy.transfer();
+        transfer
+            .header_function(|line| {
+                if let Ok(text) = std::str::from_utf8(line) {
+                    let trimmed_line = text.trim();
+                    if let Some(rest) = trimmed_line.strip_prefix("HTTP/") {
+                        *content_type.borrow_mut() = None;
+                        *location.borrow_mut() = None;
+                        *status_code.borrow_mut() = rest
+                            .split_whitespace()
+                            .nth(1)
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0);
+                    } else if let Some((name, value)) = trimmed_line.split_once(':') {
+                        if name.trim().eq_ignore_ascii_case("content-type") {
+                            let mime = value
+                                .split(';')
+                                .next()
+                                .unwrap_or("")
+                                .trim()
+                                .to_ascii_lowercase();
+                            if !mime.is_empty() {
+                                *content_type.borrow_mut() = Some(mime);
+                            }
+                        } else if name.trim().eq_ignore_ascii_case("location") {
+                            let loc = value.trim();
+                            if !loc.is_empty() {
+                                *location.borrow_mut() = Some(loc.to_owned());
+                            }
+                        }
+                    }
+                }
+                true
+            })
+            .map_err(curl_error)?;
+        transfer
+            .write_function(|chunk| {
+                let code = *status_code.borrow();
+                if matches!(code, 301 | 302 | 303 | 307 | 308) {
+                    *stopped_early.borrow_mut() = true;
+                    return Ok(0);
+                }
+                if content_type
+                    .borrow()
+                    .as_deref()
+                    .is_some_and(|mime| mime.starts_with("image/"))
+                {
+                    *stopped_early.borrow_mut() = true;
+                    return Ok(0);
+                }
+                let mut buf = body.borrow_mut();
+                let remaining = max_bytes.saturating_sub(buf.len());
+                let take = remaining.min(chunk.len());
+                buf.extend_from_slice(&chunk[..take]);
+                if buf.len() >= max_bytes || has_head_end(&buf) {
+                    *stopped_early.borrow_mut() = true;
+                    return Ok(0);
+                }
+                Ok(chunk.len())
+            })
+            .map_err(curl_error)?;
+        transfer.perform()
+    };
+
+    if let Err(error) = transfer_result
+        && !(*stopped_early.borrow() && error.is_write_error())
+    {
+        return Err(curl_error(error));
+    }
+
+    Ok(PageHeadResponse {
+        status: *status_code.borrow(),
+        content_type: content_type.into_inner(),
+        location: location.into_inner(),
+        body: body.into_inner(),
+    })
+}
+
+fn has_head_end(bytes: &[u8]) -> bool {
+    // Scan only the tail window to avoid O(n^2) on streaming chunks.
+    let start = bytes.len().saturating_sub(16 * 1024);
+    bytes[start..]
+        .windows(7)
+        .any(|w| w.eq_ignore_ascii_case(b"</head>"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

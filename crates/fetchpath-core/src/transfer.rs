@@ -1,8 +1,7 @@
 use crate::checkpoint::{
     CommitQueue, PrefixTracker, ResponseHeaders, source_key_with_context, strong_etag,
 };
-use crate::{BUFFER_BYTES, CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
-use curl::easy::Easy;
+use crate::{CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use fetchpath_http::{
     Chunk, GlobalBudget, RequestContext as HttpRequestContext, ResumePoint, Scheduler,
     TransferError, TransferLimits, transfer_resumable,
@@ -469,26 +468,6 @@ fn prefix_digest(path: &std::path::Path, len: u64) -> io::Result<sha2::Sha256> {
         ));
     }
     Ok(digest)
-}
-
-pub(crate) fn configure(
-    easy: &mut Easy,
-    url: &str,
-    context: &crate::RequestContext,
-) -> Result<(), curl::Error> {
-    easy.url(url)?;
-    easy.follow_location(true)?;
-    easy.fail_on_error(true)?;
-    easy.ssl_verify_peer(true)?;
-    easy.ssl_verify_host(true)?;
-    for cookie in &context.cookie_lines {
-        easy.cookie_list(cookie)?;
-    }
-    if let Some(referer) = &context.referer {
-        easy.referer(referer)?;
-    }
-    easy.buffer_size(BUFFER_BYTES)?;
-    easy.progress(true)
 }
 
 fn response_total(headers: &ResponseHeaders, fallback: u64) -> Option<u64> {

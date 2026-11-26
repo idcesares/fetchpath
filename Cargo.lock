@@ -1716,7 +1716,6 @@ dependencies = [
 name = "fetchpath-core"
 version = "0.1.0"
 dependencies = [
- "curl",
  "fetchpath-cache",
  "fetchpath-http",
  "fetchpath-metalink",
@@ -1730,8 +1729,6 @@ name = "fetchpath-desktop"
 version = "0.4.1"
 dependencies = [
  "fetchpath-browser-inbox",
- "fetchpath-core",
- "fetchpath-media",
  "fetchpath-protocol",
  "qrcode",
  "serde",

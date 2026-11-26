@@ -363,6 +363,56 @@ pub struct CancelResponse {
     pub job: JobView,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableTool {
+    pub name: String,
+    pub version: String,
+    pub url: String,
+    pub checksum_source: String,
+    pub license: String,
+    pub pinned: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsStatus {
+    pub ready: bool,
+    pub yt_dlp_path: Option<String>,
+    pub ffmpeg_dir: Option<String>,
+    pub yt_dlp_version: Option<String>,
+    pub ffmpeg_version: Option<String>,
+    pub install_dir: String,
+    pub available: Vec<AvailableTool>,
+    pub problem: Option<String>,
+}
+
+impl From<model::MediaToolsStatus> for ToolsStatus {
+    fn from(status: model::MediaToolsStatus) -> Self {
+        Self {
+            ready: status.ready,
+            yt_dlp_path: status.yt_dlp_path,
+            ffmpeg_dir: status.ffmpeg_dir,
+            yt_dlp_version: status.yt_dlp_version,
+            ffmpeg_version: status.ffmpeg_version,
+            install_dir: status.install_dir,
+            available: status
+                .available
+                .into_iter()
+                .map(|tool| AvailableTool {
+                    name: tool.name,
+                    version: tool.version,
+                    url: tool.url,
+                    checksum_source: tool.checksum_source,
+                    license: tool.license,
+                    pinned: tool.pinned,
+                })
+                .collect(),
+            problem: status.problem,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

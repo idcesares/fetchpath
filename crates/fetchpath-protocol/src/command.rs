@@ -146,6 +146,22 @@ pub enum Command {
     InspectLink {
         url: SensitiveUrl,
     },
+    /// Resolves a photo web page (or direct `image/*` response) to its public
+    /// downloadable image URL without cookies.
+    InspectPageImage {
+        url: SensitiveUrl,
+    },
+    /// Readiness and install folder of the media helpers (`yt-dlp` and `ffmpeg`).
+    /// The person only.
+    MediaToolsStatus,
+    /// Downloads and verifies the pinned media helpers into the engine's data
+    /// folder and configures the engine to use them. The person only.
+    InstallMediaTools,
+    /// Validates a user-chosen folder holding `yt-dlp` and `ffmpeg` and saves it
+    /// to engine settings. The person only.
+    UseMediaToolsDir {
+        directory: String,
+    },
     QueueStats,
     /// Where a signed-in device may save: the default folder and the rules'
     /// folders (contract D6).
@@ -347,6 +363,10 @@ impl Command {
             Self::JobDetails { .. } => "JobDetails",
             Self::InspectMedia { .. } => "InspectMedia",
             Self::InspectLink { .. } => "InspectLink",
+            Self::InspectPageImage { .. } => "InspectPageImage",
+            Self::MediaToolsStatus => "MediaToolsStatus",
+            Self::InstallMediaTools => "InstallMediaTools",
+            Self::UseMediaToolsDir { .. } => "UseMediaToolsDir",
             Self::QueueStats => "QueueStats",
             Self::ListFolderChoices => "ListFolderChoices",
             Self::OpenWebUi => "OpenWebUi",
@@ -409,6 +429,10 @@ impl Command {
                 | Self::JobDetails { .. }
                 | Self::InspectMedia { .. }
                 | Self::InspectLink { .. }
+                | Self::InspectPageImage { .. }
+                | Self::MediaToolsStatus
+                | Self::InstallMediaTools
+                | Self::UseMediaToolsDir { .. }
                 | Self::QueueStats
                 | Self::ListFolderChoices
                 | Self::OpenWebUi
@@ -447,6 +471,8 @@ impl Command {
             || matches!(
                 self,
                 Self::SetLanSharing { .. }
+                    | Self::InstallMediaTools
+                    | Self::UseMediaToolsDir { .. }
                     | Self::StartPairing
                     | Self::CancelPairing
                     | Self::JoinPairing { .. }
