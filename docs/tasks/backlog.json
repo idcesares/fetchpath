@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-11-24",
+  "updated": "2026-11-26",
   "tasks": [
     {
       "id": "FP-001",
@@ -4660,6 +4660,364 @@
       "evidence": [
         "docs/development/LOCAL-QUALITY.md"
       ]
+    },
+    {
+      "id": "FP-145",
+      "title": "Fix prefix-starvation thrashing, H2 socket-vs-stream lock-in, controller cooldown recovery and lane ceiling",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-087",
+        "FP-088"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-http/src/scheduler.rs",
+        "crates/fetchpath-http/src/controller.rs",
+        "crates/fetchpath-http/src/lib.rs",
+        "crates/fetchpath-http/tests/scheduler.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Prefix-starvation replacement uses hysteresis (below 35% of decaying active-lane reference) and never clips healthy non-prefix lanes on transient max_ahead dips; H2 independent-socket trial runs before locking width and unlocks Controller growth when separate sockets gain >=15%; Controller supports bounded cooldown re-probing after transient dips; default max_concurrency raises to 8 (configurable up to 16 within GlobalBudget). Paired Hugging Face 440 MB benchmark eliminates prefixStarvation churn (<=2 replacements) and reaches <=1.15x curl median without regressing per-client-limit or connection budgets.",
+      "verification": "cargo fmt --check, strict clippy, cargo test -p fetchpath-http --locked (unit + 5/5 compat + 38/38 scheduler including H2 >2-lane scaling and starved probe revert), independent strong boundary review + bounded repair recheck (PASS), and paired Hugging Face 440 MB (16.53s vs curl 14.67s = 1.13x, 0 prefixStarvation replacements), loopback, and resume benchmarks recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md",
+        "docs/development/evidence/http-adaptive/fp145-hf-internet.json",
+        "docs/development/evidence/http-adaptive/fp145-fp146-loopback.json",
+        "docs/development/evidence/http-adaptive/fp145-resume.json"
+      ]
+    },
+    {
+      "id": "FP-146",
+      "title": "Eliminate 3x SHA-256 hashing and move hashing and disk read-back off the socket callback thread",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-087",
+        "FP-088"
+      ],
+      "status": "done",
+      "owner": "agent",
+      "priority": "P0",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-storage/src/lib.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A04",
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Fresh in-process completion computes SHA-256 once over verified contiguous/complete bytes without redundant post-sync sha256_file or duplicate validate_staging re-hash inside store.publish(); crash-recovery reconcile_publication and validate_staging retain full disk verification; out-of-order read-back hashing never runs synchronously inside the libcurl write callback thread. Loopback unshaped and no-etag transfer time eliminates post-100% double-hash stalls and matches curl within noise.",
+      "verification": "cargo fmt --check, strict clippy, cargo test -p fetchpath-storage -p fetchpath-core --locked (storage 6/6, core 79/79 including fault-injection, checksum-mismatch, and publication-recovery tests), independent strong boundary review (PASS), and paired loopback (62-99% engine overhead reduction, x0.99-x1.02 on multi-second profiles) and SIGKILL interruption recovery benchmarks recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md",
+        "docs/development/evidence/http-adaptive/fp145-fp146-loopback.json",
+        "docs/development/evidence/http-adaptive/fp146-interruption.json"
+      ]
+    },
+    {
+      "id": "FP-147",
+      "title": "Implement extent-bitmap checkpoint format v2 in fetchpath-storage and fetchpath-core",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-146"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-storage/src/lib.rs",
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A04"
+      ],
+      "acceptance": "Checkpoint format v2 persists completed non-contiguous byte extents [start, end) with per-extent integrity digests, validator, and expected_total while remaining backward-compatible with v1 checkpoints on load. Pausing or killing the engine retains completed out-of-order extents across all lanes and resumes only missing extents; removes the 3-second prefix-lag run-ahead choke while bounding unflushed loss.",
+      "verification": "Storage and core fault-injection tests, v1-to-v2 upgrade tests, out-of-order pause/kill resume tests, and tools/bench/interruption.mjs recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": []
+    },
+    {
+      "id": "FP-148",
+      "title": "Add bounded write-coalescing buffers, async disk writer thread and NTFS sparse staging",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-147"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-storage/src/lib.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Network writes coalesce in bounded per-lane buffers (256 KiB-1 MiB) flushed asynchronously by a dedicated disk I/O worker thread with explicit backpressure propagation when full; segmented Windows NTFS staging evaluates and uses FSCTL_SET_SPARSE when beneficial so out-of-order write overhead drops to <=10% over sequential in tools/bench/ntfs-write.mjs; memory stays within GlobalBudget under slow-disk stress.",
+      "verification": "Slow-consumer backpressure tests, cancellation quiescence tests, tools/bench/ntfs-write.mjs paired measurements, and cargo test -p fetchpath-storage -p fetchpath-core -p fetchpath-http --locked.",
+      "evidence": []
+    },
+    {
+      "id": "FP-149",
+      "title": "Support RFC 9110 strong Last-Modified resume/segmentation and flexible RequestContext",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-145"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "crates/fetchpath-http/src/lib.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "crates/fetchpath-http/src/link.rs",
+        "crates/fetchpath-core/src/checkpoint.rs",
+        "crates/fetchpath-core/src/lib.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A03",
+        "A07",
+        "A11"
+      ],
+      "acceptance": "Sources without a strong ETag that provide Last-Modified and Date meeting RFC 9110 section 13.1.5 strong-validator conditions (Date - Last-Modified >= 1s) authorize safe If-Range resume and segmentation; weak ETags and non-strong dates remain conservative single-stream downloads; sequential non-ranged downloads permit transparent Accept-Encoding compression; RequestContext supports scoped User-Agent, custom headers, and proxy config with strict cross-origin stripping and redaction.",
+      "verification": "Fixture tests for strong/weak Last-Modified, sequential gzip/br decoding, cross-origin header stripping, and no-etag mirror corpus runs.",
+      "evidence": []
+    },
+    {
+      "id": "FP-150",
+      "title": "Implement global and per-job bandwidth pacing, job priorities and per-host fairness",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-145"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-protocol/src/command.rs",
+        "crates/fetchpath-protocol/src/model.rs",
+        "crates/fetchpath-protocol/schema/protocol-v1.schema.json",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-session/src/settings.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A09",
+        "A13"
+      ],
+      "acceptance": "Hierarchical token-bucket pacer enforces global engine bandwidth ceiling and per-job limits within +-5% over 5 s windows without starving other jobs; queue scheduler respects job priority (high/normal/low) and per-host fairness; additive Protocol v1 PolicyPatch and EngineSettings fields preserve 0.4.x backward compatibility and principal permissions (agents cannot raise global limits).",
+      "verification": "Protocol schema/roundtrip tests, session priority/policy tests, paced transfer rate tests, and cargo test --workspace --locked.",
+      "evidence": []
+    },
+    {
+      "id": "FP-151",
+      "title": "Add shared engine-wide HTTP connection, DNS and TLS session pool across concurrent jobs",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-147"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P1",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-http/src/lib.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A05",
+        "A07",
+        "A09"
+      ],
+      "acceptance": "Concurrent and sequential downloads to the same origin reuse DNS, TCP, and TLS sessions within an isolated (principal, credential_scope) pool partition; credentialed and cross-principal jobs never share connections or TLS session tickets; batch download of 50 small same-host files shows measurable connection reuse and >=20% median wall-time reduction.",
+      "verification": "Cross-principal/credential isolation tests, batch small-file connection-count and timing benchmark recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": []
+    },
+    {
+      "id": "FP-152",
+      "title": "Define HttpBackend transport seam and deliver pure-Rust async HTTP/1.1, HTTP/2 and HTTP/3 (QUIC) backend",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-147",
+        "FP-151"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-http/Cargo.toml",
+        "crates/fetchpath-http/src/lib.rs",
+        "crates/fetchpath-http/src/scheduler.rs",
+        "crates/fetchpath-http/tests/protocol_fixtures.rs",
+        "tools/bench/protocol-matrix.mjs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A05",
+        "A06",
+        "A07",
+        "A09"
+      ],
+      "acceptance": "Internal HttpBackend trait decouples scheduler/validator/redirect logic from libcurl; pure-Rust Tokio backend (hyper + h2 + quinn/h3 + rustls with Windows platform verifier) supports HTTP/1.1, HTTP/2, and opportunistic HTTP/3 with Happy Eyeballs fallback and prompt blocked-UDP fallback; reports actual negotiated protocol honestly and passes controlled H1/H2/H3, blocked-UDP, and paired comparative gates before becoming default.",
+      "verification": "Controlled H1/H2/H3 + blocked-UDP protocol matrix (A06), TLS verification and redirect secret-stripping tests (A07), and paired benchmark against libcurl/curl/aria2.",
+      "evidence": []
+    },
+    {
+      "id": "FP-153",
+      "title": "Unify multi-source and Metalink concurrent striping onto the extent planner and wire into fetchpath-session",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-147",
+        "FP-151"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-core/src/verified.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "crates/fetchpath-protocol/src/command.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A03",
+        "A05",
+        "A09"
+      ],
+      "acceptance": "Replaces single-mirror sequential MAX_CONCURRENT_MIRROR_ATTEMPTS=1 with concurrent multi-mirror striping on the unified extent planner; bad pieces are localized and selectively repaired from healthy mirrors when trusted PieceMap is present, and conservative whole-file restart applies for final-hash-only; exposed through fetchpath-session and fetchpath-protocol.",
+      "verification": "Corrupt/slow/offline multi-mirror striping tests, selective piece repair tests, and session integration tests.",
+      "evidence": []
+    },
+    {
+      "id": "FP-154",
+      "title": "Wire FTP, FTPS and SFTP compatibility transports into fetchpath-core and fetchpath-session",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-147"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-http/src/compatibility.rs",
+        "crates/fetchpath-core/src/transfer.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A07",
+        "A11"
+      ],
+      "acceptance": "FTP, FTPS, and SFTP downloads execute through fetchpath-core and fetchpath-session with resumable checkpoints, explicit credential references (never persisted in plaintext or logs), strict FTPS TLS verification, and fail-closed SFTP known_hosts verification.",
+      "verification": "Local FTP/FTPS/SFTP fixture tests through fetchpath-session covering auth, resume, host-key rejection, and cancellation.",
+      "evidence": []
+    },
+    {
+      "id": "FP-155",
+      "title": "Implement Hugging Face Xet chunk-deduplication provider adapter",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-151"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "terra-medium",
+      "review": "standard",
+      "files": [
+        "adapters/providers/Cargo.toml",
+        "adapters/providers/src/lib.rs",
+        "crates/fetchpath-cache/src/lib.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A02",
+        "A09",
+        "A11"
+      ],
+      "acceptance": "Evaluates and integrates Hugging Face Xet chunk reconstruction metadata with verified local chunk reuse via fetchpath-cache for related model/dataset revisions, falling back cleanly to pinned HTTP when Xet metadata is unavailable, with paired comparison against hf_xet.",
+      "verification": "Provider chunk-verification tests and paired version-update transfer benchmark recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": []
+    },
+    {
+      "id": "FP-156",
+      "title": "Replace full-file JSON queue rewrites with SQLite WAL / indexed store and offload blocking reconcile I/O",
+      "milestone": "M20",
+      "dependsOn": [
+        "FP-150"
+      ],
+      "status": "todo",
+      "owner": "agent",
+      "priority": "P2",
+      "modelTier": "astra-high",
+      "review": "strong",
+      "files": [
+        "crates/fetchpath-session/Cargo.toml",
+        "crates/fetchpath-session/src/persist.rs",
+        "crates/fetchpath-session/src/lib.rs",
+        "crates/fetchpath-session/src/engine.rs",
+        "docs/development/ENGINE-REDESIGN.md"
+      ],
+      "acceptanceIds": [
+        "A04",
+        "A05",
+        "A12"
+      ],
+      "acceptance": "Migrates queue, command ledger, and durable event persistence from O(N) full-file pretty JSON rewrites to an indexed transactional store (SQLite WAL or append-log with automatic migration from 0.1-0.4 JSON queues and read-only newer-schema guard preserved); moves blocking provenance hashing and directory creation off the Session queue mutex; 5,000-job queue commits stay under 5 ms p95.",
+      "verification": "Migration tests from 0.1.0 and 0.4.x queue fixtures, crash/rollback/idempotency tests, newer-schema read-only tests, and 5,000-job commit latency benchmark.",
+      "evidence": []
     }
   ]
 }

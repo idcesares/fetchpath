@@ -81,7 +81,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         limits.max_concurrency = lanes;
     }
-    let budget = GlobalBudget::new(limits.max_active_requests, limits.max_buffered_bytes)?;
+    let budget = GlobalBudget::new(
+        limits.max_active_requests.max(limits.max_concurrency),
+        limits.max_buffered_bytes,
+    )?;
     let report = transfer_resumable(
         &args[0],
         &RequestContext {

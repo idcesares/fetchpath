@@ -130,9 +130,9 @@ pub const RECEIVE_BUFFER_BYTES: usize = 16 * 1024;
 impl Default for TransferLimits {
     fn default() -> Self {
         Self {
-            max_active_requests: 8,
+            max_active_requests: 16,
             max_buffered_bytes: 32 * 1024 * 1024,
-            max_concurrency: 4,
+            max_concurrency: 8,
             min_segment_bytes: 1024 * 1024,
             min_adaptive_bytes: 4 * 1024 * 1024,
             receive_buffer_bytes: RECEIVE_BUFFER_BYTES,

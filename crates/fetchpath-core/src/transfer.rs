@@ -1,5 +1,6 @@
 use crate::checkpoint::{
-    CommitQueue, PrefixTracker, ResponseHeaders, source_key_with_context, strong_etag,
+    CommitQueue, CommitRequest, PrefixTracker, ResponseHeaders, source_key_with_context,
+    strong_etag,
 };
 use crate::{CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use fetchpath_http::{
@@ -8,8 +9,9 @@ use fetchpath_http::{
 };
 use fetchpath_storage::{
     CheckpointPhase, CheckpointRecord, CheckpointStore, FaultInjector, NoFaults,
-    PublicationRecovery, sha256_file,
+    PublicationRecovery,
 };
+use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io;
@@ -20,6 +22,9 @@ use std::time::{Duration, Instant};
 const CHECKPOINT_BYTES: u64 = 64 * 1024;
 /// ...and at least this much time since the last one.
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
+/// Wake the background hasher whenever the contiguous prefix advances by this
+/// much so SHA-256 stays pipelined concurrently with socket reads.
+const HASH_PIPELINE_BYTES: u64 = 256 * 1024;
 static HTTP_BUDGET: OnceLock<GlobalBudget> = OnceLock::new();
 
 pub(crate) fn http_budget() -> &'static GlobalBudget {
@@ -52,6 +57,9 @@ enum CallbackFailure {
 struct AttemptResult {
     headers: ResponseHeaders,
     final_len: u64,
+    /// Single-pass SHA-256 over `[0, final_len)` verified by the pipelined
+    /// hasher or validated from a complete retained checkpoint.
+    digest: String,
 }
 
 pub(crate) fn download(request: DownloadRequest) -> Result<DownloadedFile, DownloadError> {
@@ -140,12 +148,12 @@ pub fn download_with_faults(
         });
     }
 
-    let (mut file, mut offset, mut validator) = recover_download(&store, latest.as_ref())?;
+    let mut recovered = recover_download(&store, latest.as_ref())?;
     let mut expected_total = latest
         .as_ref()
-        .filter(|_| offset > 0)
+        .filter(|_| recovered.offset > 0)
         .and_then(|record| record.expected_total);
-    request.cancellation.set_received(offset);
+    request.cancellation.set_received(recovered.offset);
     // A recovered checkpoint already carries the length the source stated on the
     // first attempt, so a resumed transfer shows its size before the first byte
     // of this attempt arrives instead of blanking out and filling in later.
@@ -162,27 +170,34 @@ pub fn download_with_faults(
     let mut identity_restarted = false;
     let mut attempts = 0;
     let attempt = loop {
-        // A complete retained prefix still gets the final disk digest and
-        // publication checks, without asking the origin for an empty range.
-        if expected_total == Some(offset) {
+        // A complete retained prefix was already validated against disk in
+        // `recover_download`; reuse its verified digest without re-reading.
+        if expected_total == Some(recovered.offset) {
+            let digest = recovered
+                .verified_digest
+                .take()
+                .unwrap_or_else(|| format!("{:x}", recovered.hasher.clone().finalize()));
             break AttemptResult {
                 headers: ResponseHeaders {
                     status: Some(200),
-                    etag: validator.clone(),
+                    etag: recovered.validator.clone(),
                     content_length: expected_total,
                     content_range: None,
                 },
-                final_len: offset,
+                final_len: recovered.offset,
+                digest,
             };
         }
         attempts += 1;
+        let attempt_hasher = std::mem::replace(&mut recovered.hasher, Sha256::new());
         let failure = match perform_scheduled_attempt(
             &request,
             &store,
-            &file,
-            offset,
-            validator.as_deref(),
+            &recovered.file,
+            recovered.offset,
+            recovered.validator.as_deref(),
             expected_total,
+            attempt_hasher,
             identity_restarted,
             faults,
         ) {
@@ -192,11 +207,15 @@ pub fn download_with_faults(
         match failure {
             CallbackFailure::RestartRequired if !identity_restarted && attempts < 2 => {
                 identity_restarted = true;
-                file = store
-                    .reset()
-                    .map_err(|error| storage_error(&store, error))?;
-                offset = 0;
-                validator = None;
+                recovered = RecoveredStaging {
+                    file: store
+                        .reset()
+                        .map_err(|error| storage_error(&store, error))?,
+                    offset: 0,
+                    validator: None,
+                    hasher: Sha256::new(),
+                    verified_digest: None,
+                };
                 expected_total = None;
                 request.cancellation.set_received(0);
             }
@@ -205,22 +224,28 @@ pub fn download_with_faults(
                 let latest = store
                     .latest()
                     .map_err(|error| storage_error(&store, error))?;
-                (file, offset, validator) = recover_download(&store, latest.as_ref())?;
+                recovered = recover_download(&store, latest.as_ref())?;
                 expected_total = latest
                     .as_ref()
-                    .filter(|_| offset > 0)
+                    .filter(|_| recovered.offset > 0)
                     .and_then(|record| record.expected_total);
-                request.cancellation.set_received(offset);
+                request.cancellation.set_received(recovered.offset);
             }
             failure => return Err(map_attempt_failure(&request, &store, failure)),
         }
     };
 
-    store
-        .sync_payload(&mut file, faults)
+    // Trim any stale bytes left past `final_len` by an earlier retry before
+    // syncing and publishing with the single-pass verified digest (D10).
+    recovered
+        .file
+        .set_len(attempt.final_len)
         .map_err(|error| storage_detail(&store, error))?;
-    drop(file);
-    let digest = sha256_file(store.staging()).map_err(|error| storage_detail(&store, error))?;
+    store
+        .sync_payload(&mut recovered.file, faults)
+        .map_err(|error| storage_detail(&store, error))?;
+    drop(recovered.file);
+    let digest = attempt.digest;
     if let Some(expected) = mismatch(&request, &digest) {
         // Known-bad bytes are discarded, not retained for a resume to build on.
         let _ = store.remove_all();
@@ -243,39 +268,63 @@ pub fn download_with_faults(
     let intent = store
         .commit(intent, faults)
         .map_err(|error| storage_detail(&store, error))?;
-    publish(&request, &store, &intent, faults)
+    publish_verified(&request, &store, &intent, faults)
+}
+
+struct RecoveredStaging {
+    file: File,
+    offset: u64,
+    validator: Option<String>,
+    hasher: Sha256,
+    verified_digest: Option<String>,
 }
 
 fn recover_download(
     store: &CheckpointStore,
     latest: Option<&CheckpointRecord>,
-) -> Result<(File, u64, Option<String>), DownloadError> {
+) -> Result<RecoveredStaging, DownloadError> {
+    let empty = |file| RecoveredStaging {
+        file,
+        offset: 0,
+        validator: None,
+        hasher: Sha256::new(),
+        verified_digest: None,
+    };
     let Some(record) = latest else {
         return store
             .reset()
-            .map(|file| (file, 0, None))
+            .map(empty)
             .map_err(|error| storage_error(store, error));
     };
-    let reusable = record.phase == CheckpointPhase::Downloading
-        && record.strong_etag.is_some()
-        && store
-            .validate_staging(record)
-            .map_err(|error| storage_error(store, error))?;
-    if !reusable {
+    let hasher = if record.phase == CheckpointPhase::Downloading && record.strong_etag.is_some() {
+        store
+            .validate_staging_hasher(record)
+            .map_err(|error| storage_error(store, error))?
+    } else {
+        None
+    };
+    let Some(hasher) = hasher else {
         return store
             .reset()
-            .map(|file| (file, 0, None))
+            .map(empty)
             .map_err(|error| storage_error(store, error));
-    }
+    };
     store
         .open_staging()
-        .map(|file| (file, record.committed_len, record.strong_etag.clone()))
+        .map(|file| RecoveredStaging {
+            file,
+            offset: record.committed_len,
+            validator: record.strong_etag.clone(),
+            hasher,
+            verified_digest: Some(record.local_sha256.clone()),
+        })
         .map_err(|error| storage_error(store, error))
 }
 
 /// Downloads the file, or the rest of it after `offset`, with the
 /// stream-first scheduler. Lanes deliver bytes out of order; they are written
-/// where they belong and folded into the prefix digest in order.
+/// where they belong and folded into the prefix digest asynchronously on the
+/// commit/hasher worker thread (FP-146).
 #[allow(clippy::too_many_arguments)]
 fn perform_scheduled_attempt(
     request: &DownloadRequest,
@@ -284,6 +333,7 @@ fn perform_scheduled_attempt(
     offset: u64,
     validator: Option<&str>,
     expected_total: Option<u64>,
+    initial_hasher: Sha256,
     plain_restart: bool,
     faults: &dyn FaultInjector,
 ) -> Result<AttemptResult, CallbackFailure> {
@@ -309,20 +359,16 @@ fn perform_scheduled_attempt(
         }),
         _ => None,
     };
-    // The digest of the bytes kept so far, extended as bytes arrive rather
-    // than recomputed from the whole staging file at every checkpoint.
-    let tracker = RefCell::new(PrefixTracker::new(
-        offset,
-        prefix_digest(store.staging(), offset).map_err(CallbackFailure::Storage)?,
-    ));
+    let tracker = RefCell::new(PrefixTracker::new(offset));
     let key = source_key_with_context(&request.url, &request.context.fingerprint());
     let queue = CommitQueue::new(offset);
     // The validator and total the newest chunk carried, for the final commit.
     let identity = RefCell::new((validator.map(str::to_owned), expected_total));
     let mut last_submit = (Instant::now(), offset);
+    let mut last_hashed_notify = offset;
 
     let result = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| queue.run(store, faults));
+        let worker = scope.spawn(|| queue.run(store, offset, initial_hasher, faults));
         let result = transfer_resumable(
             &request.url,
             &context,
@@ -340,10 +386,14 @@ fn perform_scheduled_attempt(
                 let mut tracker = tracker.borrow_mut();
                 tracker.check(chunk.offset, chunk.bytes.len())?;
                 store.write_payload_at(file, chunk.offset, chunk.bytes, faults)?;
-                tracker.record(file, chunk.offset, chunk.bytes)?;
+                tracker.record(chunk.offset, chunk.bytes.len())?;
                 let prefix = tracker.prefix();
                 request.cancellation.set_received(prefix);
                 request.cancellation.set_total(chunk.total_bytes);
+                if prefix.saturating_sub(last_hashed_notify) >= HASH_PIPELINE_BYTES {
+                    queue.advance_prefix(prefix);
+                    last_hashed_notify = prefix;
+                }
                 if let Some(etag) = chunk.strong_etag {
                     let mut identity = identity.borrow_mut();
                     if identity.0.as_deref() != Some(etag) {
@@ -351,25 +401,36 @@ fn perform_scheduled_attempt(
                     }
                     identity.1 = chunk.total_bytes.or(identity.1);
                     // Checkpoint when a second has passed and 64 KiB more
-                    // are contiguous. The commit thread fsyncs and commits.
+                    // are contiguous. The background thread hashes, fsyncs, and commits.
                     if prefix - last_submit.1 >= CHECKPOINT_BYTES
                         && last_submit.0.elapsed() >= CHECKPOINT_INTERVAL
                     {
-                        queue.submit(CheckpointRecord::downloading(
-                            key.clone(),
+                        queue.submit_commit(CommitRequest {
                             prefix,
-                            tracker.digest(),
-                            identity.0.clone(),
-                            identity.1,
-                        ));
+                            source_key: key.clone(),
+                            strong_etag: identity.0.clone(),
+                            expected_total: identity.1,
+                        });
                         last_submit = (Instant::now(), prefix);
+                        last_hashed_notify = prefix;
                     }
                 }
                 Ok(())
             },
         );
-        // Every lane has stopped by now. Let the commit thread finish.
-        queue.close();
+        // Every lane has stopped by now. Drain or abort the worker cleanly.
+        let remove_cancel = request.cancellation.is_cancelled()
+            && request.cancel_cleanup == CancelCleanup::RemoveStaging;
+        if remove_cancel {
+            queue.abort();
+        } else if result.is_ok()
+            || (matches!(result, Err(TransferError::Cancelled))
+                && request.cancel_cleanup == CancelCleanup::RetainStaging)
+        {
+            queue.finish(tracker.borrow().prefix());
+        } else {
+            queue.close();
+        }
         let _ = worker.join();
         result
     });
@@ -386,17 +447,26 @@ fn perform_scheduled_attempt(
     match result {
         Ok(report) => {
             let tracker = tracker.borrow();
-            if tracker.prefix() != report.bytes || tracker.written() != report.bytes {
+            if tracker.prefix() != report.bytes
+                || tracker.written() != report.bytes
+                || queue.hashed() != report.bytes
+            {
                 return Err(CallbackFailure::Storage(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "the transfer ended at {} bytes but {} are contiguous and {} written",
+                        "the transfer ended at {} bytes but {} are contiguous, {} written, {} hashed",
                         report.bytes,
                         tracker.prefix(),
-                        tracker.written()
+                        tracker.written(),
+                        queue.hashed(),
                     ),
                 )));
             }
+            let digest = queue.take_final_digest().ok_or_else(|| {
+                CallbackFailure::Storage(io::Error::other(
+                    "background hasher ended without a final digest",
+                ))
+            })?;
             Ok(AttemptResult {
                 headers: ResponseHeaders {
                     status: Some(200),
@@ -405,6 +475,7 @@ fn perform_scheduled_attempt(
                     content_range: None,
                 },
                 final_len: report.bytes,
+                digest,
             })
         }
         Err(TransferError::Cancelled) => {
@@ -416,6 +487,7 @@ fn perform_scheduled_attempt(
                 let (etag, total) = identity.borrow().clone();
                 if let Some(etag) = etag
                     && tracker.prefix() > queue.committed()
+                    && let Some(digest) = queue.take_final_digest()
                 {
                     store
                         .sync_payload_shared(file, faults)
@@ -425,7 +497,7 @@ fn perform_scheduled_attempt(
                             CheckpointRecord::downloading(
                                 key,
                                 tracker.prefix(),
-                                tracker.digest(),
+                                digest,
                                 Some(etag),
                                 total,
                             ),
@@ -441,33 +513,6 @@ fn perform_scheduled_attempt(
         Err(TransferError::Rejected(detail)) => Err(CallbackFailure::Rejected(detail)),
         Err(error) => Err(CallbackFailure::Transport(error.to_string())),
     }
-}
-
-/// SHA-256 state over the first `len` bytes of `path`.
-fn prefix_digest(path: &std::path::Path, len: u64) -> io::Result<sha2::Sha256> {
-    use std::io::Read;
-    let mut digest = <sha2::Sha256 as sha2::Digest>::new();
-    if len == 0 {
-        return Ok(digest);
-    }
-    let mut reader = File::open(path)?.take(len);
-    let mut buffer = vec![0_u8; 1024 * 1024];
-    let mut read = 0_u64;
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        sha2::Digest::update(&mut digest, &buffer[..count]);
-        read += count as u64;
-    }
-    if read != len {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "staging is shorter than its checkpoint",
-        ));
-    }
-    Ok(digest)
 }
 
 fn response_total(headers: &ResponseHeaders, fallback: u64) -> Option<u64> {
@@ -493,12 +538,32 @@ pub(crate) fn publish(
     intent: &CheckpointRecord,
     faults: &dyn FaultInjector,
 ) -> Result<DownloadedFile, DownloadError> {
+    publish_with(request, store, intent, || store.publish(intent, faults))
+}
+
+fn publish_verified(
+    request: &DownloadRequest,
+    store: &CheckpointStore,
+    intent: &CheckpointRecord,
+    faults: &dyn FaultInjector,
+) -> Result<DownloadedFile, DownloadError> {
+    publish_with(request, store, intent, || {
+        store.publish_verified(intent, faults)
+    })
+}
+
+fn publish_with(
+    request: &DownloadRequest,
+    store: &CheckpointStore,
+    intent: &CheckpointRecord,
+    do_publish: impl FnOnce() -> io::Result<Option<std::path::PathBuf>>,
+) -> Result<DownloadedFile, DownloadError> {
     let gate = request.cancellation.publication_gate();
     if request.cancellation.is_cancelled() {
         drop(gate);
         return Err(cancelled(request, store));
     }
-    match store.publish(intent, faults) {
+    match do_publish() {
         Ok(staging_pending) => {
             request.cancellation.mark_published();
             drop(gate);

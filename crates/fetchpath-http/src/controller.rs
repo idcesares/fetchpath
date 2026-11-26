@@ -1,17 +1,26 @@
-//! The concurrency controller (spec 4.6). It decides how many lanes a
+//! The concurrency controller (FP-145, Engine 2.0). It decides how many lanes a
 //! download runs and never looks at bytes or sockets: the scheduler feeds it
 //! the goodput of each valid window.
 //!
 //! Start at 2 lanes. Measure one valid window, then try double the width. Keep
 //! it only if two consecutive valid windows at the new width each beat the old
-//! width by 15%; otherwise go back and never probe again for this download.
-//! Halve on a 429 or 503, on backpressure that lasts two windows, or on a 30%
-//! goodput drop that lasts two windows.
+//! width by 15%; otherwise return to the old width and settle for a bounded
+//! cooldown (never re-probing short downloads, while allowing long downloads to
+//! recover from transient WAN noise). Explicit 429/503 throttling halves lanes
+//! and disables further growth for the download. When an HTTP/2 connection-pool
+//! trial unlocks independent sockets, `resume_probing` re-enables growth across
+//! the newly available sockets.
 
 /// A window at a wider setting must beat the old one by this factor.
 pub(crate) const GROWTH_GAIN: f64 = 1.15;
 /// A window below this share of the reference counts as a drop.
 pub(crate) const DROP_RATIO: f64 = 0.70;
+/// Steady valid windows before re-probing after a failed width probe (~24 s),
+/// long enough that short/per-client-limited downloads never waste probes.
+pub(crate) const REPROBE_COOLDOWN_WINDOWS: u32 = 24;
+/// Steady valid windows before re-probing after a non-throttle halving (~12 s).
+pub(crate) const RECOVERY_COOLDOWN_WINDOWS: u32 = 12;
+const MAX_REPROBE_COOLDOWN_WINDOWS: u32 = 96;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Change {
@@ -31,8 +40,8 @@ enum Stage {
         good_windows: u8,
         good_sum: f64,
     },
-    /// No further probing.
-    Settled,
+    /// Holding steady until a cooldown expires (unless throttled or at max).
+    Settled { steady_windows: u32, cooldown: u32 },
 }
 
 #[derive(Debug)]
@@ -43,6 +52,9 @@ pub(crate) struct Controller {
     reference: Option<f64>,
     drops: u8,
     backpressure_windows: u8,
+    /// Set on 429/503: never grows again for this download.
+    throttled: bool,
+    next_cooldown: u32,
 }
 
 /// What a window told the controller.
@@ -63,6 +75,8 @@ impl Controller {
             reference: None,
             drops: 0,
             backpressure_windows: 0,
+            throttled: false,
+            next_cooldown: REPROBE_COOLDOWN_WINDOWS,
         }
     }
 
@@ -70,13 +84,57 @@ impl Controller {
         self.width
     }
 
-    /// True while the download may still ask for more lanes.
+    /// True while the download is actively probing for more lanes.
     pub(crate) fn growing(&self) -> bool {
         match self.stage {
             Stage::Baseline => self.width < self.max,
             Stage::Probe { .. } => true,
-            Stage::Settled => false,
+            Stage::Settled { .. } => false,
         }
+    }
+
+    pub(crate) fn is_baseline(&self) -> bool {
+        matches!(self.stage, Stage::Baseline)
+    }
+
+    pub(crate) fn is_probing(&self) -> bool {
+        matches!(self.stage, Stage::Probe { .. })
+    }
+
+    /// Reverts an active width probe that cannot fill its lanes (for example
+    /// because `max_ahead` cannot fit `width` minimum segments at the current
+    /// link speed), preventing `window_step` from starving indefinitely.
+    pub(crate) fn revert_starved(&mut self) -> Option<Change> {
+        if let Stage::Probe { from, baseline, .. } = self.stage {
+            self.width = from;
+            self.settle_after_revert();
+            self.reference = Some(baseline);
+            Some(Change::Reverted(from))
+        } else {
+            None
+        }
+    }
+
+    /// Re-enables width probing after a transport change (such as switching an
+    /// HTTP/2 download from one shared socket to independent sockets). Respects
+    /// server throttling and the configured ceiling.
+    pub(crate) fn resume_probing(&mut self, baseline: f64) -> Option<Change> {
+        if self.throttled || self.width >= self.max || baseline <= 0.0 {
+            return None;
+        }
+        self.reference = Some(baseline);
+        self.drops = 0;
+        self.backpressure_windows = 0;
+        self.next_cooldown = REPROBE_COOLDOWN_WINDOWS;
+        let from = self.width;
+        self.width = (self.width * 2).min(self.max);
+        self.stage = Stage::Probe {
+            from,
+            baseline,
+            good_windows: 0,
+            good_sum: 0.0,
+        };
+        Some(Change::Grew(self.width))
     }
 
     /// Lowers the ceiling (the budget refused a lane, or the source ignores
@@ -88,22 +146,39 @@ impl Controller {
         }
         if matches!(self.stage, Stage::Probe { .. }) && self.width >= self.max {
             // The probe can no longer reach the width it wanted.
-            self.stage = Stage::Settled;
+            self.stage = Stage::Settled {
+                steady_windows: 0,
+                cooldown: self.next_cooldown,
+            };
         }
     }
 
-    /// A 429 or 503: halve and stop probing.
+    /// A 429 or 503: halve and permanently stop growing for this download.
     pub(crate) fn throttled(&mut self) -> usize {
-        self.halve();
+        self.throttled = true;
+        self.halve(u32::MAX);
         self.width
     }
 
-    fn halve(&mut self) {
+    fn halve(&mut self, cooldown: u32) {
         self.width = (self.width / 2).max(1);
-        self.stage = Stage::Settled;
+        self.stage = Stage::Settled {
+            steady_windows: 0,
+            cooldown,
+        };
         self.reference = None;
         self.drops = 0;
         self.backpressure_windows = 0;
+    }
+
+    fn settle_after_revert(&mut self) {
+        let cooldown = self.next_cooldown;
+        self.next_cooldown =
+            (self.next_cooldown.saturating_mul(2)).min(MAX_REPROBE_COOLDOWN_WINDOWS);
+        self.stage = Stage::Settled {
+            steady_windows: 0,
+            cooldown,
+        };
     }
 
     /// Feeds one valid window.
@@ -113,11 +188,11 @@ impl Controller {
             self.backpressure_windows += 1;
             if let Stage::Probe { from, baseline, .. } = self.stage {
                 self.width = from;
-                self.stage = Stage::Settled;
+                self.settle_after_revert();
                 self.reference = Some(baseline);
                 outcome.change = Some(Change::Reverted(from));
             } else if self.backpressure_windows >= 2 {
-                self.halve();
+                self.halve(RECOVERY_COOLDOWN_WINDOWS);
                 outcome.change = Some(Change::Halved(self.width));
             } else {
                 outcome.hold_claims = true;
@@ -138,7 +213,10 @@ impl Controller {
                     self.width = (self.width * 2).min(self.max);
                     outcome.change = Some(Change::Grew(self.width));
                 } else {
-                    self.stage = Stage::Settled;
+                    self.stage = Stage::Settled {
+                        steady_windows: 0,
+                        cooldown: self.next_cooldown,
+                    };
                 }
             }
             Stage::Probe {
@@ -153,6 +231,7 @@ impl Controller {
                     if good_windows >= 2 {
                         let mean = good_sum / f64::from(good_windows);
                         self.reference = Some(mean);
+                        self.next_cooldown = REPROBE_COOLDOWN_WINDOWS;
                         if self.width < self.max {
                             self.stage = Stage::Probe {
                                 from: self.width,
@@ -163,7 +242,10 @@ impl Controller {
                             self.width = (self.width * 2).min(self.max);
                             outcome.change = Some(Change::Grew(self.width));
                         } else {
-                            self.stage = Stage::Settled;
+                            self.stage = Stage::Settled {
+                                steady_windows: 0,
+                                cooldown: self.next_cooldown,
+                            };
                         }
                     } else {
                         self.stage = Stage::Probe {
@@ -175,21 +257,52 @@ impl Controller {
                     }
                 } else {
                     self.width = from;
-                    self.stage = Stage::Settled;
+                    self.settle_after_revert();
                     self.reference = Some(baseline);
                     outcome.change = Some(Change::Reverted(from));
                 }
             }
-            Stage::Settled => match self.reference {
+            Stage::Settled {
+                steady_windows,
+                cooldown,
+            } => match self.reference {
                 Some(reference) if goodput < reference * DROP_RATIO => {
                     self.drops += 1;
                     if self.drops >= 2 {
-                        self.halve();
+                        self.halve(RECOVERY_COOLDOWN_WINDOWS);
                         outcome.change = Some(Change::Halved(self.width));
+                    } else {
+                        self.stage = Stage::Settled {
+                            steady_windows: 0,
+                            cooldown,
+                        };
                     }
                 }
-                Some(_) => self.drops = 0,
-                None => self.reference = Some(goodput),
+                _ => {
+                    self.drops = 0;
+                    let reference = self.reference.get_or_insert(goodput);
+                    // Track the settled baseline smoothly so a recovered link
+                    // becomes the baseline for any later re-probe.
+                    *reference = 0.75 * *reference + 0.25 * goodput;
+                    let steady_windows = steady_windows.saturating_add(1);
+                    if !self.throttled && self.width < self.max && steady_windows >= cooldown {
+                        let from = self.width;
+                        let baseline = (*reference).max(goodput);
+                        self.width = (self.width * 2).min(self.max);
+                        self.stage = Stage::Probe {
+                            from,
+                            baseline,
+                            good_windows: 0,
+                            good_sum: 0.0,
+                        };
+                        outcome.change = Some(Change::Grew(self.width));
+                    } else {
+                        self.stage = Stage::Settled {
+                            steady_windows,
+                            cooldown,
+                        };
+                    }
+                }
             },
         }
         outcome
@@ -223,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn a_probe_that_does_not_gain_goes_back_and_never_probes_again() {
+    fn a_probe_that_does_not_gain_goes_back_and_holds_steady_during_cooldown() {
         let mut controller = Controller::new(2, 8);
         controller.window(100.0, false);
         // 10% is not enough.
@@ -233,10 +346,27 @@ mod tests {
         );
         assert_eq!(controller.width(), 2);
         assert!(!controller.growing());
-        for _ in 0..6 {
+        for _ in 0..REPROBE_COOLDOWN_WINDOWS - 1 {
             assert_eq!(controller.window(100.0, false).change, None);
         }
-        assert_eq!(controller.width(), 2, "no re-probe");
+        assert_eq!(controller.width(), 2, "stays settled through cooldown");
+        // After the full cooldown, one bounded re-probe is allowed.
+        assert_eq!(
+            controller.window(100.0, false).change,
+            Some(Change::Grew(4))
+        );
+        // If that fails too, cooldown doubles.
+        assert_eq!(
+            controller.window(105.0, false).change,
+            Some(Change::Reverted(2))
+        );
+        for _ in 0..(REPROBE_COOLDOWN_WINDOWS * 2 - 1) {
+            assert_eq!(controller.window(100.0, false).change, None);
+        }
+        assert_eq!(
+            controller.window(100.0, false).change,
+            Some(Change::Grew(4))
+        );
     }
 
     #[test]
@@ -251,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn a_throttle_halves_and_stops_probing() {
+    fn a_throttle_halves_and_never_reprobes() {
         let mut controller = Controller::new(2, 8);
         controller.window(100.0, false);
         controller.window(130.0, false);
@@ -262,10 +392,16 @@ mod tests {
         assert_eq!(controller.throttled(), 1);
         assert_eq!(controller.throttled(), 1);
         assert!(!controller.growing());
+        // Even across many steady windows, server throttling stays respected.
+        for _ in 0..100 {
+            assert_eq!(controller.window(200.0, false).change, None);
+        }
+        assert_eq!(controller.width(), 1);
+        assert_eq!(controller.resume_probing(200.0), None);
     }
 
     #[test]
-    fn a_sustained_thirty_percent_drop_halves() {
+    fn a_sustained_thirty_percent_drop_halves_and_recovers_after_cooldown() {
         let mut controller = Controller::new(4, 4);
         controller.window(100.0, false);
         assert_eq!(controller.window(65.0, false).change, None);
@@ -273,6 +409,10 @@ mod tests {
             controller.window(60.0, false).change,
             Some(Change::Halved(2))
         );
+        for _ in 0..RECOVERY_COOLDOWN_WINDOWS - 1 {
+            assert_eq!(controller.window(60.0, false).change, None);
+        }
+        assert_eq!(controller.window(60.0, false).change, Some(Change::Grew(4)));
         // A single dip between good windows does nothing.
         let mut controller = Controller::new(4, 4);
         controller.window(100.0, false);
@@ -280,6 +420,25 @@ mod tests {
         controller.window(95.0, false);
         assert_eq!(controller.window(60.0, false).change, None);
         assert_eq!(controller.width(), 4);
+    }
+
+    #[test]
+    fn resume_probing_unlocks_growth_after_transport_change() {
+        let mut controller = Controller::new(2, 8);
+        controller.window(100.0, false);
+        assert_eq!(
+            controller.window(102.0, false).change,
+            Some(Change::Reverted(2))
+        );
+        assert!(!controller.growing());
+        assert_eq!(controller.resume_probing(200.0), Some(Change::Grew(4)));
+        assert_eq!(controller.width(), 4);
+        assert!(controller.growing());
+        assert_eq!(controller.window(250.0, false).change, None);
+        assert_eq!(
+            controller.window(260.0, false).change,
+            Some(Change::Grew(8))
+        );
     }
 
     #[test]

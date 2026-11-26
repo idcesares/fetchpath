@@ -1,6 +1,6 @@
 # Fetchpath project state
 
-Updated 25 November 2026. Phase: **0.4.1 published** (security patch of 0.4.0, see [the record](docs/development/RELEASE-CANDIDATE.md)), with post-0.4.1 stabilization, sharing/relay, photo-page detection, and prompt-free browser extension work on `main`. Fetchpath 0.4.0 was published on GitHub after owner-authorized validation. It adds in-app Codex and Claude Code connection, a headless installer, and a disk reserve with no limit. The local web UI arrived in 0.3.0. The engine serves the desktop, command line, interactive terminal, browser extension, a local browser page and agents through MCP. The design is [the engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+Updated 26 November 2026. Phase: **Engine 2.0 redesign (Milestone M20, `FP-145`–`FP-156`)** building on **0.4.1 published** (see [the release record](docs/development/RELEASE-CANDIDATE.md)). The engine platform serves the desktop, command line, interactive terminal, browser extension, local web UI, and agents through MCP ([engine platform spec](docs/architecture/specs/2026-09-24-engine-platform-design.md)). M20 redesigns the download data plane, scheduler, I/O pipeline, and transport boundary toward SOTA throughput, crash recovery, and protocol capabilities ([Engine 2.0 redesign spec](docs/architecture/specs/2026-11-26-engine-redesign.md)).
 
 ## Confirmed purpose
 
@@ -11,7 +11,7 @@ The user builds with agents in Codex and Claude Code, using proportional model e
 ## Source of truth
 
 - Product/technical direction: [architecture plan](docs/architecture/PLAN.md) and [job contract](docs/architecture/JOB-CONTRACT.md).
-- Engine platform: [platform design](docs/architecture/specs/2026-09-24-engine-platform-design.md).
+- Engine platform & redesign: [platform design](docs/architecture/specs/2026-09-24-engine-platform-design.md) and [Engine 2.0 redesign](docs/architecture/specs/2026-11-26-engine-redesign.md).
 - UX journeys: [UX contract](docs/product/UX.md).
 - Task state, dependencies, ownership, and evidence: [backlog](docs/tasks/backlog.json).
 - Repository boundaries: [repository map](docs/architecture/REPOSITORY.md). Per-area evidence and limitations: [development records](docs/development/README.md).
@@ -31,16 +31,15 @@ The 0.4.0 release adds in-app agent connection, the headless installer, and a di
 
 The [release candidate record](docs/development/RELEASE-CANDIDATE.md) owns the tested revision, artifact and verdict. Guest sign-out/sign-in recovery passed. A physical reboot was not part of that check. Sudden power loss will not be run (FP-077): A04 is an accepted limit, not a demonstrated proof. Claude Code registration and discovery are checked; its current model-driven download flow is explicitly owner-deferred. Remote access was deferred beyond 0.2.0 and is still unbuilt in 0.4.0. `fetchpath hub` keeps the local engine running on this computer and does not listen for other computers. Research recommends no chunking, deltas, multipath or FEC implementation now; a Hugging Face Xet client remains a candidate. Other platforms and mobile are scoped in [PLATFORMS](docs/product/PLATFORMS.md).
 
-## Direction (decided 24 September 2026)
+## Direction
 
-- **One engine, many clients.** A per-user headless engine (`fetchpath engine`, inside `fetchpath.exe`) is the only owner of the queue, history, settings, rules and policy. Every client uses one versioned protocol implementing [the job contract](docs/architecture/JOB-CONTRACT.md). Closing a window or terminal does not stop downloads; the idle engine exits unless always on or sharing keeps it running.
-- **Terminal-first build order.** The terminal is the first complete client and proves the protocol. The desktop is still the product for ordinary users, and its journeys must not regress.
+- **One engine, many clients (24 September 2026).** A per-user headless engine (`fetchpath engine`, inside `fetchpath.exe`) is the only owner of the queue, history, settings, rules and policy. Every client uses one versioned protocol implementing [the job contract](docs/architecture/JOB-CONTRACT.md). Closing a window or terminal does not stop downloads; the idle engine exits unless always on or sharing keeps it running.
 - **Agents are principals, not users.** An agent reaches Fetchpath through `fetchpath mcp` under a policy the person grants (folders, size, no credentials, no sharing). Anything beyond that waits for the person's approval in the terminal or desktop. Same-user malware is out of scope, and the docs say so.
-- **Existing work re-sequenced.** The cache and LAN desktop surfaces (FP-032, FP-033) and new job kinds (FP-021, FP-022) land on the engine session so every client gets them.
+- **Three-plane SOTA Engine 2.0 (26 November 2026, Milestone M20).** Separate Control (`fetchpath-session`), Data/Storage (`fetchpath-core` + `fetchpath-storage`), and Transport (`fetchpath-http` + `adapters/*`) cleanly: fix the 0.4.1 prefix-starvation thrashing and H2 width-vs-socket lock-in (`FP-145`), eliminate 3× full-file SHA-256 hashing (`FP-146`), move to extent-bitmap checkpoints v2 (`FP-147`) and coalesced async disk I/O (`FP-148`), add strong `Last-Modified` resume, bandwidth pacing, priorities, and shared host pools (`FP-149`–`FP-151`), then land a pluggable pure-Rust H1/H2/H3 (`hyper`+`h3`/`quinn`) transport seam, unified multi-source/FTP/SFTP/Xet execution, and scalable queue persistence (`FP-152`–`FP-156`). See [the Engine 2.0 spec](docs/architecture/specs/2026-11-26-engine-redesign.md) and [D10](docs/architecture/JOB-CONTRACT.md#d10--engine-20-data-plane-extent-checkpoints-pacing-and-scheduling-26-november-2026).
 
 ## Next development
 
-`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). Nothing is ready. FP-128 is blocked: Isaac has no VPS, so [checklist A](docs/plan/linux-vps-validation.md) is deferred. FP-119 is blocked on his decision to expose the home PC. FP-091, FP-092, FP-093, and FP-120 stay blocked. FP-129 (Linux CI) and FP-130 (systemd unit) are done. Proposed agent work that does not need a VPS is FP-131, FP-132, and FP-133. The backlog remains the task list.
+`node tools/tasks.mjs next` lists in-progress work, then ready tasks by priority (P0–P3). **Milestone M20 (Engine 2.0 redesign, `FP-145`–`FP-156`)** is the active engineering track; Phase 1 starts with P0 tasks **`FP-145`** (scheduler/H2/controller repair) and **`FP-146`** (single-pass hashing & callback offload), tracked in [docs/development/ENGINE-REDESIGN.md](docs/development/ENGINE-REDESIGN.md). Older non-M20 items remain as recorded: FP-128 is blocked on VPS access ([checklist A](docs/plan/linux-vps-validation.md)), FP-119/FP-091/FP-092/FP-093/FP-120/FP-134 stay blocked, and FP-131/132/133/135 remain proposed Linux packaging/relay tasks. The backlog remains authoritative.
 
 0.1.0 was published on 28 September 2026 as [v0.1.0](https://github.com/idcesares/fetchpath/releases/tag/v0.1.0), with its installer and `SHA256SUMS.txt`. On 4 October 2026, [v0.2.0](https://github.com/idcesares/fetchpath/releases/tag/v0.2.0) was published after the recorded release gate and GitHub CI passed. On 9 October 2026, [v0.3.0](https://github.com/idcesares/fetchpath/releases/tag/v0.3.0) was published the same way. On 20 October 2026, [v0.4.0](https://github.com/idcesares/fetchpath/releases/tag/v0.4.0) was published the same way. On 25 October 2026, [v0.4.1](https://github.com/idcesares/fetchpath/releases/tag/v0.4.1) followed as a dependency security patch.
 

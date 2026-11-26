@@ -219,13 +219,7 @@ Progress is derived from committed facts:
 - `network_bytes`: optional transport measurement and may exceed useful bytes.
 - `phase`: probe, receive, verify, mux/process, or publish.
 
-HTTP recovery retains only the contiguous checkpointed prefix. The stream-first
-scheduler limits out-of-order bytes beyond the contiguous written prefix to
-about three seconds of recent
-goodput, with a 64 KiB floor. With checkpoints completing at the one-second
-cadence, interruption discards about four seconds of transfer or 64 KiB,
-whichever is larger; storage stalls can extend the checkpoint lag. These are
-recoverable-process estimates, not a power-loss durability guarantee.
+HTTP recovery in 0.1–0.4 retains only the contiguous checkpointed prefix (limiting out-of-order bytes beyond the prefix to about three seconds of recent goodput, with a 64 KiB floor, so interruption discards about four seconds of transfer or 64 KiB, whichever is larger). From [D10](#d10--engine-20-data-plane-extent-checkpoints-pacing-and-scheduling-26-november-2026) (Engine 2.0, `FP-147`), checkpoint format v2 persists completed non-contiguous extents so pause and crash retain completed segments across all lanes, and `bytes_checkpointed` reflects total durable extent bytes. These remain recoverable-process estimates, not a power-loss durability guarantee.
 
 Rates and remaining time are estimates with a sampling window and `confidence` (`low`, `medium`, `high`). A client displays no ETA when total or confidence is unavailable. Media component progress cannot be summed unless the adapter supplies a normalized total.
 
@@ -589,3 +583,14 @@ Extends D1 and D7. Slice T1 of [the file transfer and sharing design](specs/2026
 - **Protocol (additive to v1).** Commands `ShareStatus`, `ConfigureSharing`, `SetSharingEnabled`, `StartShareTest`, `CreateShare`, `RevokeShare`, `RevokeAllShares`; results `Sharing{ShareView}` and `ShareLink{link, share}`. Handles identify links in lists and never allow use. Errors added: `share.not_shareable`, `share.not_ready`, `share.unknown_link`, `share.too_many`, `share.unavailable`, `share.unsupported` (file links need Windows).
 - **Relay mode (FP-118, 6 November 2026).** `ConfigureRelay{relay, key?}` switches the stored setup between Tunnel and Relay; the stored address is then the relay's (`relay: true` persists in `share-v1.json`, old files mean a tunnel). Only `user` may send it (agents and remote sessions are refused) and it is not ledgered, because its argument is a secret. `key` is the relay's 64-hex enrollment key and is write-only: it is sealed by the host (DPAPI) before the setup is saved, and no reply, event, snapshot, log or `ShareView` can show it (`ShareView` adds only `relay` and `relay_key_stored`). In relay mode the engine listens on nothing: it dials the relay over TLS, proves it holds the key (HMAC, key never on the wire) and serves relayed requests with the same handler and rules as above. Any change of address, port, mode or key turns sharing off, clears the delivered test and revokes every link, so a test or link made for one path never counts for another. Link format and Tunnel are unchanged. The relay's owner is the trusted operator (SECURITY.md). Errors reused: `share.not_ready` (no address or key yet), `share.unsupported`.
 - **Gates this decision serves.** X1 no implicit share, X2 provenance, X3 grants, X4 port and route, X5 ticket, X6 framing, X8 independent strong review. X7 (a phone on mobile data through a real tunnel) is not covered by tests.
+
+### D10 · Engine 2.0 data plane, extent checkpoints, pacing and scheduling (26 November 2026)
+
+Accepted architectural direction for Milestone M20 ([Engine 2.0 redesign](specs/2026-11-26-engine-redesign.md), `FP-145`–`FP-156`). Additive to Protocol v1; existing clients continue to interoperate.
+
+- **Single-pass verified publication (`FP-146`).** A fresh in-process transfer whose streaming or extent digest already covers every byte `[0, total)` without overlap or gap commits `PublicationIntent` and publishes through the create-only `hard_link` fence without performing redundant post-transfer full-file re-hashes. Crash recovery (`reconcile_publication` / `validate_staging`) continues to verify staging bytes from disk before resuming or publishing.
+- **Extent-bitmap checkpoints v2 (`FP-147`).** Checkpoints persist completed non-contiguous byte extents `[start, end)` with per-extent integrity digests, representation validator, and total size. Format v1 checkpoints remain readable on upgrade. `bytes_checkpointed` reports total durably checkpointed bytes across retained extents, decoupling crash/pause loss from run-ahead concurrency.
+- **RFC 9110 strong `Last-Modified` validators (`FP-149`).** When a source provides no strong `ETag` but supplies `Last-Modified` and `Date` meeting RFC 9110 §13.1.5 strong-validator rules (`Date - Last-Modified >= 1 s`), `SourceValidator` may authorize `If-Range` resume and segmentation under that date. Weak ETags and non-strong dates remain conservative single-stream downloads.
+- **Bandwidth pacing and job priorities (`FP-150`).** `PolicyPatch` (`UpdatePolicy`) additively supports `priority` (`high` | `normal` | `low`) and `bandwidth_limit_bps`; `EngineSettings` additively supports global bandwidth ceilings. Neither changes `work_generation` or desired output identity.
+- **Shared host pools with strict isolation (`FP-151`).** Connection, DNS, and TLS session caches may be shared across concurrent jobs only within the same `(principal, credential_scope)` partition; credentialed and cross-principal transfers never share transport state.
+- **Unified multi-source and compatibility execution (`FP-153`, `FP-154`).** Multi-mirror Metalink jobs and FTP/FTPS/SFTP transfers execute through the same session lifecycle, extent/checkpoint contract, and publication fence rather than isolated sequential side paths.

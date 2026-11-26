@@ -344,20 +344,28 @@ impl CheckpointStore {
     }
 
     pub fn validate_staging(&self, record: &CheckpointRecord) -> io::Result<bool> {
+        Ok(self.validate_staging_hasher(record)?.is_some())
+    }
+
+    /// Validates retained staging bytes against `record` and returns the
+    /// live `Sha256` state over `[0, record.committed_len)` so a resumed
+    /// transfer can extend it without re-reading the prefix a second time.
+    pub fn validate_staging_hasher(&self, record: &CheckpointRecord) -> io::Result<Option<Sha256>> {
         let mut file = match OpenOptions::new()
             .read(true)
             .write(true)
             .open(&self.staging)
         {
             Ok(file) => file,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
         if file.metadata()?.len() < record.committed_len {
-            return Ok(false);
+            return Ok(None);
         }
         file.set_len(record.committed_len)?;
-        Ok(hash_reader(&mut file)? == record.local_sha256)
+        let (digest, hasher) = hash_reader_state(&mut file)?;
+        Ok((digest == record.local_sha256).then_some(hasher))
     }
 
     pub fn reconcile_publication(
@@ -398,6 +406,36 @@ impl CheckpointStore {
                 "staging bytes do not match publication intent",
             ));
         }
+        self.publish_after_check(faults)
+    }
+
+    /// Publishes staging bytes whose full SHA-256 was already verified in
+    /// process immediately before committing `record` (D10, FP-146), avoiding
+    /// a redundant full-file re-hash while still checking length and crossing
+    /// the create-only `hard_link` fence. Crash recovery uses [`Self::publish`]
+    /// or calls [`Self::validate_staging`] first.
+    pub fn publish_verified(
+        &self,
+        record: &CheckpointRecord,
+        faults: &dyn FaultInjector,
+    ) -> io::Result<Option<PathBuf>> {
+        if record.phase != CheckpointPhase::PublicationIntent {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "publication requires a committed publication intent",
+            ));
+        }
+        let len = fs::metadata(&self.staging)?.len();
+        if len != record.committed_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "staging length does not match publication intent",
+            ));
+        }
+        self.publish_after_check(faults)
+    }
+
+    fn publish_after_check(&self, faults: &dyn FaultInjector) -> io::Result<Option<PathBuf>> {
         faults.check(FaultPoint::PublicationFence)?;
         fs::hard_link(&self.staging, &self.destination)?;
         faults.check(FaultPoint::PublicationReconcile)?;
@@ -475,6 +513,10 @@ fn file_matches(path: &Path, expected_len: u64, expected_sha256: &str) -> io::Re
 }
 
 fn hash_reader(reader: &mut impl Read) -> io::Result<String> {
+    Ok(hash_reader_state(reader)?.0)
+}
+
+fn hash_reader_state(reader: &mut impl Read) -> io::Result<(String, Sha256)> {
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -484,7 +526,8 @@ fn hash_reader(reader: &mut impl Read) -> io::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = format!("{:x}", hasher.clone().finalize());
+    Ok((digest, hasher))
 }
 
 fn encode_record(record: &CheckpointRecord) -> Vec<u8> {
@@ -761,6 +804,50 @@ mod tests {
         read_exact_at(&file, 6, &mut buffer).unwrap();
         assert_eq!(&buffer, b"world");
         assert!(read_exact_at(&file, 8, &mut [0_u8; 9]).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn validate_staging_hasher_seeds_incremental_sha256_and_publish_verified_checks_length() {
+        let dir = temp_dir("verified-publish");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        let full = b"hello world from engine 2.0";
+        fs::write(store.staging(), &full[..11]).unwrap();
+        let partial = store
+            .commit(record("source", &full[..11]), &NoFaults)
+            .unwrap();
+        let mut hasher = store
+            .validate_staging_hasher(&partial)
+            .unwrap()
+            .expect("retained prefix validates and yields live hasher");
+        hasher.update(&full[11..]);
+        let full_digest = format!("{:x}", hasher.finalize());
+        assert_eq!(full_digest, format!("{:x}", Sha256::digest(full)));
+
+        // A truncated staging file is rejected by publish_verified before hard_link.
+        let mut intent = CheckpointRecord::downloading(
+            "source".into(),
+            full.len() as u64,
+            full_digest.clone(),
+            Some("\"v1\"".into()),
+            Some(full.len() as u64),
+        );
+        intent.phase = CheckpointPhase::PublicationIntent;
+        let intent = store.commit(intent, &NoFaults).unwrap();
+        assert!(store.publish_verified(&intent, &NoFaults).is_err());
+        assert!(!destination.exists());
+
+        // Once staging has the exact committed length, publish_verified publishes it.
+        fs::write(store.staging(), full).unwrap();
+        assert!(
+            store
+                .publish_verified(&intent, &NoFaults)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fs::read(&destination).unwrap(), full);
+        assert!(!store.staging().exists());
         fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -1,0 +1,110 @@
+{
+  "profile": "64 MiB, 8 MiB retained, per-connection 8 MiB/s",
+  "method": "Five alternating pairs, same binary and retained bytes, one-lane baseline versus default four-lane ceiling",
+  "singleMedianMs": 7347.645200000001,
+  "adaptiveMedianMs": 3006.7786999999953,
+  "improvementPercent": 59.07833573673379,
+  "limits": "Transfer layer only; includes identical prefix copy and final hash pass; process recovery verified separately; no Internet speed claim.",
+  "runs": [
+    {
+      "rep": 0,
+      "lanes": 1,
+      "timeToVerifiedMs": 7613.3778,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 1,
+      "requests": 1,
+      "connections": 1
+    },
+    {
+      "rep": 0,
+      "lanes": 4,
+      "timeToVerifiedMs": 2789.633,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 4,
+      "requests": 7,
+      "connections": 5
+    },
+    {
+      "rep": 1,
+      "lanes": 4,
+      "timeToVerifiedMs": 2941.293300000001,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 4,
+      "requests": 7,
+      "connections": 5
+    },
+    {
+      "rep": 1,
+      "lanes": 1,
+      "timeToVerifiedMs": 7347.645200000001,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 1,
+      "requests": 1,
+      "connections": 1
+    },
+    {
+      "rep": 2,
+      "lanes": 1,
+      "timeToVerifiedMs": 7412.7611,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 1,
+      "requests": 1,
+      "connections": 1
+    },
+    {
+      "rep": 2,
+      "lanes": 4,
+      "timeToVerifiedMs": 3104.1591000000008,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 4,
+      "requests": 7,
+      "connections": 5
+    },
+    {
+      "rep": 3,
+      "lanes": 4,
+      "timeToVerifiedMs": 3137.6648000000023,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 4,
+      "requests": 7,
+      "connections": 5
+    },
+    {
+      "rep": 3,
+      "lanes": 1,
+      "timeToVerifiedMs": 7335.192199999998,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 1,
+      "requests": 1,
+      "connections": 1
+    },
+    {
+      "rep": 4,
+      "lanes": 1,
+      "timeToVerifiedMs": 7245.270999999993,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 1,
+      "requests": 1,
+      "connections": 1
+    },
+    {
+      "rep": 4,
+      "lanes": 4,
+      "timeToVerifiedMs": 3006.7786999999953,
+      "verified": true,
+      "bytes": 67108864,
+      "peakConcurrency": 4,
+      "requests": 7,
+      "connections": 5
+    }
+  ]
+}

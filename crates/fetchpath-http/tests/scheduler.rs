@@ -24,7 +24,7 @@ const sessions = new Set();
 const perConnection = process.argv[1] === 'connection';
 // Keep the connection-limited transfer alive for baseline and two gain
 // windows even when the shared CI runner delays a measurement boundary.
-const total = (perConnection ? 16 : 8) * 1024 * 1024;
+const total = (Number(process.argv[2]) || (perConnection ? 16 : 8)) * 1024 * 1024;
 const chunk = Buffer.alloc(16 * 1024, 7);
 server.on('session', session => {
   const bucket = { streams: [], cursor: 0, tokens: 0, last: performance.now() };
@@ -79,6 +79,15 @@ server.listen(0, '127.0.0.1', () => console.log(`http://127.0.0.1:${server.addre
 "#;
 
 fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
+    h2_pool_transfer_sized(limit, if limit == "connection" { 16 } else { 8 }, 2, 25)
+}
+
+fn h2_pool_transfer_sized(
+    limit: &str,
+    mib: usize,
+    max_lanes: usize,
+    timeout_secs: u64,
+) -> (TransferReport, Duration, Image) {
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
     struct Fixture(std::process::Child);
@@ -89,7 +98,7 @@ fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
         }
     }
     let child = Command::new("node")
-        .args(["-e", H2_POOL_FIXTURE, limit])
+        .args(["-e", H2_POOL_FIXTURE, limit, &mib.to_string()])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -99,7 +108,7 @@ fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
     BufReader::new(fixture.0.stdout.take().unwrap())
         .read_line(&mut url)
         .unwrap();
-    let budget = GlobalBudget::new(2, 2 * MIB).unwrap();
+    let budget = GlobalBudget::new(max_lanes, max_lanes * MIB).unwrap();
     let context = RequestContext {
         http2_prior_knowledge: true,
         ..RequestContext::default()
@@ -110,14 +119,14 @@ fn h2_pool_transfer(limit: &str) -> (TransferReport, Duration, Image) {
         url.trim(),
         &context,
         TransferLimits {
-            max_concurrency: 2,
+            max_concurrency: max_lanes,
             min_segment_bytes: MIB,
             ..limits()
         },
         &budget,
         &SegmentMonitor::default(),
         None,
-        || started.elapsed() > Duration::from_secs(25),
+        || started.elapsed() > Duration::from_secs(timeout_secs),
         |chunk| image.borrow_mut().record(chunk.offset, chunk.bytes),
     )
     .unwrap();
@@ -170,6 +179,23 @@ fn h2_shared_origin_limit_rejects_the_socket_trial_and_never_reprobes() {
     assert_eq!(report.replacements, 0);
 }
 
+#[test]
+fn h2_per_connection_limit_unlocks_controller_beyond_two_lanes() {
+    let (report, elapsed, image) = h2_pool_transfer_sized("connection", 36, 4, 35);
+    assert_eq!(image.bytes, vec![7; 36 * MIB]);
+    assert_eq!(image.overlaps, 0);
+    assert_eq!(
+        report.final_concurrency, 4,
+        "controller must unlock and scale to 4 lanes after H2 socket trial succeeds: {report:?}"
+    );
+    assert_eq!(report.connections_opened, 4);
+    assert_eq!(report.replacements, 0);
+    assert!(
+        elapsed < Duration::from_secs(24),
+        "4 independent sockets should beat 2-socket (~18s+) and 1-socket (~36s) caps: {elapsed:?}"
+    );
+}
+
 const MIB: usize = 1024 * 1024;
 
 // -- a test server -----------------------------------------------------------
@@ -193,6 +219,8 @@ struct Reply {
     /// Read the request and never answer it.
     silent: bool,
     initial_delay: Duration,
+    /// Optional shared pacing clock across concurrent connections (origin cap).
+    shared_gate: Option<Arc<Mutex<Instant>>>,
 }
 
 impl Reply {
@@ -207,6 +235,7 @@ impl Reply {
             hold_after: None,
             silent: false,
             initial_delay: Duration::ZERO,
+            shared_gate: None,
         }
     }
 
@@ -385,7 +414,20 @@ fn server(behaviour: impl Fn(&Req) -> Reply + Send + Sync + 'static) -> Server {
                         }
                         sent += chunk.len();
                         if !reply.pace.is_zero() {
-                            thread::sleep(reply.pace);
+                            if let Some(gate) = &reply.shared_gate {
+                                let wait = {
+                                    let now = Instant::now();
+                                    let mut next = gate.lock().unwrap();
+                                    let target = (*next).max(now) + reply.pace;
+                                    *next = target;
+                                    target.saturating_duration_since(now)
+                                };
+                                if !wait.is_zero() {
+                                    thread::sleep(wait);
+                                }
+                            } else {
+                                thread::sleep(reply.pace);
+                            }
                         }
                     }
                     // `Connection: close` was sent, so this ends the connection.
@@ -1269,4 +1311,42 @@ fn an_extreme_retry_after_is_an_error_without_a_clock_panic() {
         matches!(result, Err(TransferError::Transport(detail)) if detail.contains("clock range"))
     );
     assert_eq!(server.count(), 1);
+}
+
+#[test]
+fn starved_width_probe_reverts_when_prefix_lane_is_healthy() {
+    let body = patterned(12 * MIB);
+    let served = body.clone();
+    let gate = Arc::new(Mutex::new(Instant::now()));
+    let server = server(move |req| {
+        let mut reply = honest(&served, "\"v1\"", req);
+        // Shared ~1.8 MiB/s origin cap: max_ahead (~5.4 MiB) comfortably fits
+        // two 2 MiB lanes, and never fits four 2 MiB lanes while every lane is
+        // equally healthy.
+        reply.chunk = 64 * 1024;
+        reply.pace = Duration::from_millis(35);
+        reply.shared_gate = Some(Arc::clone(&gate));
+        reply
+    });
+    let mut configured = limits();
+    configured.min_segment_bytes = 2 * MIB;
+    configured.min_adaptive_bytes = (4 * MIB) as u64;
+    configured.max_concurrency = 4;
+    let image = RefCell::new(Image::default());
+    let report = fetch_with(&server, configured, None, &image).unwrap();
+    assert_eq!(image.borrow().bytes, body);
+    assert_eq!(image.borrow().overlaps, 0);
+    assert_eq!(
+        report.peak_concurrency, 4,
+        "controller should probe width=4 after width=2 baseline: {report:?}"
+    );
+    assert_eq!(
+        report.final_concurrency, 2,
+        "starved width probe should revert to 2 instead of stalling at 4: {report:?}"
+    );
+    assert_eq!(
+        report.block_replacements, 0,
+        "healthy prefix lane must not be replaced while probe is starved: {report:?}"
+    );
+    assert_eq!(report.replacements, 0);
 }

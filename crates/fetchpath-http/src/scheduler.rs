@@ -41,9 +41,22 @@ const IGNORED_RANGE_LIMIT: u32 = 2;
 /// Wait per loop turn when nothing is ready.
 const POLL: Duration = Duration::from_millis(20);
 /// How long claiming may stay blocked by `max_ahead` before the lane that
-/// holds the prefix is replaced.
-const BLOCK_GRACE: Duration = Duration::from_secs(1);
+/// holds the prefix is considered for replacement.
+const BLOCK_GRACE: Duration = Duration::from_secs(2);
+/// Only replace a prefix lane for holding back other lanes when its rate falls
+/// below this fraction of healthy active lanes (hysteresis prevents thrashing).
+const PREFIX_SLOW_SHARE: f64 = 0.35;
+/// A prefix lane must have been delivering for at least this long before it
+/// can be judged slower than other lanes, letting TCP clear slow start.
+const PREFIX_MIN_AGE: Duration = Duration::from_millis(1500);
+/// Minimum spacing between prefix-starvation replacements.
+const BLOCK_REPLACE_COOLDOWN: Duration = Duration::from_secs(3);
 const AHEAD_SECONDS: f64 = 3.0;
+const GOODPUT_WINDOW: Duration = Duration::from_secs(3);
+/// Time constants for smoothing goodput so brief WAN pauses do not collapse
+/// `max_ahead`, independent of tick frequency.
+const GOODPUT_RISE_TAU_SECS: f64 = 0.25;
+const GOODPUT_DECAY_TAU_SECS: f64 = 1.5;
 const STALL_RATE_SHARE: f64 = 0.10;
 const RATE_HISTORY: Duration = Duration::from_secs(3);
 /// The time to first byte assumed until one has been measured.
@@ -65,6 +78,39 @@ fn retry_attempts(previous: u32, received: u64, replacement: bool) -> u32 {
         0
     } else {
         previous + 1
+    }
+}
+
+fn smooth_goodput(prev: Option<f64>, curr: f64, dt_secs: f64) -> f64 {
+    match prev {
+        Some(prev) => {
+            let tau = if curr >= prev {
+                GOODPUT_RISE_TAU_SECS
+            } else {
+                GOODPUT_DECAY_TAU_SECS
+            };
+            let alpha = 1.0 - (-dt_secs.max(0.0) / tau).exp();
+            prev + alpha * (curr - prev)
+        }
+        None => curr,
+    }
+}
+
+fn prefix_should_replace(
+    mine: Option<f64>,
+    reference: Option<f64>,
+    age: Option<Duration>,
+    since_last_replacement: Option<Duration>,
+) -> bool {
+    if since_last_replacement.is_some_and(|elapsed| elapsed < BLOCK_REPLACE_COOLDOWN) {
+        return false;
+    }
+    if age.is_none_or(|elapsed| elapsed < PREFIX_MIN_AGE) {
+        return false;
+    }
+    match (mine, reference) {
+        (Some(mine), Some(reference)) if reference > 0.0 => mine < reference * PREFIX_SLOW_SHARE,
+        _ => false,
     }
 }
 
@@ -978,10 +1024,12 @@ struct Engine<'a> {
     window: Option<Window>,
     observations: Vec<BatchObservation>,
     goodput: VecDeque<(Instant, u64)>,
+    smoothed_goodput: Option<(Instant, f64)>,
     /// What finished claims measured for one lane, smoothed. A claim on a
     /// fast link ends before a running lane has a rate worth trusting.
     learned_rate: Option<f64>,
     blocked_since: Option<Instant>,
+    last_block_replacement: Option<Instant>,
     starved: bool,
     finished: bool,
     peak_width: usize,
@@ -1062,8 +1110,10 @@ pub(crate) fn run<'a>(
         window: None,
         observations: Vec::new(),
         goodput: VecDeque::from([(Instant::now(), 0)]),
+        smoothed_goodput: None,
         learned_rate: None,
         blocked_since: None,
+        last_block_replacement: None,
         starved: false,
         finished: false,
         peak_width: 1,
@@ -1259,7 +1309,11 @@ impl<'a> Engine<'a> {
             &self.decision,
         ))
         .map_err(curl_error)?;
-        easy.pipewait(true).map_err(curl_error)?;
+        easy.pipewait(matches!(
+            self.pool_policy,
+            PoolPolicy::Eligible | PoolPolicy::Pending { .. } | PoolPolicy::Shared
+        ))
+        .map_err(curl_error)?;
         if request.target.credentials {
             easy.cookie_file("").map_err(curl_error)?;
             for cookie in &request.target.cookie_lines {
@@ -1721,14 +1775,30 @@ impl<'a> Engine<'a> {
         while self
             .goodput
             .front()
-            .is_some_and(|(then, _)| now.duration_since(*then) > Duration::from_millis(1200))
+            .is_some_and(|(then, _)| now.duration_since(*then) > GOODPUT_WINDOW)
         {
             self.goodput.pop_front();
         }
-        let goodput = self.goodput.front().and_then(|(then, before)| {
+        let instant_goodput = self.goodput.front().and_then(|(then, before)| {
             let span = now.duration_since(*then).as_secs_f64();
             (span >= 0.01).then(|| (written - before) as f64 / span)
         });
+        // Smooth declines with a time-based EWMA so brief WAN pauses do not
+        // collapse max_ahead and clip healthy non-prefix lanes, regardless of
+        // tick frequency, while still tracking sustained drops.
+        let goodput = match (self.smoothed_goodput, instant_goodput) {
+            (Some((last, prev)), Some(curr)) => {
+                let dt = now.duration_since(last).as_secs_f64();
+                let next = smooth_goodput(Some(prev), curr, dt);
+                self.smoothed_goodput = Some((now, next));
+                Some(next)
+            }
+            (None, Some(curr)) => {
+                self.smoothed_goodput = Some((now, curr));
+                Some(curr)
+            }
+            (prev, None) => prev.map(|(_, rate)| rate),
+        };
         // One lane's pace: the median of what running lanes measure for
         // themselves, or an even share of the aggregate. Dividing the
         // aggregate by however many lanes happen to be running at this
@@ -1861,6 +1931,7 @@ impl<'a> Engine<'a> {
         self.starved = false;
         let capacity = self.permits.len().min(self.controller.width());
         if self.lanes.len() >= capacity {
+            self.blocked_since = None;
             return Ok(());
         }
         let held = self.hold_claims_until.is_some_and(|until| now < until);
@@ -1895,6 +1966,9 @@ impl<'a> Engine<'a> {
                 break;
             }
         }
+        if self.lanes.len() >= capacity {
+            self.blocked_since = None;
+        }
         Ok(())
     }
 
@@ -1902,7 +1976,6 @@ impl<'a> Engine<'a> {
         let plan = self.shared.state.borrow_mut().plan_claim(capacity);
         match plan {
             Plan::Claim(start, end) => {
-                self.blocked_since = None;
                 let attempts = self.retries.remove(&start).unwrap_or(0);
                 self.start_range(start, end, attempts)?;
                 Ok(true)
@@ -1911,10 +1984,13 @@ impl<'a> Engine<'a> {
                 let since = *self.blocked_since.get_or_insert(now);
                 if now.duration_since(since) >= BLOCK_GRACE {
                     // Every lane is parked behind the one that holds the prefix.
-                    self.blocked_since = None;
+                    // Keep `blocked_since` set when the prefix lane is healthy so
+                    // `window_step` can revert a starved width probe.
                     if let Some(index) = self.prefix_lane()
-                        && self.slower_than_median(index, now)
+                        && self.prefix_is_crawling(index, now)
                     {
+                        self.blocked_since = None;
+                        self.last_block_replacement = Some(now);
                         self.block_replacements += 1;
                         self.replace(index, "the prefix lane holds back every other lane")?;
                         return Ok(true);
@@ -1929,25 +2005,28 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// A lane that only looks slow next to healthy ones is not replaced for
-    /// parking them; it must really be slower than the median lane.
-    fn slower_than_median(&self, index: usize, now: Instant) -> bool {
-        let mut rates: Vec<f64> = self
+    /// Replaces the prefix lane for blocking other lanes only when it has
+    /// cleared slow start, cooldown has elapsed, and its pace is genuinely
+    /// crawling (< 35% of healthy active lanes). Comparing with zero margin
+    /// against an undecaying peak rate caused prefix-starvation thrashing.
+    fn prefix_is_crawling(&self, index: usize, now: Instant) -> bool {
+        let claim = &self.lanes[index].claim;
+        let age = claim
+            .first_byte
+            .get()
+            .map(|first| now.duration_since(first));
+        let mine = claim.recent_rate(now).or_else(|| claim.rate(now));
+        let mut peers: Vec<f64> = self
             .lanes
             .iter()
-            .filter_map(|lane| lane.claim.rate(now))
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .filter_map(|(_, lane)| lane.claim.recent_rate(now).or_else(|| lane.claim.rate(now)))
             .collect();
-        rates.sort_by(|a, b| a.total_cmp(b));
-        let Some(mine) = self.lanes[index].claim.rate(now) else {
-            return false;
-        };
-        let median = rates
-            .get(rates.len() / 2)
-            .copied()
-            .into_iter()
-            .chain(self.learned_rate)
-            .max_by(|a, b| a.total_cmp(b));
-        median.is_some_and(|median| mine < median)
+        peers.sort_by(|a, b| a.total_cmp(b));
+        let reference = peers.get(peers.len() / 2).copied().or(self.learned_rate);
+        let since_last = self.last_block_replacement.map(|at| now.duration_since(at));
+        prefix_should_replace(mine, reference, age, since_last)
     }
 
     fn prefix_lane(&self) -> Option<usize> {
@@ -2025,6 +2104,21 @@ impl<'a> Engine<'a> {
                 .iter()
                 .all(|lane| lane.claim.first_byte.get().is_some());
         let full = self.lanes.len() >= width;
+        if self.controller.is_probing()
+            && !full
+            && self.starved
+            && self
+                .blocked_since
+                .is_some_and(|since| now.duration_since(since) >= BLOCK_GRACE)
+        {
+            self.blocked_since = None;
+            if let Some(Change::Reverted(from)) = self.controller.revert_starved() {
+                self.slot.set_growing(self.controller.growing());
+                self.window = None;
+                self.trace(|| format!("reverted starved width probe to {from}"));
+            }
+            return;
+        }
         let Some(window) = &self.window else {
             if all_started && full && !self.starved {
                 let ttfbs = self.shared.ttfbs.borrow();
@@ -2083,6 +2177,13 @@ impl<'a> Engine<'a> {
                     self.trace(|| {
                         "pool trial kept separate connections after two 15% gains".into()
                     });
+                    if let Some(Change::Grew(next)) = self.controller.resume_probing(goodput) {
+                        self.peak_width = self.peak_width.max(next);
+                        self.slot.set_growing(self.controller.growing());
+                        self.trace(|| {
+                            format!("unlocked width probe to {next} on independent H2 sockets")
+                        });
+                    }
                 } else {
                     self.pool_policy = PoolPolicy::Trial {
                         baseline,
@@ -2098,6 +2199,30 @@ impl<'a> Engine<'a> {
                     deadline: now,
                 };
             }
+            return;
+        }
+        let all_h2 = self
+            .lanes
+            .iter()
+            .all(|lane| lane.handle.get_ref().headers.protocol == Protocol::Http2);
+        // On HTTP/2, run the bounded independent-socket trial right after the
+        // initial width=2 baseline before trying wider multiplexed streams on
+        // one socket. If separate sockets win, `resume_probing` then scales
+        // across independent sockets; if not, rollback resumes multiplexed
+        // probing cleanly.
+        if matches!(self.pool_policy, PoolPolicy::Eligible)
+            && self.controller.is_baseline()
+            && width >= 2
+            && !backpressure
+            && all_h2
+        {
+            self.pool_policy = PoolPolicy::Pending { baseline: goodput };
+            self.trace(|| {
+                format!(
+                    "window width={width} goodput={:.1} MiB/s -> deferring width probe for H2 socket trial",
+                    goodput / 1048576.0
+                )
+            });
             return;
         }
         let outcome = self.controller.window(goodput, backpressure);
@@ -2131,10 +2256,7 @@ impl<'a> Engine<'a> {
             && self.controller.width() >= 2
             && !backpressure
             && !matches!(outcome.change, Some(Change::Halved(_)))
-            && self
-                .lanes
-                .iter()
-                .all(|lane| lane.handle.get_ref().headers.protocol == Protocol::Http2)
+            && all_h2
         {
             self.pool_policy = PoolPolicy::Pending { baseline: goodput };
         }
@@ -2780,6 +2902,56 @@ mod tests {
         assert_eq!(retry_attempts(2, 1024, false), 3);
     }
 
+    #[test]
+    fn prefix_replacement_requires_hysteresis_age_and_cooldown() {
+        let old_enough = Some(PREFIX_MIN_AGE);
+        let cooled = Some(BLOCK_REPLACE_COOLDOWN);
+        // Normal variance (e.g. 50% or 95% of healthy peers) must never churn.
+        assert!(!prefix_should_replace(
+            Some(95.0),
+            Some(100.0),
+            old_enough,
+            None
+        ));
+        assert!(!prefix_should_replace(
+            Some(50.0),
+            Some(100.0),
+            old_enough,
+            None
+        ));
+        assert!(!prefix_should_replace(
+            Some(35.0),
+            Some(100.0),
+            old_enough,
+            None
+        ));
+        // Below 35% of peers replaces only once slow-start age and cooldown pass.
+        assert!(!prefix_should_replace(
+            Some(20.0),
+            Some(100.0),
+            Some(Duration::from_millis(500)),
+            None
+        ));
+        assert!(!prefix_should_replace(
+            Some(20.0),
+            Some(100.0),
+            old_enough,
+            Some(Duration::from_secs(1))
+        ));
+        assert!(prefix_should_replace(
+            Some(20.0),
+            Some(100.0),
+            old_enough,
+            None
+        ));
+        assert!(prefix_should_replace(
+            Some(20.0),
+            Some(100.0),
+            old_enough,
+            cooled
+        ));
+    }
+
     // -- planning claims ------------------------------------------------------
 
     fn planner(total: u64) -> State {
@@ -2910,6 +3082,31 @@ mod tests {
             position = end;
         }
         assert_eq!(position, total);
+    }
+
+    #[test]
+    fn goodput_smoothing_is_time_based_and_asymmetric() {
+        let initial = smooth_goodput(None, 10_000_000.0, 0.02);
+        assert_eq!(initial, 10_000_000.0);
+        // Zero elapsed time must not decay regardless of tick frequency.
+        assert_eq!(smooth_goodput(Some(10_000_000.0), 0.0, 0.0), 10_000_000.0);
+        // 50 ticks of 20 ms (1.0 s) match a single 1.0 s step on a steady drop.
+        let mut stepped = 10_000_000.0;
+        for _ in 0..50 {
+            stepped = smooth_goodput(Some(stepped), 0.0, 0.02);
+        }
+        let one_shot = smooth_goodput(Some(10_000_000.0), 0.0, 1.0);
+        assert!(
+            (stepped - one_shot).abs() < 1e-3,
+            "stepped={stepped} vs one_shot={one_shot}"
+        );
+        // Declines decay slowly (> 50% remains after 1 s), while rises track quickly.
+        assert!(
+            one_shot > 5_000_000.0 && one_shot < 5_500_000.0,
+            "unexpected 1 s decay: {one_shot}"
+        );
+        let risen = smooth_goodput(Some(1_000_000.0), 10_000_000.0, 0.5);
+        assert!(risen > 8_500_000.0, "expected fast rise: {risen}");
     }
 
     #[test]
