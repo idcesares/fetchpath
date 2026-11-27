@@ -134,6 +134,8 @@ pub(crate) fn snapshot(record: &QueueRecord) -> model::JobSnapshot {
         principal: record.principal.clone(),
         reused_from_cache: view.reused_from_cache,
         from_paired_device: view.from_paired_device.clone(),
+        priority: (!record.priority.is_normal()).then_some(record.priority),
+        max_bytes_per_second: record.max_bytes_per_second,
         approval: record.awaiting_approval().then(|| ApprovalRequest {
             reasons: record
                 .approval
@@ -235,6 +237,8 @@ pub(crate) fn engine_settings(settings: &Settings) -> EngineSettings {
         hub_mode: Some(settings.hub_mode),
         web_ui: Some(settings.web_ui),
         disk_reserve_bytes: Some(settings.disk_reserve_bytes),
+        max_bytes_per_second: Some(settings.max_bytes_per_second),
+        max_active_per_host: Some(settings.max_active_per_host as u64),
     }
 }
 
@@ -282,6 +286,13 @@ pub(crate) fn session_settings(wire: &EngineSettings, current: &Settings) -> Set
         disk_reserve_bytes: wire
             .disk_reserve_bytes
             .unwrap_or(current.disk_reserve_bytes),
+        max_bytes_per_second: wire
+            .max_bytes_per_second
+            .unwrap_or(current.max_bytes_per_second),
+        max_active_per_host: wire
+            .max_active_per_host
+            .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX))
+            .unwrap_or(current.max_active_per_host),
     }
 }
 

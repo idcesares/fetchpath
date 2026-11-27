@@ -34,8 +34,9 @@ use browser_inbox::BridgeStore;
 #[cfg(test)]
 use durable::RecordDurable;
 use durable::{Durable, RemovedJob};
-use fetchpath_core::{RequestContext, normalize_sha256};
+use fetchpath_core::{BandwidthPacer, RequestContext, TokenBucket, normalize_sha256};
 use fetchpath_media::{MediaInspection, MediaJob, MediaTools};
+use fetchpath_protocol::model::JobPriority;
 use fetchpath_protocol::principal::{AgentName, AgentPolicy, ApprovalReason, Principal};
 #[cfg(test)]
 use fetchpath_torrent::JobState as TorrentJobState;
@@ -49,13 +50,13 @@ use persist::{PersistedRecord, save_persisted};
 use rate::RateEstimate;
 use record::{
     JobHandle, QueueRecord, UNREADABLE_CHECKSUM, checked_checksum, discover_media_tools, file_job,
-    find_record, find_record_mut, has_checksum, now_ms, refresh_record, remaining_bytes,
-    retried_automatically, sample_rate, show_waiting_for_space, torrent_job,
+    find_record, find_record_mut, has_checksum, is_terminal, now_ms, refresh_record,
+    remaining_bytes, retried_automatically, sample_rate, show_waiting_for_space, torrent_job,
 };
 #[cfg(test)]
-use record::{action_for_error, is_terminal, recovery_action};
+use record::{action_for_error, recovery_action};
 use settings::Settings;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
@@ -126,6 +127,9 @@ pub struct Session {
     /// Sizes of links looked at lately, so a size rule decides the same way
     /// when the job is created as it did on the card.
     inspected_sizes: Mutex<std::collections::VecDeque<(String, u64)>>,
+    /// Engine-wide bandwidth token bucket shared by all running file downloads
+    /// (FP-150). Updated live when `max_bytes_per_second` changes in settings.
+    global_pacer: Arc<TokenBucket>,
 }
 
 #[derive(Default)]
@@ -148,6 +152,39 @@ impl ReconcileWake {
             .expect("reconcile wake poisoned");
         std::mem::take(&mut *pending)
     }
+}
+
+/// Extracts a normalized lowercase host (without userinfo or port) for per-host
+/// queue fairness (FP-150).
+fn record_host(record: &QueueRecord) -> Option<String> {
+    let url = record.live_url.as_deref().unwrap_or(&record.display_url);
+    url_host(url)
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    // Require a valid RFC 3986 scheme before `://` so non-authority URIs such
+    // as `magnet:?xt=...&tr=https://tracker.example/...` never inherit a query
+    // parameter's tracker host (FP-150).
+    let mut bytes = scheme.bytes();
+    let first = bytes.next()?;
+    if !first.is_ascii_alphabetic()
+        || !bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+    {
+        return None;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+    if hostport.is_empty() {
+        return None;
+    }
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        rest.split_once(']')?.0
+    } else {
+        hostport.split_once(':').map_or(hostport, |(h, _)| h)
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// How many inspected sizes are remembered.
@@ -241,6 +278,7 @@ impl Session {
         for record in &mut records {
             seen.advance(record);
         }
+        let global_pacer = Arc::new(TokenBucket::new(stored.max_bytes_per_second));
         Ok(Self {
             wake: Arc::default(),
             inner: Mutex::new(QueueState {
@@ -272,6 +310,7 @@ impl Session {
             cache_root: Mutex::default(),
             lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
+            global_pacer,
         })
     }
 
@@ -284,6 +323,7 @@ impl Session {
             ..Settings::default()
         };
         stored.clamp();
+        let global_pacer = Arc::new(TokenBucket::new(stored.max_bytes_per_second));
         Self {
             wake: Arc::default(),
             inner: Mutex::new(QueueState::default()),
@@ -306,6 +346,7 @@ impl Session {
             cache_root: Mutex::default(),
             lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
+            global_pacer,
         }
     }
 
@@ -572,6 +613,7 @@ impl Session {
         }
         let quota_lowered = next.cache_quota_bytes < self.settings().cache_quota_bytes;
         *self.settings.lock().expect("settings poisoned") = next.clone();
+        self.global_pacer.set_rate(next.max_bytes_per_second);
         if quota_lowered && let Ok(mut cache) = self.open_cache() {
             let _ = cache.trim();
         }
@@ -1184,6 +1226,84 @@ impl Session {
         } else {
             "queued".into()
         };
+        self.reconcile_locked(&mut state);
+        self.save_locked(&mut state)?;
+        Ok(find_record(&state, job_id)?.view.clone())
+    }
+
+    /// Returns a job's currently configured per-job bandwidth cap, if any.
+    pub(crate) fn job_bandwidth_limit(&self, job_id: &str) -> Option<u64> {
+        let state = self.inner.lock().expect("desktop jobs poisoned");
+        find_record(&state, job_id)
+            .ok()
+            .and_then(|record| record.max_bytes_per_second)
+    }
+
+    /// Applies mutable policy fields (`schedule`, `priority`, and/or
+    /// `max_bytes_per_second`) atomically (FP-150).
+    ///
+    /// `schedule`:
+    /// - `None` leaves schedule unchanged
+    /// - `Some(None)` starts now (clears `not_before_ms`)
+    /// - `Some(Some(ms))` reschedules to `ms`
+    ///
+    /// `max_bytes_per_second`:
+    /// - `None` leaves per-job bandwidth cap unchanged
+    /// - `Some(0)` removes the per-job cap (global ceiling still applies)
+    /// - `Some(rate)` sets a clamped per-job ceiling and updates the live
+    ///   token bucket immediately for running jobs
+    pub fn update_policy(
+        &self,
+        job_id: &str,
+        schedule: Option<Option<u64>>,
+        priority: Option<JobPriority>,
+        max_bytes_per_second: Option<u64>,
+    ) -> Result<JobSnapshot, String> {
+        let mut state = self.inner.lock().expect("desktop jobs poisoned");
+        let record = find_record_mut(&mut state, job_id)?;
+        if is_terminal(&record.view.state) {
+            return Err("Completed, cancelled or failed downloads cannot change policy.".into());
+        }
+        if let Some(sched) = schedule {
+            if record.view.state != "scheduled" && record.view.state != "queued" {
+                return Err(match sched {
+                    None => "Only queued or scheduled downloads can start now.".into(),
+                    Some(_) => "Only queued or scheduled downloads can be rescheduled.".into(),
+                });
+            }
+            match sched {
+                None => {
+                    record.not_before_ms = None;
+                    record.view.not_before_ms = None;
+                    record.view.state = "queued".into();
+                }
+                Some(not_before_ms) => {
+                    record.not_before_ms = Some(not_before_ms);
+                    record.view.not_before_ms = Some(not_before_ms);
+                    record.view.state = if not_before_ms > now_ms() {
+                        "scheduled".into()
+                    } else {
+                        "queued".into()
+                    };
+                }
+            }
+        }
+        if let Some(next_priority) = priority
+            && next_priority != JobPriority::Unknown
+        {
+            record.priority = next_priority;
+            record.view.priority = (!next_priority.is_normal()).then_some(next_priority);
+        }
+        if let Some(limit) = max_bytes_per_second {
+            let normalized = if limit == 0 {
+                None
+            } else {
+                Some(limit.max(settings::MIN_BANDWIDTH_BYTES_PER_SECOND))
+            };
+            record.max_bytes_per_second = normalized;
+            record.view.max_bytes_per_second = normalized;
+            record.job_pacer.set_rate(normalized.unwrap_or(0));
+        }
         self.reconcile_locked(&mut state);
         self.save_locked(&mut state)?;
         Ok(find_record(&state, job_id)?.view.clone())
@@ -2430,24 +2550,70 @@ impl Session {
             space_stopped,
             ..
         } = state;
+        // Promote any due scheduled jobs before candidate ranking so they
+        // participate fairly in priority and per-host admission (FP-150).
         for record in records.iter_mut() {
-            if active >= max_active || halted {
-                break;
-            }
-            // Its worker is still stopping; it is queued again once joined.
-            if space_stopped.contains(&record.id) {
-                continue;
-            }
-            if record.view.state == "scheduled" && record.not_before_ms.is_none_or(|due| due <= now)
+            if !space_stopped.contains(&record.id)
+                && record.view.state == "scheduled"
+                && record.not_before_ms.is_none_or(|due| due <= now)
             {
                 record.view.state = "queued".into();
             }
-            if record.view.state != "queued" || record.not_before_ms.is_some_and(|due| due > now) {
-                continue;
+        }
+        let mut active_per_host: HashMap<String, usize> = HashMap::new();
+        for record in records.iter() {
+            if record.view.state == "running"
+                && let Some(host) = record_host(record)
+            {
+                *active_per_host.entry(host).or_insert(0) += 1;
             }
-            if record.job.is_none() && !record.view.waiting_for_space {
-                continue;
-            }
+        }
+        let max_per_host = settings.max_active_per_host;
+        let mut tried = vec![false; records.len()];
+        while active < max_active && !halted {
+            // Select the highest-priority eligible queued job, breaking ties
+            // by fewest currently running downloads on the same host (soft
+            // per-host fairness) and then FIFO creation order.
+            let next_index = records
+                .iter()
+                .enumerate()
+                .filter(|(idx, record)| {
+                    if tried[*idx] || space_stopped.contains(&record.id) {
+                        return false;
+                    }
+                    if record.view.state != "queued"
+                        || record.not_before_ms.is_some_and(|due| due > now)
+                    {
+                        return false;
+                    }
+                    if record.job.is_none() && !record.view.waiting_for_space {
+                        return false;
+                    }
+                    if max_per_host > 0
+                        && let Some(host) = record_host(record)
+                        && active_per_host.get(&host).copied().unwrap_or(0) >= max_per_host
+                    {
+                        return false;
+                    }
+                    true
+                })
+                .min_by_key(|(idx, record)| {
+                    let host_active = record_host(record)
+                        .and_then(|host| active_per_host.get(&host).copied())
+                        .unwrap_or(0);
+                    (
+                        record.priority.rank(),
+                        host_active,
+                        record.created_at_ms,
+                        *idx,
+                    )
+                })
+                .map(|(idx, _)| idx);
+            let Some(idx) = next_index else {
+                break;
+            };
+            tried[idx] = true;
+            let record = &mut records[idx];
             // Folder grants are checked again as the job starts: a junction
             // can be pointed elsewhere between the request and now, and the
             // agent's grants may have changed. The person's approval stands.
@@ -2555,6 +2721,12 @@ impl Session {
                 torrent.limit_bytes(limit);
             }
             if let JobHandle::File(file) = job {
+                // Attach the hierarchical global + per-job token-bucket pacer
+                // so settings/policy bandwidth changes take effect live (FP-150).
+                let _ = file.use_pacer(Arc::new(BandwidthPacer::new(
+                    Arc::clone(&self.global_pacer),
+                    Some(Arc::clone(&record.job_pacer)),
+                )));
                 // A rule may cap the connections, decided as the job starts.
                 let url = record.live_url.as_deref().unwrap_or(&record.display_url);
                 let name = record
@@ -2604,6 +2776,9 @@ impl Session {
             }
             refresh_record(record);
             active += 1;
+            if let Some(host) = record_host(record) {
+                *active_per_host.entry(host).or_insert(0) += 1;
+            }
         }
         for record in &mut state.records {
             record.view.error_code = failure_code(&record.view);

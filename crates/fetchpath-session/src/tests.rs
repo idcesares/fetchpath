@@ -365,6 +365,8 @@ fn an_unreadable_saved_checksum_fails_closed_after_a_restart() {
         folder_approved: false,
         public_origin: false,
         provenance_marked: false,
+        priority: fetchpath_protocol::JobPriority::Normal,
+        max_bytes_per_second: None,
         view,
     };
     let restored = QueueRecord::restore(saved, now_ms(), None, None, Path::new("queue-v1.json"));
@@ -374,6 +376,25 @@ fn an_unreadable_saved_checksum_fails_closed_after_a_restart() {
     );
     assert_eq!(restored.view.state, "failed");
     assert_eq!(restored.view.action.as_deref(), Some("check_checksum"));
+}
+
+#[test]
+fn url_host_extracts_http_hosts_and_ignores_magnet_tracker_urls() {
+    assert_eq!(
+        url_host("https://CDN.Example.COM:8443/path/file.bin?x=1"),
+        Some("cdn.example.com".into())
+    );
+    assert_eq!(
+        url_host("http://user:pass@[2001:DB8::1]:8080/file.bin"),
+        Some("2001:db8::1".into())
+    );
+    assert_eq!(
+        url_host(
+            "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&tr=https://tracker.example.org:443/announce"
+        ),
+        None
+    );
+    assert_eq!(url_host("not-a-url"), None);
 }
 
 #[test]

@@ -3,6 +3,7 @@
 use crate::durable::{DurableEngine, RecordDurable};
 use crate::types::{Approval, JobSnapshot, TorrentPolicy, is_false};
 use crate::{ENGINE_SCHEMA_VERSION, QUEUE_SCHEMA_VERSION, QueueState};
+use fetchpath_protocol::model::JobPriority;
 use fetchpath_protocol::principal::Principal;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -64,6 +65,10 @@ pub(crate) struct PersistedRecord {
     pub(crate) public_origin: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(crate) provenance_marked: bool,
+    #[serde(default, skip_serializing_if = "JobPriority::is_normal")]
+    pub(crate) priority: JobPriority,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) max_bytes_per_second: Option<u64>,
     pub(crate) view: JobSnapshot,
 }
 
@@ -139,6 +144,8 @@ pub(crate) fn write_queue(
                 folder_approved: record.folder_approved,
                 public_origin: record.public_origin,
                 provenance_marked: record.provenance_marked,
+                priority: record.priority,
+                max_bytes_per_second: record.max_bytes_per_second,
                 view: record.view.clone(),
             })
             .collect(),

@@ -283,6 +283,33 @@ pub struct Progress {
     pub confidence: Option<Confidence>,
 }
 
+/// Queue scheduling priority for a download job (FP-150).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JobPriority {
+    High,
+    #[default]
+    Normal,
+    Low,
+    #[serde(other)]
+    Unknown,
+}
+
+impl JobPriority {
+    /// Ordering rank where smaller values are admitted first.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::High => 0,
+            Self::Normal | Self::Unknown => 1,
+            Self::Low => 2,
+        }
+    }
+
+    pub fn is_normal(&self) -> bool {
+        matches!(self, Self::Normal | Self::Unknown)
+    }
+}
+
 /// One job as a client sees it. Every snapshot carries the revision and the
 /// last durable event sequence it reflects, so a client can resume its event
 /// stream exactly after it.
@@ -343,6 +370,13 @@ pub struct JobSnapshot {
     /// fingerprint this is (FP-034); checked against the job's checksum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_paired_device: Option<String>,
+    /// Scheduling priority for queued admission (FP-150). Absent means `normal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<JobPriority>,
+    /// Optional per-job bandwidth ceiling in bytes/second (FP-150). Absent or
+    /// `0` means no per-job cap beyond the engine-wide ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_second: Option<u64>,
 }
 
 /// One byte range in flight: received into memory, not yet written.
@@ -654,6 +688,15 @@ pub struct EngineSettings {
     /// "leave it as it is".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_reserve_bytes: Option<u64>,
+    /// Engine-wide bandwidth ceiling in bytes/second across all running jobs;
+    /// 0 is unlimited (FP-150). Absent from an update means "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_second: Option<u64>,
+    /// Optional hard cap on concurrently active downloads per host; 0 leaves
+    /// soft per-host fairness active without a hard cap (FP-150). Absent from
+    /// an update means "leave it as it is".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_per_host: Option<u64>,
 }
 
 /// A model or dataset repository resolved to one commit (FP-022). Each file

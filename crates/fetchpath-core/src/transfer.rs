@@ -388,6 +388,7 @@ fn perform_scheduled_attempt(
         custom_headers: request.context.custom_headers.clone(),
         proxy: request.context.proxy.clone(),
         http2_prior_knowledge: false,
+        pacer: request.pacer.clone(),
     };
     let extent_ranges: Vec<(u64, u64)> = initial_extents
         .iter()
@@ -814,6 +815,7 @@ mod tests {
             context: crate::RequestContext::default(),
             expected_sha256: None,
             max_connections: None,
+            pacer: None,
         }
     }
 

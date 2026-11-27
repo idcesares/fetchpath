@@ -196,6 +196,7 @@ fn two_clients_racing_on_one_revision_cannot_both_win() {
             job_id: job.job_id.clone(),
             patch: PolicyPatch {
                 schedule: Some(Schedule::At { not_before: later }),
+                ..PolicyPatch::default()
             },
         },
     )
@@ -1136,4 +1137,288 @@ fn a_queue_from_a_newer_build_is_served_read_only_and_never_written() {
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(files, ["queue-v1.json"], "{files:?}");
+}
+
+type ServerGate = Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
+
+/// Spawns a gated HTTP server that holds each request until `release` is
+/// signalled, returning the URL and a handle to release all waiting clients.
+fn gated_server(
+    body: Vec<u8>,
+    expected_requests: usize,
+) -> (String, ServerGate, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let worker_gate = Arc::clone(&gate);
+    let worker = thread::spawn(move || {
+        let mut handlers = Vec::new();
+        for _ in 0..expected_requests {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let body = body.clone();
+            let gate = Arc::clone(&worker_gate);
+            handlers.push(thread::spawn(move || {
+                let mut req = [0_u8; 1024];
+                let _ = stream.read(&mut req);
+                let (lock, cvar) = &*gate;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+                drop(open);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&body);
+                let _ = stream.flush();
+            }));
+        }
+        for h in handlers {
+            let _ = h.join();
+        }
+    });
+    (format!("http://{addr}/file.bin"), gate, worker)
+}
+
+#[test]
+fn queue_admits_high_priority_jobs_before_normal_and_low_and_persists_policy() {
+    use fetchpath_protocol::model::JobPriority;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let session = Arc::new(fixture_session(path.clone(), 1, None).unwrap());
+    let engine = InProcessClient::manual(Engine::new(session));
+
+    let (blocker_url, gate, blocker_srv) = gated_server(b"blocker".to_vec(), 1);
+    let (fast_url, fast_gate, fast_srv) = gated_server(b"payload".to_vec(), 3);
+    // Open fast_gate so queued jobs start and complete as soon as admitted.
+    {
+        let (lock, cvar) = &*fast_gate;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+
+    // 1) Blocker occupies the single active slot.
+    let blocker = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&blocker_url, dir.path().join("blocker.bin")),
+            ))
+            .unwrap(),
+    );
+    assert_eq!(blocker.state, JobState::Running);
+
+    // 2) Queue Low, Normal, then High (created last).
+    let low = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&fast_url, dir.path().join("low.bin")),
+            ))
+            .unwrap(),
+    );
+    let low = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                Command::UpdatePolicy {
+                    job_id: low.job_id.clone(),
+                    patch: PolicyPatch {
+                        priority: Some(JobPriority::Low),
+                        ..PolicyPatch::default()
+                    },
+                },
+            ))
+            .unwrap(),
+    );
+    assert_eq!(low.priority, Some(JobPriority::Low));
+
+    let normal = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&fast_url, dir.path().join("normal.bin")),
+            ))
+            .unwrap(),
+    );
+    assert_eq!(normal.priority, None);
+
+    let high = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&fast_url, dir.path().join("high.bin")),
+            ))
+            .unwrap(),
+    );
+    let high = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                Command::UpdatePolicy {
+                    job_id: high.job_id.clone(),
+                    patch: PolicyPatch {
+                        priority: Some(JobPriority::High),
+                        max_bytes_per_second: Some(512 * 1024),
+                        ..PolicyPatch::default()
+                    },
+                },
+            ))
+            .unwrap(),
+    );
+    assert_eq!(high.priority, Some(JobPriority::High));
+    assert_eq!(high.max_bytes_per_second, Some(512 * 1024));
+
+    // Release the blocker and verify High starts before Normal, and Normal before Low.
+    {
+        let (lock, cvar) = &*gate;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut start_order = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    while start_order.len() < 3 && Instant::now() < deadline {
+        for snap in jobs(&engine) {
+            if matches!(snap.state, JobState::Running | JobState::Completed)
+                && (snap.job_id == high.job_id
+                    || snap.job_id == normal.job_id
+                    || snap.job_id == low.job_id)
+                && seen.insert(snap.job_id.clone())
+            {
+                start_order.push(snap.job_id);
+            }
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert_eq!(
+        start_order,
+        vec![
+            high.job_id.clone(),
+            normal.job_id.clone(),
+            low.job_id.clone()
+        ],
+        "expected High -> Normal -> Low admission order"
+    );
+    // Wait for all to finish cleanly before checking persistence on reload.
+    while Instant::now() < deadline {
+        if jobs(&engine).iter().all(|j| j.state == JobState::Completed) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    blocker_srv.join().unwrap();
+    fast_srv.join().unwrap();
+    drop(engine);
+
+    // Reload from disk and verify priority and per-job cap persisted.
+    let reloaded = open(&path);
+    let reloaded_high = jobs(&reloaded)
+        .into_iter()
+        .find(|j| j.job_id == high.job_id)
+        .unwrap();
+    assert_eq!(reloaded_high.priority, Some(JobPriority::High));
+    assert_eq!(reloaded_high.max_bytes_per_second, Some(512 * 1024));
+}
+
+#[test]
+fn queue_enforces_per_host_fairness_and_optional_per_host_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queue-v1.json");
+    let session = Arc::new(fixture_session(path, 1, None).unwrap());
+    let engine = InProcessClient::manual(Engine::new(session));
+
+    // Use two distinct hostnames (`127.0.0.1` vs `localhost`) pointing at gated servers.
+    let (host_a_url, gate_a, srv_a) = gated_server(b"host-a".to_vec(), 2);
+    let (host_b_raw, gate_b, srv_b) = gated_server(b"host-b".to_vec(), 1);
+    let host_b_url = host_b_raw.replace("127.0.0.1", "localhost");
+
+    // 1) host_a job 1 takes the single active slot.
+    let a1 = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&host_a_url, dir.path().join("a1.bin")),
+            ))
+            .unwrap(),
+    );
+    assert_eq!(a1.state, JobState::Running);
+
+    // 2) Queue host_a job 2 BEFORE host_b job 1.
+    let a2 = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&host_a_url, dir.path().join("a2.bin")),
+            ))
+            .unwrap(),
+    );
+    let b1 = job_of(
+        &engine
+            .execute(&CommandEnvelope::new(
+                client(),
+                create(&host_b_url, dir.path().join("b1.bin")),
+            ))
+            .unwrap(),
+    );
+    assert_eq!(a2.state, JobState::Queued);
+    assert_eq!(b1.state, JobState::Queued);
+
+    // 3) Raise max_active to 2 with max_active_per_host = 1:
+    //    host_b MUST be admitted into slot 2 while host_a's second job stays queued!
+    let current = match engine
+        .execute(&CommandEnvelope::new(client(), Command::GetSettings))
+        .unwrap()
+    {
+        CommandResult::Settings { view } => view.settings,
+        other => panic!("{other:?}"),
+    };
+    engine
+        .execute(&CommandEnvelope::new(
+            client(),
+            Command::UpdateSettings {
+                settings: fetchpath_protocol::model::EngineSettings {
+                    max_active_downloads: 2,
+                    max_active_per_host: Some(1),
+                    ..current
+                },
+            },
+        ))
+        .unwrap();
+
+    let after = jobs(&engine);
+    let state_of = |id: &JobId| after.iter().find(|j| &j.job_id == id).unwrap().state;
+    assert_eq!(state_of(&a1.job_id), JobState::Running);
+    assert_eq!(
+        state_of(&b1.job_id),
+        JobState::Running,
+        "idle host B must be admitted ahead of busy host A"
+    );
+    assert_eq!(
+        state_of(&a2.job_id),
+        JobState::Queued,
+        "host A second job must wait under max_active_per_host=1"
+    );
+
+    // Release both gates so all three jobs complete cleanly.
+    for gate in [&gate_a, &gate_b] {
+        let (lock, cvar) = &**gate;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if jobs(&engine).iter().all(|j| j.state == JobState::Completed) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(jobs(&engine).iter().all(|j| j.state == JobState::Completed));
+    srv_a.join().unwrap();
+    srv_b.join().unwrap();
 }

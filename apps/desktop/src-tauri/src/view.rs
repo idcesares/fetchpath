@@ -220,6 +220,12 @@ pub struct Settings {
     /// Free space left on every drive; 0 is automatic. Absent leaves it.
     #[serde(default)]
     pub disk_reserve_bytes: Option<u64>,
+    /// Global bandwidth ceiling in bytes/second; 0 is unlimited. Absent leaves it.
+    #[serde(default)]
+    pub max_bytes_per_second: Option<u64>,
+    /// Optional per-host active download cap; 0 is automatic fairness. Absent leaves it.
+    #[serde(default)]
+    pub max_active_per_host: Option<u64>,
 }
 
 impl Settings {
@@ -254,6 +260,8 @@ impl Settings {
             hub_mode: settings.hub_mode,
             web_ui: settings.web_ui,
             disk_reserve_bytes: settings.disk_reserve_bytes,
+            max_bytes_per_second: settings.max_bytes_per_second,
+            max_active_per_host: settings.max_active_per_host,
         }
     }
 
@@ -288,6 +296,8 @@ impl Settings {
             hub_mode: self.hub_mode,
             web_ui: self.web_ui,
             disk_reserve_bytes: self.disk_reserve_bytes,
+            max_bytes_per_second: self.max_bytes_per_second,
+            max_active_per_host: self.max_active_per_host,
         }
     }
 }
@@ -476,6 +486,8 @@ mod tests {
             hub_mode: Some(false),
             web_ui: Some(false),
             disk_reserve_bytes: Some(0),
+            max_bytes_per_second: Some(0),
+            max_active_per_host: Some(0),
         };
         let shown = Settings::from_engine(&engine);
         assert_eq!(serde_json::to_value(&shown).unwrap()["theme"], "dark");

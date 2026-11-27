@@ -341,6 +341,12 @@ struct Claim {
     started: Instant,
     first_byte: Cell<Option<Instant>>,
     last_byte: Cell<Instant>,
+    /// Last non-paced activity timestamp for stall/silence detection (FP-150).
+    /// Advanced whenever bytes arrive or the engine intentionally sleeps for
+    /// bandwidth pacing outside `multi.perform()`.
+    activity: Cell<Instant>,
+    /// Cumulative pacing sleep elapsed while awaiting this lane's first byte.
+    paced_before_first: Cell<Duration>,
     history: RefCell<VecDeque<(Instant, u64)>>,
 }
 
@@ -356,6 +362,8 @@ impl Claim {
             started: now,
             first_byte: Cell::new(None),
             last_byte: Cell::new(now),
+            activity: Cell::new(now),
+            paced_before_first: Cell::new(Duration::ZERO),
             history: RefCell::new(VecDeque::new()),
         })
     }
@@ -556,6 +564,7 @@ struct Shared<'a> {
     ttfbs: RefCell<VecDeque<Duration>>,
     state: RefCell<State>,
     pin: RefCell<Option<Target>>,
+    pacer: Option<Arc<crate::BandwidthPacer>>,
 }
 
 #[derive(Clone)]
@@ -857,12 +866,16 @@ impl LaneHandler<'_> {
             if self.claim.first_byte.get().is_none() {
                 self.claim.first_byte.set(Some(now));
                 let mut ttfbs = self.shared.ttfbs.borrow_mut();
-                ttfbs.push_back(now.duration_since(self.claim.started));
+                let ttfb = now
+                    .saturating_duration_since(self.claim.started)
+                    .saturating_sub(self.claim.paced_before_first.get());
+                ttfbs.push_back(ttfb);
                 if ttfbs.len() > 16 {
                     ttfbs.pop_front();
                 }
             }
             self.claim.last_byte.set(now);
+            self.claim.activity.set(now);
             self.claim
                 .live
                 .received
@@ -1151,6 +1164,7 @@ pub(crate) fn run<'a>(
             largest_claim: limits.min_segment_bytes as u64,
         }),
         pin: RefCell::new(None),
+        pacer: context.pacer.clone(),
     });
     let mut engine = Engine {
         lanes: Vec::new(),
@@ -1224,6 +1238,7 @@ impl<'a> Engine<'a> {
             if self.cancelled() {
                 return Err(TransferError::Cancelled);
             }
+            let written_before = self.shared.written.get();
             self.multi.perform().map_err(multi_error)?;
             let done = self.collect();
             let any_done = !done.is_empty();
@@ -1233,17 +1248,45 @@ impl<'a> Engine<'a> {
             if let Some(error) = self.shared.sink_error.borrow_mut().take() {
                 return Err(TransferError::Sink(error));
             }
+            if !self.finished {
+                let now = Instant::now();
+                let ramp_due = !self.ramped && self.shared.state.borrow().phase == Phase::Ranged;
+                if any_done || ramp_due || now.duration_since(last_tick) >= POLL {
+                    self.tick(now)?;
+                    last_tick = now;
+                }
+            }
+            // Pace outside `multi.perform()` and `sink_nanos` (including the
+            // final turn's bytes) so all lanes drain non-blockingly, deliberate
+            // pacing sleep never triggers false stall replacements or window
+            // resets, and trailing bursts cannot bypass the ceiling (FP-150).
+            let written_delta = self.shared.written.get().saturating_sub(written_before) as usize;
+            let mut paced = Duration::ZERO;
+            if written_delta > 0
+                && let Some(pacer) = self.shared.pacer.clone()
+            {
+                let pace_start = Instant::now();
+                pacer.consume(written_delta, self.shared.cancelled);
+                paced = pace_start.elapsed();
+                if !paced.is_zero() {
+                    for lane in &self.lanes {
+                        lane.claim.activity.set(lane.claim.activity.get() + paced);
+                        if lane.claim.first_byte.get().is_none() {
+                            lane.claim
+                                .paced_before_first
+                                .set(lane.claim.paced_before_first.get() + paced);
+                        }
+                    }
+                    if let Some(since) = self.blocked_since {
+                        self.blocked_since = Some(since + paced);
+                    }
+                }
+            }
             if self.finished {
                 break;
             }
-            let now = Instant::now();
-            let ramp_due = !self.ramped && self.shared.state.borrow().phase == Phase::Ranged;
-            if any_done || ramp_due || now.duration_since(last_tick) >= POLL {
-                self.tick(now)?;
-                last_tick = now;
-            }
-            if self.finished {
-                break;
+            if !paced.is_zero() {
+                continue;
             }
             let waited = Instant::now();
             self.multi.wait(&mut [], POLL).map_err(multi_error)?;
@@ -1832,7 +1875,7 @@ impl<'a> Engine<'a> {
     /// download, a stall is only a long silence.
     fn check_open_stall(&mut self, now: Instant) -> Result<(), TransferError> {
         for lane in &self.lanes {
-            let silent = now.duration_since(lane.claim.last_byte.get().max(lane.claim.started));
+            let silent = now.saturating_duration_since(lane.claim.activity.get());
             if silent >= self.limits.open_timeout {
                 return Err(TransferError::Transport(format!(
                     "no data for {} s",
@@ -1905,7 +1948,8 @@ impl<'a> Engine<'a> {
             .filter(|lane| lane.claim.received() >= 128 * 1024)
             // A lane that has stopped delivering says nothing about the link.
             .filter(|lane| {
-                now.duration_since(lane.claim.last_byte.get()) < Duration::from_millis(500)
+                now.saturating_duration_since(lane.claim.activity.get())
+                    < Duration::from_millis(500)
             })
             .filter_map(|lane| lane.claim.rate(now))
             .collect();
@@ -1957,7 +2001,7 @@ impl<'a> Engine<'a> {
             if claim.remaining() == 0 {
                 continue;
             }
-            let silent = now.duration_since(claim.last_byte.get().max(claim.started));
+            let silent = now.saturating_duration_since(claim.activity.get());
             let allowance = if claim.first_byte.get().is_none() {
                 waiting_allowance
             } else {
@@ -2239,8 +2283,7 @@ impl<'a> Engine<'a> {
         // one that starts is ordinary turnover and stays in the window; a
         // lane that has been silent for longer is not.
         let silent = self.lanes.iter().any(|lane| {
-            now.duration_since(lane.claim.last_byte.get().max(lane.claim.started))
-                > Duration::from_millis(500)
+            now.saturating_duration_since(lane.claim.activity.get()) > Duration::from_millis(500)
         });
         if self.starved || !full || silent {
             self.window = None;
@@ -2791,6 +2834,7 @@ mod tests {
             ttfbs: RefCell::new(VecDeque::new()),
             state: RefCell::new(state),
             pin: RefCell::new(None),
+            pacer: None,
         });
         shared.state.borrow_mut().claims.push(Rc::clone(&claim));
         LaneHandler {

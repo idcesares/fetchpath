@@ -35,6 +35,8 @@ pub const MIN_CACHE_QUOTA_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_CACHE_QUOTA_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 pub const DEFAULT_CACHE_QUOTA_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
+pub const MIN_BANDWIDTH_BYTES_PER_SECOND: u64 = fetchpath_core::MIN_BANDWIDTH_BYTES_PER_SECOND;
+
 /// Upper bound for any stored path, matching the queue's own limit.
 const MAX_PATH_LENGTH: usize = 4_096;
 
@@ -137,9 +139,22 @@ pub struct Settings {
     /// Written only when chosen.
     #[serde(skip_serializing_if = "is_zero")]
     pub disk_reserve_bytes: u64,
+    /// Engine-wide bandwidth ceiling in bytes/second across all running jobs
+    /// (FP-150). 0 is unlimited; written only when set.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub max_bytes_per_second: u64,
+    /// Optional hard cap on concurrently active downloads per host (FP-150).
+    /// 0 keeps soft per-host fairness active without a hard cap; written only
+    /// when set.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub max_active_per_host: usize,
 }
 
 fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+fn is_zero_usize(value: &usize) -> bool {
     *value == 0
 }
 
@@ -179,6 +194,8 @@ impl Default for Settings {
             hub_mode: false,
             web_ui: false,
             disk_reserve_bytes: 0,
+            max_bytes_per_second: 0,
+            max_active_per_host: 0,
         }
     }
 }
@@ -204,6 +221,16 @@ impl Settings {
             .cache_quota_bytes
             .clamp(MIN_CACHE_QUOTA_BYTES, MAX_CACHE_QUOTA_BYTES);
         self.instance_name = clamp_instance_name(self.instance_name.take());
+        if self.max_bytes_per_second > 0 {
+            self.max_bytes_per_second = self
+                .max_bytes_per_second
+                .max(MIN_BANDWIDTH_BYTES_PER_SECOND);
+        }
+        if self.max_active_per_host > 0 {
+            self.max_active_per_host = self
+                .max_active_per_host
+                .clamp(MIN_ACTIVE_DOWNLOADS, MAX_ACTIVE_DOWNLOADS);
+        }
         // Always on means back after a restart too, so it implies the
         // sign-in start; turning it off leaves the sign-in start as it is.
         if self.hub_mode {

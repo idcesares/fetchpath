@@ -76,6 +76,8 @@ fn settings() -> EngineSettings {
         hub_mode: Some(false),
         web_ui: Some(false),
         disk_reserve_bytes: Some(10 * 1024 * 1024 * 1024),
+        max_bytes_per_second: Some(5 * 1024 * 1024),
+        max_active_per_host: Some(2),
     }
 }
 
@@ -153,6 +155,8 @@ fn snapshot() -> JobSnapshot {
         }),
         reused_from_cache: true,
         from_paired_device: None,
+        priority: Some(JobPriority::High),
+        max_bytes_per_second: Some(1_048_576),
     }
 }
 
@@ -212,12 +216,16 @@ fn every_command() -> Vec<Command> {
                 schedule: Some(Schedule::At {
                     not_before: at("2026-09-21T08:00:00Z"),
                 }),
+                priority: Some(JobPriority::High),
+                max_bytes_per_second: Some(2 * 1024 * 1024),
             },
         },
         Command::UpdatePolicy {
             job_id: job_id(),
             patch: PolicyPatch {
                 schedule: Some(Schedule::Now),
+                priority: Some(JobPriority::Low),
+                max_bytes_per_second: Some(0),
             },
         },
         Command::ResolveDestination {
@@ -1577,4 +1585,40 @@ fn a_relay_key_is_checked_and_never_printed() {
             key: None
         }
     ));
+}
+
+#[test]
+fn v04_clients_interoperate_with_additive_pacing_and_priority_fields() {
+    // 0.4.x EngineSettings payload omits max_bytes_per_second and max_active_per_host.
+    let legacy_settings: EngineSettings = serde_json::from_value(json!({
+        "max_active_downloads": 3,
+        "auto_retry": true,
+        "auto_retry_max_attempts": 3,
+        "auto_retry_base_delay_seconds": 15,
+        "close_to_tray": true,
+        "power_mode": false,
+        "confirm_remove_completed": true,
+        "theme": "system",
+        "onboarding_completed": true
+    }))
+    .unwrap();
+    assert_eq!(legacy_settings.max_bytes_per_second, None);
+    assert_eq!(legacy_settings.max_active_per_host, None);
+
+    // 0.4.x PolicyPatch payload only carries schedule.
+    let legacy_patch: PolicyPatch = serde_json::from_value(json!({
+        "schedule": { "type": "now" }
+    }))
+    .unwrap();
+    assert_eq!(legacy_patch.priority, None);
+    assert_eq!(legacy_patch.max_bytes_per_second, None);
+
+    // Forward-compat: unknown priority value reads as JobPriority::Unknown.
+    let future_patch: PolicyPatch = serde_json::from_value(json!({
+        "priority": "realtime",
+        "max_bytes_per_second": 262144
+    }))
+    .unwrap();
+    assert_eq!(future_patch.priority, Some(JobPriority::Unknown));
+    assert_eq!(future_patch.max_bytes_per_second, Some(262_144));
 }

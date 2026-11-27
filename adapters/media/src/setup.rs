@@ -366,6 +366,7 @@ fn fetch(
         context: fetchpath_core::RequestContext::default(),
         expected_sha256: fetchpath_core::normalize_sha256(sha256),
         max_connections: None,
+        pacer: None,
     };
     // Watches the transfer and stops it once it states or passes the cap.
     let too_large = Arc::new(AtomicBool::new(false));

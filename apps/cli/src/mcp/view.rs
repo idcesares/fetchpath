@@ -471,6 +471,8 @@ mod tests {
             quality_label: None,
             reused_from_cache: false,
             from_paired_device: None,
+            priority: None,
+            max_bytes_per_second: None,
             principal: Principal::try_from("agent:helper").unwrap(),
             approval: None,
         }

@@ -116,6 +116,9 @@ fn the_0_1_0_settings_file_loads_every_choice_and_writes_back_identically() {
             web_ui: false,
             // Added after 0.1.0 (FP-101); a 0.1.0 file has the automatic one.
             disk_reserve_bytes: 0,
+            // Added in M20 (FP-150); older files leave bandwidth and per-host cap unset.
+            max_bytes_per_second: 0,
+            max_active_per_host: 0,
         }
     );
 

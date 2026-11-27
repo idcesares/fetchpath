@@ -588,6 +588,13 @@ pub enum DestinationDecision {
 pub struct PolicyPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule: Option<Schedule>,
+    /// Queue scheduling priority for this job (FP-150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<crate::model::JobPriority>,
+    /// Per-job bandwidth ceiling in bytes/second (`0` removes the per-job cap;
+    /// the global engine ceiling still applies, FP-150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_second: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

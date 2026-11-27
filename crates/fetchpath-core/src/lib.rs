@@ -20,7 +20,9 @@ pub(crate) fn storage_code(detail: &str) -> &'static str {
     }
 }
 
-pub use fetchpath_http::{LinkFacts, SegmentProgress};
+pub use fetchpath_http::{
+    BandwidthPacer, LinkFacts, MIN_BANDWIDTH_BYTES_PER_SECOND, SegmentProgress, TokenBucket,
+};
 
 /// Looks at an HTTP(S) link's headers without downloading it. Errors carry
 /// a stable code first, as download errors do.
@@ -254,6 +256,8 @@ pub struct DownloadRequest {
     /// The most connections this download may open, below the engine-wide
     /// limit. `None` leaves it to the adaptive transfer.
     pub max_connections: Option<usize>,
+    /// Optional hierarchical bandwidth pacer (global + per-job ceilings).
+    pub pacer: Option<Arc<BandwidthPacer>>,
 }
 
 /// Normalizes a SHA-256 as people paste it: surrounding whitespace, an
@@ -540,6 +544,7 @@ impl FileJob {
                     context,
                     expected_sha256: None,
                     max_connections: None,
+                    pacer: None,
                 }),
                 cache: None,
                 peers: Vec::new(),
@@ -602,6 +607,17 @@ impl FileJob {
             .as_mut()
             .ok_or("contract.invalid_transition")?;
         request.max_connections = Some(connections.max(1));
+        Ok(())
+    }
+
+    /// Attaches a hierarchical bandwidth pacer before the job starts.
+    pub fn use_pacer(&self, pacer: Arc<BandwidthPacer>) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap();
+        let request = inner
+            .request
+            .as_mut()
+            .ok_or("contract.invalid_transition")?;
+        request.pacer = Some(pacer);
         Ok(())
     }
 
@@ -982,6 +998,7 @@ Connection: close
             context: RequestContext::default(),
             expected_sha256: None,
             max_connections: None,
+            pacer: None,
         }
     }
 

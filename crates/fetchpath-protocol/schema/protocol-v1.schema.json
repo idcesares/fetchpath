@@ -2274,6 +2274,24 @@
           "minimum": 0,
           "type": "integer"
         },
+        "max_active_per_host": {
+          "description": "Optional hard cap on concurrently active downloads per host; 0 leaves\nsoft per-host fairness active without a hard cap (FP-150). Absent from\nan update means \"leave it as it is\".",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_bytes_per_second": {
+          "description": "Engine-wide bandwidth ceiling in bytes/second across all running jobs;\n0 is unlimited (FP-150). Absent from an update means \"leave it as it is\".",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "media_tools_dir": {
           "default": null,
           "type": [
@@ -2984,6 +3002,16 @@
       ],
       "type": "string"
     },
+    "JobPriority": {
+      "description": "Queue scheduling priority for a download job (FP-150).",
+      "enum": [
+        "high",
+        "normal",
+        "low",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "JobRequest": {
       "description": "The immutable request a job is created from (contract §4). Changing any\nof it later creates a new job.",
       "oneOf": [
@@ -3203,6 +3231,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "max_bytes_per_second": {
+          "description": "Optional per-job bandwidth ceiling in bytes/second (FP-150). Absent or\n`0` means no per-job cap beyond the engine-wide ceiling.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "not_before": {
           "anyOf": [
             {
@@ -3225,6 +3262,17 @@
           "$ref": "#/$defs/Principal",
           "default": "user",
           "description": "Who created the job."
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobPriority"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Scheduling priority for queued admission (FP-150). Absent means `normal`."
         },
         "progress": {
           "$ref": "#/$defs/Progress"
@@ -3845,6 +3893,26 @@
     "PolicyPatch": {
       "description": "Mutable policy. Absent fields are left as they are.",
       "properties": {
+        "max_bytes_per_second": {
+          "description": "Per-job bandwidth ceiling in bytes/second (`0` removes the per-job cap;\nthe global engine ceiling still applies, FP-150).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobPriority"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Queue scheduling priority for this job (FP-150)."
+        },
         "schedule": {
           "anyOf": [
             {

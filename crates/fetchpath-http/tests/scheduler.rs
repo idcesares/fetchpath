@@ -1571,3 +1571,236 @@ fn custom_headers_are_stripped_across_origins_while_user_agent_persists() {
     }
     assert_eq!(image.borrow().bytes, body);
 }
+
+#[test]
+fn global_and_per_job_pacer_enforces_rate_within_five_percent_without_starvation() {
+    use fetchpath_http::{BandwidthPacer, TokenBucket};
+    use std::sync::atomic::AtomicUsize;
+
+    // 1) Single transfer paced at 512 KiB/s over a 5 s window (2.5 MiB payload).
+    let rate_bps: u64 = 512 * 1024;
+    let body = vec![0x5A; (rate_bps * 5) as usize];
+    let body_srv = body.clone();
+    let srv = server(move |req| honest(&body_srv, "\"v1\"", req));
+    let global = Arc::new(TokenBucket::new(rate_bps));
+    let context = RequestContext {
+        pacer: Some(Arc::new(BandwidthPacer::single(Arc::clone(&global)))),
+        ..RequestContext::default()
+    };
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let image = RefCell::new(Image::default());
+    let started = Instant::now();
+    transfer_resumable(
+        &srv.url,
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |chunk| image.borrow_mut().record(chunk.offset, chunk.bytes),
+    )
+    .unwrap();
+    let elapsed = started.elapsed().as_secs_f64();
+    assert_eq!(image.borrow().bytes, body);
+    let observed_bps = body.len() as f64 / elapsed;
+    let ratio = observed_bps / rate_bps as f64;
+    assert!(
+        (0.95..=1.05).contains(&ratio),
+        "single-job 5s paced rate drifted outside +-5%: target={rate_bps} observed={observed_bps:.0} ratio={ratio:.4} elapsed={elapsed:.3}s"
+    );
+
+    // 2) Two concurrent transfers sharing one 512 KiB/s global bucket over ~5 s:
+    //    combined rate holds within +-5% and neither job starves the other.
+    let half_body = vec![0xA5; (rate_bps * 5 / 2) as usize];
+    let half_a = half_body.clone();
+    let half_b = half_body.clone();
+    let server_a = server(move |req| honest(&half_a, "\"va\"", req));
+    let server_b = server(move |req| honest(&half_b, "\"vb\"", req));
+    let shared_global = Arc::new(TokenBucket::new(rate_bps));
+    let bytes_a_at_mid = Arc::new(AtomicUsize::new(0));
+    let bytes_b_at_mid = Arc::new(AtomicUsize::new(0));
+
+    let url_a = server_a.url.clone();
+    let url_b = server_b.url.clone();
+    let g_a = Arc::clone(&shared_global);
+    let g_b = Arc::clone(&shared_global);
+    let mid_a = Arc::clone(&bytes_a_at_mid);
+    let mid_b = Arc::clone(&bytes_b_at_mid);
+    let expected_a = half_body.clone();
+    let expected_b = half_body.clone();
+
+    let concurrent_start = Instant::now();
+    let t_a = thread::spawn(move || {
+        let ctx = RequestContext {
+            pacer: Some(Arc::new(BandwidthPacer::new(
+                g_a,
+                Some(Arc::new(TokenBucket::new(0))),
+            ))),
+            ..RequestContext::default()
+        };
+        let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+        let img = RefCell::new(Image::default());
+        transfer_resumable(
+            &url_a,
+            &ctx,
+            limits(),
+            &budget,
+            &SegmentMonitor::default(),
+            None,
+            || false,
+            |chunk| {
+                mid_a.fetch_add(chunk.bytes.len(), Ordering::Relaxed);
+                img.borrow_mut().record(chunk.offset, chunk.bytes)
+            },
+        )
+        .unwrap();
+        assert_eq!(img.borrow().bytes, expected_a);
+        Instant::now()
+    });
+    let t_b = thread::spawn(move || {
+        let ctx = RequestContext {
+            pacer: Some(Arc::new(BandwidthPacer::new(
+                g_b,
+                Some(Arc::new(TokenBucket::new(0))),
+            ))),
+            ..RequestContext::default()
+        };
+        let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+        let img = RefCell::new(Image::default());
+        transfer_resumable(
+            &url_b,
+            &ctx,
+            limits(),
+            &budget,
+            &SegmentMonitor::default(),
+            None,
+            || false,
+            |chunk| {
+                mid_b.fetch_add(chunk.bytes.len(), Ordering::Relaxed);
+                img.borrow_mut().record(chunk.offset, chunk.bytes)
+            },
+        )
+        .unwrap();
+        assert_eq!(img.borrow().bytes, expected_b);
+        Instant::now()
+    });
+    // Sample midpoint while both concurrent jobs are active to verify fairness.
+    thread::sleep(Duration::from_millis(2500));
+    let sample_a = bytes_a_at_mid.load(Ordering::Relaxed);
+    let sample_b = bytes_b_at_mid.load(Ordering::Relaxed);
+    let end_a = t_a.join().unwrap();
+    let end_b = t_b.join().unwrap();
+    let total_elapsed = end_a
+        .max(end_b)
+        .duration_since(concurrent_start)
+        .as_secs_f64();
+    let combined_bps = (half_body.len() * 2) as f64 / total_elapsed;
+    let combined_ratio = combined_bps / rate_bps as f64;
+    assert!(
+        (0.95..=1.05).contains(&combined_ratio),
+        "concurrent 5s paced rate drifted outside +-5%: target={rate_bps} observed={combined_bps:.0} ratio={combined_ratio:.4} elapsed={total_elapsed:.3}s"
+    );
+    let total_mid = (sample_a + sample_b).max(1) as f64;
+    let share_a = sample_a as f64 / total_mid;
+    let share_b = sample_b as f64 / total_mid;
+    assert!(
+        share_a >= 0.35 && share_b >= 0.35,
+        "concurrent global pacing starved one job: share_a={share_a:.2} share_b={share_b:.2}"
+    );
+}
+
+#[test]
+fn hierarchical_pacer_enforces_tighter_per_job_limit_under_global_ceiling() {
+    use fetchpath_http::{BandwidthPacer, TokenBucket};
+
+    let global_rate: u64 = 1024 * 1024;
+    let job_rate: u64 = 256 * 1024;
+    let body = vec![0x3C; (job_rate * 2) as usize];
+    let body_srv = body.clone();
+    let srv = server(move |req| honest(&body_srv, "\"v1\"", req));
+    let pacer = Arc::new(BandwidthPacer::new(
+        Arc::new(TokenBucket::new(global_rate)),
+        Some(Arc::new(TokenBucket::new(job_rate))),
+    ));
+    let context = RequestContext {
+        pacer: Some(pacer),
+        ..RequestContext::default()
+    };
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let image = RefCell::new(Image::default());
+    let started = Instant::now();
+    transfer_resumable(
+        &srv.url,
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |chunk| image.borrow_mut().record(chunk.offset, chunk.bytes),
+    )
+    .unwrap();
+    let elapsed = started.elapsed().as_secs_f64();
+    assert_eq!(image.borrow().bytes, body);
+    let observed = body.len() as f64 / elapsed;
+    let ratio = observed / job_rate as f64;
+    assert!(
+        (0.90..=1.10).contains(&ratio),
+        "per-job cap should govern under higher global ceiling: target={job_rate} observed={observed:.0} ratio={ratio:.3}"
+    );
+}
+
+#[test]
+fn low_rate_live_downshift_on_multi_lane_transfer_does_not_trigger_false_stalls() {
+    use fetchpath_http::{BandwidthPacer, MIN_BANDWIDTH_BYTES_PER_SECOND, TokenBucket};
+    use std::sync::atomic::AtomicBool;
+
+    // Start fast enough for multi-lane ramp (4 lanes, 16 KiB min_segment, 160 KiB total),
+    // then downshift live to 16 KiB/s (MIN_BANDWIDTH_BYTES_PER_SECOND) once >= 64 KiB lands.
+    // With stall_timeout = 1s, blocking sleeps inside write callbacks would trigger
+    // false stall replacements and fail the transfer.
+    let body = vec![0x77; 160 * 1024];
+    let body_srv = body.clone();
+    let srv = server(move |req| honest(&body_srv, "\"v1\"", req));
+    let bucket = Arc::new(TokenBucket::new(0));
+    let downshifted = Arc::new(AtomicBool::new(false));
+    let context = RequestContext {
+        pacer: Some(Arc::new(BandwidthPacer::single(Arc::clone(&bucket)))),
+        ..RequestContext::default()
+    };
+    let mut lim = limits();
+    lim.max_concurrency = 4;
+    lim.min_segment_bytes = 16 * 1024;
+    lim.min_adaptive_bytes = 32 * 1024;
+    lim.stall_timeout = Duration::from_secs(1);
+
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let image = RefCell::new(Image::default());
+    let mut seen = 0usize;
+    let bucket_cb = Arc::clone(&bucket);
+    let flag_cb = Arc::clone(&downshifted);
+    let report = transfer_resumable(
+        &srv.url,
+        &context,
+        lim,
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |chunk| {
+            seen += chunk.bytes.len();
+            if seen >= 64 * 1024 && !flag_cb.swap(true, Ordering::Relaxed) {
+                bucket_cb.set_rate(MIN_BANDWIDTH_BYTES_PER_SECOND);
+            }
+            image.borrow_mut().record(chunk.offset, chunk.bytes)
+        },
+    )
+    .unwrap();
+    assert!(downshifted.load(Ordering::Relaxed));
+    assert_eq!(image.borrow().bytes, body);
+    assert_eq!(
+        report.replacements, 0,
+        "pacing sleep must not trigger false stall replacements: {report:?}"
+    );
+}

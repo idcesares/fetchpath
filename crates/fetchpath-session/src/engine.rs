@@ -985,17 +985,39 @@ impl Engine {
                     .map(|job| Outcome::Job(job.job_id))
                     .map_err(transition)
             }
-            Command::UpdatePolicy { job_id, patch } => match &patch.schedule {
-                None => Ok(Outcome::Job(job_id.as_str().to_owned())),
-                Some(Schedule::Now) => session
-                    .start_now(job_id.as_str())
+            Command::UpdatePolicy { job_id, patch } => {
+                if !principal.is_person() {
+                    if patch.priority == Some(model::JobPriority::High) {
+                        return Err(policy::not_permitted(principal, command));
+                    }
+                    if let Some(requested) = patch.max_bytes_per_second
+                        && let Some(current_cap) = session.job_bandwidth_limit(job_id.as_str())
+                        && (requested == 0 || requested > current_cap)
+                    {
+                        return Err(policy::not_permitted(principal, command));
+                    }
+                }
+                if patch.schedule.is_none()
+                    && patch.priority.is_none()
+                    && patch.max_bytes_per_second.is_none()
+                {
+                    return Ok(Outcome::Job(job_id.as_str().to_owned()));
+                }
+                let schedule = match &patch.schedule {
+                    None => None,
+                    Some(Schedule::Now) => Some(None),
+                    Some(Schedule::At { not_before }) => Some(Some(millis(*not_before)?)),
+                };
+                session
+                    .update_policy(
+                        job_id.as_str(),
+                        schedule,
+                        patch.priority,
+                        patch.max_bytes_per_second,
+                    )
                     .map(|job| Outcome::Job(job.job_id))
-                    .map_err(transition),
-                Some(Schedule::At { not_before }) => session
-                    .reschedule(job_id.as_str(), millis(*not_before)?)
-                    .map(|job| Outcome::Job(job.job_id))
-                    .map_err(transition),
-            },
+                    .map_err(transition)
+            }
             Command::ResolveDestination { job_id, decision } => match decision {
                 DestinationDecision::ChooseNewPath {
                     path,

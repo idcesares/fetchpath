@@ -1316,6 +1316,7 @@ fn perform(
         custom_headers: request.context.custom_headers.clone(),
         proxy: request.context.proxy.clone(),
         http2_prior_knowledge: false,
+        pacer: None,
     };
     let headers = RefCell::new(ResponseHeaders::default());
     let offset = Cell::new(range.map_or(0, |(start, _)| start));
@@ -1460,6 +1461,7 @@ fn as_download_request(request: &VerifiedDownloadRequest, url: &str) -> Download
         // This path verifies against its own trusted digests and piece hashes.
         expected_sha256: None,
         max_connections: None,
+        pacer: None,
     }
 }
 

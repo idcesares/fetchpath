@@ -4831,7 +4831,7 @@
       "dependsOn": [
         "FP-145"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": "agent",
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -4843,6 +4843,7 @@
         "crates/fetchpath-session/src/lib.rs",
         "crates/fetchpath-session/src/engine.rs",
         "crates/fetchpath-session/src/settings.rs",
+        "crates/fetchpath-http/src/pacer.rs",
         "crates/fetchpath-http/src/scheduler.rs",
         "docs/development/ENGINE-REDESIGN.md"
       ],
@@ -4852,8 +4853,10 @@
         "A13"
       ],
       "acceptance": "Hierarchical token-bucket pacer enforces global engine bandwidth ceiling and per-job limits within +-5% over 5 s windows without starving other jobs; queue scheduler respects job priority (high/normal/low) and per-host fairness; additive Protocol v1 PolicyPatch and EngineSettings fields preserve 0.4.x backward compatibility and principal permissions (agents cannot raise global limits).",
-      "verification": "Protocol schema/roundtrip tests, session priority/policy tests, paced transfer rate tests, and cargo test --workspace --locked.",
-      "evidence": []
+      "verification": "cargo fmt --check, strict clippy, full cargo test --workspace --locked (protocol schema + 0.4.x compat, 5s +-5% single/concurrent non-starvation pacer, hierarchical per-job cap, 4-lane 16 KiB/s live-downshift zero-stall regression, priority ordering/persistence, per-host fairness/cap, url_host magnet URI test, agent principal enforcement), and independent strong boundary review + bounded repair recheck (PASS) recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md"
+      ]
     },
     {
       "id": "FP-151",

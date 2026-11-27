@@ -10,8 +10,11 @@ use crate::validation::{
     display_url, published_inside, restartable_url, torrent_metadata_path, verify_torrent_metadata,
 };
 use crate::{QueueState, ReconcileWake};
-use fetchpath_core::{CancelResult, FileJob, FileJobState, RequestContext, normalize_sha256};
+use fetchpath_core::{
+    CancelResult, FileJob, FileJobState, RequestContext, TokenBucket, normalize_sha256,
+};
 use fetchpath_media::{MediaJob, MediaJobState, MediaTools};
+use fetchpath_protocol::model::JobPriority;
 use fetchpath_protocol::principal::{ApprovalReason, Principal};
 use fetchpath_torrent::{JobState as TorrentJobState, TorrentJob};
 use std::path::{Path, PathBuf};
@@ -119,6 +122,13 @@ pub(crate) struct QueueRecord {
     /// The output of a credentialed job carries its marker (contract D8,
     /// FP-121). Persisted with the row; marking repeats until it holds.
     pub(crate) provenance_marked: bool,
+    /// Queue scheduling priority for admission ordering (FP-150).
+    pub(crate) priority: JobPriority,
+    /// Optional per-job bandwidth ceiling in bytes/second (FP-150).
+    pub(crate) max_bytes_per_second: Option<u64>,
+    /// Live per-job token bucket shared with any active `FileJob` so live
+    /// `UpdatePolicy` bandwidth changes take effect immediately (FP-150).
+    pub(crate) job_pacer: Arc<TokenBucket>,
     pub(crate) view: JobSnapshot,
 }
 
@@ -258,6 +268,9 @@ impl QueueRecord {
             folder_approved: false,
             public_origin,
             provenance_marked: false,
+            priority: JobPriority::Normal,
+            max_bytes_per_second: None,
+            job_pacer: Arc::new(TokenBucket::new(0)),
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -283,6 +296,8 @@ impl QueueRecord {
                 quality_label: None,
                 reused_from_cache: false,
                 from_paired_device: None,
+                priority: None,
+                max_bytes_per_second: None,
             },
         }
     }
@@ -344,6 +359,9 @@ impl QueueRecord {
             folder_approved: false,
             public_origin: false,
             provenance_marked: false,
+            priority: JobPriority::Normal,
+            max_bytes_per_second: None,
+            job_pacer: Arc::new(TokenBucket::new(0)),
             view: JobSnapshot {
                 waiting_for_space: false,
                 job_id: id,
@@ -369,6 +387,8 @@ impl QueueRecord {
                 quality_label: Some(quality_label),
                 reused_from_cache: false,
                 from_paired_device: None,
+                priority: None,
+                max_bytes_per_second: None,
             },
         }
     }
@@ -602,8 +622,20 @@ impl QueueRecord {
                 state: view.state.clone(),
                 not_before_ms: saved.not_before_ms,
                 waiting_for_space: false,
+                priority: saved.priority,
+                max_bytes_per_second: saved.max_bytes_per_second,
             });
         }
+        let priority = match saved.priority {
+            JobPriority::Unknown => JobPriority::Normal,
+            other => other,
+        };
+        let max_bytes_per_second = saved
+            .max_bytes_per_second
+            .filter(|rate| *rate > 0)
+            .map(|rate| rate.max(crate::settings::MIN_BANDWIDTH_BYTES_PER_SECOND));
+        view.priority = (!priority.is_normal()).then_some(priority);
+        view.max_bytes_per_second = max_bytes_per_second;
         Self {
             id: saved.id,
             live_url,
@@ -632,6 +664,9 @@ impl QueueRecord {
             folder_approved: saved.folder_approved,
             public_origin: saved.public_origin,
             provenance_marked: saved.provenance_marked,
+            priority,
+            max_bytes_per_second,
+            job_pacer: Arc::new(TokenBucket::new(max_bytes_per_second.unwrap_or(0))),
             view,
         }
     }
@@ -650,6 +685,8 @@ impl QueueRecord {
                 state: view.state.clone(),
                 not_before_ms: saved.not_before_ms,
                 waiting_for_space: false,
+                priority: saved.priority,
+                max_bytes_per_second: saved.max_bytes_per_second,
             });
         }
         Self {
@@ -680,6 +717,9 @@ impl QueueRecord {
             folder_approved: saved.folder_approved,
             public_origin: saved.public_origin,
             provenance_marked: saved.provenance_marked,
+            priority: saved.priority,
+            max_bytes_per_second: saved.max_bytes_per_second,
+            job_pacer: Arc::new(TokenBucket::new(0)),
             view,
         }
     }

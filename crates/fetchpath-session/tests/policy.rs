@@ -507,6 +507,8 @@ fn only_the_person_approves_denies_or_changes_access_and_settings() {
         hub_mode: None,
         web_ui: None,
         disk_reserve_bytes: None,
+        max_bytes_per_second: None,
+        max_active_per_host: None,
     };
     for command in [
         Command::ApproveJob {
@@ -2362,4 +2364,113 @@ fn a_folder_swapped_for_a_junction_after_the_request_holds_the_job_as_it_starts(
     });
     assert_eq!(reasons(&held), [ApprovalReason::OutsideGrantedFolders]);
     assert!(!s.outside.join("a.bin").exists());
+}
+
+#[test]
+fn agents_cannot_raise_global_limits_elevate_priority_or_lift_per_job_bandwidth_caps() {
+    use fetchpath_protocol::command::PolicyPatch;
+    use fetchpath_protocol::model::JobPriority;
+    let s = setup(granting);
+    let queued = job(send(&s.agent, later(&s.granted.join("paced.bin"))).unwrap());
+
+    // User sets a global bandwidth ceiling and per-host concurrency cap.
+    let current = match send(&s.user, Command::GetSettings).unwrap() {
+        CommandResult::Settings { view } => view.settings,
+        other => panic!("{other:?}"),
+    };
+    let updated = match send(
+        &s.user,
+        Command::UpdateSettings {
+            settings: EngineSettings {
+                max_bytes_per_second: Some(512 * 1024),
+                max_active_per_host: Some(2),
+                ..current.clone()
+            },
+        },
+    )
+    .unwrap()
+    {
+        CommandResult::Settings { view } => view.settings,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(updated.max_bytes_per_second, Some(512 * 1024));
+    assert_eq!(updated.max_active_per_host, Some(2));
+
+    // Agent cannot change global EngineSettings (including raising global limits).
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::UpdateSettings {
+                settings: EngineSettings {
+                    max_bytes_per_second: Some(0),
+                    ..updated.clone()
+                },
+            },
+        )),
+        "policy.not_permitted"
+    );
+
+    // Agent cannot elevate a job to High priority.
+    assert_eq!(
+        code(send(
+            &s.agent,
+            Command::UpdatePolicy {
+                job_id: queued.job_id.clone(),
+                patch: PolicyPatch {
+                    priority: Some(JobPriority::High),
+                    ..PolicyPatch::default()
+                },
+            },
+        )),
+        "policy.not_permitted"
+    );
+
+    // Agent can lower priority to Low and tighten its own job's per-job cap.
+    let tightened = job(send(
+        &s.agent,
+        Command::UpdatePolicy {
+            job_id: queued.job_id.clone(),
+            patch: PolicyPatch {
+                priority: Some(JobPriority::Low),
+                max_bytes_per_second: Some(128 * 1024),
+                ..PolicyPatch::default()
+            },
+        },
+    )
+    .unwrap());
+    assert_eq!(tightened.priority, Some(JobPriority::Low));
+    assert_eq!(tightened.max_bytes_per_second, Some(128 * 1024));
+
+    // Once capped, the agent cannot lift (0) or raise the per-job cap.
+    for attempted in [0, 256 * 1024] {
+        assert_eq!(
+            code(send(
+                &s.agent,
+                Command::UpdatePolicy {
+                    job_id: queued.job_id.clone(),
+                    patch: PolicyPatch {
+                        max_bytes_per_second: Some(attempted),
+                        ..PolicyPatch::default()
+                    },
+                },
+            )),
+            "policy.not_permitted"
+        );
+    }
+
+    // The person can elevate to High priority and clear the per-job cap.
+    let elevated = job(send(
+        &s.user,
+        Command::UpdatePolicy {
+            job_id: queued.job_id.clone(),
+            patch: PolicyPatch {
+                priority: Some(JobPriority::High),
+                max_bytes_per_second: Some(0),
+                ..PolicyPatch::default()
+            },
+        },
+    )
+    .unwrap());
+    assert_eq!(elevated.priority, Some(JobPriority::High));
+    assert_eq!(elevated.max_bytes_per_second, None);
 }

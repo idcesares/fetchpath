@@ -1,6 +1,7 @@
 //! Public and crate-internal data types for the download session.
 
 use crate::settings;
+use fetchpath_protocol::model::JobPriority;
 use fetchpath_protocol::principal::{ApprovalReason, Principal};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -141,6 +142,12 @@ pub struct JobSnapshot {
     /// The fingerprint of the paired device it came from (FP-034).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_paired_device: Option<String>,
+    /// Queue scheduling priority for this job (FP-150). Absent means normal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<JobPriority>,
+    /// Optional per-job bandwidth ceiling in bytes/second (FP-150).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_second: Option<u64>,
 }
 
 /// Aggregate queue figures, for the statistics panel.
