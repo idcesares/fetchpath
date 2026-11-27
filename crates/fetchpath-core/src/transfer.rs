@@ -1,6 +1,6 @@
 use crate::checkpoint::{
-    CommitQueue, CommitRequest, PrefixTracker, ResponseHeaders, source_key_with_context,
-    strong_etag,
+    COALESCE_FLUSH_BYTES, CommitQueue, CommitRequest, DEFAULT_WRITE_QUEUE_BUDGET, LaneCoalescer,
+    PrefixTracker, ResponseHeaders, WriteQueue, source_key_with_context, strong_etag,
 };
 use crate::{CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use fetchpath_http::{
@@ -15,8 +15,8 @@ use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// A checkpoint needs at least this many more contiguous bytes...
 const CHECKPOINT_BYTES: u64 = 64 * 1024;
@@ -242,12 +242,14 @@ pub fn download_with_faults(
         }
     };
 
-    // Trim any stale bytes left past `final_len` by an earlier retry before
-    // syncing and publishing with the single-pass verified digest (D10).
+    // Trim any stale bytes left past `final_len` by an earlier retry, clear the
+    // NTFS sparse staging flag before publication (best-effort, FP-148), then
+    // sync and publish with the single-pass verified digest (D10).
     recovered
         .file
         .set_len(attempt.final_len)
         .map_err(|error| storage_detail(&store, error))?;
+    let _ = fetchpath_storage::set_sparse(&recovered.file, false);
     store
         .sync_payload(&mut recovered.file, faults)
         .map_err(|error| storage_detail(&store, error))?;
@@ -372,6 +374,10 @@ fn perform_scheduled_attempt(
         // Restarting after an identity change: one plain GET, no ranges. A
         // later attempt that resumes from a checkpoint asks for a range again.
         limits.scheduler = Scheduler::Plain;
+    } else {
+        // Best-effort NTFS sparse staging avoids synchronous VDL zero-fill when
+        // out-of-order range segments land ahead of the current prefix (FP-148).
+        let _ = fetchpath_storage::set_sparse(file, true);
     }
     let context = HttpRequestContext {
         cookie_lines: request.context.cookie_lines.clone(),
@@ -392,18 +398,32 @@ fn perform_scheduled_attempt(
         }),
         _ => None,
     };
-    let tracker = RefCell::new(PrefixTracker::with_extents(offset, &extent_ranges));
-    let initial_written = tracker.borrow().written();
+    let accepted = RefCell::new(PrefixTracker::with_extents(offset, &extent_ranges));
+    let initial_written = accepted.borrow().written();
     let key = source_key_with_context(&request.url, &request.context.fingerprint());
-    let queue = CommitQueue::new(offset, initial_written);
-    // The validator and total the newest chunk carried, for the final commit.
-    let identity = RefCell::new((validator.map(str::to_owned), expected_total));
-    let mut last_submit = (Instant::now(), initial_written);
-    let mut last_hashed_notify = offset;
+    let commit_queue = CommitQueue::new(offset, initial_written);
+    let write_queue = WriteQueue::new(offset, &extent_ranges, DEFAULT_WRITE_QUEUE_BUDGET);
+    let coalescer = RefCell::new(LaneCoalescer::new(&write_queue, COALESCE_FLUSH_BYTES));
+    // The validator and total the newest chunk carried, shared with the disk
+    // writer thread for periodic v2 checkpoint commits.
+    let identity = Mutex::new((validator.map(str::to_owned), expected_total));
 
     let result = std::thread::scope(|scope| {
-        let worker =
-            scope.spawn(|| queue.run(store, offset, initial_hasher, initial_extents, faults));
+        let commit_worker = scope
+            .spawn(|| commit_queue.run(store, offset, initial_hasher, initial_extents, faults));
+        let write_worker = scope.spawn(|| {
+            write_queue.run(
+                store,
+                file,
+                &commit_queue,
+                &identity,
+                key.clone(),
+                HASH_PIPELINE_BYTES,
+                CHECKPOINT_BYTES,
+                CHECKPOINT_INTERVAL,
+                faults,
+            )
+        });
         let result = transfer_resumable(
             &request.url,
             &context,
@@ -413,114 +433,137 @@ fn perform_scheduled_attempt(
             resume.as_ref(),
             || request.cancellation.is_cancelled(),
             |chunk: Chunk<'_>| {
-                if queue.failed() {
-                    return Err(queue
-                        .take_error()
-                        .unwrap_or_else(|| io::Error::other("checkpoint thread stopped")));
+                if write_queue.failed() {
+                    write_queue.check_error()?;
                 }
-                let mut tracker = tracker.borrow_mut();
-                tracker.check(chunk.offset, chunk.bytes.len())?;
-                store.write_payload_at(file, chunk.offset, chunk.bytes, faults)?;
-                tracker.record(chunk.offset, chunk.bytes.len())?;
-                let prefix = tracker.prefix();
-                let written = tracker.written();
-                request.cancellation.set_received(written);
-                request.cancellation.set_total(chunk.total_bytes);
-                if prefix.saturating_sub(last_hashed_notify) >= HASH_PIPELINE_BYTES {
-                    queue.advance_prefix(prefix);
-                    last_hashed_notify = prefix;
+                if commit_queue.failed() {
+                    commit_queue.check_error()?;
                 }
                 if let Some(etag) = chunk.strong_etag {
-                    let mut identity = identity.borrow_mut();
-                    if identity.0.as_deref() != Some(etag) {
-                        identity.0 = Some(etag.to_owned());
+                    let mut id = identity.lock().expect("identity lock poisoned");
+                    if id.0.as_deref() != Some(etag) {
+                        id.0 = Some(etag.to_owned());
                     }
-                    identity.1 = chunk.total_bytes.or(identity.1);
-                    // Checkpoint when a second has passed and 64 KiB more
-                    // bytes have landed across any lane. The background thread
-                    // hashes the prefix and new out-of-order extents, fsyncs,
-                    // and commits checkpoint format v2.
-                    if written - last_submit.1 >= CHECKPOINT_BYTES
-                        && last_submit.0.elapsed() >= CHECKPOINT_INTERVAL
-                    {
-                        queue.submit_commit(CommitRequest {
-                            prefix,
-                            extents: tracker.non_prefix_extents(),
-                            source_key: key.clone(),
-                            strong_etag: identity.0.clone(),
-                            expected_total: identity.1,
-                            persist_small_extents: false,
-                        });
-                        last_submit = (Instant::now(), written);
-                        last_hashed_notify = prefix;
-                    }
+                    id.1 = chunk.total_bytes.or(id.1);
                 }
+                let mut accepted = accepted.borrow_mut();
+                accepted.check(chunk.offset, chunk.bytes.len())?;
+                coalescer
+                    .borrow_mut()
+                    .enqueue(chunk.offset, chunk.bytes, &|| {
+                        request.cancellation.is_cancelled()
+                    })?;
+                accepted.record(chunk.offset, chunk.bytes.len())?;
+                request.cancellation.set_received(accepted.written());
+                request.cancellation.set_total(chunk.total_bytes);
                 Ok(())
             },
         );
-        // Every lane has stopped by now. Drain or abort the worker cleanly.
+        // Every lane has stopped by now. Quiesce the disk writer BEFORE closing
+        // or finishing the hasher/commit worker so CommitQueue never reads
+        // bytes that have not reached the OS file handle.
         let remove_cancel = request.cancellation.is_cancelled()
             && request.cancel_cleanup == CancelCleanup::RemoveStaging;
-        if remove_cancel {
-            queue.abort();
-        } else if result.is_ok() {
-            queue.finish(tracker.borrow().prefix());
-        } else if matches!(result, Err(TransferError::Cancelled))
+        let retain_cancel = request.cancellation.is_cancelled()
             && request.cancel_cleanup == CancelCleanup::RetainStaging
-        {
-            // A pause keeps the staging file: commit both the contiguous prefix
-            // and all completed out-of-order extents before closing the worker.
-            let tracker = tracker.borrow();
-            let (etag, total) = identity.borrow().clone();
-            if let Some(etag) = etag
-                && (tracker.prefix() > queue.committed()
-                    || tracker.written() > queue.committed_bytes())
-            {
-                queue.submit_commit(CommitRequest {
-                    prefix: tracker.prefix(),
-                    extents: tracker.non_prefix_extents(),
-                    source_key: key.clone(),
-                    strong_etag: Some(etag),
-                    expected_total: total,
-                    persist_small_extents: true,
-                });
+            && !write_queue.failed()
+            && !commit_queue.failed();
+        if remove_cancel {
+            coalescer.borrow_mut().discard();
+            write_queue.abort();
+            let _ = write_worker.join();
+            commit_queue.abort();
+            let _ = commit_worker.join();
+        } else if retain_cancel {
+            // A pause keeps the staging file: flush all coalesced bytes (including
+            // any batch whose backpressure wait was interrupted by cancel) to disk
+            // first, then commit both the contiguous prefix and all completed
+            // out-of-order extents before closing the commit worker.
+            let flush_ok = coalescer.borrow_mut().flush_all(&|| false).is_ok();
+            write_queue.close();
+            let _ = write_worker.join();
+            if flush_ok && !write_queue.failed() {
+                let (prefix, written, extents) = write_queue.on_disk_snapshot();
+                let (etag, total) = identity.lock().expect("identity lock poisoned").clone();
+                if let Some(etag) = etag
+                    && (prefix > commit_queue.committed()
+                        || written > commit_queue.committed_bytes())
+                {
+                    commit_queue.submit_commit(CommitRequest {
+                        prefix,
+                        extents,
+                        source_key: key.clone(),
+                        strong_etag: Some(etag),
+                        expected_total: total,
+                        persist_small_extents: true,
+                    });
+                }
+                commit_queue.close();
+            } else {
+                commit_queue.abort();
             }
-            queue.close();
+            let _ = commit_worker.join();
+        } else if result.is_ok() {
+            let flush_ok = coalescer.borrow_mut().flush_all(&|| false).is_ok();
+            write_queue.close();
+            let _ = write_worker.join();
+            if flush_ok && !write_queue.failed() {
+                let (prefix, _, _) = write_queue.on_disk_snapshot();
+                commit_queue.finish(prefix);
+            } else {
+                commit_queue.abort();
+            }
+            let _ = commit_worker.join();
         } else {
-            queue.close();
+            if write_queue.failed() {
+                coalescer.borrow_mut().discard();
+                write_queue.abort();
+            } else {
+                let _ = coalescer.borrow_mut().flush_all(&|| false);
+                write_queue.close();
+            }
+            let _ = write_worker.join();
+            commit_queue.close();
+            let _ = commit_worker.join();
         }
-        let _ = worker.join();
         result
     });
 
-    // All handles and the commit worker are quiescent. Removal takes
-    // precedence over a concurrent checkpoint error when cancel was requested.
+    // All handles, the async disk writer, and the commit worker are quiescent.
+    // Removal takes precedence over a concurrent storage error on cancel.
     if request.cancellation.is_cancelled() && request.cancel_cleanup == CancelCleanup::RemoveStaging
     {
         return Err(CallbackFailure::Cancelled);
     }
-    if let Some(error) = queue.take_error() {
+    if let Some(error) = write_queue.take_error() {
         return Err(CallbackFailure::Storage(error));
+    }
+    if let Some(error) = commit_queue.take_error() {
+        return Err(CallbackFailure::Storage(error));
+    }
+    if request.cancellation.is_cancelled() && request.cancel_cleanup == CancelCleanup::RetainStaging
+    {
+        return Err(CallbackFailure::Cancelled);
     }
     match result {
         Ok(report) => {
-            let tracker = tracker.borrow();
-            if tracker.prefix() != report.bytes
-                || tracker.written() != report.bytes
-                || queue.hashed() != report.bytes
+            let (prefix, written, _) = write_queue.on_disk_snapshot();
+            if prefix != report.bytes
+                || written != report.bytes
+                || commit_queue.hashed() != report.bytes
             {
                 return Err(CallbackFailure::Storage(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
                         "the transfer ended at {} bytes but {} are contiguous, {} written, {} hashed",
                         report.bytes,
-                        tracker.prefix(),
-                        tracker.written(),
-                        queue.hashed(),
+                        prefix,
+                        written,
+                        commit_queue.hashed(),
                     ),
                 )));
             }
-            let digest = queue.take_final_digest().ok_or_else(|| {
+            let digest = commit_queue.take_final_digest().ok_or_else(|| {
                 CallbackFailure::Storage(io::Error::other(
                     "background hasher ended without a final digest",
                 ))

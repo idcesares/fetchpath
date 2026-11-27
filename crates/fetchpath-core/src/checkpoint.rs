@@ -1,15 +1,25 @@
 use fetchpath_storage::{CheckpointRecord, CheckpointStore, CompletedExtent, FaultInjector};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io;
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 const HASH_BUFFER_BYTES: usize = 256 * 1024;
 /// Minimum new out-of-order extent slice to hash and persist on periodic
 /// checkpoints so slow trickles never churn tiny extent records. Graceful
 /// pauses (`persist_small_extents: true`) persist all remaining bytes.
 const EXTENT_COMMIT_MIN_BYTES: u64 = 64 * 1024;
+/// Target coalescing flush threshold per active lane (512 KiB, FP-148).
+pub(crate) const COALESCE_FLUSH_BYTES: usize = 512 * 1024;
+/// Maximum age of a partial coalescing buffer before flushing on slow links.
+const COALESCE_MAX_AGE: Duration = Duration::from_millis(200);
+/// Default total memory cap for local coalescing + async disk write queue
+/// (stays strictly within GlobalBudget's 32 MiB ceiling under slow-disk stress).
+pub(crate) const DEFAULT_WRITE_QUEUE_BUDGET: usize = 8 * 1024 * 1024;
+const MAX_LANE_BUFFERS: usize = 16;
+const MAX_FREE_BUFFERS: usize = 16;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ResponseHeaders {
@@ -320,6 +330,16 @@ impl CommitQueue {
             .expect("commit queue poisoned")
             .error
             .is_some()
+    }
+
+    /// Non-destructive error check for the sink callback so post-scope
+    /// `failed()` and `take_error()` remain authoritative.
+    pub(crate) fn check_error(&self) -> io::Result<()> {
+        let state = self.state.lock().expect("commit queue poisoned");
+        if let Some(error) = state.error.as_ref() {
+            return Err(io::Error::new(error.kind(), error.to_string()));
+        }
+        Ok(())
     }
 
     pub(crate) fn take_error(&self) -> Option<io::Error> {
@@ -666,6 +686,454 @@ fn open_reader<'a>(store: &CheckpointStore, reader: &'a mut Option<File>) -> io:
     Ok(reader.as_ref().expect("reader initialized"))
 }
 
+struct WriteBatch {
+    offset: u64,
+    data: Vec<u8>,
+}
+
+struct WriterState {
+    pending: VecDeque<WriteBatch>,
+    /// Bytes currently queued in `pending` plus the batch being written to disk.
+    in_flight_bytes: usize,
+    peak_buffered_bytes: usize,
+    backpressure_waits: u64,
+    closed: bool,
+    aborted: bool,
+    error: Option<io::Error>,
+    free_pool: Vec<Vec<u8>>,
+    /// Extents durably written to the OS file handle (updated strictly AFTER
+    /// `store.write_payload_at` succeeds so `CommitQueue` never reads unwritten bytes).
+    on_disk: PrefixTracker,
+}
+
+/// Bounded asynchronous disk write queue with recycled buffers and explicit
+/// backpressure (FP-148).
+///
+/// The socket thread coalesces small libcurl callbacks into 512 KiB contiguous
+/// batches via [`LaneCoalescer`] and pushes them here; a dedicated disk I/O
+/// worker thread drains them with `write_payload_at`, updates `on_disk`, and
+/// wakes [`CommitQueue`] only after bytes have reached the OS file.
+pub(crate) struct WriteQueue {
+    state: Mutex<WriterState>,
+    not_empty: Condvar,
+    not_full: Condvar,
+    max_bytes: usize,
+}
+
+impl WriteQueue {
+    pub(crate) fn new(committed_prefix: u64, extents: &[(u64, u64)], max_bytes: usize) -> Self {
+        Self {
+            state: Mutex::new(WriterState {
+                pending: VecDeque::new(),
+                in_flight_bytes: 0,
+                peak_buffered_bytes: 0,
+                backpressure_waits: 0,
+                closed: false,
+                aborted: false,
+                error: None,
+                free_pool: Vec::new(),
+                on_disk: PrefixTracker::with_extents(committed_prefix, extents),
+            }),
+            not_empty: Condvar::new(),
+            not_full: Condvar::new(),
+            max_bytes: max_bytes.max(1),
+        }
+    }
+
+    pub(crate) fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+
+    pub(crate) fn check_error(&self) -> io::Result<()> {
+        let state = self.state.lock().expect("write queue poisoned");
+        if let Some(error) = state.error.as_ref() {
+            return Err(io::Error::new(error.kind(), error.to_string()));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn failed(&self) -> bool {
+        self.state
+            .lock()
+            .expect("write queue poisoned")
+            .error
+            .is_some()
+    }
+
+    pub(crate) fn take_error(&self) -> Option<io::Error> {
+        self.state
+            .lock()
+            .expect("write queue poisoned")
+            .error
+            .take()
+    }
+
+    fn take_buffer(&self, capacity: usize) -> Vec<u8> {
+        let mut state = self.state.lock().expect("write queue poisoned");
+        if let Some(mut buf) = state.free_pool.pop() {
+            buf.clear();
+            buf.reserve(capacity);
+            buf
+        } else {
+            Vec::with_capacity(capacity)
+        }
+    }
+
+    /// Enqueues a coalesced write batch, blocking on backpressure when total
+    /// buffered bytes (`in_flight_bytes + local_bytes + data.len()`) exceed
+    /// `max_bytes`. Polls `cancelled` every 20 ms so cancel never deadlocks.
+    ///
+    /// Returns `Ok(None)` when the batch was queued, or `Ok(Some(data))` if
+    /// cancellation interrupted backpressure before queueing so the caller can
+    /// retain the batch for a `RetainStaging` flush or discard it on removal.
+    pub(crate) fn push(
+        &self,
+        offset: u64,
+        data: Vec<u8>,
+        local_bytes: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> io::Result<Option<Vec<u8>>> {
+        if data.is_empty() {
+            return Ok(None);
+        }
+        let batch_len = data.len();
+        let mut state = self.state.lock().expect("write queue poisoned");
+        while !state.aborted
+            && state.error.is_none()
+            && state.in_flight_bytes > 0
+            && state.in_flight_bytes + local_bytes + batch_len > self.max_bytes
+        {
+            if cancelled() {
+                return Ok(Some(data));
+            }
+            state.backpressure_waits += 1;
+            let (next, _) = self
+                .not_full
+                .wait_timeout(state, Duration::from_millis(20))
+                .expect("write queue poisoned");
+            state = next;
+        }
+        if let Some(error) = state.error.as_ref() {
+            return Err(io::Error::new(error.kind(), error.to_string()));
+        }
+        if state.aborted || state.closed {
+            return Ok(Some(data));
+        }
+        state.in_flight_bytes += batch_len;
+        state.peak_buffered_bytes = state
+            .peak_buffered_bytes
+            .max(state.in_flight_bytes + local_bytes);
+        state.pending.push_back(WriteBatch { offset, data });
+        self.not_empty.notify_one();
+        Ok(None)
+    }
+
+    /// Closes the queue gracefully so the disk worker drains all pending
+    /// batches and exits.
+    pub(crate) fn close(&self) {
+        let mut state = self.state.lock().expect("write queue poisoned");
+        state.closed = true;
+        self.not_empty.notify_all();
+    }
+
+    /// Aborts immediately, dropping all unwritten batches and waking any
+    /// backpressured producer (used for `RemoveStaging` cancel).
+    pub(crate) fn abort(&self) {
+        let mut state = self.state.lock().expect("write queue poisoned");
+        state.aborted = true;
+        state.closed = true;
+        state.pending.clear();
+        state.in_flight_bytes = 0;
+        self.not_empty.notify_all();
+        self.not_full.notify_all();
+    }
+
+    /// Returns `(contiguous_prefix, total_written, non_prefix_extents)` of all
+    /// bytes durably written to the OS file handle.
+    pub(crate) fn on_disk_snapshot(&self) -> (u64, u64, Vec<(u64, u64)>) {
+        let state = self.state.lock().expect("write queue poisoned");
+        (
+            state.on_disk.prefix(),
+            state.on_disk.written(),
+            state.on_disk.non_prefix_extents(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stats(&self) -> (usize, u64) {
+        let state = self.state.lock().expect("write queue poisoned");
+        (state.peak_buffered_bytes, state.backpressure_waits)
+    }
+
+    /// Dedicated disk I/O worker thread body. Writes coalesced batches to
+    /// `file`, updates `on_disk`, and drives [`CommitQueue`] hashing and
+    /// periodic checkpoint commits strictly after each write completes.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn run(
+        &self,
+        store: &CheckpointStore,
+        file: &File,
+        commit_queue: &CommitQueue,
+        identity: &Mutex<(Option<String>, Option<u64>)>,
+        source_key: String,
+        hash_pipeline_bytes: u64,
+        checkpoint_bytes: u64,
+        checkpoint_interval: Duration,
+        faults: &dyn FaultInjector,
+    ) {
+        let (mut last_hashed_notify, initial_written) = {
+            let state = self.state.lock().expect("write queue poisoned");
+            (state.on_disk.prefix(), state.on_disk.written())
+        };
+        let mut last_submit = (Instant::now(), initial_written);
+
+        loop {
+            let batch = {
+                let mut state = self.state.lock().expect("write queue poisoned");
+                loop {
+                    if state.aborted {
+                        state.pending.clear();
+                        state.in_flight_bytes = 0;
+                        self.not_full.notify_all();
+                        return;
+                    }
+                    if let Some(batch) = state.pending.pop_front() {
+                        break batch;
+                    }
+                    if state.closed {
+                        return;
+                    }
+                    state = self.not_empty.wait(state).expect("write queue poisoned");
+                }
+            };
+
+            let batch_len = batch.data.len();
+            if let Err(error) = store.write_payload_at(file, batch.offset, &batch.data, faults) {
+                let mut state = self.state.lock().expect("write queue poisoned");
+                state.error = Some(error);
+                state.aborted = true;
+                state.closed = true;
+                state.pending.clear();
+                state.in_flight_bytes = 0;
+                self.not_full.notify_all();
+                return;
+            }
+
+            let mut commit_req: Option<CommitRequest> = None;
+            let mut advance_to: Option<u64> = None;
+            {
+                let mut state = self.state.lock().expect("write queue poisoned");
+                state.in_flight_bytes = state.in_flight_bytes.saturating_sub(batch_len);
+                let mut buf = batch.data;
+                if state.free_pool.len() < MAX_FREE_BUFFERS
+                    && buf.capacity() <= COALESCE_FLUSH_BYTES * 2
+                {
+                    buf.clear();
+                    state.free_pool.push(buf);
+                }
+                if let Err(error) = state.on_disk.record(batch.offset, batch_len) {
+                    state.error = Some(error);
+                    state.aborted = true;
+                    state.closed = true;
+                    state.pending.clear();
+                    state.in_flight_bytes = 0;
+                    self.not_full.notify_all();
+                    return;
+                }
+                let prefix = state.on_disk.prefix();
+                let written = state.on_disk.written();
+                if prefix.saturating_sub(last_hashed_notify) >= hash_pipeline_bytes {
+                    advance_to = Some(prefix);
+                    last_hashed_notify = prefix;
+                }
+                if written.saturating_sub(last_submit.1) >= checkpoint_bytes
+                    && last_submit.0.elapsed() >= checkpoint_interval
+                {
+                    let (etag, total) = identity.lock().expect("identity lock poisoned").clone();
+                    if etag.is_some() {
+                        commit_req = Some(CommitRequest {
+                            prefix,
+                            extents: state.on_disk.non_prefix_extents(),
+                            source_key: source_key.clone(),
+                            strong_etag: etag,
+                            expected_total: total,
+                            persist_small_extents: false,
+                        });
+                        last_submit = (Instant::now(), written);
+                        last_hashed_notify = prefix;
+                    }
+                }
+                self.not_full.notify_all();
+            }
+
+            if let Some(req) = commit_req {
+                commit_queue.submit_commit(req);
+            } else if let Some(prefix) = advance_to {
+                commit_queue.advance_prefix(prefix);
+            }
+        }
+    }
+}
+
+struct LaneBuffer {
+    start: u64,
+    data: Vec<u8>,
+    created_at: Instant,
+}
+
+/// Producer-side per-lane write coalescer owned exclusively by the socket
+/// callback thread (FP-148). Accumulates contiguous 16 KiB callbacks into
+/// 512 KiB batches before handing them off to [`WriteQueue`].
+pub(crate) struct LaneCoalescer<'a> {
+    queue: &'a WriteQueue,
+    buffers: Vec<LaneBuffer>,
+    local_bytes: usize,
+    flush_bytes: usize,
+}
+
+impl<'a> LaneCoalescer<'a> {
+    pub(crate) fn new(queue: &'a WriteQueue, flush_bytes: usize) -> Self {
+        Self {
+            queue,
+            buffers: Vec::new(),
+            local_bytes: 0,
+            flush_bytes: flush_bytes.max(1),
+        }
+    }
+
+    pub(crate) fn enqueue(
+        &mut self,
+        offset: u64,
+        bytes: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> io::Result<()> {
+        self.queue.check_error()?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        if let Some(index) = self
+            .buffers
+            .iter()
+            .position(|buf| buf.start + buf.data.len() as u64 == offset)
+        {
+            self.buffers[index].data.extend_from_slice(bytes);
+            self.local_bytes += bytes.len();
+            if self.buffers[index].data.len() >= self.flush_bytes
+                || self.buffers[index].created_at.elapsed() >= COALESCE_MAX_AGE
+            {
+                self.flush_index(index, cancelled)?;
+            }
+        } else {
+            self.flush_stale(cancelled)?;
+            if self.buffers.len() >= MAX_LANE_BUFFERS {
+                self.flush_largest(cancelled)?;
+            }
+            let capacity = self.flush_bytes.min(bytes.len().max(64 * 1024));
+            let mut data = self.queue.take_buffer(capacity);
+            data.extend_from_slice(bytes);
+            self.local_bytes += bytes.len();
+            self.buffers.push(LaneBuffer {
+                start: offset,
+                data,
+                created_at: Instant::now(),
+            });
+            let last = self.buffers.len() - 1;
+            if self.buffers[last].data.len() >= self.flush_bytes {
+                self.flush_index(last, cancelled)?;
+            }
+        }
+        let local_cap = (self.queue.max_bytes() / 2).max(self.flush_bytes);
+        while self.local_bytes > local_cap && !self.buffers.is_empty() {
+            self.flush_largest(cancelled)?;
+        }
+        Ok(())
+    }
+
+    fn flush_stale(&mut self, cancelled: &dyn Fn() -> bool) -> io::Result<()> {
+        let mut index = 0;
+        while index < self.buffers.len() {
+            if self.buffers[index].created_at.elapsed() >= COALESCE_MAX_AGE {
+                self.flush_index(index, cancelled)?;
+            } else {
+                index += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush_largest(&mut self, cancelled: &dyn Fn() -> bool) -> io::Result<()> {
+        if let Some((index, _)) = self
+            .buffers
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, buf)| buf.data.len())
+        {
+            self.flush_index(index, cancelled)?;
+        }
+        Ok(())
+    }
+
+    fn flush_index(&mut self, index: usize, cancelled: &dyn Fn() -> bool) -> io::Result<()> {
+        let batch = self.buffers.swap_remove(index);
+        let len = batch.data.len();
+        self.local_bytes = self.local_bytes.saturating_sub(len);
+        match self
+            .queue
+            .push(batch.start, batch.data, self.local_bytes, cancelled)?
+        {
+            None => Ok(()),
+            Some(data) => {
+                // Restore the unpushed batch so `RetainStaging` can flush it
+                // cleanly during shutdown while `RemoveStaging` discards it.
+                self.local_bytes += data.len();
+                self.buffers.push(LaneBuffer {
+                    start: batch.start,
+                    data,
+                    created_at: batch.created_at,
+                });
+                Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "write backpressure interrupted by cancellation",
+                ))
+            }
+        }
+    }
+
+    pub(crate) fn flush_all(&mut self, cancelled: &dyn Fn() -> bool) -> io::Result<()> {
+        // Flush in ascending offset order so sequential tails land contiguously.
+        self.buffers.sort_by_key(|buf| buf.start);
+        let drained = std::mem::take(&mut self.buffers);
+        let mut iter = drained.into_iter();
+        while let Some(batch) = iter.next() {
+            self.local_bytes = self.local_bytes.saturating_sub(batch.data.len());
+            if let Some(data) =
+                self.queue
+                    .push(batch.start, batch.data, self.local_bytes, cancelled)?
+            {
+                self.local_bytes += data.len();
+                self.buffers.push(LaneBuffer {
+                    start: batch.start,
+                    data,
+                    created_at: batch.created_at,
+                });
+                // Remaining items in `iter` are still accounted for in `self.local_bytes`.
+                self.buffers.extend(iter);
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "write flush interrupted by cancellation",
+                ));
+            }
+        }
+        self.local_bytes = 0;
+        Ok(())
+    }
+
+    pub(crate) fn discard(&mut self) {
+        self.buffers.clear();
+        self.local_bytes = 0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -918,6 +1386,236 @@ mod tests {
         assert_eq!(
             queue.take_final_digest().unwrap(),
             format!("{:x}", Sha256::digest(&body))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_pipeline_coalesces_writes_and_bounds_memory_under_slow_disk_backpressure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct SlowDisk {
+            writes: AtomicUsize,
+        }
+        impl FaultInjector for SlowDisk {
+            fn check(&self, point: fetchpath_storage::FaultPoint) -> io::Result<()> {
+                if point == fetchpath_storage::FaultPoint::PayloadWrite {
+                    self.writes.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(15));
+                }
+                Ok(())
+            }
+        }
+
+        let body: Vec<u8> = (0..(1024 * 1024_u32))
+            .map(|value| (value % 251) as u8)
+            .collect();
+        let (dir, store, file) = scratch_store("coalesce-backpressure");
+        let faults = SlowDisk {
+            writes: AtomicUsize::new(0),
+        };
+        let commit_queue = CommitQueue::new(0, 0);
+        let max_bytes = 384 * 1024;
+        let flush_bytes = 128 * 1024;
+        let write_queue = WriteQueue::new(0, &[], max_bytes);
+        let identity = Mutex::new((Some("\"v1\"".to_owned()), Some(body.len() as u64)));
+
+        std::thread::scope(|scope| {
+            let commit_worker =
+                scope.spawn(|| commit_queue.run(&store, 0, Sha256::new(), Vec::new(), &faults));
+            let write_worker = scope.spawn(|| {
+                write_queue.run(
+                    &store,
+                    &file,
+                    &commit_queue,
+                    &identity,
+                    "key".into(),
+                    256 * 1024,
+                    64 * 1024,
+                    Duration::from_secs(60),
+                    &faults,
+                )
+            });
+
+            let mut coalescer = LaneCoalescer::new(&write_queue, flush_bytes);
+            // Interleave 4 lanes delivering 16 KiB chunks (64 callbacks total).
+            let quarter = body.len() / 4;
+            let chunk = 16 * 1024;
+            for step in 0..(quarter / chunk) {
+                for lane in 0..4 {
+                    let offset = lane * quarter + step * chunk;
+                    coalescer
+                        .enqueue(offset as u64, &body[offset..offset + chunk], &|| false)
+                        .unwrap();
+                }
+            }
+            coalescer.flush_all(&|| false).unwrap();
+            write_queue.close();
+            write_worker.join().unwrap();
+            let (prefix, written, _) = write_queue.on_disk_snapshot();
+            assert_eq!(prefix, body.len() as u64);
+            assert_eq!(written, body.len() as u64);
+            commit_queue.finish(prefix);
+            commit_worker.join().unwrap();
+        });
+
+        let write_calls = faults.writes.load(Ordering::SeqCst);
+        let (peak_bytes, backpressure_waits) = write_queue.stats();
+        assert!(
+            write_calls <= 16,
+            "64x 16 KiB callbacks should coalesce into <=16 disk writes, got {write_calls}"
+        );
+        assert!(
+            peak_bytes <= max_bytes,
+            "buffered bytes {peak_bytes} exceeded configured cap {max_bytes}"
+        );
+        assert!(
+            backpressure_waits > 0,
+            "slow disk must exert backpressure on fast producer"
+        );
+        assert!(!write_queue.failed());
+        assert!(!commit_queue.failed());
+        assert_eq!(std::fs::read(store.staging()).unwrap(), body);
+        assert_eq!(
+            commit_queue.take_final_digest().unwrap(),
+            format!("{:x}", Sha256::digest(&body))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_pipeline_cancel_unblocks_backpressured_producer_and_quiesces_cleanly() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct BlockingDisk {
+            started: AtomicBool,
+            released: Mutex<bool>,
+            cv: Condvar,
+        }
+        impl FaultInjector for BlockingDisk {
+            fn check(&self, point: fetchpath_storage::FaultPoint) -> io::Result<()> {
+                if point == fetchpath_storage::FaultPoint::PayloadWrite {
+                    self.started.store(true, Ordering::SeqCst);
+                    let mut done = self.released.lock().unwrap();
+                    while !*done {
+                        done = self.cv.wait(done).unwrap();
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        let (dir, store, file) = scratch_store("cancel-backpressure");
+        let faults = BlockingDisk {
+            started: AtomicBool::new(false),
+            released: Mutex::new(false),
+            cv: Condvar::new(),
+        };
+        let commit_queue = CommitQueue::new(0, 0);
+        let write_queue = WriteQueue::new(0, &[], 64 * 1024);
+        let identity = Mutex::new((None, None));
+        let cancelled = AtomicBool::new(false);
+
+        std::thread::scope(|scope| {
+            let write_worker = scope.spawn(|| {
+                write_queue.run(
+                    &store,
+                    &file,
+                    &commit_queue,
+                    &identity,
+                    "key".into(),
+                    256 * 1024,
+                    64 * 1024,
+                    Duration::from_secs(60),
+                    &faults,
+                )
+            });
+            // First batch enters write_payload_at and blocks inside BlockingDisk.
+            write_queue
+                .push(0, vec![1_u8; 64 * 1024], 0, &|| false)
+                .unwrap();
+            while !faults.started.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            // Cancel from another thread shortly after the second batch blocks on backpressure
+            // inside LaneCoalescer; the unpushed batch must be retained (not dropped).
+            let mut coalescer = LaneCoalescer::new(&write_queue, 64 * 1024);
+            let canceller = scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(40));
+                cancelled.store(true, Ordering::SeqCst);
+            });
+            let started_wait = Instant::now();
+            let err = coalescer
+                .enqueue(64 * 1024, &[2_u8; 64 * 1024], &|| {
+                    cancelled.load(Ordering::SeqCst)
+                })
+                .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+            assert!(
+                started_wait.elapsed() < Duration::from_secs(2),
+                "backpressured producer must wake promptly on cancel"
+            );
+            canceller.join().unwrap();
+
+            // Release the disk and flush with `&|| false` (simulating RetainStaging pause):
+            // the interrupted batch is still in the coalescer and reaches disk intact.
+            *faults.released.lock().unwrap() = true;
+            faults.cv.notify_all();
+            coalescer.flush_all(&|| false).unwrap();
+            write_queue.close();
+            write_worker.join().unwrap();
+        });
+
+        let (prefix, written, _) = write_queue.on_disk_snapshot();
+        assert_eq!(prefix, 128 * 1024);
+        assert_eq!(
+            written,
+            128 * 1024,
+            "RetainStaging flush preserves interrupted batch"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn write_pipeline_propagates_storage_full_error() {
+        struct DiskFull;
+        impl FaultInjector for DiskFull {
+            fn check(&self, point: fetchpath_storage::FaultPoint) -> io::Result<()> {
+                if point == fetchpath_storage::FaultPoint::PayloadWrite {
+                    return Err(io::Error::new(io::ErrorKind::StorageFull, "disk full"));
+                }
+                Ok(())
+            }
+        }
+
+        let (dir, store, file) = scratch_store("disk-full");
+        let commit_queue = CommitQueue::new(0, 0);
+        let write_queue = WriteQueue::new(0, &[], 256 * 1024);
+        let identity = Mutex::new((None, None));
+
+        std::thread::scope(|scope| {
+            let write_worker = scope.spawn(|| {
+                write_queue.run(
+                    &store,
+                    &file,
+                    &commit_queue,
+                    &identity,
+                    "key".into(),
+                    256 * 1024,
+                    64 * 1024,
+                    Duration::from_secs(60),
+                    &DiskFull,
+                )
+            });
+            let _ = write_queue.push(0, vec![7_u8; 32 * 1024], 0, &|| false);
+            write_queue.close();
+            write_worker.join().unwrap();
+        });
+
+        assert!(write_queue.failed());
+        assert_eq!(
+            write_queue.take_error().unwrap().kind(),
+            io::ErrorKind::StorageFull
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -556,6 +556,64 @@ impl CheckpointStore {
     }
 }
 
+/// Enables or disables NTFS sparse allocation on `file` (`FSCTL_SET_SPARSE`).
+///
+/// Best-effort optimization (FP-148): prevents NTFS from synchronously
+/// zero-filling unwritten gaps when out-of-order segments land ahead of the
+/// current valid data length. Returns `Ok(false)` on non-Windows platforms or
+/// on filesystems that do not support sparse files (such as FAT32/exFAT), and
+/// clears the sparse attribute cleanly once all bytes have been written.
+pub fn set_sparse(file: &File, sparse: bool) -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::IO::DeviceIoControl;
+        use windows_sys::Win32::System::Ioctl::{FILE_SET_SPARSE_BUFFER, FSCTL_SET_SPARSE};
+
+        let mut buffer = FILE_SET_SPARSE_BUFFER { SetSparse: sparse };
+        let mut bytes_returned: u32 = 0;
+        // SAFETY: `file` owns a live Win32 file handle for the duration of this
+        // call, `buffer` is a valid initialized `FILE_SET_SPARSE_BUFFER` sized
+        // by `size_of`, and `bytes_returned` is a valid stack output pointer.
+        let ok = unsafe {
+            DeviceIoControl(
+                file.as_raw_handle() as HANDLE,
+                FSCTL_SET_SPARSE,
+                (&raw mut buffer).cast(),
+                std::mem::size_of::<FILE_SET_SPARSE_BUFFER>() as u32,
+                std::ptr::null_mut(),
+                0,
+                &raw mut bytes_returned,
+                std::ptr::null_mut(),
+            )
+        };
+        Ok(ok != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (file, sparse);
+        Ok(false)
+    }
+}
+
+/// Reports whether `file` currently has the Windows `FILE_ATTRIBUTE_SPARSE_FILE`
+/// attribute set (`false` on non-Windows platforms).
+pub fn is_sparse(file: &File) -> io::Result<bool> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_SPARSE_FILE;
+
+        Ok(file.metadata()?.file_attributes() & FILE_ATTRIBUTE_SPARSE_FILE != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = file;
+        Ok(false)
+    }
+}
+
 /// Writes all of `bytes` at `offset`, looping over short writes.
 pub fn write_all_at(file: &File, mut offset: u64, mut bytes: &[u8]) -> io::Result<()> {
     while !bytes.is_empty() {
@@ -1189,6 +1247,47 @@ mod tests {
         bad_intent.phase = CheckpointPhase::PublicationIntent;
         assert!(store.commit(bad_intent, &NoFaults).is_err());
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sparse_staging_flag_enables_and_clears_after_full_write() {
+        let dir = temp_dir("sparse");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        let file = store.open_staging().unwrap();
+        let enabled = set_sparse(&file, true).unwrap();
+        #[cfg(windows)]
+        {
+            if enabled {
+                assert!(is_sparse(&file).unwrap());
+            }
+        }
+        // Write out of order, then fill the hole, then clear sparse.
+        store
+            .write_payload_at(&file, 64 * 1024, &[2_u8; 64 * 1024], &NoFaults)
+            .unwrap();
+        store
+            .write_payload_at(&file, 0, &[1_u8; 64 * 1024], &NoFaults)
+            .unwrap();
+        let cleared = set_sparse(&file, false).unwrap();
+        #[cfg(windows)]
+        {
+            if enabled && cleared {
+                assert!(!is_sparse(&file).unwrap());
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(!enabled);
+            assert!(!cleared);
+            assert!(!is_sparse(&file).unwrap());
+        }
+        drop(file);
+        let bytes = fs::read(store.staging()).unwrap();
+        assert_eq!(bytes.len(), 128 * 1024);
+        assert!(bytes[..64 * 1024].iter().all(|&b| b == 1));
+        assert!(bytes[64 * 1024..].iter().all(|&b| b == 2));
         fs::remove_dir_all(dir).unwrap();
     }
 }
