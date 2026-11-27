@@ -8,7 +8,7 @@ use fetchpath_http::{
     TransferError, TransferLimits, transfer_resumable,
 };
 use fetchpath_storage::{
-    CheckpointPhase, CheckpointRecord, CheckpointStore, FaultInjector, NoFaults,
+    CheckpointPhase, CheckpointRecord, CheckpointStore, CompletedExtent, FaultInjector, NoFaults,
     PublicationRecovery,
 };
 use sha2::{Digest, Sha256};
@@ -151,9 +151,11 @@ pub fn download_with_faults(
     let mut recovered = recover_download(&store, latest.as_ref())?;
     let mut expected_total = latest
         .as_ref()
-        .filter(|_| recovered.offset > 0)
+        .filter(|_| recovered.has_retained_bytes())
         .and_then(|record| record.expected_total);
-    request.cancellation.set_received(recovered.offset);
+    request
+        .cancellation
+        .set_received(recovered.retained_bytes());
     // A recovered checkpoint already carries the length the source stated on the
     // first attempt, so a resumed transfer shows its size before the first byte
     // of this attempt arrives instead of blanking out and filling in later.
@@ -172,7 +174,7 @@ pub fn download_with_faults(
     let attempt = loop {
         // A complete retained prefix was already validated against disk in
         // `recover_download`; reuse its verified digest without re-reading.
-        if expected_total == Some(recovered.offset) {
+        if expected_total == Some(recovered.offset) && recovered.extents.is_empty() {
             let digest = recovered
                 .verified_digest
                 .take()
@@ -190,11 +192,13 @@ pub fn download_with_faults(
         }
         attempts += 1;
         let attempt_hasher = std::mem::replace(&mut recovered.hasher, Sha256::new());
+        let attempt_extents = std::mem::take(&mut recovered.extents);
         let failure = match perform_scheduled_attempt(
             &request,
             &store,
             &recovered.file,
             recovered.offset,
+            attempt_extents,
             recovered.validator.as_deref(),
             expected_total,
             attempt_hasher,
@@ -212,6 +216,7 @@ pub fn download_with_faults(
                         .reset()
                         .map_err(|error| storage_error(&store, error))?,
                     offset: 0,
+                    extents: Vec::new(),
                     validator: None,
                     hasher: Sha256::new(),
                     verified_digest: None,
@@ -220,16 +225,18 @@ pub fn download_with_faults(
                 request.cancellation.set_received(0);
             }
             CallbackFailure::Transport(_) if attempts < 2 => {
-                // Resume from the committed prefix, or from zero when there is none.
+                // Resume from the committed prefix + extents, or from zero when there is none.
                 let latest = store
                     .latest()
                     .map_err(|error| storage_error(&store, error))?;
                 recovered = recover_download(&store, latest.as_ref())?;
                 expected_total = latest
                     .as_ref()
-                    .filter(|_| recovered.offset > 0)
+                    .filter(|_| recovered.has_retained_bytes())
                     .and_then(|record| record.expected_total);
-                request.cancellation.set_received(recovered.offset);
+                request
+                    .cancellation
+                    .set_received(recovered.retained_bytes());
             }
             failure => return Err(map_attempt_failure(&request, &store, failure)),
         }
@@ -274,9 +281,25 @@ pub fn download_with_faults(
 struct RecoveredStaging {
     file: File,
     offset: u64,
+    extents: Vec<CompletedExtent>,
     validator: Option<String>,
     hasher: Sha256,
     verified_digest: Option<String>,
+}
+
+impl RecoveredStaging {
+    fn retained_bytes(&self) -> u64 {
+        self.offset
+            + self
+                .extents
+                .iter()
+                .map(|extent| extent.end.saturating_sub(extent.start))
+                .sum::<u64>()
+    }
+
+    fn has_retained_bytes(&self) -> bool {
+        self.offset > 0 || !self.extents.is_empty()
+    }
 }
 
 fn recover_download(
@@ -286,6 +309,7 @@ fn recover_download(
     let empty = |file| RecoveredStaging {
         file,
         offset: 0,
+        extents: Vec::new(),
         validator: None,
         hasher: Sha256::new(),
         verified_digest: None,
@@ -296,14 +320,15 @@ fn recover_download(
             .map(empty)
             .map_err(|error| storage_error(store, error));
     };
-    let hasher = if record.phase == CheckpointPhase::Downloading && record.strong_etag.is_some() {
+    let validated = if record.phase == CheckpointPhase::Downloading && record.strong_etag.is_some()
+    {
         store
-            .validate_staging_hasher(record)
+            .validate_staging_state(record)
             .map_err(|error| storage_error(store, error))?
     } else {
         None
     };
-    let Some(hasher) = hasher else {
+    let Some(validated) = validated else {
         return store
             .reset()
             .map(empty)
@@ -314,23 +339,25 @@ fn recover_download(
         .map(|file| RecoveredStaging {
             file,
             offset: record.committed_len,
+            extents: validated.extents,
             validator: record.strong_etag.clone(),
-            hasher,
+            hasher: validated.prefix_hasher,
             verified_digest: Some(record.local_sha256.clone()),
         })
         .map_err(|error| storage_error(store, error))
 }
 
-/// Downloads the file, or the rest of it after `offset`, with the
-/// stream-first scheduler. Lanes deliver bytes out of order; they are written
-/// where they belong and folded into the prefix digest asynchronously on the
-/// commit/hasher worker thread (FP-146).
+/// Downloads the file, or the missing gaps after `offset` and `initial_extents`,
+/// with the stream-first scheduler. Lanes deliver bytes out of order; they are
+/// written where they belong and folded into the prefix digest and v2 extent
+/// checkpoints asynchronously on the commit/hasher worker thread (FP-146, FP-147).
 #[allow(clippy::too_many_arguments)]
 fn perform_scheduled_attempt(
     request: &DownloadRequest,
     store: &CheckpointStore,
     file: &File,
     offset: u64,
+    initial_extents: Vec<CompletedExtent>,
     validator: Option<&str>,
     expected_total: Option<u64>,
     initial_hasher: Sha256,
@@ -341,7 +368,7 @@ fn perform_scheduled_attempt(
     if let Some(connections) = request.max_connections {
         limits.max_concurrency = connections.clamp(1, limits.max_active_requests);
     }
-    if plain_restart && offset == 0 {
+    if plain_restart && offset == 0 && initial_extents.is_empty() {
         // Restarting after an identity change: one plain GET, no ranges. A
         // later attempt that resumes from a checkpoint asks for a range again.
         limits.scheduler = Scheduler::Plain;
@@ -351,24 +378,32 @@ fn perform_scheduled_attempt(
         referer: request.context.referer.clone(),
         http2_prior_knowledge: false,
     };
-    let resume = match (offset > 0, validator) {
+    let extent_ranges: Vec<(u64, u64)> = initial_extents
+        .iter()
+        .map(|extent| (extent.start, extent.end))
+        .collect();
+    let has_retained = offset > 0 || !extent_ranges.is_empty();
+    let resume = match (has_retained, validator) {
         (true, Some(strong_etag)) => Some(ResumePoint {
             offset,
             strong_etag: strong_etag.to_owned(),
             expected_total,
+            completed_extents: extent_ranges.clone(),
         }),
         _ => None,
     };
-    let tracker = RefCell::new(PrefixTracker::new(offset));
+    let tracker = RefCell::new(PrefixTracker::with_extents(offset, &extent_ranges));
+    let initial_written = tracker.borrow().written();
     let key = source_key_with_context(&request.url, &request.context.fingerprint());
-    let queue = CommitQueue::new(offset);
+    let queue = CommitQueue::new(offset, initial_written);
     // The validator and total the newest chunk carried, for the final commit.
     let identity = RefCell::new((validator.map(str::to_owned), expected_total));
-    let mut last_submit = (Instant::now(), offset);
+    let mut last_submit = (Instant::now(), initial_written);
     let mut last_hashed_notify = offset;
 
     let result = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| queue.run(store, offset, initial_hasher, faults));
+        let worker =
+            scope.spawn(|| queue.run(store, offset, initial_hasher, initial_extents, faults));
         let result = transfer_resumable(
             &request.url,
             &context,
@@ -388,7 +423,8 @@ fn perform_scheduled_attempt(
                 store.write_payload_at(file, chunk.offset, chunk.bytes, faults)?;
                 tracker.record(chunk.offset, chunk.bytes.len())?;
                 let prefix = tracker.prefix();
-                request.cancellation.set_received(prefix);
+                let written = tracker.written();
+                request.cancellation.set_received(written);
                 request.cancellation.set_total(chunk.total_bytes);
                 if prefix.saturating_sub(last_hashed_notify) >= HASH_PIPELINE_BYTES {
                     queue.advance_prefix(prefix);
@@ -401,17 +437,21 @@ fn perform_scheduled_attempt(
                     }
                     identity.1 = chunk.total_bytes.or(identity.1);
                     // Checkpoint when a second has passed and 64 KiB more
-                    // are contiguous. The background thread hashes, fsyncs, and commits.
-                    if prefix - last_submit.1 >= CHECKPOINT_BYTES
+                    // bytes have landed across any lane. The background thread
+                    // hashes the prefix and new out-of-order extents, fsyncs,
+                    // and commits checkpoint format v2.
+                    if written - last_submit.1 >= CHECKPOINT_BYTES
                         && last_submit.0.elapsed() >= CHECKPOINT_INTERVAL
                     {
                         queue.submit_commit(CommitRequest {
                             prefix,
+                            extents: tracker.non_prefix_extents(),
                             source_key: key.clone(),
                             strong_etag: identity.0.clone(),
                             expected_total: identity.1,
+                            persist_small_extents: false,
                         });
-                        last_submit = (Instant::now(), prefix);
+                        last_submit = (Instant::now(), written);
                         last_hashed_notify = prefix;
                     }
                 }
@@ -423,11 +463,29 @@ fn perform_scheduled_attempt(
             && request.cancel_cleanup == CancelCleanup::RemoveStaging;
         if remove_cancel {
             queue.abort();
-        } else if result.is_ok()
-            || (matches!(result, Err(TransferError::Cancelled))
-                && request.cancel_cleanup == CancelCleanup::RetainStaging)
-        {
+        } else if result.is_ok() {
             queue.finish(tracker.borrow().prefix());
+        } else if matches!(result, Err(TransferError::Cancelled))
+            && request.cancel_cleanup == CancelCleanup::RetainStaging
+        {
+            // A pause keeps the staging file: commit both the contiguous prefix
+            // and all completed out-of-order extents before closing the worker.
+            let tracker = tracker.borrow();
+            let (etag, total) = identity.borrow().clone();
+            if let Some(etag) = etag
+                && (tracker.prefix() > queue.committed()
+                    || tracker.written() > queue.committed_bytes())
+            {
+                queue.submit_commit(CommitRequest {
+                    prefix: tracker.prefix(),
+                    extents: tracker.non_prefix_extents(),
+                    source_key: key.clone(),
+                    strong_etag: Some(etag),
+                    expected_total: total,
+                    persist_small_extents: true,
+                });
+            }
+            queue.close();
         } else {
             queue.close();
         }
@@ -478,36 +536,7 @@ fn perform_scheduled_attempt(
                 digest,
             })
         }
-        Err(TransferError::Cancelled) => {
-            // Stop lanes (done), sync, commit the prefix. A pause keeps the
-            // staging file, so what it holds is worth committing; a cancel
-            // that removes it is not.
-            if request.cancel_cleanup == CancelCleanup::RetainStaging {
-                let tracker = tracker.borrow();
-                let (etag, total) = identity.borrow().clone();
-                if let Some(etag) = etag
-                    && tracker.prefix() > queue.committed()
-                    && let Some(digest) = queue.take_final_digest()
-                {
-                    store
-                        .sync_payload_shared(file, faults)
-                        .map_err(CallbackFailure::Storage)?;
-                    store
-                        .commit(
-                            CheckpointRecord::downloading(
-                                key,
-                                tracker.prefix(),
-                                digest,
-                                Some(etag),
-                                total,
-                            ),
-                            faults,
-                        )
-                        .map_err(CallbackFailure::Storage)?;
-                }
-            }
-            Err(CallbackFailure::Cancelled)
-        }
+        Err(TransferError::Cancelled) => Err(CallbackFailure::Cancelled),
         Err(TransferError::Sink(error)) => Err(CallbackFailure::Storage(error)),
         Err(TransferError::IdentityChanged(_)) => Err(CallbackFailure::RestartRequired),
         Err(TransferError::Rejected(detail)) => Err(CallbackFailure::Rejected(detail)),
@@ -1638,8 +1667,9 @@ mod tests {
                     let mut seen = self.seen.lock().unwrap();
                     if seen.is_none() {
                         // Read metadata before graceful thread draining can commit
-                        // more. Count every on-disk byte, including retired lanes.
-                        let committed = self.store.latest()?.map_or(0, |r| r.committed_len);
+                        // more. Count every on-disk byte, including retired lanes,
+                        // against all durably retained prefix + v2 extent bytes.
+                        let committed = self.store.latest()?.map_or(0, |r| r.retained_bytes());
                         let written = fs::read(self.store.staging())?
                             .into_iter()
                             .filter(|byte| *byte == 1)
@@ -1850,5 +1880,153 @@ mod tests {
         );
         assert!(!destination.exists());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn out_of_order_extents_survive_pause_and_resume_only_missing_gaps() {
+        let dir = temp_dir("pause-v2-extents");
+        let destination = dir.join("file.bin");
+        let seg = segment();
+        let body = patterned(8 * seg);
+        let served = body.clone();
+        let server = range_server(move |req| {
+            let mut answer = honest(&served, "\"v1\"", req);
+            if req.index == 0 {
+                // Keep lane 0 slower so lane 1 finishes out-of-order bytes ahead of prefix.
+                answer.chunk = 32 * 1024;
+                answer.pace = Duration::from_millis(8);
+            } else {
+                answer.chunk = 64 * 1024;
+                answer.pace = Duration::from_millis(1);
+            }
+            answer
+        });
+
+        let mut first = request(server.url.clone(), destination.clone());
+        first.cancel_cleanup = CancelCleanup::RetainStaging;
+        let token = first.cancellation.clone();
+        let worker = thread::spawn(move || download(first));
+        while token.received() < (3 * seg) as u64 {
+            thread::sleep(Duration::from_millis(5));
+        }
+        token.cancel();
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(DownloadError::Cancelled { staging: Some(_) })
+        ));
+
+        let store = CheckpointStore::new(&destination, &crate::checkpoint::source_key(&server.url))
+            .unwrap();
+        let saved = store
+            .latest()
+            .unwrap()
+            .expect("pause must commit v2 checkpoint");
+        assert!(
+            !saved.extents.is_empty(),
+            "out-of-order extents must be persisted on pause: {saved:?}"
+        );
+        assert!(saved.retained_bytes() > saved.committed_len);
+        assert!(store.validate_staging_state(&saved).unwrap().is_some());
+
+        let before_resume = server.requests().len();
+        let resumed = download(checked(
+            server.url.clone(),
+            destination.clone(),
+            &sha256_hex(&body),
+        ))
+        .unwrap();
+        assert_eq!(resumed.bytes, body.len() as u64);
+        assert_eq!(fs::read(&destination).unwrap(), body);
+
+        // Verify post-resume ranged requests never start inside an already-committed extent.
+        let post_resume = &server.requests()[before_resume..];
+        assert!(!post_resume.is_empty());
+        for raw in post_resume {
+            if let Some(start) = raw.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if !name.eq_ignore_ascii_case("range") {
+                    return None;
+                }
+                value
+                    .trim()
+                    .strip_prefix("bytes=")?
+                    .split('-')
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            }) {
+                for extent in &saved.extents {
+                    assert!(
+                        !(start >= extent.start && start < extent.end),
+                        "resume re-requested byte {start} inside retained extent {extent:?}"
+                    );
+                }
+            }
+        }
+        drop(server);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn resuming_at_zero_with_v2_extents_skips_retained_range_and_restarts_on_etag_change() {
+        let seg = segment();
+        for etag_changed in [false, true] {
+            let dir = temp_dir(if etag_changed {
+                "zero-extents-changed"
+            } else {
+                "zero-extents-same"
+            });
+            let destination = dir.join("file.bin");
+            let old_body = patterned(6 * seg);
+            let new_body: Vec<u8> = old_body.iter().map(|b| b.wrapping_add(3)).collect();
+            let served = if etag_changed {
+                new_body.clone()
+            } else {
+                old_body.clone()
+            };
+            let etag = if etag_changed { "\"v2\"" } else { "\"v1\"" };
+            let server = range_server(move |req| {
+                let mut answer = honest(&served, etag, req);
+                answer.chunk = 64 * 1024;
+                answer.pace = Duration::from_millis(1);
+                answer
+            });
+
+            let store =
+                CheckpointStore::new(&destination, &crate::checkpoint::source_key(&server.url))
+                    .unwrap();
+            let file = store.open_staging().unwrap();
+            let ext_start = (2 * seg) as u64;
+            let ext_end = (4 * seg) as u64;
+            store
+                .write_payload_at(&file, ext_start, &old_body[2 * seg..4 * seg], &NoFaults)
+                .unwrap();
+            drop(file);
+            let v2 = CheckpointRecord::downloading_with_extents(
+                crate::checkpoint::source_key(&server.url),
+                0,
+                sha256_hex(&[]),
+                Some("\"v1\"".into()),
+                Some(old_body.len() as u64),
+                vec![CompletedExtent {
+                    start: ext_start,
+                    end: ext_end,
+                    sha256: sha256_hex(&old_body[2 * seg..4 * seg]),
+                }],
+            );
+            store.commit(v2, &NoFaults).unwrap();
+
+            let expected = if etag_changed { &new_body } else { &old_body };
+            let result = download(checked(
+                server.url.clone(),
+                destination.clone(),
+                &sha256_hex(expected),
+            ))
+            .unwrap();
+            assert_eq!(result.bytes, expected.len() as u64);
+            assert_eq!(fs::read(&destination).unwrap(), *expected);
+            drop(server);
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 }

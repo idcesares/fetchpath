@@ -35,8 +35,19 @@ async function checkpoint() {
     const marker = text.lastIndexOf('checksum=');
     if (marker < 0 || createHash('sha256').update(text.slice(0, marker)).digest('hex') !== text.slice(marker + 9).trim()) continue;
     const values = Object.fromEntries(text.split('\n').map(line => line.split('=')));
+    const extents = (values.extents ?? '').split(',').filter(Boolean).map(entry => {
+      const [start, end] = entry.split(':');
+      return [Number(start), Number(end)];
+    });
+    const committed = Number(values.committed_len);
+    const extentBytes = extents.reduce((sum, [start, end]) => sum + Math.max(0, end - start), 0);
     if (!latest || Number(values.generation) > latest.generation) {
-      latest = { generation: Number(values.generation), committed: Number(values.committed_len) };
+      latest = {
+        generation: Number(values.generation),
+        committed,
+        retained: committed + extentBytes,
+        extentCount: extents.length,
+      };
     }
   }
   return latest;
@@ -102,7 +113,7 @@ try {
   const firstRange = resumed.find(r => r.status === 206)?.range;
   const resumeOffset = Number(/^bytes=(\d+)-/.exec(firstRange ?? '')?.[1] ?? 0);
   const elapsedS = (Date.now() - began) / 1000;
-  const lossUpperBound = Math.max(0, bytesServed - afterKill.committed);
+  const lossUpperBound = Math.max(0, bytesServed - afterKill.retained);
   const result = {
     profile: '256 MiB, per-connection 8 MiB/s, process killed after a durable checkpoint',
     method: 'SIGKILL/TerminateProcess of explicitly spawned scratch engine; no graceful commit drain',

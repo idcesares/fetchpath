@@ -12,6 +12,7 @@ pub(crate) struct Frontier {
 }
 
 impl Frontier {
+    #[cfg(test)]
     pub(crate) fn new(start: u64, end: u64) -> Self {
         let mut frontier = Self::default();
         frontier.insert(start, end);

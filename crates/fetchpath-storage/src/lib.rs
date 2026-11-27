@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION_V1: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FaultPoint {
@@ -38,6 +39,24 @@ pub enum CheckpointPhase {
     PublicationIntent,
 }
 
+/// A verified completed byte range `[start, end)` stored in staging strictly
+/// past the contiguous prefix `[0, committed_len)`, protected by its own
+/// SHA-256 digest (Checkpoint format v2, FP-147).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedExtent {
+    pub start: u64,
+    pub end: u64,
+    pub sha256: String,
+}
+
+/// Verified staging state returned by [`CheckpointStore::validate_staging_state`].
+pub struct ValidatedStaging {
+    /// Live SHA-256 state over `[0, record.committed_len)`.
+    pub prefix_hasher: Sha256,
+    /// Verified completed non-contiguous extents strictly past `committed_len`.
+    pub extents: Vec<CompletedExtent>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointRecord {
     pub generation: u64,
@@ -47,6 +66,9 @@ pub struct CheckpointRecord {
     pub strong_etag: Option<String>,
     pub expected_total: Option<u64>,
     pub phase: CheckpointPhase,
+    /// Sorted, non-overlapping completed extents strictly past `committed_len`.
+    /// Always empty for v1 checkpoints and for [`CheckpointPhase::PublicationIntent`].
+    pub extents: Vec<CompletedExtent>,
 }
 
 impl CheckpointRecord {
@@ -57,6 +79,24 @@ impl CheckpointRecord {
         strong_etag: Option<String>,
         expected_total: Option<u64>,
     ) -> Self {
+        Self::downloading_with_extents(
+            source_key,
+            committed_len,
+            local_sha256,
+            strong_etag,
+            expected_total,
+            Vec::new(),
+        )
+    }
+
+    pub fn downloading_with_extents(
+        source_key: String,
+        committed_len: u64,
+        local_sha256: String,
+        strong_etag: Option<String>,
+        expected_total: Option<u64>,
+        extents: Vec<CompletedExtent>,
+    ) -> Self {
         Self {
             generation: 0,
             source_key,
@@ -65,7 +105,19 @@ impl CheckpointRecord {
             strong_etag,
             expected_total,
             phase: CheckpointPhase::Downloading,
+            extents,
         }
+    }
+
+    /// Total verified bytes retained in staging across the contiguous prefix
+    /// and all committed out-of-order extents.
+    pub fn retained_bytes(&self) -> u64 {
+        self.committed_len
+            + self
+                .extents
+                .iter()
+                .map(|extent| extent.end.saturating_sub(extent.start))
+                .sum::<u64>()
     }
 }
 
@@ -251,6 +303,7 @@ impl CheckpointStore {
                 "checkpoint source key does not match store",
             ));
         }
+        validate_record_invariants(&record)?;
         let committed = self
             .parent
             .join(format!("{}{}", self.metadata_prefix, record.generation));
@@ -344,14 +397,30 @@ impl CheckpointStore {
     }
 
     pub fn validate_staging(&self, record: &CheckpointRecord) -> io::Result<bool> {
-        Ok(self.validate_staging_hasher(record)?.is_some())
+        Ok(self.validate_staging_state(record)?.is_some())
     }
 
     /// Validates retained staging bytes against `record` and returns the
     /// live `Sha256` state over `[0, record.committed_len)` so a resumed
     /// transfer can extend it without re-reading the prefix a second time.
     pub fn validate_staging_hasher(&self, record: &CheckpointRecord) -> io::Result<Option<Sha256>> {
-        let mut file = match OpenOptions::new()
+        Ok(self
+            .validate_staging_state(record)?
+            .map(|state| state.prefix_hasher))
+    }
+
+    /// Validates both the contiguous prefix `[0, record.committed_len)` and
+    /// every committed out-of-order extent in `record.extents`, returning the
+    /// live prefix `Sha256` state and verified extents. Truncates only
+    /// uncommitted trailing bytes past the highest committed offset.
+    pub fn validate_staging_state(
+        &self,
+        record: &CheckpointRecord,
+    ) -> io::Result<Option<ValidatedStaging>> {
+        if validate_record_invariants(record).is_err() {
+            return Ok(None);
+        }
+        let file = match OpenOptions::new()
             .read(true)
             .write(true)
             .open(&self.staging)
@@ -360,12 +429,29 @@ impl CheckpointStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        if file.metadata()?.len() < record.committed_len {
+        let max_end = record
+            .extents
+            .last()
+            .map_or(record.committed_len, |extent| extent.end)
+            .max(record.committed_len);
+        if file.metadata()?.len() < max_end {
             return Ok(None);
         }
-        file.set_len(record.committed_len)?;
-        let (digest, hasher) = hash_reader_state(&mut file)?;
-        Ok((digest == record.local_sha256).then_some(hasher))
+        file.set_len(max_end)?;
+        let (prefix_digest, prefix_hasher) = hash_range_state(&file, 0, record.committed_len)?;
+        if prefix_digest != record.local_sha256 {
+            return Ok(None);
+        }
+        for extent in &record.extents {
+            let (digest, _) = hash_range_state(&file, extent.start, extent.end)?;
+            if digest != extent.sha256 {
+                return Ok(None);
+            }
+        }
+        Ok(Some(ValidatedStaging {
+            prefix_hasher,
+            extents: record.extents.clone(),
+        }))
     }
 
     pub fn reconcile_publication(
@@ -530,13 +616,142 @@ fn hash_reader_state(reader: &mut impl Read) -> io::Result<(String, Sha256)> {
     Ok((digest, hasher))
 }
 
+fn hash_range_state(file: &File, start: u64, end: u64) -> io::Result<(String, Sha256)> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut pos = start;
+    while pos < end {
+        let count = (end - pos).min(buffer.len() as u64) as usize;
+        read_exact_at(file, pos, &mut buffer[..count])?;
+        hasher.update(&buffer[..count]);
+        pos += count as u64;
+    }
+    let digest = format!("{:x}", hasher.clone().finalize());
+    Ok((digest, hasher))
+}
+
+fn is_hex_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn validate_record_invariants(record: &CheckpointRecord) -> io::Result<()> {
+    if !is_hex_sha256(&record.local_sha256) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid checkpoint local_sha256",
+        ));
+    }
+    if record.phase == CheckpointPhase::PublicationIntent && !record.extents.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "publication intent cannot carry non-contiguous extents",
+        ));
+    }
+    if record
+        .expected_total
+        .is_some_and(|total| record.committed_len > total)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "committed_len exceeds expected_total",
+        ));
+    }
+    let mut cursor = record.committed_len;
+    for (index, extent) in record.extents.iter().enumerate() {
+        if extent.start >= extent.end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "checkpoint extent must be non-empty",
+            ));
+        }
+        if index == 0 && extent.start <= record.committed_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "checkpoint extent must start strictly past committed_len",
+            ));
+        }
+        if index > 0 && extent.start < cursor {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "checkpoint extents must be sorted and non-overlapping",
+            ));
+        }
+        if record
+            .expected_total
+            .is_some_and(|total| extent.end > total)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "checkpoint extent exceeds expected_total",
+            ));
+        }
+        if !is_hex_sha256(&extent.sha256) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid checkpoint extent sha256",
+            ));
+        }
+        cursor = extent.end;
+    }
+    Ok(())
+}
+
+fn encode_extents(extents: &[CompletedExtent]) -> String {
+    let mut out = String::new();
+    for (index, extent) in extents.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{}:{}:{}",
+            extent.start, extent.end, extent.sha256
+        ));
+    }
+    out
+}
+
+fn decode_extents(value: &str) -> io::Result<Vec<CompletedExtent>> {
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut extents = Vec::new();
+    for entry in value.split(',') {
+        let mut parts = entry.split(':');
+        let start = parts
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing extent start"))?;
+        let end = parts
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing extent end"))?;
+        let sha256 = parts
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing extent sha256"))?;
+        if parts.next().is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed checkpoint extent entry",
+            ));
+        }
+        extents.push(CompletedExtent {
+            start: parse_u64("extent.start", start)?,
+            end: parse_u64("extent.end", end)?,
+            sha256: sha256.to_owned(),
+        });
+    }
+    Ok(extents)
+}
+
 fn encode_record(record: &CheckpointRecord) -> Vec<u8> {
     let phase = match record.phase {
         CheckpointPhase::Downloading => "downloading",
         CheckpointPhase::PublicationIntent => "publication_intent",
     };
+    let extents = encode_extents(&record.extents);
     let mut body = format!(
-        "version={FORMAT_VERSION}\ngeneration={}\nsource_key={}\ncommitted_len={}\nlocal_sha256={}\nstrong_etag={}\nexpected_total={}\nphase={phase}\n",
+        "version={FORMAT_VERSION}\ngeneration={}\nsource_key={}\ncommitted_len={}\nlocal_sha256={}\nstrong_etag={}\nexpected_total={}\nphase={phase}\nextents={extents}\n",
         record.generation,
         record.source_key,
         record.committed_len,
@@ -584,12 +799,19 @@ fn decode_record(bytes: &[u8]) -> io::Result<CheckpointRecord> {
             .copied()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("missing {name}")))
     };
-    if required("version")?.parse::<u32>().ok() != Some(FORMAT_VERSION) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "unsupported checkpoint version",
-        ));
-    }
+    let version = required("version")?
+        .parse::<u32>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid checkpoint version"))?;
+    let extents = match version {
+        FORMAT_VERSION_V1 => Vec::new(),
+        FORMAT_VERSION => decode_extents(required("extents")?)?,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported checkpoint version",
+            ));
+        }
+    };
     let strong_etag = match required("strong_etag")? {
         "" => None,
         encoded => Some(hex_decode(encoded)?),
@@ -608,7 +830,7 @@ fn decode_record(bytes: &[u8]) -> io::Result<CheckpointRecord> {
             ));
         }
     };
-    Ok(CheckpointRecord {
+    let record = CheckpointRecord {
         generation: parse_u64("generation", required("generation")?)?,
         source_key: required("source_key")?.to_owned(),
         committed_len: parse_u64("committed_len", required("committed_len")?)?,
@@ -616,7 +838,10 @@ fn decode_record(bytes: &[u8]) -> io::Result<CheckpointRecord> {
         strong_etag,
         expected_total,
         phase,
-    })
+        extents,
+    };
+    validate_record_invariants(&record)?;
+    Ok(record)
 }
 
 fn parse_u64(name: &str, value: &str) -> io::Result<u64> {
@@ -848,6 +1073,122 @@ mod tests {
         );
         assert_eq!(fs::read(&destination).unwrap(), full);
         assert!(!store.staging().exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn v1_checkpoints_load_cleanly_and_upgrade_to_v2_on_commit() {
+        let dir = temp_dir("v1-upgrade");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        let bytes = b"legacy v1 prefix";
+        fs::write(store.staging(), bytes).unwrap();
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        let body = format!(
+            "version=1\ngeneration=3\nsource_key=source\ncommitted_len={}\nlocal_sha256={digest}\nstrong_etag={}\nexpected_total=64\nphase=downloading\n",
+            bytes.len(),
+            hex_encode("\"v1\""),
+        );
+        let checksum = format!("{:x}", Sha256::digest(body.as_bytes()));
+        let v1_path = dir.join(format!("{}3", store.metadata_prefix));
+        fs::write(&v1_path, format!("{body}checksum={checksum}\n")).unwrap();
+
+        let loaded = store.latest().unwrap().expect("v1 checkpoint must load");
+        assert_eq!(loaded.generation, 3);
+        assert_eq!(loaded.committed_len, bytes.len() as u64);
+        assert!(loaded.extents.is_empty());
+        assert!(store.validate_staging_state(&loaded).unwrap().is_some());
+
+        let upgraded = store.commit(record("source", bytes), &NoFaults).unwrap();
+        assert_eq!(upgraded.generation, 4);
+        let raw_v2 = fs::read_to_string(dir.join(format!("{}4", store.metadata_prefix))).unwrap();
+        assert!(raw_v2.starts_with("version=2\n"));
+        assert!(raw_v2.contains("\nextents=\n"));
+        assert_eq!(store.latest().unwrap(), Some(upgraded));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn v2_extent_checkpoints_validate_preserve_extents_and_reject_corruption() {
+        let dir = temp_dir("v2-extents");
+        let destination = dir.join("file.bin");
+        let store = CheckpointStore::new(&destination, "source").unwrap();
+        let file = store.open_staging().unwrap();
+        let prefix = b"0123456789";
+        let ext_a = b"abcdefghijklmno";
+        let ext_b = b"ABCDEFGHIJKLMNO";
+        store.write_payload_at(&file, 0, prefix, &NoFaults).unwrap();
+        store.write_payload_at(&file, 20, ext_a, &NoFaults).unwrap();
+        store.write_payload_at(&file, 35, ext_b, &NoFaults).unwrap();
+        // Uncommitted trailing junk past the highest extent should be trimmed.
+        store
+            .write_payload_at(&file, 50, b"stale tail", &NoFaults)
+            .unwrap();
+        drop(file);
+
+        let extents = vec![
+            CompletedExtent {
+                start: 20,
+                end: 35,
+                sha256: format!("{:x}", Sha256::digest(ext_a)),
+            },
+            CompletedExtent {
+                start: 35,
+                end: 50,
+                sha256: format!("{:x}", Sha256::digest(ext_b)),
+            },
+        ];
+        let v2 = CheckpointRecord::downloading_with_extents(
+            "source".into(),
+            prefix.len() as u64,
+            format!("{:x}", Sha256::digest(prefix)),
+            Some("\"v1\"".into()),
+            Some(64),
+            extents.clone(),
+        );
+        let committed = store.commit(v2, &NoFaults).unwrap();
+        assert_eq!(committed.retained_bytes(), 40);
+        assert_eq!(store.latest().unwrap(), Some(committed.clone()));
+
+        let validated = store
+            .validate_staging_state(&committed)
+            .unwrap()
+            .expect("v2 staging must validate");
+        assert_eq!(validated.extents, extents);
+        assert_eq!(fs::metadata(store.staging()).unwrap().len(), 50);
+
+        // Corrupt a single byte in the first out-of-order extent.
+        let file = store.open_staging().unwrap();
+        store.write_payload_at(&file, 25, b"X", &NoFaults).unwrap();
+        drop(file);
+        assert!(store.validate_staging_state(&committed).unwrap().is_none());
+
+        // Invalid invariants are refused at commit time.
+        let bad_overlapping = CheckpointRecord::downloading_with_extents(
+            "source".into(),
+            10,
+            format!("{:x}", Sha256::digest(prefix)),
+            Some("\"v1\"".into()),
+            Some(64),
+            vec![
+                CompletedExtent {
+                    start: 20,
+                    end: 35,
+                    sha256: format!("{:x}", Sha256::digest(ext_a)),
+                },
+                CompletedExtent {
+                    start: 30,
+                    end: 45,
+                    sha256: format!("{:x}", Sha256::digest(ext_b)),
+                },
+            ],
+        );
+        assert!(store.commit(bad_overlapping, &NoFaults).is_err());
+
+        let mut bad_intent = committed;
+        bad_intent.phase = CheckpointPhase::PublicationIntent;
+        assert!(store.commit(bad_intent, &NoFaults).is_err());
+
         fs::remove_dir_all(dir).unwrap();
     }
 }

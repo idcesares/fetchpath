@@ -51,7 +51,6 @@ const PREFIX_SLOW_SHARE: f64 = 0.35;
 const PREFIX_MIN_AGE: Duration = Duration::from_millis(1500);
 /// Minimum spacing between prefix-starvation replacements.
 const BLOCK_REPLACE_COOLDOWN: Duration = Duration::from_secs(3);
-const AHEAD_SECONDS: f64 = 3.0;
 const GOODPUT_WINDOW: Duration = Duration::from_secs(3);
 /// Time constants for smoothing goodput so brief WAN pauses do not collapse
 /// `max_ahead`, independent of tick frequency.
@@ -169,8 +168,9 @@ pub(crate) fn classify_first(
     resume: Option<&ResumePoint>,
     plain: bool,
 ) -> First {
+    let resuming = offset > 0 || resume.is_some_and(|point| !point.completed_extents.is_empty());
     match headers.status {
-        Some(200) if offset == 0 => First::Sequential {
+        Some(200) if !resuming => First::Sequential {
             etag: strong_etag(headers.etag.as_deref()),
             total: headers.content_length,
             expected_len: headers.content_length,
@@ -181,7 +181,7 @@ pub(crate) fn classify_first(
                 return First::Fail("HTTP status 206".into());
             }
             let Some(range) = headers.open_range else {
-                return if offset > 0 {
+                return if resuming {
                     // Retained bytes cannot be trusted next to an answer that
                     // does not say which bytes it carries.
                     First::IdentityRestart("a resume was answered without a Content-Range".into())
@@ -190,7 +190,7 @@ pub(crate) fn classify_first(
                 };
             };
             if range.start != offset {
-                return if offset > 0 {
+                return if resuming {
                     First::IdentityRestart(format!(
                         "resume asked for byte {offset} and got {}",
                         range.start
@@ -207,6 +207,26 @@ pub(crate) fn classify_first(
                 if resume.expected_total.is_some() && resume.expected_total != range.total {
                     return First::IdentityRestart("the total size changed".into());
                 }
+                if !resume.completed_extents.is_empty() {
+                    let Some(total) = range.total else {
+                        return First::IdentityRestart(
+                            "retained extents require a known total size".into(),
+                        );
+                    };
+                    let mut cursor = offset;
+                    for (index, &(start, end)) in resume.completed_extents.iter().enumerate() {
+                        if start >= end
+                            || (index == 0 && start <= offset)
+                            || (index > 0 && start < cursor)
+                            || end > total
+                        {
+                            return First::IdentityRestart(
+                                "retained extents do not fit the source length".into(),
+                            );
+                        }
+                        cursor = end;
+                    }
+                }
             }
             let len = range.end - range.start + 1;
             match (range.total, strong) {
@@ -220,15 +240,18 @@ pub(crate) fn classify_first(
                     total,
                     covers_end: range.end + 1,
                 },
-                (Some(total), None) if range.end + 1 == total => First::Sequential {
+                (Some(total), None) if !resuming && range.end + 1 == total => First::Sequential {
                     etag: None,
                     total: Some(total),
                     expected_len: Some(len),
                 },
+                (Some(_), None) if resuming => {
+                    First::IdentityRestart("the validator changed".into())
+                }
                 (Some(_), None) => First::PlainGet,
             }
         }
-        Some(416) if offset == 0 => First::PlainGet,
+        Some(416) if !resuming => First::PlainGet,
         Some(416) => First::IdentityRestart("the resume offset is past the end".into()),
         Some(status) => First::Fail(format!("HTTP status {status}")),
         None => First::Fail("no HTTP status".into()),
@@ -401,6 +424,8 @@ struct State {
     phase: Phase,
     /// First byte this transfer fetches.
     offset: u64,
+    /// Bytes already retained in verified out-of-order extents past `offset`.
+    retained_extents_bytes: u64,
     resume: Option<ResumePoint>,
     etag: Option<String>,
     total: Option<u64>,
@@ -421,11 +446,11 @@ struct State {
     largest_claim: u64,
 }
 
-/// The run-ahead budget is three seconds of recently measured aggregate
+/// The run-ahead budget is `ahead_seconds` of recently measured aggregate
 /// goodput, or 64 KiB while the link is slow or not measured yet. Minimum
-/// claim sizes and file size never enlarge the amount a pause may discard.
-fn max_ahead_for(goodput: Option<f64>) -> u64 {
-    ((goodput.unwrap_or(0.0) * AHEAD_SECONDS) as u64).max(64 * 1024)
+/// claim sizes and file size never enlarge the ordering window on slow links.
+fn max_ahead_for(goodput: Option<f64>, ahead_seconds: f64) -> u64 {
+    ((goodput.unwrap_or(0.0) * ahead_seconds) as u64).max(64 * 1024)
 }
 
 /// What the next idle lane should do about the frontier.
@@ -884,29 +909,54 @@ impl LaneHandler<'_> {
                         total,
                         covers_end,
                     } => {
-                        let remaining = total.saturating_sub(offset);
-                        let claim_end = if remaining < state.min_adaptive {
-                            covers_end
+                        let completed: &[(u64, u64)] = resume
+                            .as_ref()
+                            .map(|point| point.completed_extents.as_slice())
+                            .unwrap_or(&[]);
+                        let retained_extents_bytes: u64 =
+                            completed.iter().map(|&(start, end)| end - start).sum();
+                        let first_gap_end = completed
+                            .first()
+                            .map_or(total, |&(start, _)| start)
+                            .min(total);
+                        let first_cover_end = covers_end.min(first_gap_end);
+                        let missing = total
+                            .saturating_sub(offset)
+                            .saturating_sub(retained_extents_bytes);
+                        let claim_end = if completed.is_empty() && missing < state.min_adaptive {
+                            first_cover_end
                         } else {
                             // A few minimum ranges until a rate is known, however
                             // large the file: a size-proportional first range
-                            // would break the loss bound on a slow link. Lane 0
+                            // would break the ordering bound on a slow link. Lane 0
                             // keeps streaming through `extend`.
                             let first = state
                                 .min_segment
                                 .max(total / 16)
                                 .min(state.min_segment.saturating_mul(2));
-                            (offset + first).min(covers_end)
+                            (offset + first).min(first_cover_end)
                         };
+                        let mut frontier = Frontier::default();
+                        let mut cursor = claim_end;
+                        for &(ext_start, ext_end) in completed {
+                            if ext_start > cursor {
+                                frontier.insert(cursor, ext_start);
+                            }
+                            cursor = cursor.max(ext_end);
+                        }
+                        if cursor < total {
+                            frontier.insert(cursor, total);
+                        }
                         state.phase = Phase::Ranged;
                         state.etag = Some(etag.clone());
                         state.total = Some(total);
+                        state.retained_extents_bytes = retained_extents_bytes;
                         state.first_claim = claim_end - offset;
                         state.claim_bytes = state.first_claim.max(state.min_segment);
                         state.largest_claim = state.largest_claim.max(state.first_claim);
-                        state.frontier = Frontier::new(claim_end, total);
+                        state.frontier = frontier;
                         self.claim.set_end(claim_end);
-                        self.claim.cover_end.set(covers_end);
+                        self.claim.cover_end.set(first_cover_end);
                         self.etag = Some(etag);
                         self.total = Some(total);
                         Ok(())
@@ -1071,6 +1121,7 @@ pub(crate) fn run<'a>(
         state: RefCell::new(State {
             phase: Phase::Opening,
             offset,
+            retained_extents_bytes: 0,
             resume: resume.cloned(),
             etag: None,
             total: None,
@@ -1619,10 +1670,17 @@ impl<'a> Engine<'a> {
         };
         match (role, phase) {
             (Role::First { plain }, Phase::Opening) if !frozen => {
-                let offset = self.shared.state.borrow().offset;
+                let resuming = {
+                    let state = self.shared.state.borrow();
+                    state.offset > 0
+                        || state
+                            .resume
+                            .as_ref()
+                            .is_some_and(|point| !point.completed_extents.is_empty())
+                };
                 match status {
                     Some(416) if !plain => {
-                        if offset > 0 {
+                        if resuming {
                             return Err(TransferError::IdentityChanged(
                                 "the resume offset is past the end".into(),
                             ));
@@ -1754,7 +1812,11 @@ impl<'a> Engine<'a> {
     fn ramp(&mut self) {
         let remaining = {
             let state = self.shared.state.borrow();
-            state.total.unwrap_or(0).saturating_sub(state.offset)
+            state
+                .total
+                .unwrap_or(0)
+                .saturating_sub(state.offset)
+                .saturating_sub(state.retained_extents_bytes)
         };
         let maximum = if remaining >= self.limits.min_adaptive_bytes {
             self.limits
@@ -1828,7 +1890,7 @@ impl<'a> Engine<'a> {
             ((rate * crate::SEGMENT_SECONDS) as u64).max(floor)
         });
         // The lanes actually held, not the width the controller wants.
-        state.max_ahead = max_ahead_for(goodput);
+        state.max_ahead = max_ahead_for(goodput, self.limits.max_ahead_seconds);
         for lane in &self.lanes {
             lane.claim.sample(now);
         }
@@ -2335,13 +2397,13 @@ impl<'a> Engine<'a> {
         let state = self.shared.state.borrow();
         let written = self.shared.written.get();
         let ranged = state.phase == Phase::Ranged;
+        let total_present = state.offset + state.retained_extents_bytes + written;
         if ranged
             && let Some(total) = state.total
-            && state.offset + written != total
+            && total_present != total
         {
             return Err(TransferError::Transport(format!(
-                "the ranges delivered {} of {total} bytes",
-                state.offset + written
+                "the ranges delivered {total_present} of {total} bytes",
             )));
         }
         let mut fallback_reasons = self.decision.fallback_reasons.clone();
@@ -2349,7 +2411,7 @@ impl<'a> Engine<'a> {
             fallback_reasons.push("negotiated_lower_protocol");
         }
         Ok(TransferReport {
-            bytes: state.offset + written,
+            bytes: total_present,
             total_bytes: state.total,
             strong_etag: state.etag.clone(),
             preferred_protocol: self.decision.preferred,
@@ -2395,6 +2457,7 @@ mod tests {
             offset,
             strong_etag: etag.into(),
             expected_total: total,
+            completed_extents: Vec::new(),
         }
     }
 
@@ -2660,6 +2723,7 @@ mod tests {
         State {
             phase: Phase::Ranged,
             offset: 0,
+            retained_extents_bytes: 0,
             resume: None,
             etag: Some("\"e\"".into()),
             total: Some(total),
@@ -2860,11 +2924,18 @@ mod tests {
 
     #[test]
     fn low_rate_ahead_budget_never_inherits_the_file_or_range_floor() {
-        assert_eq!(max_ahead_for(None), 64 * 1024);
-        assert_eq!(max_ahead_for(Some(1024.0)), 64 * 1024);
-        assert_eq!(max_ahead_for(Some(5_000_000.0)), 15_000_000);
+        assert_eq!(max_ahead_for(None, crate::DEFAULT_AHEAD_SECONDS), 64 * 1024);
+        assert_eq!(
+            max_ahead_for(Some(1024.0), crate::DEFAULT_AHEAD_SECONDS),
+            64 * 1024
+        );
+        assert_eq!(max_ahead_for(Some(5_000_000.0), 3.0), 15_000_000);
+        assert_eq!(
+            max_ahead_for(Some(5_000_000.0), crate::DEFAULT_AHEAD_SECONDS),
+            60_000_000
+        );
         let mut state = planner(8 * 1024 * MIB);
-        state.max_ahead = max_ahead_for(Some(1024.0));
+        state.max_ahead = max_ahead_for(Some(1024.0), crate::DEFAULT_AHEAD_SECONDS);
         state
             .claims
             .push(Claim::new(LiveSegment::new(0, 4 * MIB), 4 * MIB, 0));

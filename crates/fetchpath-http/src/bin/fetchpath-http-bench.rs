@@ -45,6 +45,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             offset: args[1].parse()?,
             strong_etag: args[2].clone(),
             expected_total: Some(args[3].parse()?),
+            completed_extents: Vec::new(),
         };
         let prefix = PathBuf::from(&args[4]);
         if std::fs::metadata(&prefix)?.len() != point.offset {

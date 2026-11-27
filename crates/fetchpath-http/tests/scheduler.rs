@@ -800,6 +800,7 @@ fn a_remainder_under_the_adaptive_size_finishes_on_the_first_request() {
         offset: MIB as u64,
         strong_etag: "\"v1\"".into(),
         expected_total: Some(body.len() as u64),
+        completed_extents: Vec::new(),
     };
     let image = RefCell::new(Image::default());
 
@@ -821,6 +822,7 @@ fn a_resume_of_a_large_remainder_uses_ranges() {
         offset: 2 * MIB as u64,
         strong_etag: "\"v1\"".into(),
         expected_total: Some(body.len() as u64),
+        completed_extents: Vec::new(),
     };
     let image = RefCell::new(Image::default());
 
@@ -963,6 +965,7 @@ fn resume_at(offset: usize, total: Option<usize>) -> ResumePoint {
         offset: offset as u64,
         strong_etag: "\"v1\"".into(),
         expected_total: total.map(|total| total as u64),
+        completed_extents: Vec::new(),
     }
 }
 
@@ -1332,6 +1335,7 @@ fn starved_width_probe_reverts_when_prefix_lane_is_healthy() {
     configured.min_segment_bytes = 2 * MIB;
     configured.min_adaptive_bytes = (4 * MIB) as u64;
     configured.max_concurrency = 4;
+    configured.max_ahead_seconds = 3.0;
     let image = RefCell::new(Image::default());
     let report = fetch_with(&server, configured, None, &image).unwrap();
     assert_eq!(image.borrow().bytes, body);
@@ -1349,4 +1353,85 @@ fn starved_width_probe_reverts_when_prefix_lane_is_healthy() {
         "healthy prefix lane must not be replaced while probe is starved: {report:?}"
     );
     assert_eq!(report.replacements, 0);
+}
+
+#[test]
+fn resuming_with_completed_extents_fetches_only_missing_gaps_without_overlap() {
+    let body = patterned(12 * MIB);
+    let served = body.clone();
+    let server = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let point = ResumePoint {
+        offset: (2 * MIB) as u64,
+        strong_etag: "\"v1\"".into(),
+        expected_total: Some(body.len() as u64),
+        completed_extents: vec![
+            ((4 * MIB) as u64, (6 * MIB) as u64),
+            ((8 * MIB) as u64, (10 * MIB) as u64),
+        ],
+    };
+    let image = RefCell::new(Image::default());
+    // Seed the already-retained slices into the image so any duplicate write is caught.
+    image.borrow_mut().record(0, &body[..2 * MIB]).unwrap();
+    image
+        .borrow_mut()
+        .record((4 * MIB) as u64, &body[4 * MIB..6 * MIB])
+        .unwrap();
+    image
+        .borrow_mut()
+        .record((8 * MIB) as u64, &body[8 * MIB..10 * MIB])
+        .unwrap();
+
+    let report = fetch_with(&server, limits(), Some(&point), &image).unwrap();
+
+    assert!(report.used_ranges);
+    assert_eq!(report.bytes, body.len() as u64);
+    assert_eq!(
+        image.borrow().overlaps,
+        0,
+        "no retained extent re-delivered"
+    );
+    assert_eq!(image.borrow().bytes, body);
+}
+
+#[test]
+fn resuming_at_zero_with_completed_extents_restarts_on_200_and_succeeds_on_matching_206() {
+    let body = patterned(6 * MIB);
+    let served = body.clone();
+    let point = ResumePoint {
+        offset: 0,
+        strong_etag: "\"v1\"".into(),
+        expected_total: Some(body.len() as u64),
+        completed_extents: vec![((2 * MIB) as u64, (4 * MIB) as u64)],
+    };
+
+    // A 200 response when completed_extents are present must force IdentityChanged.
+    let whole_server = server({
+        let served = served.clone();
+        move |_| whole(&served, "\"v1\"")
+    });
+    let image = RefCell::new(Image::default());
+    let result = fetch_with(&whole_server, limits(), Some(&point), &image);
+    assert!(matches!(result, Err(TransferError::IdentityChanged(_))));
+    assert_eq!(image.borrow().written(), 0);
+
+    // A 416 response when offset == 0 with completed_extents must also force
+    // IdentityChanged immediately without issuing a plain GET retry.
+    let bad_range_server = server(|_| Reply::new(416, Vec::new()));
+    let image = RefCell::new(Image::default());
+    let result = fetch_with(&bad_range_server, limits(), Some(&point), &image);
+    assert!(matches!(result, Err(TransferError::IdentityChanged(_))));
+    assert_eq!(bad_range_server.count(), 1);
+    assert_eq!(image.borrow().written(), 0);
+
+    // Matching 206 at offset 0 skips [2 MiB, 4 MiB) and completes cleanly.
+    let range_server = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let image = RefCell::new(Image::default());
+    image
+        .borrow_mut()
+        .record((2 * MIB) as u64, &body[2 * MIB..4 * MIB])
+        .unwrap();
+    let report = fetch_with(&range_server, limits(), Some(&point), &image).unwrap();
+    assert_eq!(report.bytes, body.len() as u64);
+    assert_eq!(image.borrow().overlaps, 0);
+    assert_eq!(image.borrow().bytes, body);
 }

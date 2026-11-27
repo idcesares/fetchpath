@@ -4735,7 +4735,7 @@
       "dependsOn": [
         "FP-146"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": "agent",
       "priority": "P1",
       "modelTier": "astra-high",
@@ -4753,8 +4753,12 @@
         "A04"
       ],
       "acceptance": "Checkpoint format v2 persists completed non-contiguous byte extents [start, end) with per-extent integrity digests, validator, and expected_total while remaining backward-compatible with v1 checkpoints on load. Pausing or killing the engine retains completed out-of-order extents across all lanes and resumes only missing extents; removes the 3-second prefix-lag run-ahead choke while bounding unflushed loss.",
-      "verification": "Storage and core fault-injection tests, v1-to-v2 upgrade tests, out-of-order pause/kill resume tests, and tools/bench/interruption.mjs recorded in docs/development/ENGINE-REDESIGN.md.",
-      "evidence": []
+      "verification": "cargo fmt --check, strict clippy, cargo test -p fetchpath-storage (8/8) -p fetchpath-core (82/82) -p fetchpath-http (59/59 unit, 5/5 compat, 40/40 scheduler), independent strong boundary review + bounded repair recheck (PASS), and release interruption.mjs (9 extents, 143.0 MB retained vs 88.5 MB prefix across SIGKILL, 0.38 s loss) + resume.mjs (-62.8%) recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md",
+        "docs/development/evidence/http-adaptive/fp147-interruption.json",
+        "docs/development/evidence/http-adaptive/fp147-resume.json"
+      ]
     },
     {
       "id": "FP-148",

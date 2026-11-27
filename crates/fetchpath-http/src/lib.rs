@@ -118,11 +118,18 @@ pub struct TransferLimits {
     pub stall_timeout: Duration,
     /// How long the first request may take to deliver a byte.
     pub open_timeout: Duration,
+    /// Seconds of recent aggregate goodput a non-prefix lane may run ahead of
+    /// the contiguous prefix. Extent checkpoints (FP-147) remove the old 3 s
+    /// prefix-lag choke by defaulting to 12 s while keeping ordering bounded.
+    pub max_ahead_seconds: f64,
     pub scheduler: Scheduler,
 }
 
 /// How much time one range should take on its lane.
 pub const SEGMENT_SECONDS: f64 = 1.5;
+
+/// Default run-ahead window in seconds of aggregate goodput (FP-147).
+pub const DEFAULT_AHEAD_SECONDS: f64 = 12.0;
 
 /// The default libcurl receive buffer. FP-085 measured 64, 128 and 256 KiB.
 pub const RECEIVE_BUFFER_BYTES: usize = 16 * 1024;
@@ -138,6 +145,7 @@ impl Default for TransferLimits {
             receive_buffer_bytes: RECEIVE_BUFFER_BYTES,
             stall_timeout: Duration::from_secs(3),
             open_timeout: Duration::from_secs(30),
+            max_ahead_seconds: DEFAULT_AHEAD_SECONDS,
             scheduler: Scheduler::Stream,
         }
     }
@@ -153,6 +161,8 @@ impl TransferLimits {
             || self.receive_buffer_bytes > self.max_buffered_bytes
             || self.stall_timeout.is_zero()
             || self.open_timeout.is_zero()
+            || !self.max_ahead_seconds.is_finite()
+            || self.max_ahead_seconds <= 0.0
         {
             return Err(TransferError::InvalidLimits);
         }
@@ -621,12 +631,16 @@ pub struct TransferReport {
 /// Where a resumed transfer continues.
 #[derive(Clone, Debug)]
 pub struct ResumePoint {
-    /// First byte to fetch: the length of the verified prefix.
+    /// First missing byte to fetch: the length of the verified prefix.
     pub offset: u64,
-    /// The strong ETag the prefix came from; sent as `If-Range`.
+    /// The strong ETag the retained bytes came from; sent as `If-Range`.
     pub strong_etag: String,
     /// The total the checkpoint recorded, when it recorded one.
     pub expected_total: Option<u64>,
+    /// Sorted, disjoint, verified completed extents `(start, end)` strictly
+    /// past `offset` (`start > offset`, `start < end`) that need not be
+    /// re-fetched (Checkpoint format v2, FP-147).
+    pub completed_extents: Vec<(u64, u64)>,
 }
 
 #[derive(Debug)]
