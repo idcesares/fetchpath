@@ -82,6 +82,7 @@ pub(crate) fn source_key_with_context(url: &str, context_fingerprint: &str) -> S
     digest[..32].to_owned()
 }
 
+#[cfg(test)]
 pub(crate) fn strong_etag(value: Option<&str>) -> Option<String> {
     let value = value?.trim();
     if value.starts_with("W/") || value.starts_with("w/") {

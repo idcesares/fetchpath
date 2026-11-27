@@ -1,6 +1,6 @@
 use crate::checkpoint::{
     COALESCE_FLUSH_BYTES, CommitQueue, CommitRequest, DEFAULT_WRITE_QUEUE_BUDGET, LaneCoalescer,
-    PrefixTracker, ResponseHeaders, WriteQueue, source_key_with_context, strong_etag,
+    PrefixTracker, ResponseHeaders, WriteQueue, source_key_with_context,
 };
 use crate::{CancelCleanup, DownloadError, DownloadRequest, DownloadedFile};
 use fetchpath_http::{
@@ -264,7 +264,9 @@ pub fn download_with_faults(
             published: None,
         });
     }
-    let response_validator = strong_etag(attempt.headers.etag.as_deref());
+    // `attempt.headers.etag` carries the already-validated strong validator
+    // from `fetchpath-http` (either a strong ETag or an RFC 9110 strong Last-Modified).
+    let response_validator = attempt.headers.etag.clone();
     let expected_total = response_total(&attempt.headers, attempt.final_len);
     let mut intent = CheckpointRecord::downloading(
         key,
@@ -382,6 +384,9 @@ fn perform_scheduled_attempt(
     let context = HttpRequestContext {
         cookie_lines: request.context.cookie_lines.clone(),
         referer: request.context.referer.clone(),
+        user_agent: request.context.user_agent.clone(),
+        custom_headers: request.context.custom_headers.clone(),
+        proxy: request.context.proxy.clone(),
         http2_prior_knowledge: false,
     };
     let extent_ranges: Vec<(u64, u64)> = initial_extents

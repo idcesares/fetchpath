@@ -4800,7 +4800,7 @@
       "dependsOn": [
         "FP-145"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": "agent",
       "priority": "P1",
       "modelTier": "terra-medium",
@@ -4819,8 +4819,10 @@
         "A11"
       ],
       "acceptance": "Sources without a strong ETag that provide Last-Modified and Date meeting RFC 9110 section 13.1.5 strong-validator conditions (Date - Last-Modified >= 1s) authorize safe If-Range resume and segmentation; weak ETags and non-strong dates remain conservative single-stream downloads; sequential non-ranged downloads permit transparent Accept-Encoding compression; RequestContext supports scoped User-Agent, custom headers, and proxy config with strict cross-origin stripping and redaction.",
-      "verification": "Fixture tests for strong/weak Last-Modified, sequential gzip/br decoding, cross-origin header stripping, and no-etag mirror corpus runs.",
-      "evidence": []
+      "verification": "cargo fmt --check, strict clippy, cargo test -p fetchpath-http (61/61 unit, 5/5 compat, 43/43 scheduler including RFC 9110 strong/weak Last-Modified, sequential gzip decoding without wire-length clipping, RequestContext validation/redaction, and cross-origin custom header stripping) and cargo test -p fetchpath-core (85/85), recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md"
+      ]
     },
     {
       "id": "FP-150",

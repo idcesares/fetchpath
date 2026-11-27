@@ -84,13 +84,168 @@ pub fn decide_protocol(capabilities: ProtocolCapabilities) -> ProtocolDecision {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct RequestContext {
     pub cookie_lines: Vec<String>,
     pub referer: Option<String>,
+    /// Optional explicit `User-Agent` header (non-secret; kept across redirects).
+    pub user_agent: Option<String>,
+    /// Scoped custom request headers `(name, value)` sent ONLY to the initial
+    /// origin; stripped on cross-origin redirects alongside cookies/referer.
+    pub custom_headers: Vec<(String, String)>,
+    /// Optional explicit proxy URL (`http`, `https`, `socks5`, `socks5h`).
+    pub proxy: Option<String>,
     /// Reserved for controlled cleartext HTTP/2 origins. Public HTTP URLs use
     /// normal negotiation and HTTPS uses ALPN.
     pub http2_prior_knowledge: bool,
+}
+
+impl std::fmt::Debug for RequestContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestContext")
+            .field(
+                "cookie_lines",
+                &format!("[redacted; {}]", self.cookie_lines.len()),
+            )
+            .field(
+                "referer",
+                &if self.referer.is_some() {
+                    "[redacted]"
+                } else {
+                    "None"
+                },
+            )
+            .field("user_agent", &self.user_agent)
+            .field(
+                "custom_headers",
+                &format!("[redacted; {}]", self.custom_headers.len()),
+            )
+            .field(
+                "proxy",
+                &if self.proxy.is_some() {
+                    "[redacted]"
+                } else {
+                    "None"
+                },
+            )
+            .field("http2_prior_knowledge", &self.http2_prior_knowledge)
+            .finish()
+    }
+}
+
+const MAX_CUSTOM_HEADERS: usize = 64;
+const MAX_HEADER_NAME_BYTES: usize = 256;
+const MAX_HEADER_VALUE_BYTES: usize = 8 * 1024;
+const MAX_USER_AGENT_BYTES: usize = 1024;
+const MAX_PROXY_URL_BYTES: usize = 4 * 1024;
+
+fn is_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_HEADER_NAME_BYTES
+        && name.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
+}
+
+fn is_reserved_header_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host"
+            | "range"
+            | "if-range"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "accept-encoding"
+            | "cookie"
+            | "referer"
+            | "proxy-authorization"
+    )
+}
+
+fn is_safe_header_value(value: &str, max_len: usize) -> bool {
+    value.len() <= max_len && !value.contains(['\r', '\n', '\0'])
+}
+
+/// Validates a custom request header pair `(name, value)` against CRLF/NUL
+/// injection and reserved protocol/framing headers.
+pub fn validate_custom_header(name: &str, value: &str) -> Result<(), &'static str> {
+    if !is_valid_header_name(name)
+        || is_reserved_header_name(name)
+        || !is_safe_header_value(value, MAX_HEADER_VALUE_BYTES)
+    {
+        return Err("request_context.invalid_header");
+    }
+    Ok(())
+}
+
+/// Validates an optional proxy URL (`http`, `https`, `socks5`, `socks5h`).
+pub fn validate_proxy_url(proxy: &str) -> Result<(), &'static str> {
+    if proxy.is_empty() || !is_safe_header_value(proxy, MAX_PROXY_URL_BYTES) {
+        return Err("request_context.invalid_proxy");
+    }
+    let parsed = url::Url::parse(proxy).map_err(|_| "request_context.invalid_proxy")?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h")
+        || parsed.host_str().is_none()
+    {
+        return Err("request_context.invalid_proxy");
+    }
+    Ok(())
+}
+
+impl RequestContext {
+    pub fn validate(&self) -> Result<(), TransferError> {
+        if self.cookie_lines.len() > 256
+            || self
+                .cookie_lines
+                .iter()
+                .any(|line| line.is_empty() || !is_safe_header_value(line, 16 * 1024))
+        {
+            return Err(TransferError::Rejected("invalid cookie context".into()));
+        }
+        if self
+            .referer
+            .as_deref()
+            .is_some_and(|r| !is_safe_header_value(r, MAX_HEADER_VALUE_BYTES))
+        {
+            return Err(TransferError::Rejected("invalid referer header".into()));
+        }
+        if self
+            .user_agent
+            .as_deref()
+            .is_some_and(|ua| ua.is_empty() || !is_safe_header_value(ua, MAX_USER_AGENT_BYTES))
+        {
+            return Err(TransferError::Rejected("invalid User-Agent header".into()));
+        }
+        if self.custom_headers.len() > MAX_CUSTOM_HEADERS {
+            return Err(TransferError::Rejected("too many custom headers".into()));
+        }
+        for (name, value) in &self.custom_headers {
+            validate_custom_header(name, value)
+                .map_err(|detail| TransferError::Rejected(detail.into()))?;
+        }
+        if let Some(proxy) = &self.proxy {
+            validate_proxy_url(proxy).map_err(|detail| TransferError::Rejected(detail.into()))?;
+        }
+        Ok(())
+    }
 }
 
 /// Which scheduler drives a fresh download.
@@ -411,6 +566,9 @@ struct ResponseHeaders {
     status: Option<u32>,
     protocol: Protocol,
     etag: Option<String>,
+    last_modified: Option<String>,
+    date: Option<String>,
+    content_encoding: Option<String>,
     content_length: Option<u64>,
     /// A total of `*` is allowed and stays unknown.
     open_range: Option<OpenRange>,
@@ -444,6 +602,9 @@ impl ResponseHeaders {
                 Protocol::Http1
             };
             self.etag = None;
+            self.last_modified = None;
+            self.date = None;
+            self.content_encoding = None;
             self.content_length = None;
             self.open_range = None;
             self.retry_after = None;
@@ -455,6 +616,12 @@ impl ResponseHeaders {
         let value = value.trim();
         if name.eq_ignore_ascii_case("etag") {
             self.etag = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("last-modified") {
+            self.last_modified = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("date") {
+            self.date = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("content-encoding") {
+            self.content_encoding = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("content-length") {
             self.content_length = value.parse().ok();
         } else if name.eq_ignore_ascii_case("content-range") {
@@ -463,6 +630,20 @@ impl ResponseHeaders {
             // A date form is ignored: the lanes back off on the status alone.
             self.retry_after = value.parse().ok().map(Duration::from_secs);
         }
+    }
+
+    fn is_compressed(&self) -> bool {
+        self.content_encoding
+            .as_deref()
+            .is_some_and(|enc| !enc.is_empty() && !enc.eq_ignore_ascii_case("identity"))
+    }
+
+    fn strong_validator(&self) -> Option<String> {
+        strong_validator(
+            self.etag.as_deref(),
+            self.last_modified.as_deref(),
+            self.date.as_deref(),
+        )
     }
 }
 
@@ -485,9 +666,140 @@ fn parse_open_range(value: &str) -> Option<OpenRange> {
 }
 
 fn strong_etag(value: Option<&str>) -> Option<String> {
-    value
-        .filter(|value| value.starts_with('"') && value.ends_with('"') && !value.starts_with("W/"))
-        .map(str::to_owned)
+    let value = value?.trim();
+    if value.starts_with("W/") || value.starts_with("w/") {
+        return None;
+    }
+    (value.len() >= 2 && value.starts_with('"') && value.ends_with('"')).then(|| value.to_owned())
+}
+
+/// Authorizes a strong HTTP validator for `If-Range` resume and segmentation
+/// per RFC 9110 §13.1.5 (FP-149):
+/// - If `ETag` is present: returns it only when it is a strong quoted ETag
+///   (never falls back to `Last-Modified` when the origin explicitly sent a weak ETag).
+/// - If `ETag` is absent: returns `Last-Modified` when both `Last-Modified` and
+///   `Date` parse as valid HTTP-dates and `Date - Last-Modified >= 1 second`.
+pub fn strong_validator(
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    date: Option<&str>,
+) -> Option<String> {
+    if let Some(raw_etag) = etag {
+        return strong_etag(Some(raw_etag));
+    }
+    let raw_lm = last_modified?.trim();
+    let lm_secs = parse_http_date(raw_lm)?;
+    let date_secs = parse_http_date(date?.trim())?;
+    (date_secs >= lm_secs.saturating_add(1)).then(|| raw_lm.to_owned())
+}
+
+/// Parses an RFC 9110 §5.6.7 HTTP-date (IMF-fixdate, obsolete RFC 850, or
+/// ANSI C `asctime()` format) into Unix timestamp seconds (UTC).
+pub fn parse_http_date(value: &str) -> Option<i64> {
+    let value = value.trim();
+    // IMF-fixdate: "Sun, 06 Nov 1994 08:49:37 GMT"
+    if let Some((_, rest)) = value.split_once(',') {
+        let rest = rest.trim();
+        let parts: Vec<&str> = rest.split_ascii_whitespace().collect();
+        if parts.len() == 5 && parts[4] == "GMT" {
+            let day: u32 = parts[0].parse().ok()?;
+            let month = parse_month(parts[1])?;
+            let year: i32 = parts[2].parse().ok()?;
+            let (hour, min, sec) = parse_hms(parts[3])?;
+            return civil_to_unix(year, month, day, hour, min, sec);
+        }
+        // RFC 850: "Sunday, 06-Nov-94 08:49:37 GMT"
+        if parts.len() == 3 && parts[2] == "GMT" {
+            let date_parts: Vec<&str> = parts[0].split('-').collect();
+            if date_parts.len() == 3 {
+                let day: u32 = date_parts[0].parse().ok()?;
+                let month = parse_month(date_parts[1])?;
+                let yy: i32 = date_parts[2].parse().ok()?;
+                if !(0..=99).contains(&yy) {
+                    return None;
+                }
+                let year = if yy >= 70 { 1900 + yy } else { 2000 + yy };
+                let (hour, min, sec) = parse_hms(parts[1])?;
+                return civil_to_unix(year, month, day, hour, min, sec);
+            }
+        }
+        return None;
+    }
+    // ANSI C asctime(): "Sun Nov  6 08:49:37 1994"
+    let parts: Vec<&str> = value.split_ascii_whitespace().collect();
+    if parts.len() == 5 {
+        let month = parse_month(parts[1])?;
+        let day: u32 = parts[2].parse().ok()?;
+        let (hour, min, sec) = parse_hms(parts[3])?;
+        let year: i32 = parts[4].parse().ok()?;
+        return civil_to_unix(year, month, day, hour, min, sec);
+    }
+    None
+}
+
+fn parse_month(text: &str) -> Option<u32> {
+    match text {
+        "Jan" => Some(1),
+        "Feb" => Some(2),
+        "Mar" => Some(3),
+        "Apr" => Some(4),
+        "May" => Some(5),
+        "Jun" => Some(6),
+        "Jul" => Some(7),
+        "Aug" => Some(8),
+        "Sep" => Some(9),
+        "Oct" => Some(10),
+        "Nov" => Some(11),
+        "Dec" => Some(12),
+        _ => None,
+    }
+}
+
+fn parse_hms(text: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<&str> = text.split(':').collect();
+    if parts.len() != 3 || parts.iter().any(|p| p.len() != 2) {
+        return None;
+    }
+    let hour: u32 = parts[0].parse().ok()?;
+    let min: u32 = parts[1].parse().ok()?;
+    let sec: u32 = parts[2].parse().ok()?;
+    if hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
+    Some((hour, min, sec))
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn civil_to_unix(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> Option<i64> {
+    if !(1970..=9999).contains(&year) || !(1..=12).contains(&month) {
+        return None;
+    }
+    let max_day = days_in_month(year, month);
+    if day < 1 || day > max_day {
+        return None;
+    }
+    // Howard Hinnant's civil-from-days inverse (exact days since 1970-01-01).
+    let y = i64::from(year) - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let m = i64::from(month);
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + i64::from(hour) * 3_600 + i64::from(min) * 60 + i64::from(sec))
 }
 
 #[derive(Clone, Debug)]
@@ -752,6 +1064,7 @@ pub(crate) fn configure(
     context: &RequestContext,
     decision: &ProtocolDecision,
 ) -> Result<(), TransferError> {
+    context.validate()?;
     easy.url(url).map_err(curl_error)?;
     http_only(easy.raw())?;
     easy.follow_location(true).map_err(curl_error)?;
@@ -767,6 +1080,12 @@ pub(crate) fn configure(
     }
     if let Some(referer) = &context.referer {
         easy.referer(referer).map_err(curl_error)?;
+    }
+    if let Some(user_agent) = &context.user_agent {
+        easy.useragent(user_agent).map_err(curl_error)?;
+    }
+    if let Some(proxy) = &context.proxy {
+        easy.proxy(proxy).map_err(curl_error)?;
     }
     Ok(())
 }
@@ -804,14 +1123,25 @@ pub(crate) fn http_only(handle: *mut curl_sys::CURL) -> Result<(), TransferError
     Ok(())
 }
 
-pub(crate) fn request_headers(if_range: Option<&str>) -> Result<List, TransferError> {
+pub(crate) fn request_headers(
+    if_range: Option<&str>,
+    allow_compression: bool,
+    custom_headers: &[(String, String)],
+) -> Result<List, TransferError> {
     let mut headers = List::new();
-    headers
-        .append("Accept-Encoding: identity")
-        .map_err(curl_error)?;
-    if let Some(etag) = if_range {
+    if !allow_compression {
         headers
-            .append(&format!("If-Range: {etag}"))
+            .append("Accept-Encoding: identity")
+            .map_err(curl_error)?;
+    }
+    if let Some(validator) = if_range {
+        headers
+            .append(&format!("If-Range: {validator}"))
+            .map_err(curl_error)?;
+    }
+    for (name, value) in custom_headers {
+        headers
+            .append(&format!("{name}: {value}"))
             .map_err(curl_error)?;
     }
     Ok(headers)
@@ -942,6 +1272,110 @@ mod tests {
         let extra = take_all(&growing);
         assert_eq!(1 + extra.len(), 6, "8 lanes minus the 2 that are settled");
         drop((held, extra));
+    }
+
+    #[test]
+    fn rfc9110_strong_last_modified_validator_and_http_date_parsing() {
+        // IMF-fixdate, RFC 850, and asctime formats.
+        assert_eq!(
+            parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT"),
+            Some(784_111_777)
+        );
+        assert_eq!(
+            parse_http_date("Sunday, 06-Nov-94 08:49:37 GMT"),
+            Some(784_111_777)
+        );
+        assert_eq!(
+            parse_http_date("Sun Nov  6 08:49:37 1994"),
+            Some(784_111_777)
+        );
+        assert!(parse_http_date("Thu, 29 Feb 2024 00:00:00 GMT").is_some());
+        assert!(parse_http_date("Fri, 29 Feb 2025 00:00:00 GMT").is_none());
+        assert!(parse_http_date("Sun, 06 Nov 1994 24:00:00 GMT").is_none());
+
+        // Strong Last-Modified requires Date - Last-Modified >= 1s and no ETag.
+        assert_eq!(
+            strong_validator(
+                None,
+                Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+                Some("Wed, 21 Oct 2015 07:28:01 GMT"),
+            ),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT".into())
+        );
+        // Same second or earlier Date is weak.
+        assert_eq!(
+            strong_validator(
+                None,
+                Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+                Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+            ),
+            None
+        );
+        assert_eq!(
+            strong_validator(None, Some("Wed, 21 Oct 2015 07:28:00 GMT"), None),
+            None
+        );
+        // Weak ETag NEVER falls back to Last-Modified even when Date is years later.
+        assert_eq!(
+            strong_validator(
+                Some("W/\"weak\""),
+                Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+                Some("Thu, 26 Nov 2026 21:00:00 GMT"),
+            ),
+            None
+        );
+        // Strong ETag always wins over Last-Modified.
+        assert_eq!(
+            strong_validator(
+                Some("\"strong\""),
+                Some("Wed, 21 Oct 2015 07:28:00 GMT"),
+                Some("Thu, 26 Nov 2026 21:00:00 GMT"),
+            ),
+            Some("\"strong\"".into())
+        );
+    }
+
+    #[test]
+    fn request_context_validation_and_redacted_debug() {
+        let valid = RequestContext {
+            cookie_lines: vec!["example.invalid\tFALSE\t/\tFALSE\t0\tsid\tsecret-cookie".into()],
+            referer: Some("https://example.invalid/private?token=abc".into()),
+            user_agent: Some("Fetchpath/2.0".into()),
+            custom_headers: vec![("Authorization".into(), "Bearer super-secret".into())],
+            proxy: Some("http://user:proxy-pass@127.0.0.1:8080".into()),
+            http2_prior_knowledge: false,
+        };
+        assert!(valid.validate().is_ok());
+        let debug = format!("{valid:?}");
+        assert!(!debug.contains("secret-cookie"));
+        assert!(!debug.contains("token=abc"));
+        assert!(!debug.contains("super-secret"));
+        assert!(!debug.contains("proxy-pass"));
+        assert!(debug.contains("Fetchpath/2.0"));
+
+        for reserved in [
+            "Host",
+            "Range",
+            "If-Range",
+            "Accept-Encoding",
+            "Cookie",
+            "Referer",
+            "Transfer-Encoding",
+        ] {
+            let mut ctx = RequestContext::default();
+            ctx.custom_headers.push((reserved.into(), "val".into()));
+            assert!(ctx.validate().is_err(), "{reserved} must be rejected");
+        }
+        let mut crlf = RequestContext::default();
+        crlf.custom_headers
+            .push(("X-Test".into(), "ok\r\nEvil: 1".into()));
+        assert!(crlf.validate().is_err());
+
+        let bad_proxy = RequestContext {
+            proxy: Some("ftp://127.0.0.1:21".into()),
+            ..RequestContext::default()
+        };
+        assert!(bad_proxy.validate().is_err());
     }
 
     #[test]

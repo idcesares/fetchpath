@@ -154,6 +154,9 @@ pub enum CancelCleanup {
 pub struct RequestContext {
     cookie_lines: Vec<String>,
     referer: Option<String>,
+    user_agent: Option<String>,
+    custom_headers: Vec<(String, String)>,
+    proxy: Option<String>,
 }
 
 impl RequestContext {
@@ -169,13 +172,46 @@ impl RequestContext {
         Ok(Self {
             cookie_lines,
             referer,
+            user_agent: None,
+            custom_headers: Vec::new(),
+            proxy: None,
         })
+    }
+
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Result<Self, &'static str> {
+        let value = user_agent.into();
+        if value.is_empty() || value.contains(['\r', '\n', '\0']) || value.len() > 1024 {
+            return Err("request_context.invalid_user_agent");
+        }
+        self.user_agent = Some(value);
+        Ok(self)
+    }
+
+    pub fn with_custom_headers(
+        mut self,
+        headers: Vec<(String, String)>,
+    ) -> Result<Self, &'static str> {
+        if headers.len() > 64 {
+            return Err("request_context.invalid_header");
+        }
+        for (name, value) in &headers {
+            fetchpath_http::validate_custom_header(name, value)?;
+        }
+        self.custom_headers = headers;
+        Ok(self)
+    }
+
+    pub fn with_proxy(mut self, proxy: impl Into<String>) -> Result<Self, &'static str> {
+        let value = proxy.into();
+        fetchpath_http::validate_proxy_url(&value)?;
+        self.proxy = Some(value);
+        Ok(self)
     }
 
     /// True when no credential-bearing context is attached. Used to decide
     /// cache provenance; it must stay consistent with `fingerprint`.
     pub fn is_credential_free(&self) -> bool {
-        self.cookie_lines.is_empty() && self.referer.is_none()
+        self.cookie_lines.is_empty() && self.referer.is_none() && self.custom_headers.is_empty()
     }
 
     fn fingerprint(&self) -> String {
@@ -192,6 +228,12 @@ impl RequestContext {
         if let Some(referer) = &self.referer {
             digest.update(referer.len().to_le_bytes());
             digest.update(referer.as_bytes());
+        }
+        for (name, value) in &self.custom_headers {
+            digest.update(name.len().to_le_bytes());
+            digest.update(name.as_bytes());
+            digest.update(value.len().to_le_bytes());
+            digest.update(value.as_bytes());
         }
         format!("{:x}", digest.finalize())
     }

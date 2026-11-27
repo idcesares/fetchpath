@@ -17,7 +17,7 @@ use crate::{
     BatchObservation, BudgetPermit, Chunk, DownloadSlot, GlobalBudget, LiveSegment, Protocol,
     ProtocolCapabilities, ProtocolDecision, RequestContext, ResponseHeaders, ResumePoint,
     Scheduler, SegmentMonitor, TransferError, TransferLimits, TransferReport, curl_error,
-    decide_protocol, http_only, http_version_for, request_headers, strong_etag,
+    decide_protocol, http_only, http_version_for, request_headers,
 };
 use curl::easy::{Easy2, Handler, WriteError};
 use curl::multi::{Easy2Handle, Multi};
@@ -169,16 +169,26 @@ pub(crate) fn classify_first(
     plain: bool,
 ) -> First {
     let resuming = offset > 0 || resume.is_some_and(|point| !point.completed_extents.is_empty());
+    let compressed = headers.is_compressed();
     match headers.status {
         Some(200) if !resuming => First::Sequential {
-            etag: strong_etag(headers.etag.as_deref()),
-            total: headers.content_length,
-            expected_len: headers.content_length,
+            etag: headers.strong_validator(),
+            // When Content-Encoding is active, Content-Length is the compressed
+            // wire length rather than the decoded output byte count (FP-149).
+            total: (!compressed).then_some(headers.content_length).flatten(),
+            expected_len: (!compressed).then_some(headers.content_length).flatten(),
         },
         Some(200) => First::IdentityRestart("the source answered a resume with 200".into()),
         Some(206) => {
             if plain {
                 return First::Fail("HTTP status 206".into());
+            }
+            if compressed {
+                return if resuming {
+                    First::IdentityRestart("compressed 206 cannot resume byte ranges".into())
+                } else {
+                    First::PlainGet
+                };
             }
             let Some(range) = headers.open_range else {
                 return if resuming {
@@ -199,7 +209,7 @@ pub(crate) fn classify_first(
                     First::Fail(format!("range starts at {} instead of 0", range.start))
                 };
             }
-            let strong = strong_etag(headers.etag.as_deref());
+            let strong = headers.strong_validator();
             if let Some(resume) = resume {
                 if strong.as_deref() != Some(resume.strong_etag.as_str()) {
                     return First::IdentityRestart("the validator changed".into());
@@ -278,7 +288,12 @@ fn check_range_response(
     etag: &str,
     total: u64,
 ) -> Result<(), Verdict> {
-    let strong = strong_etag(headers.etag.as_deref());
+    if headers.is_compressed() {
+        return Err(Verdict::Identity(
+            "range response used Content-Encoding compression".into(),
+        ));
+    }
+    let strong = headers.strong_validator();
     match headers.status {
         Some(206) => {
             let Some(range) = headers.open_range else {
@@ -1107,6 +1122,7 @@ pub(crate) fn run<'a>(
     cancelled: &'a CancelFn<'a>,
     sink: &'a mut SinkFn<'a>,
 ) -> Result<TransferReport, TransferError> {
+    context.validate()?;
     let decision = decide_protocol(ProtocolCapabilities::detect());
     let slot = budget.register_download();
     let first_permit = slot.reserve(limits.receive_buffer_bytes, &|| cancelled())?;
@@ -1365,7 +1381,13 @@ impl<'a> Engine<'a> {
             PoolPolicy::Eligible | PoolPolicy::Pending { .. } | PoolPolicy::Shared
         ))
         .map_err(curl_error)?;
-        if request.target.credentials {
+        if let Some(user_agent) = &self.context.user_agent {
+            easy.useragent(user_agent).map_err(curl_error)?;
+        }
+        if let Some(proxy) = &self.context.proxy {
+            easy.proxy(proxy).map_err(curl_error)?;
+        }
+        let scoped_headers: &[(String, String)] = if request.target.credentials {
             easy.cookie_file("").map_err(curl_error)?;
             for cookie in &request.target.cookie_lines {
                 easy.cookie_list(cookie).map_err(curl_error)?;
@@ -1373,12 +1395,24 @@ impl<'a> Engine<'a> {
             if let Some(referer) = &self.context.referer {
                 easy.referer(referer).map_err(curl_error)?;
             }
-        }
+            &self.context.custom_headers
+        } else {
+            &[]
+        };
+        let allow_compression = request.range.is_none();
         if let Some(range) = &request.range {
             easy.range(range).map_err(curl_error)?;
+        } else {
+            // Sequential non-ranged transfers permit transparent HTTP
+            // compression (gzip/deflate/br/zstd supported by libcurl, FP-149).
+            easy.accept_encoding("").map_err(curl_error)?;
         }
-        easy.http_headers(request_headers(request.if_range.as_deref())?)
-            .map_err(curl_error)?;
+        easy.http_headers(request_headers(
+            request.if_range.as_deref(),
+            allow_compression,
+            scoped_headers,
+        )?)
+        .map_err(curl_error)?;
         if request.fresh {
             easy.fresh_connect(true).map_err(curl_error)?;
         }

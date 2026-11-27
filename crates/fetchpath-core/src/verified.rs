@@ -1312,6 +1312,9 @@ fn perform(
     let context = HttpRequestContext {
         cookie_lines: request.context.cookie_lines.clone(),
         referer: request.context.referer.clone(),
+        user_agent: request.context.user_agent.clone(),
+        custom_headers: request.context.custom_headers.clone(),
+        proxy: request.context.proxy.clone(),
         http2_prior_knowledge: false,
     };
     let headers = RefCell::new(ResponseHeaders::default());

@@ -1435,3 +1435,139 @@ fn resuming_at_zero_with_completed_extents_restarts_on_200_and_succeeds_on_match
     assert_eq!(image.borrow().overlaps, 0);
     assert_eq!(image.borrow().bytes, body);
 }
+
+#[test]
+fn strong_last_modified_without_etag_authorizes_segmentation_and_if_range() {
+    let body = patterned(12 * MIB);
+    let lm = "Wed, 21 Oct 2015 07:28:00 GMT";
+    let strong_date = "Thu, 26 Nov 2026 21:00:00 GMT";
+
+    // Strong Last-Modified (Date - Last-Modified >= 1s) with NO ETag segments cleanly.
+    let served = body.clone();
+    let strong_server = server(move |req| {
+        let (start, end) = match req.range {
+            Some((start, end)) => (start, end.unwrap_or(served.len() - 1).min(served.len() - 1)),
+            None => (0, served.len() - 1),
+        };
+        partial(&served, None, start, end)
+            .header("Last-Modified", lm)
+            .header("Date", strong_date)
+            .paced()
+    });
+    let (result, image) = fetch(&strong_server);
+    let report = result.unwrap();
+    assert!(report.used_ranges, "strong Last-Modified should segment");
+    assert!(strong_server.count() > 1);
+    assert_eq!(report.strong_etag.as_deref(), Some(lm));
+    assert_eq!(image.bytes, body);
+    assert_eq!(image.overlaps, 0);
+    assert!(
+        strong_server.requests()[1..]
+            .iter()
+            .all(|req| req.contains(&format!("If-Range: {lm}"))),
+        "later ranges must send Last-Modified as If-Range"
+    );
+
+    // Non-strong Last-Modified (Date == Last-Modified) stays single-stream.
+    let served = body.clone();
+    let same_sec_server = server(move |_| {
+        partial(&served, None, 0, served.len() - 1)
+            .header("Last-Modified", lm)
+            .header("Date", lm)
+    });
+    let (result, image) = fetch(&same_sec_server);
+    let report = result.unwrap();
+    assert!(!report.used_ranges);
+    assert_eq!(same_sec_server.count(), 1);
+    assert_eq!(report.strong_etag, None);
+    assert_eq!(image.bytes, body);
+
+    // Explicit weak ETag stays single-stream even with strong Last-Modified + Date.
+    let served = body.clone();
+    let weak_etag_server = server(move |_| {
+        partial(&served, Some("W/\"weak\""), 0, served.len() - 1)
+            .header("Last-Modified", lm)
+            .header("Date", strong_date)
+    });
+    let (result, image) = fetch(&weak_etag_server);
+    let report = result.unwrap();
+    assert!(!report.used_ranges);
+    assert_eq!(weak_etag_server.count(), 1);
+    assert_eq!(report.strong_etag, None);
+    assert_eq!(image.bytes, body);
+}
+
+#[test]
+fn sequential_plain_download_accepts_and_decodes_gzip_without_clipping() {
+    // Valid RFC 1952 gzip of 32,768 'A' bytes (65 bytes on the wire).
+    const GZIP_32K_A: &[u8] = &[
+        31, 139, 8, 0, 0, 0, 0, 0, 0, 10, 237, 193, 129, 0, 0, 0, 0, 128, 32, 182, 253, 165, 22,
+        169, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 24, 222, 222, 51, 103, 0, 128, 0, 0,
+    ];
+    let server =
+        server(|_| Reply::new(200, GZIP_32K_A.to_vec()).header("Content-Encoding", "gzip"));
+    let mut configured = limits();
+    configured.scheduler = Scheduler::Plain;
+    let image = RefCell::new(Image::default());
+    let report = fetch_with(&server, configured, None, &image).unwrap();
+    let req = server.requests()[0].to_ascii_lowercase();
+    assert!(
+        req.contains("accept-encoding:") && !req.contains("accept-encoding: identity"),
+        "plain sequential transfer must advertise compression: {req}"
+    );
+    assert!(!report.used_ranges);
+    assert_eq!(report.bytes, 32_768);
+    assert_eq!(image.borrow().bytes, vec![b'A'; 32_768]);
+}
+
+#[test]
+fn custom_headers_are_stripped_across_origins_while_user_agent_persists() {
+    let body = patterned(6 * MIB);
+    let served = body.clone();
+    let target = server(move |req| honest(&served, "\"v1\"", req).paced());
+    let target_url = target.url.clone();
+    let origin = server(move |_| Reply::new(302, Vec::new()).header("Location", &target_url));
+
+    let context = RequestContext {
+        user_agent: Some("FetchpathTest/2.0".into()),
+        custom_headers: vec![
+            ("Authorization".into(), "Bearer origin-only-token".into()),
+            ("X-Custom-Scope".into(), "initial-origin".into()),
+        ],
+        ..RequestContext::default()
+    };
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let image = RefCell::new(Image::default());
+    transfer_resumable(
+        &origin.url,
+        &context,
+        limits(),
+        &budget,
+        &SegmentMonitor::default(),
+        None,
+        || false,
+        |chunk| image.borrow_mut().record(chunk.offset, chunk.bytes),
+    )
+    .unwrap();
+
+    let first = origin.requests()[0].to_ascii_lowercase();
+    assert!(first.contains("user-agent: fetchpathtest/2.0"));
+    assert!(first.contains("authorization: bearer origin-only-token"));
+    assert!(first.contains("x-custom-scope: initial-origin"));
+
+    assert!(target.count() >= 1);
+    for sent in target.requests() {
+        let lower = sent.to_ascii_lowercase();
+        assert!(lower.contains("user-agent: fetchpathtest/2.0"));
+        assert!(
+            !lower.contains("authorization:"),
+            "Authorization header leaked cross-origin: {sent}"
+        );
+        assert!(
+            !lower.contains("x-custom-scope:"),
+            "custom header leaked cross-origin: {sent}"
+        );
+    }
+    assert_eq!(image.borrow().bytes, body);
+}
