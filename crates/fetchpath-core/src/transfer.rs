@@ -351,6 +351,14 @@ fn recover_download(
         .map_err(|error| storage_error(store, error))
 }
 
+fn url_has_userinfo(url: &str) -> bool {
+    let Some((_, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].contains('@')
+}
+
 /// Downloads the file, or the missing gaps after `offset` and `initial_extents`,
 /// with the stream-first scheduler. Lanes deliver bytes out of order; they are
 /// written where they belong and folded into the prefix digest and v2 extent
@@ -389,6 +397,14 @@ fn perform_scheduled_attempt(
         proxy: request.context.proxy.clone(),
         http2_prior_knowledge: false,
         pacer: request.pacer.clone(),
+        // Defense in depth: never pass a shared pool partition when the core
+        // RequestContext carries cookies, referer, custom headers, a proxy, or
+        // URL userinfo.
+        pool: (request.context.is_credential_free()
+            && !request.context.has_proxy()
+            && !url_has_userinfo(&request.url))
+        .then(|| request.pool.clone())
+        .flatten(),
     };
     let extent_ranges: Vec<(u64, u64)> = initial_extents
         .iter()
@@ -816,6 +832,7 @@ mod tests {
             expected_sha256: None,
             max_connections: None,
             pacer: None,
+            pool: None,
         }
     }
 

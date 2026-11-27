@@ -1804,3 +1804,367 @@ fn low_rate_live_downshift_on_multi_lane_transfer_does_not_trigger_false_stalls(
         "pacing sleep must not trigger false stall replacements: {report:?}"
     );
 }
+
+struct KeepAliveServer {
+    addr: std::net::SocketAddr,
+    url_base: String,
+    tcp_accepts: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl KeepAliveServer {
+    fn start(
+        body: Vec<u8>,
+        handshake_delay: Duration,
+        redirect_cookie_path: Option<&'static str>,
+    ) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let tcp_accepts = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let accepts_w = Arc::clone(&tcp_accepts);
+        let requests_w = Arc::clone(&requests);
+        let stop_w = Arc::clone(&stop);
+        let worker = thread::spawn(move || {
+            let mut handlers = Vec::new();
+            while !stop_w.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        accepts_w.fetch_add(1, Ordering::SeqCst);
+                        let body = body.clone();
+                        let requests = Arc::clone(&requests_w);
+                        let stop = Arc::clone(&stop_w);
+                        handlers.push(thread::spawn(move || {
+                            let _ = stream.set_nonblocking(false);
+                            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+                            if !handshake_delay.is_zero() {
+                                thread::sleep(handshake_delay);
+                            }
+                            while !stop.load(Ordering::Relaxed) {
+                                let Some(req) = read_keepalive_request(&mut stream, &stop) else {
+                                    break;
+                                };
+                                let path = req
+                                    .lines()
+                                    .next()
+                                    .and_then(|line| line.split_whitespace().nth(1))
+                                    .unwrap_or("/")
+                                    .to_owned();
+                                requests.lock().unwrap().push(req);
+                                if redirect_cookie_path == Some(path.as_str()) {
+                                    let head = "HTTP/1.1 302 Found\r\n\
+                                        Location: /final\r\n\
+                                        Set-Cookie: sid=topsecret; Path=/\r\n\
+                                        Content-Length: 0\r\n\
+                                        Connection: keep-alive\r\n\r\n";
+                                    if stream.write_all(head.as_bytes()).is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                let head = format!(
+                                    "HTTP/1.1 200 OK\r\n\
+                                     ETag: \"ka-v1\"\r\n\
+                                     Content-Length: {}\r\n\
+                                     Connection: keep-alive\r\n\r\n",
+                                    body.len()
+                                );
+                                if stream.write_all(head.as_bytes()).is_err()
+                                    || stream.write_all(&body).is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(_) => break,
+                }
+            }
+            for h in handlers {
+                let _ = h.join();
+            }
+        });
+        Self {
+            addr,
+            url_base: format!("http://{addr}"),
+            tcp_accepts,
+            requests,
+            stop,
+            worker: Some(worker),
+        }
+    }
+
+    fn accepts(&self) -> usize {
+        self.tcp_accepts.load(Ordering::SeqCst)
+    }
+
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl Drop for KeepAliveServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn read_keepalive_request(stream: &mut TcpStream, stop: &AtomicBool) -> Option<String> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) => return None,
+            Ok(n) => request.extend_from_slice(&buffer[..n]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => return None,
+        }
+    }
+    String::from_utf8(request).ok()
+}
+
+#[test]
+fn shared_pool_reuses_connections_across_50_small_same_host_files_and_cuts_wall_time() {
+    use fetchpath_http::{ConnectionPool, PoolKey};
+
+    let files = 50usize;
+    let body = vec![0x4B; 16 * 1024];
+    // 5 ms per-TCP-accept cost models real TCP/TLS handshake setup while
+    // keep-alive socket reuse pays 0 ms setup cost.
+    let handshake = Duration::from_millis(5);
+
+    // 1) Isolated (no pool): 50 sequential files open 50 TCP connections.
+    let srv_iso = KeepAliveServer::start(body.clone(), handshake, None);
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+    let iso_start = Instant::now();
+    let mut iso_connects = 0u32;
+    for i in 0..files {
+        let img = RefCell::new(Image::default());
+        let report = transfer_resumable(
+            &format!("{}/file-{i}.bin", srv_iso.url_base),
+            &RequestContext::default(),
+            limits(),
+            &budget,
+            &SegmentMonitor::default(),
+            None,
+            || false,
+            |chunk| img.borrow_mut().record(chunk.offset, chunk.bytes),
+        )
+        .unwrap();
+        assert_eq!(img.borrow().bytes, body);
+        iso_connects += report.connections_opened;
+    }
+    let iso_elapsed = iso_start.elapsed();
+    let iso_accepts = srv_iso.accepts();
+    assert_eq!(iso_accepts, files);
+    assert_eq!(iso_connects as usize, files);
+
+    // 2) Pooled (shared ConnectionPartition): 50 sequential files reuse 1 TCP connection.
+    let srv_pool = KeepAliveServer::start(body.clone(), handshake, None);
+    let pool = ConnectionPool::new();
+    let partition = pool.partition(PoolKey::public("user")).unwrap();
+    let pooled_ctx = RequestContext {
+        pool: Some(Arc::clone(&partition)),
+        ..RequestContext::default()
+    };
+    let pool_start = Instant::now();
+    let mut pool_connects = 0u32;
+    for i in 0..files {
+        let img = RefCell::new(Image::default());
+        let report = transfer_resumable(
+            &format!("{}/file-{i}.bin", srv_pool.url_base),
+            &pooled_ctx,
+            limits(),
+            &budget,
+            &SegmentMonitor::default(),
+            None,
+            || false,
+            |chunk| img.borrow_mut().record(chunk.offset, chunk.bytes),
+        )
+        .unwrap();
+        assert_eq!(img.borrow().bytes, body);
+        pool_connects += report.connections_opened;
+    }
+    let pool_elapsed = pool_start.elapsed();
+    let pool_accepts = srv_pool.accepts();
+    assert_eq!(
+        pool_accepts, 1,
+        "expected 50 sequential small files to reuse 1 keep-alive connection"
+    );
+    assert_eq!(pool_connects, 1);
+    let reduction = 1.0 - (pool_elapsed.as_secs_f64() / iso_elapsed.as_secs_f64());
+    assert!(
+        reduction >= 0.20,
+        "expected >=20% wall-time reduction with shared pool: isolated={iso_elapsed:?} pooled={pool_elapsed:?} reduction={:.1}%",
+        reduction * 100.0
+    );
+
+    // 3) Concurrent (4 worker threads, 50 files total) sharing the same partition.
+    let srv_conc = KeepAliveServer::start(body.clone(), Duration::ZERO, None);
+    let conc_pool = ConnectionPool::new();
+    let conc_partition = conc_pool.partition(PoolKey::public("user")).unwrap();
+    let next_file = Arc::new(AtomicUsize::new(0));
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let base = srv_conc.url_base.clone();
+        let part = Arc::clone(&conc_partition);
+        let counter = Arc::clone(&next_file);
+        let expected = body.clone();
+        workers.push(thread::spawn(move || {
+            let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+            let ctx = RequestContext {
+                pool: Some(part),
+                ..RequestContext::default()
+            };
+            loop {
+                let i = counter.fetch_add(1, Ordering::Relaxed);
+                if i >= files {
+                    break;
+                }
+                let img = RefCell::new(Image::default());
+                transfer_resumable(
+                    &format!("{base}/conc-{i}.bin"),
+                    &ctx,
+                    limits(),
+                    &budget,
+                    &SegmentMonitor::default(),
+                    None,
+                    || false,
+                    |chunk| img.borrow_mut().record(chunk.offset, chunk.bytes),
+                )
+                .unwrap();
+                assert_eq!(img.borrow().bytes, expected);
+            }
+        }));
+    }
+    for w in workers {
+        w.join().unwrap();
+    }
+    assert!(
+        srv_conc.accepts() <= 6,
+        "expected concurrent 4-worker batch of 50 files to reuse sockets (got {} TCP accepts)",
+        srv_conc.accepts()
+    );
+}
+
+#[test]
+fn shared_pool_isolates_principals_credentials_and_redirect_cookies() {
+    use fetchpath_http::{ConnectionPool, PoolKey};
+
+    let body = vec![0x99; 8 * 1024];
+    let srv = KeepAliveServer::start(body.clone(), Duration::ZERO, Some("/login-redirect"));
+    let pool = ConnectionPool::new();
+    let user_part = pool.partition(PoolKey::public("user")).unwrap();
+    let agent_part = pool.partition(PoolKey::public("agent:helper")).unwrap();
+    let budget = GlobalBudget::new(8, 32 * MIB).unwrap();
+
+    let run_one = |url: &str, ctx: &RequestContext| -> u32 {
+        let img = RefCell::new(Image::default());
+        let report = transfer_resumable(
+            url,
+            ctx,
+            limits(),
+            &budget,
+            &SegmentMonitor::default(),
+            None,
+            || false,
+            |chunk| img.borrow_mut().record(chunk.offset, chunk.bytes),
+        )
+        .unwrap();
+        assert_eq!(img.borrow().bytes, body);
+        report.connections_opened
+    };
+
+    let user_ctx = RequestContext {
+        pool: Some(Arc::clone(&user_part)),
+        ..RequestContext::default()
+    };
+    let agent_ctx = RequestContext {
+        pool: Some(Arc::clone(&agent_part)),
+        ..RequestContext::default()
+    };
+
+    // 1) User job 1 opens 1 connection; user job 2 reuses it.
+    assert_eq!(run_one(&format!("{}/u1", srv.url_base), &user_ctx), 1);
+    assert_eq!(srv.accepts(), 1);
+    assert_eq!(run_one(&format!("{}/u2", srv.url_base), &user_ctx), 0);
+    assert_eq!(srv.accepts(), 1);
+
+    // 2) Different principal ("agent:helper") MUST open its own connection and
+    //    never reuse "user"'s pooled socket.
+    assert_eq!(run_one(&format!("{}/a1", srv.url_base), &agent_ctx), 1);
+    assert_eq!(srv.accepts(), 2);
+    assert_eq!(run_one(&format!("{}/a2", srv.url_base), &agent_ctx), 0);
+    assert_eq!(srv.accepts(), 2);
+
+    // 3) Credentialed requests MUST NOT attach to the shared pool even if a
+    //    caller passes `user_part`.
+    let cookie_ctx = RequestContext {
+        cookie_lines: vec!["127.0.0.1\tFALSE\t/\tFALSE\t0\tauth\tsecret".into()],
+        pool: Some(Arc::clone(&user_part)),
+        ..RequestContext::default()
+    };
+    assert_eq!(run_one(&format!("{}/c1", srv.url_base), &cookie_ctx), 1);
+    assert_eq!(srv.accepts(), 3);
+
+    let auth_header_ctx = RequestContext {
+        custom_headers: vec![("Authorization".into(), "Bearer tok".into())],
+        pool: Some(Arc::clone(&user_part)),
+        ..RequestContext::default()
+    };
+    assert_eq!(
+        run_one(&format!("{}/c2", srv.url_base), &auth_header_ctx),
+        1
+    );
+    assert_eq!(srv.accepts(), 4);
+
+    let referer_ctx = RequestContext {
+        referer: Some("http://127.0.0.1/private".into()),
+        pool: Some(Arc::clone(&user_part)),
+        ..RequestContext::default()
+    };
+    assert_eq!(run_one(&format!("{}/c3", srv.url_base), &referer_ctx), 1);
+    assert_eq!(srv.accepts(), 5);
+
+    let userinfo_url = format!("http://alice:pw@{}/c4", srv.addr);
+    assert_eq!(run_one(&userinfo_url, &user_ctx), 1);
+    assert_eq!(srv.accepts(), 6);
+
+    // 4) Uncredentialed URL that receives `Set-Cookie` on a 302 redirect detaches
+    //    hop 2 from the shared pool and never leaks cookies to subsequent jobs.
+    let _ = run_one(&format!("{}/login-redirect", srv.url_base), &user_ctx);
+    let _ = run_one(&format!("{}/after-redirect", srv.url_base), &user_ctx);
+    let after_req = srv
+        .requests()
+        .into_iter()
+        .find(|req| req.starts_with("GET /after-redirect "))
+        .expect("after-redirect request recorded");
+    assert!(
+        !after_req.to_ascii_lowercase().contains("topsecret"),
+        "redirect-acquired cookie leaked across jobs: {after_req}"
+    );
+    assert!(
+        !after_req.to_ascii_lowercase().contains("auth=secret"),
+        "explicit cookie leaked into public pooled job: {after_req}"
+    );
+}

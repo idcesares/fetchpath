@@ -34,7 +34,10 @@ use browser_inbox::BridgeStore;
 #[cfg(test)]
 use durable::RecordDurable;
 use durable::{Durable, RemovedJob};
-use fetchpath_core::{BandwidthPacer, RequestContext, TokenBucket, normalize_sha256};
+use fetchpath_core::{
+    BandwidthPacer, ConnectionPartition, ConnectionPool, PoolKey, RequestContext, TokenBucket,
+    normalize_sha256,
+};
 use fetchpath_media::{MediaInspection, MediaJob, MediaTools};
 use fetchpath_protocol::model::JobPriority;
 use fetchpath_protocol::principal::{AgentName, AgentPolicy, ApprovalReason, Principal};
@@ -130,6 +133,9 @@ pub struct Session {
     /// Engine-wide bandwidth token bucket shared by all running file downloads
     /// (FP-150). Updated live when `max_bytes_per_second` changes in settings.
     global_pacer: Arc<TokenBucket>,
+    /// Partitioned engine-wide HTTP connection, DNS, and TLS session pool
+    /// keyed by `(principal, Public)` (FP-151). Credentialed jobs never attach.
+    http_pool: ConnectionPool,
 }
 
 #[derive(Default)]
@@ -311,6 +317,7 @@ impl Session {
             lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
             global_pacer,
+            http_pool: ConnectionPool::new(),
         })
     }
 
@@ -347,6 +354,7 @@ impl Session {
             lan: std::sync::OnceLock::new(),
             inspected_sizes: Mutex::default(),
             global_pacer,
+            http_pool: ConnectionPool::new(),
         }
     }
 
@@ -1237,6 +1245,23 @@ impl Session {
         find_record(&state, job_id)
             .ok()
             .and_then(|record| record.max_bytes_per_second)
+    }
+
+    /// Returns the shared `(principal, Public)` HTTP connection/DNS/TLS pool
+    /// partition for `record`, or `None` for any credentialed or proxied job
+    /// so credentialed transfers never share connections or TLS tickets (FP-151).
+    fn pool_for_record(&self, record: &QueueRecord) -> Option<Arc<ConnectionPartition>> {
+        if !record.public_origin
+            || record.credential_ref.is_some()
+            || !record.live_context.is_credential_free()
+            || record.live_context.has_proxy()
+            || record.live_url.as_deref().is_some_and(policy::has_userinfo)
+        {
+            return None;
+        }
+        self.http_pool
+            .partition(PoolKey::public(record.principal.to_string()))
+            .ok()
     }
 
     /// Applies mutable policy fields (`schedule`, `priority`, and/or
@@ -2727,6 +2752,11 @@ impl Session {
                     Arc::clone(&self.global_pacer),
                     Some(Arc::clone(&record.job_pacer)),
                 )));
+                // Attach the principal-isolated public connection/DNS/TLS pool
+                // partition for credential-free public-origin jobs (FP-151).
+                if let Some(pool) = self.pool_for_record(record) {
+                    let _ = file.use_pool(pool);
+                }
                 // A rule may cap the connections, decided as the job starts.
                 let url = record.live_url.as_deref().unwrap_or(&record.display_url);
                 let name = record

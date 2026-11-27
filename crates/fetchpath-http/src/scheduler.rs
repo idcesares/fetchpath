@@ -1079,7 +1079,7 @@ struct Engine<'a> {
     // Handles go before the multi handle so they detach first.
     lanes: Vec<Lane<'a>>,
     permits: Vec<BudgetPermit<'a>>,
-    multi: Multi,
+    multi: Option<Multi>,
     slot: DownloadSlot<'a>,
     shared: Rc<Shared<'a>>,
     url: &'a str,
@@ -1122,6 +1122,38 @@ struct Engine<'a> {
     connections: u32,
     pool_policy: PoolPolicy,
     pool_width: usize,
+    /// Partition this `Engine` checked its `Multi` handle out from (FP-151).
+    /// `Some` only when the initial URL and `RequestContext` satisfied
+    /// [`crate::pool::is_pool_eligible`].
+    pool: Option<Arc<crate::ConnectionPartition>>,
+    /// Set if any hop acquires a `Set-Cookie` or becomes ineligible (e.g.,
+    /// redirect with userinfo); tainted `Multi` handles are dropped rather
+    /// than returned to the partition.
+    pool_tainted: bool,
+}
+
+impl Drop for Engine<'_> {
+    fn drop(&mut self) {
+        let Some(multi) = self.multi.take() else {
+            return;
+        };
+        let mut all_detached = true;
+        for lane in self.lanes.drain(..) {
+            match multi.remove2(lane.handle) {
+                Ok(easy) => drop(easy),
+                Err(_) => all_detached = false,
+            }
+        }
+        // Only return a completely drained, untainted `Multi` (zero attached
+        // easy handles) when not unwinding.
+        if all_detached
+            && !self.pool_tainted
+            && !std::thread::panicking()
+            && let Some(pool) = self.pool.take()
+        {
+            pool.checkin(multi);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1166,10 +1198,20 @@ pub(crate) fn run<'a>(
         pin: RefCell::new(None),
         pacer: context.pacer.clone(),
     });
+    // Sticky pool eligibility decided once from the initial URL + RequestContext.
+    let pool = context.pool.clone().filter(|_| {
+        Url::parse(url)
+            .ok()
+            .is_some_and(|parsed| crate::pool::is_pool_eligible(context, &parsed))
+    });
+    let multi = match pool.as_ref() {
+        Some(partition) => partition.checkout()?,
+        None => new_multi()?,
+    };
     let mut engine = Engine {
         lanes: Vec::new(),
         permits: vec![first_permit],
-        multi: new_multi()?,
+        multi: Some(multi),
         slot,
         shared,
         url,
@@ -1209,11 +1251,25 @@ pub(crate) fn run<'a>(
         connections: 0,
         pool_policy: PoolPolicy::Eligible,
         pool_width: 0,
+        pool,
+        pool_tainted: false,
     };
     engine.drive()
 }
 
 impl<'a> Engine<'a> {
+    fn multi(&self) -> &Multi {
+        self.multi
+            .as_ref()
+            .expect("multi handle lives until Engine::drop")
+    }
+
+    fn multi_mut(&mut self) -> &mut Multi {
+        self.multi
+            .as_mut()
+            .expect("multi handle lives until Engine::drop")
+    }
+
     fn cancelled(&self) -> bool {
         (self.shared.cancelled)()
     }
@@ -1239,7 +1295,7 @@ impl<'a> Engine<'a> {
                 return Err(TransferError::Cancelled);
             }
             let written_before = self.shared.written.get();
-            self.multi.perform().map_err(multi_error)?;
+            self.multi().perform().map_err(multi_error)?;
             let done = self.collect();
             let any_done = !done.is_empty();
             for (id, result) in done {
@@ -1289,7 +1345,7 @@ impl<'a> Engine<'a> {
                 continue;
             }
             let waited = Instant::now();
-            self.multi.wait(&mut [], POLL).map_err(multi_error)?;
+            self.multi().wait(&mut [], POLL).map_err(multi_error)?;
             // With no socket to watch, `wait` can return at once.
             if let Some(rest) = POLL.checked_sub(waited.elapsed())
                 && self.lanes.is_empty()
@@ -1302,7 +1358,7 @@ impl<'a> Engine<'a> {
 
     fn collect(&mut self) -> Vec<(usize, Result<(), curl::Error>)> {
         let mut done = Vec::new();
-        self.multi.messages(|message| {
+        self.multi().messages(|message| {
             if let (Some(result), Ok(token)) = (message.result(), message.token()) {
                 done.push((token, result));
             }
@@ -1404,6 +1460,12 @@ impl<'a> Engine<'a> {
             max_age: None,
         };
         let mut easy = Easy2::new(handler);
+        if self.pool.is_some()
+            && (!crate::pool::is_pool_eligible(self.context, &request.target.url)
+                || !request.target.cookie_lines.is_empty())
+        {
+            self.pool_tainted = true;
+        }
         easy.url(request.target.url.as_str()).map_err(curl_error)?;
         http_only(easy.raw())?;
         easy.follow_location(false).map_err(curl_error)?;
@@ -1456,8 +1518,11 @@ impl<'a> Engine<'a> {
             scoped_headers,
         )?)
         .map_err(curl_error)?;
-        if request.fresh {
+        if request.fresh || self.pool_tainted {
             easy.fresh_connect(true).map_err(curl_error)?;
+        }
+        if self.pool_tainted {
+            easy.forbid_reuse(true).map_err(curl_error)?;
         }
         self.trace(|| {
             format!(
@@ -1466,7 +1531,7 @@ impl<'a> Engine<'a> {
                 request.fresh
             )
         });
-        let mut handle = self.multi.add2(easy).map_err(multi_error)?;
+        let mut handle = self.multi().add2(easy).map_err(multi_error)?;
         handle.set_token(id).map_err(curl_error)?;
         self.requests += 1;
         Ok(handle)
@@ -1481,7 +1546,7 @@ impl<'a> Engine<'a> {
         index: usize,
     ) -> Result<(Rc<Claim>, Easy2<LaneHandler<'a>>), TransferError> {
         let Lane { handle, claim, .. } = self.lanes.remove(index);
-        let easy = self.multi.remove2(handle).map_err(multi_error)?;
+        let easy = self.multi().remove2(handle).map_err(multi_error)?;
         self.connections += easy.num_connects().unwrap_or(0) as u32;
         if let Some(first) = claim.first_byte.get() {
             let elapsed = claim.last_byte.get().duration_since(first).as_secs_f64();
@@ -1539,7 +1604,7 @@ impl<'a> Engine<'a> {
             request.resolving = true;
             let role = handler.role;
             let Lane { handle, claim, .. } = self.lanes.remove(index);
-            let mut easy = self.multi.remove2(handle).map_err(multi_error)?;
+            let mut easy = self.multi().remove2(handle).map_err(multi_error)?;
             self.connections += easy.num_connects().unwrap_or(0) as u32;
             if request.target.credentials {
                 request.target.cookie_lines = easy
@@ -1548,6 +1613,9 @@ impl<'a> Engine<'a> {
                     .iter()
                     .filter_map(|line| std::str::from_utf8(line).ok().map(str::to_owned))
                     .collect();
+                if !request.target.cookie_lines.is_empty() {
+                    self.pool_tainted = true;
+                }
             }
             drop(easy);
             let handle = self.make_request(Rc::clone(&claim), role, request, id)?;
@@ -2417,7 +2485,9 @@ impl<'a> Engine<'a> {
                 if self.lanes.len() != width || self.permits.len() < width {
                     return Ok(());
                 }
-                self.multi.pipelining(false, false).map_err(multi_error)?;
+                self.multi_mut()
+                    .pipelining(false, false)
+                    .map_err(multi_error)?;
                 self.pool_width = width;
                 self.pool_policy = PoolPolicy::Trial {
                     baseline,
@@ -2440,7 +2510,7 @@ impl<'a> Engine<'a> {
                 while !self.lanes.is_empty() {
                     self.return_pool_lane(self.lanes.len() - 1, false)?;
                 }
-                self.multi = new_multi()?;
+                self.multi = Some(new_multi()?);
                 self.pool_policy = PoolPolicy::Shared;
                 self.window = None;
                 self.trace(|| {

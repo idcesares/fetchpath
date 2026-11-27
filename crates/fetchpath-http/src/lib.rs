@@ -11,6 +11,7 @@ mod controller;
 mod frontier;
 mod link;
 mod pacer;
+mod pool;
 mod scheduler;
 mod single;
 
@@ -18,6 +19,7 @@ pub use link::{
     LinkFacts, PageHeadResponse, disposition_file_name, fetch_page_head, fetch_small, inspect_link,
 };
 pub use pacer::{BandwidthPacer, MIN_BANDWIDTH_BYTES_PER_SECOND, TokenBucket};
+pub use pool::{ConnectionPartition, ConnectionPool, CredentialScope, PoolKey, is_pool_eligible};
 pub use single::{SingleTransferError, fetch_single_request};
 
 pub use compatibility::{
@@ -102,6 +104,10 @@ pub struct RequestContext {
     pub http2_prior_knowledge: bool,
     /// Optional hierarchical bandwidth pacer (global + per-job token buckets).
     pub pacer: Option<Arc<BandwidthPacer>>,
+    /// Optional isolated `(principal, credential_scope)` connection, DNS, and
+    /// TLS session pool partition (FP-151). Ignored for credentialed or proxied
+    /// requests.
+    pub pool: Option<Arc<ConnectionPartition>>,
 }
 
 impl std::fmt::Debug for RequestContext {
@@ -134,6 +140,7 @@ impl std::fmt::Debug for RequestContext {
             )
             .field("http2_prior_knowledge", &self.http2_prior_knowledge)
             .field("pacer", &self.pacer.as_ref().map(|p| p.configured_rates()))
+            .field("pool_partition", &self.pool.as_ref().map(|p| p.id()))
             .finish()
     }
 }
@@ -1350,6 +1357,7 @@ mod tests {
             proxy: Some("http://user:proxy-pass@127.0.0.1:8080".into()),
             http2_prior_knowledge: false,
             pacer: None,
+            pool: None,
         };
         assert!(valid.validate().is_ok());
         let debug = format!("{valid:?}");

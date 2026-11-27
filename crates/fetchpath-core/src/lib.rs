@@ -21,7 +21,8 @@ pub(crate) fn storage_code(detail: &str) -> &'static str {
 }
 
 pub use fetchpath_http::{
-    BandwidthPacer, LinkFacts, MIN_BANDWIDTH_BYTES_PER_SECOND, SegmentProgress, TokenBucket,
+    BandwidthPacer, ConnectionPartition, ConnectionPool, CredentialScope, LinkFacts,
+    MIN_BANDWIDTH_BYTES_PER_SECOND, PoolKey, SegmentProgress, TokenBucket,
 };
 
 /// Looks at an HTTP(S) link's headers without downloading it. Errors carry
@@ -216,6 +217,11 @@ impl RequestContext {
         self.cookie_lines.is_empty() && self.referer.is_none() && self.custom_headers.is_empty()
     }
 
+    /// True when an explicit proxy override is attached.
+    pub fn has_proxy(&self) -> bool {
+        self.proxy.is_some()
+    }
+
     fn fingerprint(&self) -> String {
         use sha2::{Digest, Sha256};
 
@@ -258,6 +264,9 @@ pub struct DownloadRequest {
     pub max_connections: Option<usize>,
     /// Optional hierarchical bandwidth pacer (global + per-job ceilings).
     pub pacer: Option<Arc<BandwidthPacer>>,
+    /// Optional isolated `(principal, credential_scope)` connection, DNS, and
+    /// TLS session pool partition (FP-151).
+    pub pool: Option<Arc<ConnectionPartition>>,
 }
 
 /// Normalizes a SHA-256 as people paste it: surrounding whitespace, an
@@ -545,6 +554,7 @@ impl FileJob {
                     expected_sha256: None,
                     max_connections: None,
                     pacer: None,
+                    pool: None,
                 }),
                 cache: None,
                 peers: Vec::new(),
@@ -618,6 +628,18 @@ impl FileJob {
             .as_mut()
             .ok_or("contract.invalid_transition")?;
         request.pacer = Some(pacer);
+        Ok(())
+    }
+
+    /// Attaches an isolated `(principal, credential_scope)` HTTP connection,
+    /// DNS, and TLS session pool partition before the job starts (FP-151).
+    pub fn use_pool(&self, pool: Arc<ConnectionPartition>) -> Result<(), &'static str> {
+        let mut inner = self.inner.lock().unwrap();
+        let request = inner
+            .request
+            .as_mut()
+            .ok_or("contract.invalid_transition")?;
+        request.pool = Some(pool);
         Ok(())
     }
 
@@ -999,6 +1021,7 @@ Connection: close
             expected_sha256: None,
             max_connections: None,
             pacer: None,
+            pool: None,
         }
     }
 

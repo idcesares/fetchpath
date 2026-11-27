@@ -1,0 +1,75 @@
+﻿{
+  "benchmark": "fp151-pool-batch",
+  "concurrent4": {
+    "isolatedMedianMs": 49.65,
+    "pooledMedianMs": 4.44,
+    "runs": [
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 49.65,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 4,
+        "pooledMs": 14.12,
+        "pooledTcpAccepts": 4,
+        "rep": 1
+      },
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 63.7,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 4,
+        "pooledMs": 4.44,
+        "pooledTcpAccepts": 4,
+        "rep": 2
+      },
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 21.95,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 4,
+        "pooledMs": 3.75,
+        "pooledTcpAccepts": 4,
+        "rep": 3
+      }
+    ],
+    "wallTimeReductionPct": 91.1
+  },
+  "connectHandshakeMs": 0,
+  "fileBytes": 16384,
+  "files": 50,
+  "reps": 3,
+  "sequential": {
+    "isolatedMedianMs": 174.85,
+    "pooledMedianMs": 9.41,
+    "runs": [
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 96.67,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 1,
+        "pooledMs": 14.82,
+        "pooledTcpAccepts": 1,
+        "rep": 1
+      },
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 174.85,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 1,
+        "pooledMs": 9.41,
+        "pooledTcpAccepts": 1,
+        "rep": 2
+      },
+      {
+        "isolatedCurlConnects": 50,
+        "isolatedMs": 229.28,
+        "isolatedTcpAccepts": 50,
+        "pooledCurlConnects": 1,
+        "pooledMs": 8.36,
+        "pooledTcpAccepts": 1,
+        "rep": 3
+      }
+    ],
+    "wallTimeReductionPct": 94.6
+  }
+}

@@ -4865,12 +4865,13 @@
       "dependsOn": [
         "FP-147"
       ],
-      "status": "todo",
+      "status": "done",
       "owner": "agent",
       "priority": "P1",
       "modelTier": "astra-high",
       "review": "strong",
       "files": [
+        "crates/fetchpath-http/src/pool.rs",
         "crates/fetchpath-http/src/lib.rs",
         "crates/fetchpath-http/src/scheduler.rs",
         "crates/fetchpath-core/src/transfer.rs",
@@ -4883,8 +4884,11 @@
         "A09"
       ],
       "acceptance": "Concurrent and sequential downloads to the same origin reuse DNS, TCP, and TLS sessions within an isolated (principal, credential_scope) pool partition; credentialed and cross-principal jobs never share connections or TLS session tickets; batch download of 50 small same-host files shows measurable connection reuse and >=20% median wall-time reduction.",
-      "verification": "Cross-principal/credential isolation tests, batch small-file connection-count and timing benchmark recorded in docs/development/ENGINE-REDESIGN.md.",
-      "evidence": []
+      "verification": "cargo fmt --check, strict clippy, fetchpath-http pool unit + scheduler tests (50-file seq/4-worker concurrent reuse, cross-principal, cookie/Authorization/referer/userinfo, and redirect Set-Cookie isolation), fetchpath-core (85/85), fetchpath-session session_http_pool (user reuse, agent isolation, credentialed BridgeStore capture isolation), 50-file raw loopback batch benchmark (-94.6% seq 50->1 TCP accepts, -91.1% concurrent-4 50->4 TCP accepts), and independent strong boundary review + bounded repair recheck (PASS) recorded in docs/development/ENGINE-REDESIGN.md.",
+      "evidence": [
+        "docs/development/ENGINE-REDESIGN.md",
+        "docs/development/evidence/http-adaptive/fp151-pool-batch.json"
+      ]
     },
     {
       "id": "FP-152",

@@ -2474,3 +2474,207 @@ fn agents_cannot_raise_global_limits_elevate_priority_or_lift_per_job_bandwidth_
     assert_eq!(elevated.priority, Some(JobPriority::High));
     assert_eq!(elevated.max_bytes_per_second, None);
 }
+
+#[test]
+fn session_http_pool_reuses_public_connections_per_principal_and_isolates_agents_and_credentials() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let accepts = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let accepts_w = Arc::clone(&accepts);
+    let stop_w = Arc::clone(&stop);
+    let payload = b"pooled-session-payload".to_vec();
+    let body_w = payload.clone();
+
+    let server = std::thread::spawn(move || {
+        let mut handlers = Vec::new();
+        while !stop_w.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    accepts_w.fetch_add(1, Ordering::SeqCst);
+                    let stop = Arc::clone(&stop_w);
+                    let body = body_w.clone();
+                    handlers.push(std::thread::spawn(move || {
+                        let _ = stream.set_nonblocking(false);
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                        while !stop.load(Ordering::Relaxed) {
+                            let mut buf = Vec::new();
+                            let mut chunk = [0_u8; 512];
+                            let mut ok = true;
+                            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                                if stop.load(Ordering::Relaxed) {
+                                    ok = false;
+                                    break;
+                                }
+                                match stream.read(&mut chunk) {
+                                    Ok(0) => {
+                                        ok = false;
+                                        break;
+                                    }
+                                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                                    Err(e)
+                                        if matches!(
+                                            e.kind(),
+                                            std::io::ErrorKind::WouldBlock
+                                                | std::io::ErrorKind::TimedOut
+                                        ) =>
+                                    {
+                                        continue;
+                                    }
+                                    Err(_) => {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if !ok {
+                                break;
+                            }
+                            let head = format!(
+                                "HTTP/1.1 200 OK\r\nETag: \"sess-v1\"\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                                body.len()
+                            );
+                            if stream.write_all(head.as_bytes()).is_err()
+                                || stream.write_all(&body).is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(_) => break,
+            }
+        }
+        for h in handlers {
+            let _ = h.join();
+        }
+    });
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let granted = root.join("granted");
+    std::fs::create_dir_all(&granted).unwrap();
+    let queue = root.join("queue-v1.json");
+    let session = Arc::new(fixture_session(queue, 3, Some(granted.clone())).unwrap());
+    let engine = Engine::new(session);
+    let (user, agent) = clients(&engine);
+    send(
+        &user,
+        Command::SetAgentPolicy {
+            agent: agent_name(),
+            policy: Some(granting(&granted)),
+        },
+    )
+    .unwrap();
+    let download_and_wait = |who: &InProcessClient, url: &str, dest: &Path| {
+        let created = job(send(who, file(url, dest)).unwrap());
+        let done = wait_for(&engine, who, &created.job_id, |j| {
+            j.state == JobState::Completed
+        });
+        assert_eq!(done.state, JobState::Completed);
+        assert_eq!(std::fs::read(dest).unwrap(), payload);
+    };
+
+    // 1) User downloads 3 public files sequentially -> reuses 1 keep-alive TCP connection.
+    for i in 0..3 {
+        download_and_wait(
+            &user,
+            &format!("http://{addr}/user-{i}.bin"),
+            &granted.join(format!("user-{i}.bin")),
+        );
+    }
+    assert_eq!(
+        accepts.load(Ordering::SeqCst),
+        1,
+        "same-principal public session jobs must reuse pooled connections"
+    );
+
+    // 2) Agent downloads 2 public files sequentially -> opens its own partition
+    //    (never reuses user's connection) and reuses its own connection on file 2.
+    for i in 0..2 {
+        download_and_wait(
+            &agent,
+            &format!("http://{addr}/agent-{i}.bin"),
+            &granted.join(format!("agent-{i}.bin")),
+        );
+    }
+    assert_eq!(
+        accepts.load(Ordering::SeqCst),
+        2,
+        "agent principal must get an isolated pool partition and reuse within it"
+    );
+
+    // 3) Two credentialed browser captures (cookie-bearing) -> neither reuses
+    //    the user/agent pool nor shares a connection with each other.
+    {
+        use fetchpath_session::browser_inbox::{
+            BridgeStore, BrowserCookie, CaptureRequest, SCHEMA_VERSION,
+        };
+        let store = BridgeStore::new(root.clone());
+        for (idx, expected_accepts) in [(1usize, 3usize), (2usize, 4usize)] {
+            let name = format!("private-{idx}.bin");
+            let capture_id = uuid::Uuid::new_v4().to_string();
+            assert!(
+                !store
+                    .accept(&CaptureRequest {
+                        schema_version: SCHEMA_VERSION,
+                        capture_id,
+                        method: "GET".into(),
+                        url: format!("http://{addr}/{name}"),
+                        suggested_filename: name.clone(),
+                        referrer: Some(format!("http://{addr}/account")),
+                        cookies: vec![BrowserCookie {
+                            domain: "127.0.0.1".into(),
+                            host_only: true,
+                            path: "/".into(),
+                            secure: false,
+                            expiration_date: None,
+                            name: "session".into(),
+                            value: "secret-cookie".into(),
+                        }],
+                        user_initiated: true,
+                    })
+                    .unwrap()
+            );
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let listed = match send(
+                    &user,
+                    Command::ListJobs {
+                        filter: fetchpath_protocol::command::JobFilter::All,
+                    },
+                )
+                .unwrap()
+                {
+                    CommandResult::Jobs { jobs } => jobs,
+                    other => panic!("{other:?}"),
+                };
+                if listed.iter().any(|j| {
+                    j.destination.as_deref().is_some_and(|d| d.ends_with(&name))
+                        && j.state == JobState::Completed
+                }) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for {name}");
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            assert_eq!(std::fs::read(granted.join(&name)).unwrap(), payload);
+            assert_eq!(
+                accepts.load(Ordering::SeqCst),
+                expected_accepts,
+                "credentialed job {idx} must never attach to a shared pool"
+            );
+        }
+    }
+
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+}
